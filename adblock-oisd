@@ -51,7 +51,7 @@ start()
 		return
 	fi
 
-	sed -i '\|^address=/[[:alnum:]_.-].*/#|!d' /tmp/oisd.txt
+	sed -i '\|^address=/[[:alnum:]]|!d;\|/#$|!d' /tmp/oisd.txt
 
 	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
 		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/prev_oisd.txt.gz
