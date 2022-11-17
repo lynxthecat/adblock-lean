@@ -90,6 +90,10 @@ start()
 		logger -t adblock-oisd "New oisd.txt downloaded and dnsmasq check passed."
 		[[ -f /tmp/prev_oisd.txt.gz ]] && rm /tmp/prev_oisd.txt.gz
 	fi
+
+	if [[ -f /tmp/prev_oisd.txt.gz ]]; then	
+		rm /tmp/prev_oisd.txt.gz
+	fi
 }
 
 stop()
