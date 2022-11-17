@@ -1,0 +1,99 @@
+#!/bin/bash /etc/rc.common
+
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+
+exec &> /var/log/adblock-oisd.log
+
+START=99
+STOP=4
+
+check_dnsmasq()
+{
+	check_return=0;
+
+	pgrep -x dnsmasq &> /dev/null
+
+        (($? != 0)) && check_return=1;
+
+        ping -c 1 google.com &> /dev/null
+
+        (($? != 0)) && check_return=1
+
+	ping -c 1 cloudflare.com &> /dev/null
+
+	(($? != 0)) && check_return=1
+
+	return $check_return
+}
+
+
+start() 
+{
+	
+        for ((retries=0; retries<3; retries++))
+        do
+                wget https://dnsmasq.oisd.nl -O /tmp/oisd.txt &> /dev/null
+                (($? == 0)) && break
+                sleep 5
+        done
+	
+	if [[ ! -f /tmp/oisd.txt ]]; then
+		logger -t adblock-oisd "Download of new oisd.txt file failed."
+		return
+	fi
+
+	read oisd_file_size_KB< <(du -bk /tmp/oisd.txt)
+	oisd_file_size_KB=${oisd_file_size_KB//[!0-9]/}
+
+	if (( oisd_file_size_KB > 20000 )); then
+		logger -t adblock-oisd "New oisd.txt file size: $oisd_file_size_KB KB too large."
+		return
+	fi
+
+	sed -i '\|^address=/[[:alnum:]_.-].*/#|!d' /tmp/oisd.txt
+
+	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
+		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/prev_oisd.txt.gz
+	fi
+
+	mv /tmp/oisd.txt /tmp/dnsmasq.d/oisd.txt
+
+	/etc/init.d/dnsmasq restart &> /dev/null
+
+	sleep 10
+	
+	if ((check_dnsmasq!=0)); then
+		
+		logger -t adblock-oisd "dnsmasq check failed with new oisd.txt file."
+
+		rm /tmp/dnsmasq.d/oisd.txt
+
+		if [[ -f /tmp/prev_oisd.txt.gz ]]; then
+			logger -t adblock-oisd "Found previous oisd.txt file. Attempting to recover."
+			gunzip -c /tmp/prev_oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
+
+			/etc/init.d/dnsmasq restart &> /dev/null			
+
+			if ((check_dnsmasq!=0)); then
+				logger -t adblock-oisd "dnsmasq check failed with previous oisd.txt file. Stopping adblock-oisd."
+				stop
+			else
+				logger -t adblock-oisd "Previous oisd.txt recovered and dnsmasq check passed."
+			fi
+		else
+			logger -t adblock-oisd "No previous oisd.txt file found. Stopping adblock-oisd"
+			stop
+		fi
+		
+	else
+		logger -t adblock-oisd "New oisd.txt downloaded and dnsmasq check passed."
+		[[ -f /tmp/prev_oisd.txt.gz ]] && rm /tmp/prev_oisd.txt.gz
+	fi
+}
+
+stop()
+{
+	[[ -f /tmp/dnsmasq.d/oisd.txt ]] && rm /tmp/dnsmasq.d/oisd.txt
+	/etc/init.d/dnsmasq restart &> /dev/null
+}
