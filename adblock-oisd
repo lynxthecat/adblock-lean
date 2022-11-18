@@ -1,4 +1,4 @@
-#!/bin/bash /etc/rc.common
+#!/bin/sh /etc/rc.common
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -10,43 +10,33 @@ STOP=4
 
 check_dnsmasq()
 {
-	check_return=0;
+	pgrep -x dnsmasq &> /dev/null || false; return
 
-	pgrep -x dnsmasq &> /dev/null
+        ping -c 1 google.com &> /dev/null || false; return
 
-        (($? != 0)) && check_return=1;
+	ping -c 1 cloudflare.com &> /dev/null || false; return
 
-        ping -c 1 google.com &> /dev/null
-
-        (($? != 0)) && check_return=1
-
-	ping -c 1 cloudflare.com &> /dev/null
-
-	(($? != 0)) && check_return=1
-
-	return $check_return
+	true
 }
-
 
 start() 
 {
 	
-        for ((retries=0; retries<3; retries++))
+        for retries in 1 2 3
         do
                 wget https://dnsmasq.oisd.nl -O /tmp/oisd.txt &> /dev/null
-                (($? == 0)) && break
+                [[ $? -eq 0 ]] && break
                 sleep 5
-        done
+	done
 	
 	if [[ ! -f /tmp/oisd.txt ]]; then
 		logger -t adblock-oisd "Download of new oisd.txt file failed."
 		return
 	fi
 
-	read oisd_file_size_KB< <(du -bk /tmp/oisd.txt)
-	oisd_file_size_KB=${oisd_file_size_KB//[!0-9]/}
+	oisd_file_size_KB=`du -bk /tmp/oisd.txt | awk '{print $1}'`
 
-	if (( oisd_file_size_KB > 20000 )); then
+	if [[ $oisd_file_size_KB -ge 20000 ]]; then
 		logger -t adblock-oisd "New oisd.txt file size: $oisd_file_size_KB KB too large."
 		return
 	fi
@@ -63,7 +53,8 @@ start()
 
 	sleep 10
 	
-	if ((check_dnsmasq!=0)); then
+	check_dnsmasq
+	if [[ $? -ne 0 ]]; then
 		
 		logger -t adblock-oisd "dnsmasq check failed with new oisd.txt file."
 
@@ -75,7 +66,8 @@ start()
 
 			/etc/init.d/dnsmasq restart &> /dev/null			
 
-			if ((check_dnsmasq!=0)); then
+			check_dnsmasq
+			if [[ $? -ne 0 ]]; then
 				logger -t adblock-oisd "dnsmasq check failed with previous oisd.txt file. Stopping adblock-oisd."
 				stop
 			else
