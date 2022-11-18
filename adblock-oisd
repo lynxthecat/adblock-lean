@@ -63,6 +63,7 @@ start()
 		if [[ -f /tmp/prev_oisd.txt.gz ]]; then
 			logger -t adblock-oisd "Found previous oisd.txt file. Attempting to recover."
 			gunzip -c /tmp/prev_oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
+			rm /tmp/prev_oisd.txt.gz
 
 			/etc/init.d/dnsmasq restart &> /dev/null			
 
@@ -81,10 +82,6 @@ start()
 	else
 		logger -t adblock-oisd "New oisd.txt downloaded and dnsmasq check passed."
 		[[ -f /tmp/prev_oisd.txt.gz ]] && rm /tmp/prev_oisd.txt.gz
-	fi
-
-	if [[ -f /tmp/prev_oisd.txt.gz ]]; then	
-		rm /tmp/prev_oisd.txt.gz
 	fi
 }
 
