@@ -27,6 +27,6 @@ service enable adblock-oisd
 Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-system/cron):
 
 ```bash
-0 5 * * * sadblock-oisd enabled; [[ $? -eq 0 ]] && /etc/init.d/adblock-oisd start
+0 5 * * * adblock-oisd enabled; [[ $? -eq 0 ]] && /etc/init.d/adblock-oisd start
 ```
 This tests whether the adblock-oisd service is enabled and if so launches the start function, which updates to the new OISD list. 
