@@ -33,12 +33,24 @@ check_oisd_file()
 
 check_dnsmasq()
 {
-	pgrep -x dnsmasq &> /dev/null || false; return
+	pgrep -x dnsmasq &> /dev/null
 	
-	nslookup google.com | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' && { false; return; }
-	
-	nslookup cloudflare.com | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' && { false; return; }
+	if [[ $? -ne 0 ]]; then
+		logger -t adblock-oisd "No instance of dnsmasq detected with new oisd.txt."
+		false 
+		return
+	fi
 
+	for domain in google.com amazon.com microsoft.com
+	do
+		nslookup $domain | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
+		if [[ $? -eq 0 ]]; then
+			logger -t adblock-oisd "Lookup of '$domain' resulted in 0.0.0.0 with new oisd.txt"
+			false
+			return
+		fi
+	done
+	
 	true
 }
 
