@@ -28,16 +28,16 @@ check_oisd_file()
 	fi
 
 	true
-	return
-
 }
 
 
 check_dnsmasq()
 {
 	pgrep -x dnsmasq &> /dev/null || false; return
-
-
+	
+	nslookup google.com | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' && { false; return; }
+	
+	nslookup cloudflare.com | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' && { false; return; }
 
 	true
 }
@@ -61,7 +61,7 @@ start()
 	if [[ $? -ne 0 ]]; then
 		logger -t adblock-oisd "oisd file check failed with new oisd.txt."
 	else
-		logger -t adblock-oisd "oisd file check failed with new oisd.txt."
+		logger -t adblock-oisd "oisd file check passed with new oisd.txt."
 	fi
 
 	sed -i -E '\~^address=/[[:alnum:]][[:alnum:].-]+/#$~!d' /tmp/oisd.txt
