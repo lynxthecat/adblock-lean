@@ -8,13 +8,36 @@ exec &> /var/log/adblock-oisd.log
 START=99
 STOP=4
 
+check_oisd_file()
+{
+
+	oisd_file_size_KB=`du -bk /tmp/oisd.txt | awk '{print $1}'`
+
+	if [[ $oisd_file_size_KB -ge 20000 ]]; then
+		logger -t adblock-oisd "New oisd.txt file size: $oisd_file_size_KB KB too large."
+		false
+		return
+	fi
+
+	rogue_element=`sed '\|^address=|!d;\|/#$|d;q' /tmp/oisd.txt`;
+
+	if [[ ! -z $rogue_element ]]; then
+		logger -t adblock-oisd "Rogue element '$rogue_element' identified in new oisd.txt."
+		false 
+		return
+	fi
+
+	true
+	return
+
+}
+
+
 check_dnsmasq()
 {
 	pgrep -x dnsmasq &> /dev/null || false; return
 
-        ping -c 1 google.com &> /dev/null || false; return
 
-	ping -c 1 cloudflare.com &> /dev/null || false; return
 
 	true
 }
@@ -34,14 +57,14 @@ start()
 		return
 	fi
 
-	oisd_file_size_KB=`du -bk /tmp/oisd.txt | awk '{print $1}'`
-
-	if [[ $oisd_file_size_KB -ge 20000 ]]; then
-		logger -t adblock-oisd "New oisd.txt file size: $oisd_file_size_KB KB too large."
-		return
+	check_oisd_file
+	if [[ $? -ne 0 ]]; then
+		logger -t adblock-oisd "oisd file check failed with new oisd.txt."
+	else
+		logger -t adblock-oisd "oisd file check failed with new oisd.txt."
 	fi
 
-	sed -i '\|^address=/[[:alnum:]]|!d;\|/#$|!d' /tmp/oisd.txt
+	sed -i -E '\~^address=/[[:alnum:]][[:alnum:].-]+/#$~!d' /tmp/oisd.txt
 
 	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
 		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/prev_oisd.txt.gz
