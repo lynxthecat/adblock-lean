@@ -24,7 +24,7 @@ service enable adblock-oisd
 
 ## Automatically Deploy OISD list on router reboot
 
-Providing the service is enabled the service script should automatically start on boot. 
+Providing the service is enabled, the service script should automatically start on boot. 
 
 ## Automatically Update OISD list at 5am Every Day
 
