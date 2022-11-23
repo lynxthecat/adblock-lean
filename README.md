@@ -22,11 +22,11 @@ chmod +x /etc/init.d/adblock-oisd
 service enable adblock-oisd
 ```
 
-## Automatically Deploy OISD list on router reboot
+## Automatically deploy OISD list on router reboot
 
 Providing the service is enabled, the service script should automatically start on boot. 
 
-## Automatically Update OISD list at 5am Every Day
+## Automatically update OISD list at 5am every day
 
 Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-system/cron):
 
@@ -34,3 +34,15 @@ Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-s
 0 5 * * * /etc/init.d/adblock-oisd enabled && /etc/init.d/adblock-oisd start
 ```
 This tests whether the adblock-oisd service is enabled and if so launches the start function, which updates to the new OISD list. 
+
+## Preserve service file across upgrades
+
+Just add the file:
+
+```bash
+/etc/init.d/adblock-oisd
+```
+
+to the list of files to backup in the Configuration tab in LuCi here:
+
+http://openwrt.lan/cgi-bin/luci/admin/system/flash
