@@ -24,11 +24,7 @@ service enable adblock-oisd
 
 ## Automatically Deploy OISD list on router reboot
 
-Edit rc.local (in LuCi navigate to System->Startup) to include the line:
-
-```bash
-0 5 * * * /etc/init.d/adblock-oisd enabled && /etc/init.d/adblock-oisd start
-```
+Providing the service is enabled the service script should automatically start on boot. 
 
 ## Automatically Update OISD list at 5am Every Day
 
