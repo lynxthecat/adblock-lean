@@ -17,9 +17,9 @@ adblock-oisd includes, inter alia, the following features:
 ## Installation on OpenWrt
 
 ```bash
-wget https://raw.githubusercontent.com/lynxthecat/adblock-oisd/adblock-oisd -O /etc/init.d/adblock-oisd
+wget https://raw.githubusercontent.com/lynxthecat/adblock-oisd/main/adblock-oisd -O /etc/init.d/adblock-oisd
 chmod +x /etc/init.d/adblock-oisd
-service enable adblock-oisd
+service adblock-oisd enable
 ```
 
 ## Automatically deploy OISD list on router reboot
