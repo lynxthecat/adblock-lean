@@ -1,5 +1,12 @@
 #!/bin/sh /etc/rc.common
 
+# adblock-oisd blocks ads using the highly popular oisd dnsmasq file and
+# offers a simpler solution to adblocking than the bloated alternatives on OpenWrt
+
+# Project homepage: https://github.com/lynxthecat/adblock-oisd
+
+# Authors: @Lynx and @Wizballs (OpenWrt forum)
+
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
 
@@ -19,7 +26,7 @@ check_oisd_file()
 		return
 	fi
 
-	rogue_element=`sed '\|^address=|!d;\|/#$|d;q' /tmp/oisd.txt`;
+	rogue_element=`sed -E '\~^address=~!d;\~^address=/[[:alnum:]][[:alnum:].-]+/#$~d' /tmp/oisd.txt`;
 
 	if [[ ! -z $rogue_element ]]; then
 		logger -t adblock-oisd "Rogue element '$rogue_element' identified in new oisd.txt."
@@ -76,7 +83,7 @@ start()
 		logger -t adblock-oisd "oisd file check passed with new oisd.txt."
 	fi
 
-	sed -i -E '\~^address=/[[:alnum:]][[:alnum:].-]+/#$~!d' /tmp/oisd.txt
+	sed -i -E '\~^address=/[[:alnum:]][[:alnum:].-]+/#$|^#|^\s*$~!d' /tmp/oisd.txt
 
 	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
 		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/prev_oisd.txt.gz
