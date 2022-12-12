@@ -26,11 +26,23 @@ check_oisd_file()
 		return
 	fi
 
-	rogue_element=`sed -E '\~^address=~!d;\~^address=/[[:alnum:]][[:alnum:].-]+/#$~d' /tmp/oisd.txt`;
+	# Clean whitespace
+	sed -i '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//' /tmp/oisd.txt
 
-	if [[ ! -z $rogue_element ]]; then
-		logger -t adblock-oisd "Rogue element '$rogue_element' identified in new oisd.txt."
+	# Get line number and match of any rogue elements
+	rogue_element=`sed -nE '\~(^address=/|^server=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/oisd.txt | { read match; read line; [[ ! -z $match ]] && echo "$line: $match"; }`
+
+	if [[ ! -z "$rogue_element" ]]; then
+		logger -t adblock-oisd "Rogue element: '$rogue_element' identified in new oisd.txt."
 		false 
+		return
+	fi
+
+	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/oisd.txt | wc -l`
+
+	if [[ $good_line_count -lt 100000 ]]; then
+		logger -t adblock-oisd "Good line count: $good_line_count below 100,000."
+		false
 		return
 	fi
 
@@ -79,11 +91,10 @@ start()
 	check_oisd_file
 	if [[ $? -ne 0 ]]; then
 		logger -t adblock-oisd "oisd file check failed with new oisd.txt."
+		exit
 	else
 		logger -t adblock-oisd "oisd file check passed with new oisd.txt."
 	fi
-
-	sed -i -E '\~^address=/[[:alnum:]][[:alnum:].-]+/#$|^#|^\s*$~!d' /tmp/oisd.txt
 
 	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
 		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/prev_oisd.txt.gz
@@ -122,7 +133,7 @@ start()
 		fi
 		
 	else
-		logger -t adblock-oisd "New oisd.txt downloaded and dnsmasq check passed."
+		logger -t adblock-oisd "New oisd.txt installed with line count: $good_line_count and dnsmasq check passed."
 		[[ -f /tmp/prev_oisd.txt.gz ]] && rm /tmp/prev_oisd.txt.gz
 	fi
 }
