@@ -7,8 +7,8 @@ adblock-oisd includes, inter alia, the following features:
 
 - attempt to download new oisd.txt file from: https://dnsmasq.oisd.nl (up to 3 retries) to /tmp/oisd.txt
 - check downloaded oisd.txt size does not exceeed 20 MB
-- first pass check for rogue entries on oisd.txt (e.g. check for redirection to specific IP rather than 0.0.0.0)
-- second pass filter on oisd.txt to filter out malformed, but non-rogue, entries
+- check for rogue entries on oisd.txt (e.g. check for redirection to specific IP rather than 0.0.0.0)
+- check good lines in oisd.txt exceeds 100,000 
 - set up dnsmasq with new oisd.txt and save any previous oisd.txt as compressed file
 - perform checks on restarted dnsmasq with new oisd.txt
 - revert to previous oisd.txt if checks fail
