@@ -75,11 +75,23 @@ check_dnsmasq()
 
 start() 
 {
+
+	logger -t adblock-oisd "Started adblock-oisd."
+
+	if [[ "$RANDOM_DELAY" == "1" ]]; then
+		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
+		logger -t adblock-oisd "Delaying download by $random_delay_mins minutes (thundering herd prevention)."
+		sleep "${random_delay_mins}m"
+	fi
 	
         for retries in 1 2 3
         do
                 wget https://dnsmasq.oisd.nl -O /tmp/oisd.txt &> /dev/null
-                [[ $? -eq 0 ]] && break
+                if [[ $? -eq 0 ]]; then
+			logger -t adblock-oisd "Download of new oisd.txt file suceeded."
+			break
+		fi
+	
                 sleep 5
 	done
 	
