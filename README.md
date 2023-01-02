@@ -26,14 +26,16 @@ service adblock-oisd enable
 
 Providing the service is enabled, the service script should automatically start on boot. 
 
-## Automatically update OISD list at 5am every day
+## Automatically update OISD list at 5am following delay by random number of minutes
 
 Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-system/cron):
 
 ```bash
-0 5 * * * /etc/init.d/adblock-oisd enabled && /etc/init.d/adblock-oisd start
+0 5 * * * /etc/init.d/adblock-oisd enabled && export RANDOM_DELAY="1" && /etc/init.d/adblock-oisd start
 ```
 This tests whether the adblock-oisd service is enabled and if so launches the start function, which updates to the new OISD list. 
+
+The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on oisd server; and from a selfish perspective, increase prospect that server is not loaded during the download. 
 
 ## Preserve service file across upgrades
 
