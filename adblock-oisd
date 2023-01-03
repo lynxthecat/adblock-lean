@@ -183,7 +183,7 @@ resume()
 		gunzip -c /tmp/oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
 		rm /tmp/oisd.txt.gz
 		/etc/init.d/dnsmasq restart &> /dev/null
-		logger -t adblock-oisd "/tmp/oisd.txt.gz uncompressed and written back to /tmp/dnsmasq.d/ and dnsmasq restarted."
+		logger -t adblock-oisd "/tmp/oisd.txt.gz uncompressed and written back to /tmp/dnsmasq.d/oisd.txt and dnsmasq restarted."
 	else
 		logger -t adblock-oisd "No stored /tmp/oisd.txt.gz identified."
 	fi	
