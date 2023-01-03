@@ -10,13 +10,18 @@
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
 
-exec &> /var/log/adblock-oisd.log
-
 START=99
 STOP=4
 
+EXTRA_COMMANDS="pause resume"
+EXTRA_HELP="	
+	adblock-oisd custom commands:
+	pause		pause adblock-oisd
+	resume		resume adblock-oisd"
+
 check_oisd_file()
 {
+	exec &> /var/log/adblock-oisd.log
 
 	oisd_file_size_KB=`du -bk /tmp/oisd.txt | awk '{print $1}'`
 
@@ -52,6 +57,8 @@ check_oisd_file()
 
 check_dnsmasq()
 {
+	exec &> /var/log/adblock-oisd.log
+
 	pgrep -x dnsmasq &> /dev/null
 	
 	if [[ $? -ne 0 ]]; then
@@ -154,4 +161,30 @@ stop()
 {
 	[[ -f /tmp/dnsmasq.d/oisd.txt ]] && rm /tmp/dnsmasq.d/oisd.txt
 	/etc/init.d/dnsmasq restart &> /dev/null
+}
+
+pause()
+{
+	logger -t adblock-oisd "Received pause request."
+	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
+		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/oisd.txt.gz
+		rm /tmp/dnsmasq.d/oisd.txt
+		/etc/init.d/dnsmasq restart &> /dev/null
+		logger -t adblock-oisd "/tmp/dnsmasq.d/oisd.txt temporarily saved as /tmp/oisd.txt.gz and dnsmasq restarted."
+	else
+		logger -t adblock-oisd "No active /tmp/dnsmasq.d/oisd.txt identified."
+	fi
+}
+
+resume()
+{
+	logger -t adblock-oisd "Received resume request."
+	if [[ -f /tmp/oisd.txt.gz ]]; then
+		gunzip -c /tmp/oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
+		rm /tmp/oisd.txt.gz
+		/etc/init.d/dnsmasq restart &> /dev/null
+		logger -t adblock-oisd "/tmp/oisd.txt.gz uncompressed and written back to /tmp/dnsmasq.d/ and dnsmasq restarted."
+	else
+		logger -t adblock-oisd "No stored /tmp/oisd.txt.gz identified."
+	fi	
 }
