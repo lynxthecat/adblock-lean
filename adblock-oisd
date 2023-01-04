@@ -13,9 +13,10 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="pause resume"
+EXTRA_COMMANDS="status pause resume"
 EXTRA_HELP="	
 	adblock-oisd custom commands:
+	status		check dnsmasq and good line count of existing oisd.txt
 	pause		pause adblock-oisd
 	resume		resume adblock-oisd"
 
@@ -161,6 +162,17 @@ stop()
 {
 	[[ -f /tmp/dnsmasq.d/oisd.txt ]] && rm /tmp/dnsmasq.d/oisd.txt
 	/etc/init.d/dnsmasq restart &> /dev/null
+}
+
+status()
+{
+	check_dnsmasq
+	if [[ $? -ne 0]]; then
+		logger -t adblock-oisd "dnsmasq check failed with existing oisd.txt file."
+	else
+		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/oisd.txt | wc -l`
+		logger -t adblock-oisd "Presently installed oisd.txt has line count: $good_line_count and dnsmasq check passed."
+	fi
 }
 
 pause()
