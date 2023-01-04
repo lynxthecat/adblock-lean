@@ -20,14 +20,19 @@ EXTRA_HELP="
 	pause		pause adblock-oisd
 	resume		resume adblock-oisd"
 
+log_msg()
+{
+	local msg=${1}
+	printf "${msg}\n"
+	logger -t adblock-oisd "${msg}"
+}
+
 check_oisd_file()
 {
-	exec &> /var/log/adblock-oisd.log
-
-	oisd_file_size_KB=`du -bk /tmp/oisd.txt | awk '{print ${1}}'`
+	oisd_file_size_KB=`du -bk /tmp/oisd.txt | awk '{print $1}'`
 
 	if [[ ${oisd_file_size_KB} -ge 20000 ]]; then
-		logger -t adblock-oisd "New oisd.txt file size: ${oisd_file_size_KB} KB too large."
+		log_msg "New oisd.txt file size: ${oisd_file_size_KB} KB too large."
 		false
 		return
 	fi
@@ -39,7 +44,7 @@ check_oisd_file()
 	rogue_element=`sed -nE '\~(^address=/|^server=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/oisd.txt | { read match; read line; [[ ! -z ${match} ]] && echo "${line}: ${match}"; }`
 
 	if [[ ! -z "${rogue_element}" ]]; then
-		logger -t adblock-oisd "Rogue element: '${rogue_element}' identified in new oisd.txt."
+		log_msg "Rogue element: '${rogue_element}' identified in new oisd.txt."
 		false 
 		return
 	fi
@@ -47,7 +52,7 @@ check_oisd_file()
 	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/oisd.txt | wc -l`
 
 	if [[ ${good_line_count} -lt 100000 ]]; then
-		logger -t adblock-oisd "Good line count: ${good_line_count} below 100,000."
+		log_msg "Good line count: ${good_line_count} below 100,000."
 		false
 		return
 	fi
@@ -58,12 +63,10 @@ check_oisd_file()
 
 check_dnsmasq()
 {
-	exec &> /var/log/adblock-oisd.log
-
 	pgrep -x dnsmasq &> /dev/null
 	
 	if [[ ${?} -ne 0 ]]; then
-		logger -t adblock-oisd "No instance of dnsmasq detected with new oisd.txt."
+		log_msg "No instance of dnsmasq detected with new oisd.txt."
 		false 
 		return
 	fi
@@ -72,7 +75,7 @@ check_dnsmasq()
 	do
 		nslookup ${domain} | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
 		if [[ ${?} -eq 0 ]]; then
-			logger -t adblock-oisd "Lookup of '${domain}' resulted in 0.0.0.0 with new oisd.txt"
+			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new oisd.txt"
 			false
 			return
 		fi
@@ -84,11 +87,11 @@ check_dnsmasq()
 start() 
 {
 
-	logger -t adblock-oisd "Started adblock-oisd."
+	log_msg "Started adblock-oisd."
 
 	if [[ "${RANDOM_DELAY}" == "1" ]]; then
 		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
-		logger -t adblock-oisd "Delaying download by ${random_delay_mins} minutes (thundering herd prevention)."
+		log_msg "Delaying download by ${random_delay_mins} minutes (thundering herd prevention)."
 		sleep "${random_delay_mins}m"
 	fi
 	
@@ -96,7 +99,7 @@ start()
         do
                 wget https://dnsmasq.oisd.nl -O /tmp/oisd.txt &> /dev/null
                 if [[ ${?} -eq 0 ]]; then
-			logger -t adblock-oisd "Download of new oisd.txt file suceeded."
+			log_msg "Download of new oisd.txt file suceeded."
 			break
 		fi
 	
@@ -104,16 +107,16 @@ start()
 	done
 	
 	if [[ ! -f /tmp/oisd.txt ]]; then
-		logger -t adblock-oisd "Download of new oisd.txt file failed."
+		log_msg "Download of new oisd.txt file failed."
 		return
 	fi
 
 	check_oisd_file
 	if [[ ${?} -ne 0 ]]; then
-		logger -t adblock-oisd "oisd file check failed with new oisd.txt."
+		log_msg "oisd file check failed with new oisd.txt."
 		exit
 	else
-		logger -t adblock-oisd "oisd file check passed with new oisd.txt."
+		log_msg "oisd file check passed with new oisd.txt."
 	fi
 
 	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
@@ -134,7 +137,7 @@ start()
 		rm /tmp/dnsmasq.d/oisd.txt
 
 		if [[ -f /tmp/prev_oisd.txt.gz ]]; then
-			logger -t adblock-oisd "Found previous oisd.txt file. Attempting to recover."
+			log_msg "Found previous oisd.txt file. Attempting to recover."
 			gunzip -c /tmp/prev_oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
 			rm /tmp/prev_oisd.txt.gz
 
@@ -142,18 +145,18 @@ start()
 
 			check_dnsmasq
 			if [[ ${?} -ne 0 ]]; then
-				logger -t adblock-oisd "dnsmasq check failed with previous oisd.txt file. Stopping adblock-oisd."
+				log_msg "dnsmasq check failed with previous oisd.txt file. Stopping adblock-oisd."
 				stop
 			else
-				logger -t adblock-oisd "Previous oisd.txt recovered and dnsmasq check passed."
+				log_msg "Previous oisd.txt recovered and dnsmasq check passed."
 			fi
 		else
-			logger -t adblock-oisd "No previous oisd.txt file found. Stopping adblock-oisd"
+			log_msg "No previous oisd.txt file found. Stopping adblock-oisd"
 			stop
 		fi
 		
 	else
-		logger -t adblock-oisd "New oisd.txt installed with line count: ${good_line_count} and dnsmasq check passed."
+		log_msg "New oisd.txt installed with good line count: ${good_line_count} and dnsmasq check passed."
 		[[ -f /tmp/prev_oisd.txt.gz ]] && rm /tmp/prev_oisd.txt.gz
 	fi
 }
@@ -162,41 +165,42 @@ stop()
 {
 	[[ -f /tmp/dnsmasq.d/oisd.txt ]] && rm /tmp/dnsmasq.d/oisd.txt
 	/etc/init.d/dnsmasq restart &> /dev/null
+	log_msg "Stopped adblock-oisd."
 }
 
 status()
 {
 	check_dnsmasq
-	if [[ ${?} -ne 0]]; then
-		logger -t adblock-oisd "dnsmasq check failed with existing oisd.txt file."
+	if [[ ${?} -ne 0 ]]; then
+		log_msg "dnsmasq check failed with existing oisd.txt file."
 	else
 		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/oisd.txt | wc -l`
-		logger -t adblock-oisd "Presently installed oisd.txt has line count: ${good_line_count} and dnsmasq check passed."
+		log_msg "dnsmasq check passed and presently installed oisd.txt has good line count: ${good_line_count}."
 	fi
 }
 
 pause()
 {
-	logger -t adblock-oisd "Received pause request."
+	log_msg "Received pause request."
 	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
 		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/oisd.txt.gz
 		rm /tmp/dnsmasq.d/oisd.txt
 		/etc/init.d/dnsmasq restart &> /dev/null
-		logger -t adblock-oisd "/tmp/dnsmasq.d/oisd.txt temporarily saved as /tmp/oisd.txt.gz and dnsmasq restarted."
+		log_msg "/tmp/dnsmasq.d/oisd.txt temporarily saved as /tmp/oisd.txt.gz and dnsmasq restarted."
 	else
-		logger -t adblock-oisd "No active /tmp/dnsmasq.d/oisd.txt identified."
+		log_msg "No active /tmp/dnsmasq.d/oisd.txt identified."
 	fi
 }
 
 resume()
 {
-	logger -t adblock-oisd "Received resume request."
+	log_msg "Received resume request."
 	if [[ -f /tmp/oisd.txt.gz ]]; then
 		gunzip -c /tmp/oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
 		rm /tmp/oisd.txt.gz
 		/etc/init.d/dnsmasq restart &> /dev/null
-		logger -t adblock-oisd "/tmp/oisd.txt.gz uncompressed and written back to /tmp/dnsmasq.d/oisd.txt and dnsmasq restarted."
+		log_msg "/tmp/oisd.txt.gz uncompressed and written back to /tmp/dnsmasq.d/oisd.txt and dnsmasq restarted."
 	else
-		logger -t adblock-oisd "No stored /tmp/oisd.txt.gz identified."
+		log_msg "No stored /tmp/oisd.txt.gz identified."
 	fi	
 }
