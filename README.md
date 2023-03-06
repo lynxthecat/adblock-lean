@@ -1,39 +1,39 @@
-# adblock-oisd
+# adblock-lean
 Set up adblock using the highly popular [oisd dnsmasq file](https://oisd.nl/) used by major adblockers and which is intended to block ads without interfering with normal use. 
 
-adblock-oisd is written as a service and 'service adblock-oisd start' will download and setup dnsmasq with a new oisd.txt file. Various checks are performed and, in dependence upon the outcome of those checks, the script will either: accept the new oisd.txt file; fallback to a previous oisd.txt file if available; or restart dnsmasq with no oisd.txt.
+adblock-lean is written as a service and 'service adblock-lean start' will download and setup dnsmasq with a new blocklist file. Various checks are performed and, in dependence upon the outcome of those checks, the script will either: accept the new blocklist file; fallback to a previous blocklist file if available; or restart dnsmasq with no blocklist file.
 
-adblock-oisd includes, inter alia, the following features:
+adblock-lean includes, inter alia, the following features:
 
-- attempt to download new oisd.txt file from: https://dnsmasq.oisd.nl (up to 3 retries) to /tmp/oisd.txt
-- check downloaded oisd.txt size does not exceeed 20 MB
-- check for rogue entries on oisd.txt (e.g. check for redirection to specific IP rather than 0.0.0.0)
-- check good lines in oisd.txt exceeds 100,000 
-- set up dnsmasq with new oisd.txt and save any previous oisd.txt as compressed file
-- perform checks on restarted dnsmasq with new oisd.txt
-- revert to previous oisd.txt if checks fail
-- if checks on previous oisd.txt also fail then revert to not using any oisd.txt
+- attempt to download new blocklist file from configurable blocklist url (default: https://dnsmasq.oisd.nl) using up to 3 retries
+- check downloaded blocklist file size does not exceeed configurable maximum blocklist file size (default: 20 MB)
+- check for rogue entries in blocklist file (e.g. check for redirection to specific IP rather than 0.0.0.0)
+- check good lines in blocklist file exceeds configurable minimum (default: 100,000)
+- set up dnsmasq with new blocklist file and save any previous blocklist file as compressed file
+- perform checks on restarted dnsmasq with new blocklist file
+- revert to previous blocklist file if checks fail
+- if checks on previous blocklist file also fail then revert to not using any blocklist file
 
 ## Installation on OpenWrt
 
 ```bash
-wget https://raw.githubusercontent.com/lynxthecat/adblock-oisd/main/adblock-oisd -O /etc/init.d/adblock-oisd
-chmod +x /etc/init.d/adblock-oisd
-service adblock-oisd enable
+wget https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
+chmod +x /etc/init.d/adblock-lean
+service adblock-lean enable
 ```
 
-## Automatically deploy OISD list on router reboot
+## Automatically deploy blocklist on router reboot
 
 Providing the service is enabled, the service script should automatically start on boot. 
 
-## Automatically update OISD list at 5am following delay by random number of minutes
+## Automatically update blocklist at 5am following delay by random number of minutes
 
 Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-system/cron):
 
 ```bash
-0 5 * * * /etc/init.d/adblock-oisd enabled && export RANDOM_DELAY="1" && /etc/init.d/adblock-oisd start
+0 5 * * * /etc/init.d/adblock-lean enabled && export RANDOM_DELAY="1" && /etc/init.d/adblock-lean start
 ```
-This tests whether the adblock-oisd service is enabled and if so launches the start function, which updates to the new OISD list. 
+This tests whether the adblock-lean service is enabled and if so launches the start function, which updates to the new blocklist list. 
 
 The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on oisd server; and from a selfish perspective, increase prospect that server is not loaded during the download. 
 
@@ -42,7 +42,7 @@ The random delay serves to prevent a thundering herd: from an altruistic perspec
 Just add the file:
 
 ```bash
-/etc/init.d/adblock-oisd
+/etc/init.d/adblock-lean
 ```
 
 to the list of files to backup in the Configuration tab in LuCi here:
