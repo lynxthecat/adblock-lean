@@ -1,11 +1,19 @@
 #!/bin/sh /etc/rc.common
 
-# adblock-oisd blocks ads using the highly popular oisd dnsmasq file and
-# offers a simpler solution to adblocking than the bloated alternatives on OpenWrt
+# adblock-lean blocks ads using the highly popular oisd dnsmasq file and
+# offers a leaner solution to adblocking than the existing alternatives on OpenWrt
 
-# Project homepage: https://github.com/lynxthecat/adblock-oisd
+# Project homepage: https://github.com/lynxthecat/adblock-lean
 
 # Authors: @Lynx and @Wizballs (OpenWrt forum)
+
+# *** CONFIGURATION OPTIONS ***
+
+blocklist_url="https://dnsmasq2.oisd.nl"
+min_good_line_count=100000
+max_blocklist_file_size_KB=20000
+
+# *** DO NOT EDIT BELOW THIS LINE ***
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -15,45 +23,45 @@ STOP=4
 
 EXTRA_COMMANDS="status pause resume"
 EXTRA_HELP="	
-	adblock-oisd custom commands:
-	status		check dnsmasq and good line count of existing oisd.txt
-	pause		pause adblock-oisd
-	resume		resume adblock-oisd"
+	adblock-lean custom commands:
+	status		check dnsmasq and good line count of existing blocklist
+	pause		pause adblock-lean
+	resume		resume adblock-lean"
 
 log_msg()
 {
 	local msg=${1}
 	printf "${msg}\n"
-	logger -t adblock-oisd "${msg}"
+	logger -t adblock-lean "${msg}"
 }
 
-check_oisd_file()
+check_blocklist_file()
 {
-	log_msg "Checking new oisd.txt."
+	log_msg "Checking new blocklist file."
 
-	oisd_file_size_KB=`du -bk /tmp/oisd.txt | awk '{print $1}'`
+	blocklist_file_size_KB=`du -bk /tmp/blocklist | awk '{print $1}'`
 
-	if [[ ${oisd_file_size_KB} -ge 20000 ]]; then
-		log_msg "New oisd.txt file size: ${oisd_file_size_KB} KB too large."
+	if [[ ${blocklist_file_size_KB} -gt ${max_blocklist_file_size_KB} ]]; then
+		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
 		false
 		return
 	fi
 
 	# Clean whitespace
-	sed -i '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//' /tmp/oisd.txt
+	sed -i '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//' /tmp/blocklist
 
 	# Get line number and match of any rogue elements
-	rogue_element=`sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/oisd.txt | { read match; read line; [[ ! -z ${match} ]] && echo "${line}: ${match}"; }`
+	rogue_element=`sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; }`
 
 	if [[ ! -z "${rogue_element}" ]]; then
-		log_msg "Rogue element: '${rogue_element}' identified in new oisd.txt."
+		log_msg "Rogue element: '${rogue_element}' identified in new blocklist."
 		false 
 		return
 	fi
 
-	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/oisd.txt | wc -l`
+	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/blocklist | wc -l`
 
-	if [[ ${good_line_count} -lt 100000 ]]; then
+	if [[ ${good_line_count} -lt ${min_good_line_count} ]]; then
 		log_msg "Good line count: ${good_line_count} below 100,000."
 		false
 		return
@@ -70,7 +78,7 @@ check_dnsmasq()
 	pgrep -x dnsmasq &> /dev/null
 	
 	if [[ ${?} -ne 0 ]]; then
-		log_msg "No instance of dnsmasq detected with new oisd.txt."
+		log_msg "No instance of dnsmasq detected with new blocklist."
 		false 
 		return
 	fi
@@ -79,7 +87,7 @@ check_dnsmasq()
 	do
 		nslookup ${domain} | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
 		if [[ ${?} -eq 0 ]]; then
-			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new oisd.txt"
+			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist"
 			false
 			return
 		fi
@@ -91,7 +99,7 @@ check_dnsmasq()
 start() 
 {
 
-	log_msg "Started adblock-oisd."
+	log_msg "Started adblock-lean."
 
 	if [[ "${RANDOM_DELAY}" == "1" ]]; then
 		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
@@ -99,38 +107,38 @@ start()
 		sleep "${random_delay_mins}m"
 	fi
 
-	log_msg "Downloading new oisd.txt."
+	log_msg "Downloading new blocklist file."
 	
         for retries in 1 2 3
         do
-                wget https://dnsmasq2.oisd.nl -O /tmp/oisd.txt &> /dev/null
+                wget ${blocklist_url} -O /tmp/blocklist &> /dev/null
                 if [[ ${?} -eq 0 ]]; then
-			log_msg "Download of new oisd.txt file suceeded."
+			log_msg "Download of new blocklist file suceeded."
 			break
 		fi
 	
                 sleep 5
 	done
 	
-	if [[ ! -f /tmp/oisd.txt ]]; then
-		log_msg "Download of new oisd.txt file failed."
+	if [[ ! -f /tmp/blocklist ]]; then
+		log_msg "Download of new blocklist file failed."
 		return
 	fi
 
 
-	check_oisd_file
+	check_blocklist_file
 	if [[ ${?} -ne 0 ]]; then
-		log_msg "New oisd.txt file check failed."
+		log_msg "New blocklist file check failed."
 		exit
 	else
-		log_msg "New oisd.txt file check passed."
+		log_msg "New blocklist file check passed."
 	fi
 
-	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
-		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/prev_oisd.txt.gz
+	if [[ -f /tmp/dnsmasq.d/blocklist ]]; then
+		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/prev_blocklist.gz
 	fi
 
-	mv /tmp/oisd.txt /tmp/dnsmasq.d/oisd.txt
+	mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
 
 	log_msg "Restarting dnsmasq."
 
@@ -141,87 +149,88 @@ start()
 	check_dnsmasq
 	if [[ ${?} -ne 0 ]]; then
 		
-		log_msg "The dnsmasq check failed with new oisd.txt file."
+		log_msg "The dnsmasq check failed with new blocklist file."
 
-		rm /tmp/dnsmasq.d/oisd.txt
+		rm /tmp/dnsmasq.d/blocklist
 
-		if [[ -f /tmp/prev_oisd.txt.gz ]]; then
-			log_msg "Found previous oisd.txt file. Attempting to recover."
-			gunzip -c /tmp/prev_oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
-			rm /tmp/prev_oisd.txt.gz
+		if [[ -f /tmp/prev_blocklist.gz ]]; then
+			log_msg "Found previous blocklist file. Attempting to recover."
+			gunzip -c /tmp/prev_blocklist.gz > /tmp/dnsmasq.d/blocklist
+			rm /tmp/prev_blocklist.gz
 
 			/etc/init.d/dnsmasq restart &> /dev/null			
 
 			check_dnsmasq
 			if [[ ${?} -ne 0 ]]; then
-				log_msg "The dnsmasq check failed with previous oisd.txt file. Stopping adblock-oisd."
+				log_msg "The dnsmasq check failed with previous blocklist file. Stopping adblock-lean."
 				stop
 			else
-				log_msg "Previous oisd.txt recovered and dnsmasq check passed."
+				log_msg "Previous blocklist recovered and dnsmasq check passed."
 			fi
 		else
-			log_msg "No previous oisd.txt file found. Stopping adblock-oisd"
+			log_msg "No previous blocklist file found. Stopping adblock-lean."
 			stop
 		fi
 		
 	else
-		log_msg "The dnsmasq check passed with new oisd.txt file."
-		log_msg "New oisd.txt installed with good line count: ${good_line_count}."
-		[[ -f /tmp/prev_oisd.txt.gz ]] && rm /tmp/prev_oisd.txt.gz
+		log_msg "The dnsmasq check passed with new blocklist file."
+		log_msg "New blocklist installed with good line count: ${good_line_count}."
+		[[ -f /tmp/prev_blocklist.gz ]] && rm /tmp/prev_blocklist.gz
 	fi
 }
 
 stop()
 {
-	log_msg "Stopping adblock-oisd." 
-	log_msg "Removing /tmp/dnsmasq.d/oisd.txt and restarting dnsmasq."
-	[[ -f /tmp/dnsmasq.d/oisd.txt ]] && rm /tmp/dnsmasq.d/oisd.txt
+	log_msg "Stopping adblock-lean." 
+	log_msg "Removing /tmp/dnsmasq.d/blocklist and restarting dnsmasq."
+	[[ -f /tmp/dnsmasq.d/blocklist ]] && rm /tmp/dnsmasq.d/blocklist
 	/etc/init.d/dnsmasq restart &> /dev/null
-	log_msg "Stopped adblock-oisd."
+	log_msg "Stopped adblock-lean."
 }
 
 status()
 {
-	if ! [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
-		log_msg "No /tmp/dnsmasq.d/oisd.txt identified."
-		log_msg "adblock-oisd is not active."
+	if ! [[ -f /tmp/dnsmasq.d/blocklist ]]; then
+		log_msg "No /tmp/dnsmasq.d/blocklist identified."
+		log_msg "adblock-lean is not active."
+		return
 	fi
 	check_dnsmasq
 	if [[ ${?} -ne 0 ]]; then
-		log_msg "The dnsmasq check failed with existing oisd.txt file."
+		log_msg "The dnsmasq check failed with existing blocklist file."
 	else
-		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/oisd.txt | wc -l`
-		log_msg "The dnsmasq check passed and the presently installed oisd.txt has good line count: ${good_line_count}."
-		log_msg "adblock-oisd appears to be active."
+		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/blocklist | wc -l`
+		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
+		log_msg "adblock-lean appears to be active."
 	fi
 }
 
 pause()
 {
 	log_msg "Received pause request."
-	if [[ -f /tmp/dnsmasq.d/oisd.txt ]]; then
-		log_msg "Saving /tmp/dnsmasq.d/oisd.txt as /tmp/oisd.txt.gz."
-		gzip -c /tmp/dnsmasq.d/oisd.txt > /tmp/oisd.txt.gz
-		rm /tmp/dnsmasq.d/oisd.txt
+	if [[ -f /tmp/dnsmasq.d/blocklist ]]; then
+		log_msg "Saving /tmp/dnsmasq.d/blocklist as /tmp/blocklist.gz."
+		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/blocklist.gz
+		rm /tmp/dnsmasq.d/blocklist
 		log_msg "Restarting dnsmasq."
 		/etc/init.d/dnsmasq restart &> /dev/null
-		log_msg "adblock-oisd is now paused."
+		log_msg "adblock-lean is now paused."
 	else
-		log_msg "No active /tmp/dnsmasq.d/oisd.txt identified."
+		log_msg "No active /tmp/dnsmasq.d/blocklist identified."
 	fi
 }
 
 resume()
 {
 	log_msg "Received resume request."
-	if [[ -f /tmp/oisd.txt.gz ]]; then
-		log_msg "Restoring saved /tmp/oisd.txt.gz to /tmp/dnsmasq.d/oisd.txt"
-		gunzip -c /tmp/oisd.txt.gz > /tmp/dnsmasq.d/oisd.txt
-		rm /tmp/oisd.txt.gz
+	if [[ -f /tmp/blocklist.gz ]]; then
+		log_msg "Restoring saved /tmp/blocklist.gz to /tmp/dnsmasq.d/blocklist"
+		gunzip -c /tmp/blocklist.gz > /tmp/dnsmasq.d/blocklist
+		rm /tmp/blocklist.gz
 		log_msg "Restarting dnsmasq."
 		/etc/init.d/dnsmasq restart &> /dev/null
-		log_msg "adblock-oisd is now active."
+		log_msg "adblock-lean is now active."
 	else
-		log_msg "No stored /tmp/oisd.txt.gz identified."
+		log_msg "No stored /tmp/blocklist.gz identified."
 	fi	
 }
