@@ -9,7 +9,7 @@
 
 # *** CONFIGURATION OPTIONS ***
 
-blocklist_url="https://dnsmasq2.oisd.nl"
+blocklist_url="https://big.oisd.nl/dnsmasq2"
 min_good_line_count=100000
 max_blocklist_file_size_KB=20000
 
