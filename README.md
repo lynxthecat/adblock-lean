@@ -5,7 +5,7 @@ adblock-lean is written as a service and 'service adblock-lean start' will downl
 
 adblock-lean includes, inter alia, the following features:
 
-- attempt to download new blocklist file from configurable blocklist url (default: https://dnsmasq.oisd.nl) using up to 3 retries
+- attempt to download new blocklist file from configurable blocklist url (default: https://big.oisd.nl/dnsmasq2) using up to 3 retries
 - check downloaded blocklist file size does not exceeed configurable maximum blocklist file size (default: 20 MB)
 - check for rogue entries in blocklist file (e.g. check for redirection to specific IP rather than 0.0.0.0)
 - check good lines in blocklist file exceeds configurable minimum (default: 100,000)
