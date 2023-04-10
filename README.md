@@ -1,5 +1,8 @@
 # adblock-lean
-Set up adblock using the highly popular [oisd dnsmasq file](https://oisd.nl/) used by major adblockers and which is intended to block ads without interfering with normal use. 
+
+adblock-lean is a super simple and lightweight adblocking solution that leverages the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86 that drastically improves performance and reduces memory foot-print, facilitating the use of very large blocklists for even older, low performance devices.
+
+adblock-lean was designed primarily for use with the dnsmasq variant of the [oisd blocklist](https://oisd.nl/) used by major adblockers and which is intended to block ads without interfering with normal use.  
 
 adblock-lean is written as a service and 'service adblock-lean start' will download and setup dnsmasq with a new blocklist file. Various checks are performed and, in dependence upon the outcome of those checks, the script will either: accept the new blocklist file; fallback to a previous blocklist file if available; or restart dnsmasq with no blocklist file.
 
