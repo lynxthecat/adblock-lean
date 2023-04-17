@@ -31,7 +31,7 @@ EXTRA_HELP="
 log_msg()
 {
 	local msg=${1}
-	printf "${msg}\n"
+	[[ -t 1 ]] && printf "${msg}\n"
 	logger -t adblock-lean "${msg}"
 }
 
