@@ -9,9 +9,10 @@
 
 # *** CONFIGURATION OPTIONS ***
 
-blocklist_url="https://big.oisd.nl/dnsmasq2"
+blocklist_urls="https://big.oisd.nl/dnsmasq2 https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt"
+max_blocklist_file_part_size_KB=20000
+max_blocklist_file_size_KB=25000
 min_good_line_count=100000
-max_blocklist_file_size_KB=20000
 
 # *** DO NOT EDIT BELOW THIS LINE ***
 
@@ -30,7 +31,7 @@ EXTRA_HELP="
 
 log_msg()
 {
-	local msg=${1}
+	local msg="${1}"
 	[[ -t 1 ]] && printf "${msg}\n"
 	logger -t adblock-lean "${msg}"
 }
@@ -41,7 +42,7 @@ check_blocklist_file()
 
 	blocklist_file_size_KB=`du -bk /tmp/blocklist | awk '{print $1}'`
 
-	if [[ ${blocklist_file_size_KB} -gt ${max_blocklist_file_size_KB} ]]; then
+	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]; then
 		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
 		false
 		return
@@ -61,7 +62,7 @@ check_blocklist_file()
 
 	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/blocklist | wc -l`
 
-	if [[ ${good_line_count} -lt ${min_good_line_count} ]]; then
+	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]; then
 		log_msg "Good line count: ${good_line_count} below 100,000."
 		false
 		return
@@ -77,7 +78,7 @@ check_dnsmasq()
 
 	pgrep -x dnsmasq &> /dev/null
 	
-	if [[ ${?} -ne 0 ]]; then
+	if [[ "${?}" -ne 0 ]]; then
 		log_msg "No instance of dnsmasq detected with new blocklist."
 		false 
 		return
@@ -85,8 +86,8 @@ check_dnsmasq()
 
 	for domain in google.com amazon.com microsoft.com
 	do
-		nslookup ${domain} | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
-		if [[ ${?} -eq 0 ]]; then
+		nslookup "${domain}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
+		if [[ "${?}" -eq 0 ]]; then
 			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist"
 			false
 			return
@@ -108,27 +109,36 @@ start()
 	fi
 
 	log_msg "Downloading new blocklist file."
-	
-        for retries in 1 2 3
-        do
-                wget ${blocklist_url} -O /tmp/blocklist &> /dev/null
-                if [[ ${?} -eq 0 ]]; then
-			log_msg "Download of new blocklist file suceeded."
-			break
-		fi
-	
-                sleep 5
-	done
-	
-	if [[ ! -f /tmp/blocklist ]]; then
-		log_msg "Download of new blocklist file failed."
-		return
-	fi
 
+	blocklist_id=0
+	for blocklist_url in ${blocklist_urls}
+	do
+		for retries in 1 2 3
+		do
+			wget "${blocklist_url}" -O- --timeout=2 2> /tmp/wget_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
+			if grep -q "Download completed" /tmp/wget_err
+			then
+				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
+				blocklist_id=$((blocklist_id+1))
+				continue 2
+			else
+				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
+				sleep 5
+			fi
+		done
+		log_msg "Exiting after three failed download attempts."
+		rm -f /tmp/wget_err /tmp/blocklist.* 
+		return
+	done
+
+	log_msg "Removing duplicates from downloaded blocklist file part(s)."
+	awk ' { if (!seen[$0]++) print $0 > "/tmp/blocklist" } ' /tmp/blocklist.*
+	rm -f /tmp/wget_err /tmp/blocklist.* 
 
 	check_blocklist_file
-	if [[ ${?} -ne 0 ]]; then
+	if [[ "${?}" -ne 0 ]]; then
 		log_msg "New blocklist file check failed."
+		rm -f /tmp/blocklist
 		exit
 	else
 		log_msg "New blocklist file check passed."
@@ -147,7 +157,7 @@ start()
 	sleep 10
 	
 	check_dnsmasq
-	if [[ ${?} -ne 0 ]]; then
+	if [[ "${?}" -ne 0 ]]; then
 		
 		log_msg "The dnsmasq check failed with new blocklist file."
 
@@ -161,7 +171,7 @@ start()
 			/etc/init.d/dnsmasq restart &> /dev/null			
 
 			check_dnsmasq
-			if [[ ${?} -ne 0 ]]; then
+			if [[ "${?}" -ne 0 ]]; then
 				log_msg "The dnsmasq check failed with previous blocklist file. Stopping adblock-lean."
 				stop
 			else
@@ -196,7 +206,7 @@ status()
 		return
 	fi
 	check_dnsmasq
-	if [[ ${?} -ne 0 ]]; then
+	if [[ "${?}" -ne 0 ]]; then
 		log_msg "The dnsmasq check failed with existing blocklist file."
 	else
 		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/blocklist | wc -l`
