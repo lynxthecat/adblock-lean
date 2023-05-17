@@ -13,6 +13,7 @@ blocklist_urls="https://big.oisd.nl/dnsmasq2 https://raw.githubusercontent.com/h
 max_blocklist_file_part_size_KB=20000
 max_blocklist_file_size_KB=25000
 min_good_line_count=100000
+allowlist_path="/root/allowlist"
 
 # *** DO NOT EDIT BELOW THIS LINE ***
 
@@ -42,7 +43,8 @@ check_blocklist_file()
 
 	blocklist_file_size_KB=`du -bk /tmp/blocklist | awk '{print $1}'`
 
-	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]; then
+	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
+	then
 		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
 		false
 		return
@@ -54,7 +56,8 @@ check_blocklist_file()
 	# Get line number and match of any rogue elements
 	rogue_element=`sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; }`
 
-	if [[ ! -z "${rogue_element}" ]]; then
+	if [[ ! -z "${rogue_element}" ]]
+	then
 		log_msg "Rogue element: '${rogue_element}' identified in new blocklist."
 		false 
 		return
@@ -62,7 +65,8 @@ check_blocklist_file()
 
 	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/blocklist | wc -l`
 
-	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]; then
+	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
+	then
 		log_msg "Good line count: ${good_line_count} below 100,000."
 		false
 		return
@@ -87,7 +91,8 @@ check_dnsmasq()
 	for domain in google.com amazon.com microsoft.com
 	do
 		nslookup "${domain}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
-		if [[ "${?}" -eq 0 ]]; then
+		if [[ "${?}" -eq 0 ]]
+		then
 			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist"
 			false
 			return
@@ -102,7 +107,8 @@ start()
 
 	log_msg "Started adblock-lean."
 
-	if [[ "${RANDOM_DELAY}" == "1" ]]; then
+	if [[ "${RANDOM_DELAY}" == "1" ]]
+	then
 		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
 		log_msg "Delaying download by ${random_delay_mins} minutes (thundering herd prevention)."
 		sleep "${random_delay_mins}m"
@@ -135,8 +141,21 @@ start()
 	awk ' { if (!seen[$0]++) print $0 > "/tmp/blocklist" } ' /tmp/blocklist.*
 	rm -f /tmp/wget_err /tmp/blocklist.* 
 
+	if [[ -f "${allowlist_path}" ]] && [[ `du "${allowlist_path}" | awk '{print $1}'` -gt 0 ]]
+	then
+		allowlist_line_count=`sed '/^\s*$/d' "${allowlist_path}" | wc -l`
+		log_msg "Found allowlist with ${allowlist_line_count} lines."
+		log_msg "Modifying blocklist based on allowlist."
+		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${allowlist_path}" "/tmp/blocklist" > "/tmp/blocklist.tmp"
+		mv /tmp/blocklist.tmp /tmp/blocklist
+		log_msg "Blocklist modification based on allowlist complete."
+	else
+		log_msg "No allowlist identified."
+	fi
+
 	check_blocklist_file
-	if [[ "${?}" -ne 0 ]]; then
+	if [[ "${?}" -ne 0 ]]
+	then
 		log_msg "New blocklist file check failed."
 		rm -f /tmp/blocklist
 		exit
@@ -144,7 +163,8 @@ start()
 		log_msg "New blocklist file check passed."
 	fi
 
-	if [[ -f /tmp/dnsmasq.d/blocklist ]]; then
+	if [[ -f /tmp/dnsmasq.d/blocklist ]]
+	then
 		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/prev_blocklist.gz
 	fi
 
@@ -157,13 +177,15 @@ start()
 	sleep 10
 	
 	check_dnsmasq
-	if [[ "${?}" -ne 0 ]]; then
+	if [[ "${?}" -ne 0 ]]
+	then
 		
 		log_msg "The dnsmasq check failed with new blocklist file."
 
 		rm /tmp/dnsmasq.d/blocklist
 
-		if [[ -f /tmp/prev_blocklist.gz ]]; then
+		if [[ -f /tmp/prev_blocklist.gz ]]
+		then
 			log_msg "Found previous blocklist file. Attempting to recover."
 			gunzip -c /tmp/prev_blocklist.gz > /tmp/dnsmasq.d/blocklist
 			rm /tmp/prev_blocklist.gz
@@ -171,7 +193,8 @@ start()
 			/etc/init.d/dnsmasq restart &> /dev/null			
 
 			check_dnsmasq
-			if [[ "${?}" -ne 0 ]]; then
+			if [[ "${?}" -ne 0 ]]
+			then
 				log_msg "The dnsmasq check failed with previous blocklist file. Stopping adblock-lean."
 				stop
 			else
@@ -200,13 +223,15 @@ stop()
 
 status()
 {
-	if ! [[ -f /tmp/dnsmasq.d/blocklist ]]; then
+	if ! [[ -f /tmp/dnsmasq.d/blocklist ]]
+	then
 		log_msg "No /tmp/dnsmasq.d/blocklist identified."
 		log_msg "adblock-lean is not active."
 		return
 	fi
 	check_dnsmasq
-	if [[ "${?}" -ne 0 ]]; then
+	if [[ "${?}" -ne 0 ]]
+	then
 		log_msg "The dnsmasq check failed with existing blocklist file."
 	else
 		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/blocklist | wc -l`
@@ -218,7 +243,8 @@ status()
 pause()
 {
 	log_msg "Received pause request."
-	if [[ -f /tmp/dnsmasq.d/blocklist ]]; then
+	if [[ -f /tmp/dnsmasq.d/blocklist ]]
+	then
 		log_msg "Saving /tmp/dnsmasq.d/blocklist as /tmp/blocklist.gz."
 		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/blocklist.gz
 		rm /tmp/dnsmasq.d/blocklist
@@ -233,7 +259,8 @@ pause()
 resume()
 {
 	log_msg "Received resume request."
-	if [[ -f /tmp/blocklist.gz ]]; then
+	if [[ -f /tmp/blocklist.gz ]]
+	then
 		log_msg "Restoring saved /tmp/blocklist.gz to /tmp/dnsmasq.d/blocklist"
 		gunzip -c /tmp/blocklist.gz > /tmp/dnsmasq.d/blocklist
 		rm /tmp/blocklist.gz
