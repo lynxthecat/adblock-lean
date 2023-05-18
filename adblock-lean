@@ -37,21 +37,39 @@ log_msg()
 	logger -t adblock-lean "${msg}"
 }
 
-check_blocklist_file()
+process_and_check_blocklist_file()
 {
-	log_msg "Checking new blocklist file."
+	log_msg "Processing and checking new blocklist file formed from downloaded blocklist file part(s)."
 
 	blocklist_file_size_KB=`du -bk /tmp/blocklist | awk '{print $1}'`
 
 	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
 	then
 		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
-		false
-		return
+		return 1
 	fi
 
-	# Clean whitespace
-	sed -i '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//' /tmp/blocklist
+	# Clean whitespace and format all entries as local=/.../
+	sed -i -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/^address/local/;s/^server/local/;s/#$//' /tmp/blocklist
+
+	log_msg "Removing duplicates from downloaded blocklist file."
+	awk ' { if (!seen[$0]++) print $0 > "/tmp/blocklist.tmp" } ' /tmp/blocklist
+	mv /tmp/blocklist.tmp /tmp/blocklist
+	log_msg "Duplicates removed."
+
+	if [[ -f "${allowlist_path}" ]] && [[ `du "${allowlist_path}" | awk '{print $1}'` -gt 0 ]]
+	then
+		allowlist_line_count=`sed '/^\s*$/d' "${allowlist_path}" | wc -l`
+		log_msg "Found allowlist with ${allowlist_line_count} lines."
+		log_msg "Modifying blocklist based on allowlist."
+		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${allowlist_path}" "/tmp/blocklist" > "/tmp/blocklist.tmp"
+		mv /tmp/blocklist.tmp /tmp/blocklist
+		log_msg "Blocklist modification based on allowlist complete."
+	else
+		log_msg "No allowlist identified."
+	fi
+
+	log_msg "Checking for any rogue elements."
 
 	# Get line number and match of any rogue elements
 	rogue_element=`sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; }`
@@ -59,20 +77,18 @@ check_blocklist_file()
 	if [[ ! -z "${rogue_element}" ]]
 	then
 		log_msg "Rogue element: '${rogue_element}' identified in new blocklist."
-		false 
-		return
+		return 1
 	fi
 
 	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/blocklist | wc -l`
 
 	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
 	then
-		log_msg "Good line count: ${good_line_count} below 100,000."
-		false
-		return
+		log_msg "Good line count: ${good_line_count} below ${min_good_line_count}."
+		return 1
 	fi
 
-	true
+	return 0
 }
 
 
@@ -84,8 +100,7 @@ check_dnsmasq()
 	
 	if [[ "${?}" -ne 0 ]]; then
 		log_msg "No instance of dnsmasq detected with new blocklist."
-		false 
-		return
+		return 1
 	fi
 
 	for domain in google.com amazon.com microsoft.com
@@ -94,12 +109,11 @@ check_dnsmasq()
 		if [[ "${?}" -eq 0 ]]
 		then
 			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist"
-			false
-			return
+			return 1
 		fi
 	done
 	
-	true
+	return 0
 }
 
 start() 
@@ -114,6 +128,8 @@ start()
 		sleep "${random_delay_mins}m"
 	fi
 
+	rm -f /tmp/blocklist
+
 	log_msg "Downloading new blocklist file."
 
 	blocklist_id=0
@@ -125,6 +141,9 @@ start()
 			if grep -q "Download completed" /tmp/wget_err
 			then
 				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
+				cat "/tmp/blocklist.${blocklist_id}" >> /tmp/blocklist
+				printf "\n" >> /tmp/blocklist
+				rm -f "/tmp/blocklist.${blocklist_id}"
 				blocklist_id=$((blocklist_id+1))
 				continue 2
 			else
@@ -133,34 +152,19 @@ start()
 			fi
 		done
 		log_msg "Exiting after three failed download attempts."
-		rm -f /tmp/wget_err /tmp/blocklist.* 
+		rm -f /tmp/wget_err /tmp/blocklist* 
 		return
 	done
 
-	log_msg "Removing duplicates from downloaded blocklist file part(s)."
-	awk ' { if (!seen[$0]++) print $0 > "/tmp/blocklist" } ' /tmp/blocklist.*
-	rm -f /tmp/wget_err /tmp/blocklist.* 
+	rm -f /tmp/wget_err
 
-	if [[ -f "${allowlist_path}" ]] && [[ `du "${allowlist_path}" | awk '{print $1}'` -gt 0 ]]
+	if process_and_check_blocklist_file
 	then
-		allowlist_line_count=`sed '/^\s*$/d' "${allowlist_path}" | wc -l`
-		log_msg "Found allowlist with ${allowlist_line_count} lines."
-		log_msg "Modifying blocklist based on allowlist."
-		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${allowlist_path}" "/tmp/blocklist" > "/tmp/blocklist.tmp"
-		mv /tmp/blocklist.tmp /tmp/blocklist
-		log_msg "Blocklist modification based on allowlist complete."
-	else
-		log_msg "No allowlist identified."
-	fi
-
-	check_blocklist_file
-	if [[ "${?}" -ne 0 ]]
-	then
-		log_msg "New blocklist file check failed."
-		rm -f /tmp/blocklist
-		exit
-	else
 		log_msg "New blocklist file check passed."
+	else
+		log_msg "New blocklist file check failed."
+		# rm -f /tmp/blocklist
+		exit
 	fi
 
 	if [[ -f /tmp/dnsmasq.d/blocklist ]]
@@ -176,10 +180,12 @@ start()
 
 	sleep 10
 	
-	check_dnsmasq
-	if [[ "${?}" -ne 0 ]]
+	if check_dnsmasq
 	then
-		
+		log_msg "The dnsmasq check passed with new blocklist file."
+		log_msg "New blocklist installed with good line count: ${good_line_count}."
+		[[ -f /tmp/prev_blocklist.gz ]] && rm /tmp/prev_blocklist.gz
+	else	
 		log_msg "The dnsmasq check failed with new blocklist file."
 
 		rm /tmp/dnsmasq.d/blocklist
@@ -192,23 +198,18 @@ start()
 
 			/etc/init.d/dnsmasq restart &> /dev/null			
 
-			check_dnsmasq
-			if [[ "${?}" -ne 0 ]]
+			if check_dnsmasq
 			then
+				log_msg "Previous blocklist recovered and dnsmasq check passed."
+			else
 				log_msg "The dnsmasq check failed with previous blocklist file. Stopping adblock-lean."
 				stop
-			else
-				log_msg "Previous blocklist recovered and dnsmasq check passed."
 			fi
 		else
 			log_msg "No previous blocklist file found. Stopping adblock-lean."
 			stop
 		fi
 		
-	else
-		log_msg "The dnsmasq check passed with new blocklist file."
-		log_msg "New blocklist installed with good line count: ${good_line_count}."
-		[[ -f /tmp/prev_blocklist.gz ]] && rm /tmp/prev_blocklist.gz
 	fi
 }
 
@@ -229,14 +230,13 @@ status()
 		log_msg "adblock-lean is not active."
 		return
 	fi
-	check_dnsmasq
-	if [[ "${?}" -ne 0 ]]
+	if check_dnsmasq
 	then
-		log_msg "The dnsmasq check failed with existing blocklist file."
-	else
 		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/blocklist | wc -l`
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
+	else
+		log_msg "The dnsmasq check failed with existing blocklist file."
 	fi
 }
 
