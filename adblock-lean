@@ -53,7 +53,7 @@ process_and_check_blocklist_file()
 	sed -i -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/^address/local/;s/^server/local/;s/#$//' /tmp/blocklist
 
 	log_msg "Removing duplicates from downloaded blocklist file."
-	awk ' { if (!seen[$0]++) print $0 > "/tmp/blocklist.tmp" } ' /tmp/blocklist
+	awk ' { !seen[$0]++ > "/tmp/blocklist.tmp" } ' /tmp/blocklist
 	mv /tmp/blocklist.tmp /tmp/blocklist
 	log_msg "Duplicates removed."
 
