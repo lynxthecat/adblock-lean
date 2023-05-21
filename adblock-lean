@@ -162,10 +162,13 @@ check_dnsmasq()
 
 	for domain in google.com amazon.com microsoft.com
 	do
-		nslookup "${domain}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
-		if [[ "${?}" -eq 0 ]]
+		if ! nslookup "${domain}" &> /dev/null 
 		then
-			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist"
+			log_msg "Lookup of '${domain}' failed with new blocklist."
+			return 1
+		elif nslookup "${domain}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
+		then
+			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
 			return 1
 		fi
 	done
