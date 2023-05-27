@@ -9,11 +9,21 @@
 
 # *** CONFIGURATION OPTIONS ***
 
+# One or more dnsmasq blocklist urls separated by spaces
 blocklist_urls="https://big.oisd.nl/dnsmasq2 https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt"
+
+# Path to optional local allowlist/blocklist files in the form:
+# site1.com
+# site2.com
+local_allowlist_path="/root/adblock-lean/allowlist"
+local_blocklist_path="/root/adblock-lean/blocklist"
+
+# Maximum size of any individual downloaded blocklist part
 max_blocklist_file_part_size_KB=20000
-max_blocklist_file_size_KB=25000
+# Maximum total size of combined, preprocessed blocklist
+max_blocklist_file_size_KB=30000
+# Minimum number of good lines in final postprocessed blocklist
 min_good_line_count=100000
-allowlist_path="/root/allowlist"
 
 # *** DO NOT EDIT BELOW THIS LINE ***
 
@@ -37,11 +47,58 @@ log_msg()
 	logger -t adblock-lean "${msg}"
 }
 
+generate_preprocessed_blocklist_file()
+{
+	
+	> /tmp/blocklist
+
+	if [[ -f "${local_blocklist_path}" ]] 
+	then
+		local_blocklist_line_count=$(sed '/^\s*$/d' "${local_blocklist_path}" | wc -l)
+		log_msg "Found local blocklist with ${local_blocklist_line_count} line(s)."
+		printf "%s\n" "$(sed 's@..*@local=/&/@' "${local_blocklist_path}")" >> /tmp/blocklist
+	else
+		log_msg "No local blocklist identified."
+	fi
+
+	[[ -n "${blocklist_urls}" ]] && log_msg "Downloading new blocklist file part(s)."
+
+	blocklist_id=0
+	for blocklist_url in ${blocklist_urls}
+	do
+		for retries in 1 2 3
+		do
+			log_msg "Downloading new blocklist file part from: ${blocklist_url}."
+			wget "${blocklist_url}" -O- --timeout=2 2> /tmp/wget_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
+			if grep -q "Download completed" /tmp/wget_err
+			then
+				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
+				printf "%s\n" "$(cat "/tmp/blocklist.${blocklist_id}")" >> /tmp/blocklist
+				rm -f "/tmp/blocklist.${blocklist_id}"
+				blocklist_id=$((blocklist_id+1))
+				continue 2
+			else
+				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
+				sleep 5
+			fi
+		done
+		log_msg "Exiting after three failed download attempts."
+		return 1
+	done
+
+	rm -f /tmp/wget_err
+
+	preprocessed_blocklist_line_count=$(sed '/^\s*$/d' /tmp/blocklist | wc -l)
+	[[ "${preprocessed_blocklist_line_count}" -gt 0 ]] || return 1
+
+	return 0
+}
+
 process_and_check_blocklist_file()
 {
-	log_msg "Processing and checking new blocklist file formed from downloaded blocklist file part(s)."
+	log_msg "Processing and checking new blocklist file."
 
-	blocklist_file_size_KB=`du -bk /tmp/blocklist | awk '{print $1}'`
+	blocklist_file_size_KB=$(du -bk /tmp/blocklist | awk '{print $1}')
 
 	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
 	then
@@ -50,29 +107,31 @@ process_and_check_blocklist_file()
 	fi
 
 	# Clean whitespace and format all entries as local=/.../
+	log_msg "Cleaning whitespace and formatting blocklist file."
 	sed -i -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;s/#$//' /tmp/blocklist
+	log_msg "Whitepsace removed and formatting completed."
 
-	log_msg "Removing duplicates from downloaded blocklist file."
+	log_msg "Removing duplicates from blocklist file."
 	awk '!seen[$0]++' /tmp/blocklist > /tmp/blocklist.tmp
 	mv /tmp/blocklist.tmp /tmp/blocklist
 	log_msg "Duplicates removed."
 
-	if [[ -f "${allowlist_path}" ]] && [[ `du "${allowlist_path}" | awk '{print $1}'` -gt 0 ]]
+	if [[ -f "${local_allowlist_path}" ]] && [[ $(du "${local_allowlist_path}" | awk '{print $1}') -gt 0 ]]
 	then
-		allowlist_line_count=`sed '/^\s*$/d' "${allowlist_path}" | wc -l`
-		log_msg "Found allowlist with ${allowlist_line_count} lines."
-		log_msg "Modifying blocklist based on allowlist."
+		local_allowlist_line_count=$(sed '/^\s*$/d' "${local_allowlist_path}" | wc -l)
+		log_msg "Found local allowlist with ${local_allowlist_line_count} lines."
+		log_msg "Modifying blocklist based on local allowlist."
 		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${allowlist_path}" "/tmp/blocklist" > "/tmp/blocklist.tmp"
 		mv /tmp/blocklist.tmp /tmp/blocklist
-		log_msg "Blocklist modification based on allowlist complete."
+		log_msg "Blocklist modification based on local allowlist complete."
 	else
-		log_msg "No allowlist identified."
+		log_msg "No local allowlist identified."
 	fi
 
 	log_msg "Checking for any rogue elements."
 
 	# Get line number and match of any rogue elements
-	rogue_element=`sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; }`
+	rogue_element=$(sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
 
 	if [[ ! -z "${rogue_element}" ]]
 	then
@@ -80,7 +139,7 @@ process_and_check_blocklist_file()
 		return 1
 	fi
 
-	good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/blocklist | wc -l`
+	good_line_count=$(sed '\|^#|d;\|^\s*$|d' /tmp/blocklist | wc -l)
 
 	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
 	then
@@ -91,24 +150,25 @@ process_and_check_blocklist_file()
 	return 0
 }
 
-
 check_dnsmasq()
 {
 	log_msg "Checking dnsmasq instance."
 
-	pgrep -x dnsmasq &> /dev/null
-	
-	if [[ "${?}" -ne 0 ]]; then
+	if ! pgrep -x dnsmasq &> /dev/null
+	then
 		log_msg "No instance of dnsmasq detected with new blocklist."
 		return 1
 	fi
 
 	for domain in google.com amazon.com microsoft.com
 	do
-		nslookup "${domain}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
-		if [[ "${?}" -eq 0 ]]
+		if ! nslookup "${domain}" &> /dev/null 
 		then
-			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist"
+			log_msg "Lookup of '${domain}' failed with new blocklist."
+			return 1
+		elif nslookup "${domain}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
+		then
+			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
 			return 1
 		fi
 	done
@@ -128,35 +188,14 @@ start()
 		sleep "${random_delay_mins}m"
 	fi
 
-	rm -f /tmp/blocklist
-
-	log_msg "Downloading new blocklist file."
-
-	blocklist_id=0
-	for blocklist_url in ${blocklist_urls}
-	do
-		for retries in 1 2 3
-		do
-			wget "${blocklist_url}" -O- --timeout=2 2> /tmp/wget_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
-			if grep -q "Download completed" /tmp/wget_err
-			then
-				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
-				cat "/tmp/blocklist.${blocklist_id}" >> /tmp/blocklist
-				printf "\n" >> /tmp/blocklist
-				rm -f "/tmp/blocklist.${blocklist_id}"
-				blocklist_id=$((blocklist_id+1))
-				continue 2
-			else
-				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
-				sleep 5
-			fi
-		done
-		log_msg "Exiting after three failed download attempts."
-		rm -f /tmp/wget_err /tmp/blocklist* 
-		return
-	done
-
-	rm -f /tmp/wget_err
+	if generate_preprocessed_blocklist_file
+	then
+		log_msg "Successfully generated preprocessed blocklist file with ${preprocessed_blocklist_line_count} line(s)."
+	else
+		log_msg "Failed to generate preprocessed blocklist file with at least one line."
+		rm -f /tmp/wget_err /tmp/blocklist*
+		exit
+	fi
 
 	if process_and_check_blocklist_file
 	then
@@ -232,7 +271,7 @@ status()
 	fi
 	if check_dnsmasq
 	then
-		good_line_count=`sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/blocklist | wc -l`
+		good_line_count=$(sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/blocklist | wc -l)
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
 	else
