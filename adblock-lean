@@ -68,11 +68,11 @@ generate_preprocessed_blocklist_file()
 	do
 		for retries in 1 2 3
 		do
-			log_msg "Downloading new blocklist file part from: ${blocklist_url}.  Cleaning whitespace and formatting as local=/.../"
+			log_msg "Downloading new blocklist file part from: ${blocklist_url}."
 			wget "${blocklist_url}" -O- --timeout=2 2> /tmp/wget_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
 			if grep -q "Download completed" /tmp/wget_err
 			then
-				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
+				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded.  Cleaning whitespace and formatting as local=/.../"
 				# Clean whitespace and format all entries as local=/.../
 				printf "%s\n" >> /tmp/blocklist
 				sed -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;s/#$//' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
