@@ -73,7 +73,10 @@ generate_preprocessed_blocklist_file()
 			if grep -q "Download completed" /tmp/wget_err
 			then
 				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
-				printf "%s\n" "$(cat "/tmp/blocklist.${blocklist_id}")" >> /tmp/blocklist
+				printf "%s\n" >> /tmp/blocklist
+				# Clean whitespace and format all blocklist file part entries as local=/.../
+				log_msg "Cleaning whitespace and formatting blocklist file part as local=/.../."
+				sed -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;s/#$//' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
 				rm -f "/tmp/blocklist.${blocklist_id}"
 				blocklist_id=$((blocklist_id+1))
 				continue 2
@@ -105,11 +108,6 @@ process_and_check_blocklist_file()
 		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
 		return 1
 	fi
-
-	# Clean whitespace and format all entries as local=/.../
-	log_msg "Cleaning whitespace and formatting blocklist file."
-	sed -i -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;s/#$//' /tmp/blocklist
-	log_msg "Whitepsace removed and formatting completed."
 
 	log_msg "Removing duplicates from blocklist file."
 	awk '!seen[$0]++' /tmp/blocklist > /tmp/blocklist.tmp
