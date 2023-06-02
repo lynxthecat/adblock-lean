@@ -90,7 +90,7 @@ generate_preprocessed_blocklist_file()
 
 	rm -f /tmp/wget_err
 
-	preprocessed_blocklist_line_count=$(sed '/^\s*$/d' /tmp/blocklist | wc -l)
+	preprocessed_blocklist_line_count=$(grep -v -E "^$|#.*" /tmp/blocklist | wc -l)
 	[[ "${preprocessed_blocklist_line_count}" -gt 0 ]] || return 1
 
 	return 0
