@@ -73,10 +73,9 @@ generate_preprocessed_blocklist_file()
 			if grep -q "Download completed" /tmp/wget_err
 			then
 				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
-				printf "%s\n" >> /tmp/blocklist
 				# Clean whitespace and format all blocklist file part entries as local=/.../
 				log_msg "Cleaning whitespace and formatting blocklist file part as local=/.../."
-				sed -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;s/#$//' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
+				sed 's/#$//;\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;$a\' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
 				rm -f "/tmp/blocklist.${blocklist_id}"
 				blocklist_id=$((blocklist_id+1))
 				continue 2
