@@ -54,9 +54,9 @@ generate_preprocessed_blocklist_file()
 
 	if [[ -f "${local_blocklist_path}" ]] 
 	then
-		local_blocklist_line_count=$(sed '/^\s*$/d' "${local_blocklist_path}" | wc -l)
+		local_blocklist_line_count=$(grep -v -E -c "^$|#.*" "${local_blocklist_path}")
 		log_msg "Found local blocklist with ${local_blocklist_line_count} line(s)."
-		printf "%s\n" "$(sed 's@..*@local=/&/@' "${local_blocklist_path}")" >> /tmp/blocklist
+		sed 's~..*~local=/&/~;$a\' "${local_blocklist_path}" >> /tmp/blocklist
 	else
 		log_msg "No local blocklist identified."
 	fi
@@ -73,10 +73,9 @@ generate_preprocessed_blocklist_file()
 			if grep -q "Download completed" /tmp/wget_err
 			then
 				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
-				printf "%s\n" >> /tmp/blocklist
 				# Clean whitespace and format all blocklist file part entries as local=/.../
 				log_msg "Cleaning whitespace and formatting blocklist file part as local=/.../."
-				sed -e '\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;s/#$//' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
+				sed 's/#$//;\~^\s*$~d;s/^[ \t]*//;s/[ \t]*$//;s/\(^address\|^server\)/local/;$a\' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
 				rm -f "/tmp/blocklist.${blocklist_id}"
 				blocklist_id=$((blocklist_id+1))
 				continue 2
@@ -91,7 +90,7 @@ generate_preprocessed_blocklist_file()
 
 	rm -f /tmp/wget_err
 
-	preprocessed_blocklist_line_count=$(sed '/^\s*$/d' /tmp/blocklist | wc -l)
+	preprocessed_blocklist_line_count=$(grep -v -E -c "^$|#.*" /tmp/blocklist)
 	[[ "${preprocessed_blocklist_line_count}" -gt 0 ]] || return 1
 
 	return 0
@@ -116,7 +115,7 @@ process_and_check_blocklist_file()
 
 	if [[ -f "${local_allowlist_path}" ]] && [[ $(du "${local_allowlist_path}" | awk '{print $1}') -gt 0 ]]
 	then
-		local_allowlist_line_count=$(sed '/^\s*$/d' "${local_allowlist_path}" | wc -l)
+		local_allowlist_line_count=$(grep -v -E -c "^$|#.*" "${local_allowlist_path}")
 		log_msg "Found local allowlist with ${local_allowlist_line_count} lines."
 		log_msg "Modifying blocklist based on local allowlist."
 		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${allowlist_path}" "/tmp/blocklist" > "/tmp/blocklist.tmp"
@@ -129,7 +128,7 @@ process_and_check_blocklist_file()
 	log_msg "Checking for any rogue elements."
 
 	# Get line number and match of any rogue elements
-	rogue_element=$(sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
+	rogue_element=$(sed -nE '\~(^local=/)[[:alnum:]][[:alnum:].-]+(/$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
 
 	if [[ ! -z "${rogue_element}" ]]
 	then
@@ -137,7 +136,7 @@ process_and_check_blocklist_file()
 		return 1
 	fi
 
-	good_line_count=$(sed '\|^#|d;\|^\s*$|d' /tmp/blocklist | wc -l)
+	good_line_count=$(grep -v -E -c "^$|#.*" /tmp/blocklist)
 
 	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
 	then
@@ -269,7 +268,7 @@ status()
 	fi
 	if check_dnsmasq
 	then
-		good_line_count=$(sed '\|^#|d;\|^\s*$|d' /tmp/dnsmasq.d/blocklist | wc -l)
+		good_line_count=$(grep -v -E -c "^$|#.*" /tmp/dnsmasq.d/blocklist)
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
 	else
