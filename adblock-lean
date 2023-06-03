@@ -268,7 +268,7 @@ status()
 	fi
 	if check_dnsmasq
 	then
-		good_line_count=$(grep -v -E -c "^$|#.*" /tmp/dnsmasq.d/blocklist)
+		# redundant count good_line_count=$(grep -v -E -c "^$|#.*" /tmp/dnsmasq.d/blocklist)
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
 	else
