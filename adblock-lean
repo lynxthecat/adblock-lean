@@ -56,7 +56,7 @@ generate_preprocessed_blocklist_file()
 	then
 		local_blocklist_line_count=$(grep -v -E -c "^$|#.*" "${local_blocklist_path}")
 		log_msg "Found local blocklist with ${local_blocklist_line_count} line(s)."
-		sed 's~..*~local=/&/~' "${local_blocklist_path}" >> /tmp/blocklist
+		sed 's~..*~local=/&/~;$a\' "${local_blocklist_path}" >> /tmp/blocklist
 	else
 		log_msg "No local blocklist identified."
 	fi
