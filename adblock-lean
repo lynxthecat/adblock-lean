@@ -128,7 +128,7 @@ process_and_check_blocklist_file()
 	log_msg "Checking for any rogue elements."
 
 	# Get line number and match of any rogue elements
-	rogue_element=$(sed -nE '\~(^address=/|^server=/|^local=/)[[:alnum:]][[:alnum:].-]+(/$|/#$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
+	rogue_element=$(sed -nE '\~(^local=/)[[:alnum:]][[:alnum:].-]+(/$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
 
 	if [[ ! -z "${rogue_element}" ]]
 	then
