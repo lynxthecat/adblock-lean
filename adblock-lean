@@ -159,11 +159,11 @@ check_dnsmasq()
 
 	for domain in google.com amazon.com microsoft.com
 	do
-		if ! nslookup "${domain}" &> /dev/null 
+		if ! nslookup "${domain}" 127.0.0.1 &> /dev/null 
 		then
 			log_msg "Lookup of '${domain}' failed with new blocklist."
 			return 1
-		elif nslookup "${domain}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
+		elif nslookup "${domain}" 127.0.0.1 | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
 		then
 			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
 			return 1
