@@ -232,7 +232,7 @@ start()
 	
 	for i in $(seq 1 60)
 	do
-		nslookup localhost.lan 127.0.0.1 &> /dev/null && break
+		nslookup localhost 127.0.0.1 &> /dev/null && break
 		sleep 1;
 	done
 
