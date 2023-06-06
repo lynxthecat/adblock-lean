@@ -189,6 +189,21 @@ check_dnsmasq()
 	return 0
 }
 
+restart_dnsmasq()
+{
+	log_msg "Restarting dnsmasq."
+
+	/etc/init.d/dnsmasq restart &> /dev/null
+	
+	for i in $(seq 1 60)
+	do
+		nslookup localhost 127.0.0.1 &> /dev/null && break
+		sleep 1;
+	done
+
+	log_msg "Restart of dnsmasq completed."
+}
+
 start() 
 {
 
@@ -226,17 +241,7 @@ start()
 
 	mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
 
-	log_msg "Restarting dnsmasq."
-
-	/etc/init.d/dnsmasq restart &> /dev/null
-	
-	for i in $(seq 1 60)
-	do
-		nslookup localhost 127.0.0.1 &> /dev/null && break
-		sleep 1;
-	done
-
-	log_msg "Restart of dnsmasq completed."
+	restart_dnsmasq
 
 	if check_dnsmasq
 	then
@@ -254,7 +259,7 @@ start()
 			gunzip -c /tmp/prev_blocklist.gz > /tmp/dnsmasq.d/blocklist
 			rm /tmp/prev_blocklist.gz
 
-			/etc/init.d/dnsmasq restart &> /dev/null			
+			restart_dnsmasq
 
 			if check_dnsmasq
 			then
@@ -306,8 +311,7 @@ pause()
 		log_msg "Saving /tmp/dnsmasq.d/blocklist as /tmp/blocklist.gz."
 		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/blocklist.gz
 		rm /tmp/dnsmasq.d/blocklist
-		log_msg "Restarting dnsmasq."
-		/etc/init.d/dnsmasq restart &> /dev/null
+		restart_dnsmasq
 		log_msg "adblock-lean is now paused."
 	else
 		log_msg "No active /tmp/dnsmasq.d/blocklist identified."
@@ -322,8 +326,7 @@ resume()
 		log_msg "Restoring saved /tmp/blocklist.gz to /tmp/dnsmasq.d/blocklist"
 		gunzip -c /tmp/blocklist.gz > /tmp/dnsmasq.d/blocklist
 		rm /tmp/blocklist.gz
-		log_msg "Restarting dnsmasq."
-		/etc/init.d/dnsmasq restart &> /dev/null
+		restart_dnsmasq
 		log_msg "adblock-lean is now active."
 	else
 		log_msg "No stored /tmp/blocklist.gz identified."
