@@ -143,6 +143,14 @@ process_and_check_blocklist_file()
 		log_msg "Good line count: ${good_line_count} below ${min_good_line_count}."
 		return 1
 	fi
+	
+	if dnsmasq --test --conf-file=/tmp/blocklist
+	then
+		log_msg "The dnsmasq --test on the processed blocklist passed."
+	else
+		log_msg "The dnsmasq --test on the processed blocklist failed."
+		return 1
+	fi
 
 	return 0
 }
