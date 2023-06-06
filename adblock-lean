@@ -66,7 +66,7 @@ generate_preprocessed_blocklist_file()
 	blocklist_id=0
 	for blocklist_url in ${blocklist_urls}
 	do
-		for retries in 1 2 3
+		for retries in $(seq 1 3)
 		do
 			log_msg "Downloading new blocklist file part from: ${blocklist_url}."
 			wget "${blocklist_url}" -O- --timeout=2 2> /tmp/wget_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
@@ -221,9 +221,15 @@ start()
 	log_msg "Restarting dnsmasq."
 
 	/etc/init.d/dnsmasq restart &> /dev/null
-
-	sleep 10
 	
+	for i in $(seq 1 60)
+	do
+		nslookup localhost.lan 127.0.0.1 &> /dev/null && break
+		sleep 1;
+	done
+
+	log_msg "Restart of dnsmasq completed."
+
 	if check_dnsmasq
 	then
 		log_msg "The dnsmasq check passed with new blocklist file."
