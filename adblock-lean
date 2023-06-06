@@ -144,7 +144,15 @@ process_and_check_blocklist_file()
 		return 1
 	fi
 	
-	if dnsmasq --test --conf-file=/tmp/blocklist
+	log_msg "Performing dnsmasq --test on the processed blocklist."
+
+	dnsmasq_test_output=$(dnsmasq --test --conf-file=/tmp/blocklist 2>&1)
+	
+	dnsmasq_test_result=${?}
+
+	log_msg "dnsmasq --test output: ${dnsmasq_test_output}"
+
+	if [[ ${dnsmasq_test_result} == 0 ]] 
 	then
 		log_msg "The dnsmasq --test on the processed blocklist passed."
 	else
