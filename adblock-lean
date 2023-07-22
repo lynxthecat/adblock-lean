@@ -15,12 +15,13 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="status pause resume gen_config"
+EXTRA_COMMANDS="status pause resume gen_stats gen_config"
 EXTRA_HELP="	
 adblock-lean custom commands:
 	status		check dnsmasq and good line count of existing blocklist
 	pause		pause adblock-lean
 	resume		resume adblock-lean
+	gen_stats	generate dnsmasq stats for system log
 	gen_config	generate default config"
 
 log_msg()
@@ -319,6 +320,13 @@ stop()
 	log_msg "Stopped adblock-lean."
 }
 
+gen_stats()
+{
+	log_msg "Generating dnsmasq stats."
+	kill -USR1 $(pgrep dnsmasq)
+	log_msg "dnsmasq stats available for reading using 'logread'."
+}
+
 status()
 {
 	if ! [[ -f /tmp/dnsmasq.d/blocklist ]]
@@ -332,6 +340,7 @@ status()
 		good_line_count=$(grep -vEc '^\s*$|^#' /tmp/dnsmasq.d/blocklist)
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
+		gen_stats
 	else
 		log_msg "The dnsmasq check failed with existing blocklist file."
 	fi
