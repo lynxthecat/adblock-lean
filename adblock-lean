@@ -7,25 +7,7 @@
 
 # Authors: @Lynx and @Wizballs (OpenWrt forum)
 
-# *** CONFIGURATION OPTIONS ***
-
-# One or more dnsmasq blocklist urls separated by spaces
-blocklist_urls="https://big.oisd.nl/dnsmasq2 https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt"
-
-# Path to optional local allowlist/blocklist files in the form:
-# site1.com
-# site2.com
-local_allowlist_path="/root/adblock-lean/allowlist"
-local_blocklist_path="/root/adblock-lean/blocklist"
-
-# Maximum size of any individual downloaded blocklist part
-max_blocklist_file_part_size_KB=20000
-# Maximum total size of combined, preprocessed blocklist
-max_blocklist_file_size_KB=30000
-# Minimum number of good lines in final postprocessed blocklist
-min_good_line_count=100000
-
-# *** DO NOT EDIT BELOW THIS LINE ***
+PREFIX=/root/adblock-lean
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -33,18 +15,70 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="status pause resume"
+EXTRA_COMMANDS="status pause resume gen_config"
 EXTRA_HELP="	
-	adblock-lean custom commands:
+adblock-lean custom commands:
 	status		check dnsmasq and good line count of existing blocklist
 	pause		pause adblock-lean
-	resume		resume adblock-lean"
+	resume		resume adblock-lean
+	gen_config	generate default config"
 
 log_msg()
 {
 	local msg="${1}"
 	[[ -t 1 ]] && printf "${msg}\n"
 	logger -t adblock-lean "${msg}"
+}
+
+load_config()
+{
+	mkdir -p "${PREFIX}"
+
+	if [[ -f "${PREFIX}/config" ]]
+	then
+		. "${PREFIX}/config"
+	else
+		log_msg "ERROR: no config file identified at: ${PREFIX}/config."
+		log_msg "Generate default config using 'service adblock-lean gen_config'."
+		exit
+	fi
+}
+
+gen_config()
+{
+	log_msg "Generating new default config for cake-qos-simple."
+
+	mkdir -p "${PREFIX}"
+
+	cat > "${PREFIX}/config.tmp" <<-EOT
+	# adblock-lean configuration options
+
+	# One or more dnsmasq blocklist urls separated by spaces
+	blocklist_urls="https://big.oisd.nl/dnsmasq2 https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt"
+
+	# Path to optional local allowlist/blocklist files in the form:
+	# site1.com
+	# site2.com
+	local_allowlist_path="/root/adblock-lean/allowlist"
+	local_blocklist_path="/root/adblock-lean/blocklist"
+
+	# Maximum size of any individual downloaded blocklist part
+	max_blocklist_file_part_size_KB=20000
+	# Maximum total size of combined, preprocessed blocklist
+	max_blocklist_file_size_KB=30000
+	# Minimum number of good lines in final postprocessed blocklist
+	min_good_line_count=100000
+	EOT
+	
+	if [[ -f "${PREFIX}/config" ]]
+	then
+		log_msg "WARNING: config file ${PREFIX}/config already exists."
+		log_msg "Saving new config file as: '${PREFIX}/config.new'."
+		mv "${PREFIX}/config.tmp" "${PREFIX}/config.new"
+	else
+		log_msg "Saving new config file as: '${PREFIX}/config'."
+		mv "${PREFIX}/config.tmp" "${PREFIX}/config"
+	fi
 }
 
 generate_preprocessed_blocklist_file()
@@ -332,3 +366,8 @@ resume()
 		log_msg "No stored /tmp/blocklist.gz identified."
 	fi	
 }
+
+if [[ "${action}" != "help" && "${action}" != "gen_config" ]]
+then
+	load_config
+fi
