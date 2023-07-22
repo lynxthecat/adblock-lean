@@ -31,6 +31,26 @@ log_msg()
 	logger -t adblock-lean "${msg}"
 }
 
+log_failure()
+{
+	log_msg "${1}"
+	if [[ -n "${report_failure}" ]]
+	then
+		failure_msg="${1}"
+		eval "${report_failure}"
+	fi
+}
+
+log_success()
+{
+	log_msg "${1}"
+	if [[ -n "${report_success}" ]]
+	then
+		success_msg="${1}"
+		eval "${report_success}"
+	fi
+}
+
 load_config()
 {
 	mkdir -p "${PREFIX}"
@@ -69,6 +89,14 @@ gen_config()
 	max_blocklist_file_size_KB=30000
 	# Minimum number of good lines in final postprocessed blocklist
 	min_good_line_count=100000
+
+	# The following shell variables are invoked using:
+	# 'eval ${report_failure}' and 'eval ${report_success}'
+	# thereby to facilitate sending e.g. mailsend/sms notifications
+	# The variables '${failure_msg}' and '${success_msg}' can employed
+	report_failure="" 	 
+	report_success=""	
+	
 	EOT
 	
 	if [[ -f "${PREFIX}/config" ]]
@@ -255,7 +283,7 @@ start()
 	then
 		log_msg "Successfully generated preprocessed blocklist file with ${preprocessed_blocklist_line_count} line(s)."
 	else
-		log_msg "Failed to generate preprocessed blocklist file with at least one line."
+		log_failure "Failed to generate preprocessed blocklist file with at least one line."
 		rm -f /tmp/wget_err /tmp/blocklist*
 		exit
 	fi
@@ -264,7 +292,7 @@ start()
 	then
 		log_msg "New blocklist file check passed."
 	else
-		log_msg "New blocklist file check failed."
+		log_failure "New blocklist file check failed."
 		rm -f /tmp/blocklist
 		exit
 	fi
@@ -281,10 +309,10 @@ start()
 	if check_dnsmasq
 	then
 		log_msg "The dnsmasq check passed with new blocklist file."
-		log_msg "New blocklist installed with good line count: ${good_line_count}."
+		log_success "New blocklist installed with good line count: ${good_line_count}."
 		[[ -f /tmp/prev_blocklist.gz ]] && rm /tmp/prev_blocklist.gz
 	else	
-		log_msg "The dnsmasq check failed with new blocklist file."
+		log_failure "The dnsmasq check failed with new blocklist file."
 
 		rm /tmp/dnsmasq.d/blocklist
 
