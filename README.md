@@ -17,6 +17,7 @@ adblock-lean includes, inter alia, the following features:
 - revert to previous blocklist file if checks fail
 - if checks on previous blocklist file also fail then revert to not using any blocklist file
 
+
 ## Installation on OpenWrt
 
 ```bash
@@ -25,9 +26,11 @@ chmod +x /etc/init.d/adblock-lean
 service adblock-lean enable
 ```
 
+
 ## Automatically deploy blocklist on router reboot
 
 Providing the service is enabled, the service script should automatically start on boot. 
+
 
 ## Automatically update blocklist at 5am following delay by random number of minutes
 
@@ -40,6 +43,7 @@ This tests whether the adblock-lean service is enabled and if so launches the st
 
 The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on oisd server; and from a selfish perspective, increase prospect that server is not loaded during the download. 
 
+
 ## Preserve service file across upgrades
 
 Just add the file:
@@ -51,3 +55,15 @@ Just add the file:
 to the list of files to backup in the Configuration tab in LuCi here:
 
 http://openwrt.lan/cgi-bin/luci/admin/system/flash
+
+
+## OPTIONAL - send an email (or SMS if desired) each update, on whether the new blocklist is successful or failed
+
+Instructions here are for Brevo (formerly sendinblue), but use your favourite smtp/email (or SMS) method.
+- Install mailsend package in OpenWRT
+- Sign up for free Brevo account (not affiliated!), 300 free emails sends per day.
+- Edit /root/adblock-lean/config lines with your Brevo specific user details (user variables in CAPITALS below):
+  report_failure="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub \"\$failure_msg\" -M \" \""
+  report_success="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub \"\$failure_msg\" -M \" \""
+- The Brevo password is supplied within their website, not the one you created for sign-up.
+- Each adblock-lean update you should receive an email with a header such as "New blocklist installed with good line count: 248074."
