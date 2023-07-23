@@ -67,7 +67,7 @@ load_config()
 
 gen_config()
 {
-	log_msg "Generating new default config for cake-qos-simple."
+	log_msg "Generating new default config for adblock-lean."
 
 	mkdir -p "${PREFIX}"
 
