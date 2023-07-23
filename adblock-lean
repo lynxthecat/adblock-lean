@@ -80,8 +80,8 @@ gen_config()
 	# Path to optional local allowlist/blocklist files in the form:
 	# site1.com
 	# site2.com
-	local_allowlist_path="/root/adblock-lean/allowlist"
-	local_blocklist_path="/root/adblock-lean/blocklist"
+	local_allowlist_path="${PREFIX}/allowlist"
+	local_blocklist_path="${PREFIX}/blocklist"
 
 	# Maximum size of any individual downloaded blocklist part
 	max_blocklist_file_part_size_KB=20000
