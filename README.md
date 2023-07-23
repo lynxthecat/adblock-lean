@@ -8,20 +8,31 @@ adblock-lean is written as a service and 'service adblock-lean start' will downl
 
 adblock-lean includes, inter alia, the following features:
 
-- attempt to download new blocklist file from configurable blocklist url (default: https://big.oisd.nl/dnsmasq2) using up to 3 retries
-- check downloaded blocklist file size does not exceeed configurable maximum blocklist file size (default: 20 MB)
-- check for rogue entries in blocklist file (e.g. check for redirection to specific IP rather than 0.0.0.0)
+- support for local blocklist and one or more blocklists to be downloaded from urls
+- suport for local allowlist
+- check individual blocklist file parts and total blocklist size do not exceeed configurable maximum file sizes
+- generate blocklist file from local blocklist and allowlist and the one or more downloaded blocklist file part(s)
+- check for rogue entries in blocklist file (e.g. check for redirection to specific IP)
 - check good lines in blocklist file exceeds configurable minimum (default: 100,000)
 - set up dnsmasq with new blocklist file and save any previous blocklist file as compressed file
 - perform checks on restarted dnsmasq with new blocklist file
 - revert to previous blocklist file if checks fail
 - if checks on previous blocklist file also fail then revert to not using any blocklist file
+- user-configurable calls on success or failure
+
+## Config
+
+adblock-lean reads in a config file from /root/adblock-lean/config.
+
+A default config can be generated using: `service adblock-lean gen_config`.
 
 ## Installation on OpenWrt
 
 ```bash
 wget https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
 chmod +x /etc/init.d/adblock-lean
+service adblock-lean gen_config # generates default config in /root/adblock-lean/config
+vi /root/adblock-lean/config # modify default config as required
 service adblock-lean enable
 ```
 
@@ -40,11 +51,32 @@ This tests whether the adblock-lean service is enabled and if so launches the st
 
 The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on oisd server; and from a selfish perspective, increase prospect that server is not loaded during the download. 
 
-## Preserve service file across upgrades
+## User-configurable calls on success or failure
 
-Just add the file:
+adblock-lean supports user-configurable calls on success or failure. 
+
+The following config paramters:
+```
+report_failure="" 	 
+report_success=""
+```
+
+Are evaluated on success or failure, and the variables: ${success_msg} and ${failure_msg} can be employed in the calls. 
+
+**Example below for Brevo (formerly sendinblue), but use your favourite smtp/email (or SMS) method.**
+
+- install mailsend package in OpenWRT
+- sign up for free Brevo account (not affiliated!) - provides 300 free email sends per day
+- edit /root/adblock-lean/config lines with Brevo specific user details (user variables in CAPITALS below): report_failure="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub "$failure_msg" -M " "" report_success="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub "$success_msg" -M " ""
+- the Brevo password is supplied within their website, not the one created on sign-up.
+- with each adblock-lean start call an email with a header such as "New blocklist installed with good line count: 248074." should be sent on success or a failure message sent on failure
+
+## Preserve service file and config across upgrades
+
+Just add the files:
 
 ```bash
+/root/adblock-lean
 /etc/init.d/adblock-lean
 ```
 
