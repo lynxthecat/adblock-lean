@@ -93,7 +93,7 @@ gen_config()
 	# The following shell variables are invoked using:
 	# 'eval ${report_failure}' and 'eval ${report_success}'
 	# thereby to facilitate sending e.g. mailsend/sms notifications
-	# The variables '${failure_msg}' and '${success_msg}' can employed
+	# The variables '\${failure_msg}' and '\${success_msg}' can be employed
 	report_failure="" 	 
 	report_success=""	
 	
