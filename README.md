@@ -61,9 +61,9 @@ http://openwrt.lan/cgi-bin/luci/admin/system/flash
 
 Instructions here are for Brevo (formerly sendinblue), but use your favourite smtp/email (or SMS) method.
 - Install mailsend package in OpenWRT
-- Sign up for free Brevo account (not affiliated!), 300 free emails sends per day.
+- Sign up for free Brevo account (not affiliated!), 300 free email sends per day.
 - Edit /root/adblock-lean/config lines with your Brevo specific user details (user variables in CAPITALS below):
   report_failure="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub \"\$failure_msg\" -M \" \""
-  report_success="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub \"\$failure_msg\" -M \" \""
+  report_success="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub \"\$success_msg\" -M \" \""
 - The Brevo password is supplied within their website, not the one you created for sign-up.
 - Each adblock-lean update you should receive an email with a header such as "New blocklist installed with good line count: 248074."
