@@ -85,6 +85,8 @@ gen_config()
 
 	# Maximum size of any individual downloaded blocklist part
 	max_blocklist_file_part_size_KB=20000
+	# Minimimum size of any individual downloaded blocklist part
+	min_blocklist_file_part_size_KB=100
 	# Maximum total size of combined, preprocessed blocklist
 	max_blocklist_file_size_KB=30000
 	# Minimum number of good lines in final postprocessed blocklist
@@ -135,17 +137,24 @@ generate_preprocessed_blocklist_file()
 			wget "${blocklist_url}" -O- --timeout=2 2> /tmp/wget_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
 			if grep -q "Download completed" /tmp/wget_err
 			then
-				log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded."
-				log_msg "Cleaning whitespace and formatting blocklist file part as local=/.../."
-				# '$a\' adds newline at end of file part
-				sed 's/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/\(^address\|^server\)/local/; $a\' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
-				rm -f "/tmp/blocklist.${blocklist_id}"
-				blocklist_id=$((blocklist_id+1))
-				continue 2
+				blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
+				if [[ "${blocklist_file_part_size_KB}" -gt "${min_blocklist_file_part_size_KB}" ]]
+				then
+					log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded (downloaded file size: ${blocklist_file_part_size_KB} KB)."
+					log_msg "Cleaning whitespace and formatting blocklist file part as local=/.../."
+					# '$a\' adds newline at end of file part
+					sed 's/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/\(^address\|^server\)/local/; $a\' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
+					rm -f "/tmp/blocklist.${blocklist_id}"
+					blocklist_id=$((blocklist_id+1))
+					continue 2
+				else
+					log_msg "Downloaded blocklist file part size: ${blocklist_file_part_size_KB} KB less than configured minimum: ${min_blocklist_file_part_size_KB} KB"
+				fi
 			else
 				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
-				sleep 5
 			fi
+			log_msg "Sleeping for 5 seconds after failed download attempt."
+			sleep 5
 		done
 		log_msg "Exiting after three failed download attempts."
 		return 1
@@ -170,6 +179,8 @@ process_and_check_blocklist_file()
 		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
 		return 1
 	fi
+
+	log_msg "Preprocessed blocklist file size: ${blocklist_file_size_KB} KB."
 
 	log_msg "Removing duplicates from blocklist file."
 	awk '!seen[$0]++' /tmp/blocklist > /tmp/blocklist.tmp
@@ -206,7 +217,10 @@ process_and_check_blocklist_file()
 		log_msg "Good line count: ${good_line_count} below ${min_good_line_count}."
 		return 1
 	fi
-	
+
+	blocklist_file_size_KB=$(du -bk /tmp/blocklist | awk '{print $1}')
+	log_msg "Processed blocklist file size: ${blocklist_file_size_KB} KB."
+
 	log_msg "Performing dnsmasq --test on the processed blocklist."
 
 	dnsmasq_test_output=$(dnsmasq --test --conf-file=/tmp/blocklist 2>&1)
