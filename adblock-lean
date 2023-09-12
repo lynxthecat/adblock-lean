@@ -152,6 +152,16 @@ generate_preprocessed_blocklist_file()
 				fi
 			else
 				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
+				if [[ -f "/tmp/blocklist.${blocklist_id}" ]]
+				then
+					blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
+					if [[ "${blocklist_file_part_size_KB}" -eq "${max_blocklist_file_part_size_KB}" ]]
+					then
+						log_msg "Downloaded blocklist file part size exceeded the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
+						log_msg "Consider either increasing this value in the config or removing the correasponding blocklist url."
+						return 1
+					fi
+				fi
 			fi
 			log_msg "Sleeping for 5 seconds after failed download attempt."
 			sleep 5
