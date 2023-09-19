@@ -282,11 +282,7 @@ restart_dnsmasq()
 
 	/etc/init.d/dnsmasq restart &> /dev/null
 	
-	for i in $(seq 1 60)
-	do
-		nslookup localhost 127.0.0.1 &> /dev/null && break
-		sleep 1;
-	done
+	ubus -t 60 wait_for dnsmasq
 
 	log_msg "Restart of dnsmasq completed."
 }
