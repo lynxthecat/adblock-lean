@@ -134,8 +134,8 @@ generate_preprocessed_blocklist_file()
 		for retries in $(seq 1 3)
 		do
 			log_msg "Downloading new blocklist file part from: ${blocklist_url}."
-			wget "${blocklist_url}" -O- --timeout=2 2> /tmp/wget_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
-			if grep -q "Download completed" /tmp/wget_err
+			uclient-fetch "${blocklist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
+			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
 				blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
 				if [[ "${blocklist_file_part_size_KB}" -gt "${min_blocklist_file_part_size_KB}" ]]
@@ -170,7 +170,7 @@ generate_preprocessed_blocklist_file()
 		return 1
 	done
 
-	rm -f /tmp/wget_err
+	rm -f /tmp/uclient-fetch_err
 
 	preprocessed_blocklist_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist)
 	[[ "${preprocessed_blocklist_line_count}" -gt 0 ]] || return 1
@@ -304,7 +304,7 @@ start()
 		log_msg "Successfully generated preprocessed blocklist file with ${preprocessed_blocklist_line_count} line(s)."
 	else
 		log_failure "Failed to generate preprocessed blocklist file with at least one line."
-		rm -f /tmp/wget_err /tmp/blocklist*
+		rm -f /tmp/uclient-fetch_err /tmp/blocklist*
 		exit
 	fi
 
