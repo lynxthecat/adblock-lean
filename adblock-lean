@@ -193,8 +193,7 @@ process_and_check_blocklist_file()
 	log_msg "Preprocessed blocklist file size: ${blocklist_file_size_KB} KB."
 
 	log_msg "Removing duplicates from blocklist file."
-	awk '!seen[$0]++' /tmp/blocklist > /tmp/blocklist.tmp
-	mv /tmp/blocklist.tmp /tmp/blocklist
+	echo "$(sort -u /tmp/blocklist)" > /tmp/blocklist
 	log_msg "Duplicates removed."
 
 	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
