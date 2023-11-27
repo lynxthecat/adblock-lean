@@ -92,6 +92,12 @@ gen_config()
 	# Minimum number of good lines in final postprocessed blocklist
 	min_good_line_count=100000
 
+	# Remove duplicates:
+	# DEFAULT - only remove duplicates if multiple blocklist urls are specified
+	# ALWAYS  - always remove duplicates
+	# NEVER   - never remove duplicates
+	remove_duplicates="DEFAULT"
+
 	# The following shell variables are invoked using:
 	# 'eval \${report_failure}' and 'eval \${report_success}'
 	# thereby to facilitate sending e.g. mailsend/sms notifications
@@ -192,9 +198,19 @@ process_and_check_blocklist_file()
 
 	log_msg "Preprocessed blocklist file size: ${blocklist_file_size_KB} KB."
 
-	log_msg "Removing duplicates from blocklist file."
-	echo "$(sort -u /tmp/blocklist)" > /tmp/blocklist
-	log_msg "Duplicates removed."
+	if [[ "${remove_duplicates}" == "NEVER" ]]
+	then
+		log_msg "Skipping removal of duplicates (disabled in config)."
+	else
+		if [[ "${remove_duplicates}" == "DEFAULT" ]] && [[ "$(echo ${blocklist_urls} | wc -w)" -eq 1 ]]
+		then
+			log_msg "Skippping removal of duplicates (only one blocklist URL specified)."
+		else
+			log_msg "Removing duplicates from blocklist file."
+			echo "$(sort -u /tmp/blocklist)" > /tmp/blocklist
+			log_msg "Duplicates removed."
+		fi
+	fi
 
 	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
 	then
