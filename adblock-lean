@@ -75,7 +75,7 @@ gen_config()
 	# adblock-lean configuration options
 
 	# One or more dnsmasq blocklist urls separated by spaces
-	blocklist_urls="https://big.oisd.nl/dnsmasq2 https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt"
+	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt"
 
 	# Path to optional local allowlist/blocklist files in the form:
 	# site1.com

@@ -2,7 +2,7 @@
 
 adblock-lean is a super simple and lightweight adblocking solution that leverages the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86 that drastically improves performance and reduces memory foot-print, facilitating the use of very large blocklists for even older, low performance devices.
 
-adblock-lean was designed primarily for use with the dnsmasq variant of the [oisd blocklist](https://oisd.nl/) used by major adblockers and which is intended to block ads without interfering with normal use.  
+adblock-lean was designed primarily for use with the dnsmasq variants of the popular [hagezi](https://github.com/hagezi/dns-blocklists) and [oisd](https://oisd.nl/) blocklists used by major adblockers and which are intended to block ads without interfering with normal use.  
 
 adblock-lean is written as a service and 'service adblock-lean start' will download and setup dnsmasq with a new blocklist file. Various checks are performed and, in dependence upon the outcome of those checks, the script will either: accept the new blocklist file; fallback to a previous blocklist file if available; or restart dnsmasq with no blocklist file.
 
@@ -49,7 +49,7 @@ Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-s
 ```
 This tests whether the adblock-lean service is enabled and if so launches the start function, which updates to the new blocklist list. 
 
-The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on oisd server; and from a selfish perspective, increase prospect that server is not loaded during the download. 
+The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on the blocklist server; and from a selfish perspective, increase the prospect that the server is not loaded during the download. 
 
 ## User-configurable calls on success or failure
 
