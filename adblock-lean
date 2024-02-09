@@ -98,6 +98,17 @@ gen_config()
 	# NEVER   - never remove duplicates
 	remove_duplicates="DEFAULT"
 
+	# Rogue element action:
+	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	# IGNORE - ignore any rogue elements (warning: use with caution)
+	rogue_element_action="SKIP_PARTIAL"
+
+	# Download failed action:
+	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	download_failed_action="SKIP_PARTIAL"
+
 	# The following shell variables are invoked using:
 	# 'eval \${report_failure}' and 'eval \${report_success}'
 	# thereby to facilitate sending e.g. mailsend/sms notifications
@@ -147,6 +158,25 @@ generate_preprocessed_blocklist_file()
 				if [[ "${blocklist_file_part_size_KB}" -gt "${min_blocklist_file_part_size_KB}" ]]
 				then
 					log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded (downloaded file size: ${blocklist_file_part_size_KB} KB)."
+
+					if [[ "${rogue_element_action}" != "IGNORE" ]] 
+					then
+						log_msg "Checking for any rogue elements."
+
+						# Get line number and match of any rogue elements
+						rogue_element=$(sed -nE '\~(^(local|server|address)=/)[[:alnum:]][[:alnum:].-]+(/$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist.${blocklist_id} | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
+
+						if [[ ! -z "${rogue_element}" ]]
+						then
+							log_msg "Rogue element: '${rogue_element}' identified in blocklist file part from: ${blocklist_url}."
+							if [[ "${rogue_element_action}" == "STOP" ]]
+							then
+								return 1
+							else
+								log_msg "Skipping file part and continuing."
+							fi
+						fi
+					fi
 					log_msg "Cleaning whitespace and formatting blocklist file part as local=/.../."
 					# '$a\' adds newline at end of file part
 					sed 's/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/\(^address\|^server\)/local/; $a\' /tmp/blocklist.${blocklist_id} >> /tmp/blocklist
@@ -172,8 +202,13 @@ generate_preprocessed_blocklist_file()
 			log_msg "Sleeping for 5 seconds after failed download attempt."
 			sleep 5
 		done
-		log_msg "Exiting after three failed download attempts."
-		return 1
+		if [[ "${download_failed_action}" == "STOP" ]]
+		then
+			log_msg "Exiting after three failed download attempts."
+			return 1
+		else
+			log_msg "Skipping file part and continuing."
+		fi
 	done
 
 	rm -f /tmp/uclient-fetch_err
@@ -222,17 +257,6 @@ process_and_check_blocklist_file()
 		log_msg "Removal of allowlist (sub)domain matches from blocklist complete."
 	else
 		log_msg "No local allowlist identified."
-	fi
-
-	log_msg "Checking for any rogue elements."
-
-	# Get line number and match of any rogue elements
-	rogue_element=$(sed -nE '\~(^local=/)[[:alnum:]][[:alnum:].-]+(/$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
-
-	if [[ ! -z "${rogue_element}" ]]
-	then
-		log_msg "Rogue element: '${rogue_element}' identified in new blocklist."
-		return 1
 	fi
 
 	good_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist)

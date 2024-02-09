@@ -40,16 +40,18 @@ Each configuration option is internally documented with comments in /root/adbloc
 
 | Variable | Setting                                          |
 | -------: | :----------------------------------------------- |
-|                   `blocklist_urls` | One or more blocklist URLs to download and process                      |
-|             `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                    |
-|             `local_blocklist_path` | Path to local blocklist (domain will be blocked)                        |
-|  `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part                |
-|  `min_blocklist_file_part_size_KB` | Minimum size of any individual downloaded blocklist part                |
-|       `max_blocklist_file_size_KB` | Maximim size of combined, preprocessed blocklist                        |
-|              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist           |
-|                `remove_duplicates` | Governs whether duplicates are removed: 'ALWAYS', 'DEFAULT' or 'NEVER)' |
-|                   `report_failure` | Used for performing user-defined action(s) on failure                   |
-|                  `report_successs` | Used for performing user-defined action(s) on success                   |
+|                   `blocklist_urls` | One or more blocklist URLs to download and process                     |
+|             `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                   |
+|             `local_blocklist_path` | Path to local blocklist (domain will be blocked)                       |
+|  `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part               |
+|  `min_blocklist_file_part_size_KB` | Minimum size of any individual downloaded blocklist part               |
+|       `max_blocklist_file_size_KB` | Maximim size of combined, preprocessed blocklist                       |
+|              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist          |
+|                `remove_duplicates` | Governs whether duplicates are removed: 'ALWAYS', 'DEFAULT' or 'NEVER' |
+|             `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'     |
+|           `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'             |
+|                   `report_failure` | Used for performing user-defined action(s) on failure                  |
+|                  `report_successs` | Used for performing user-defined action(s) on success                  |
 
 Concerning `remove_duplicates`, the default behaviour 'DEFAULT' is to only check for, and remove, duplicates when multiple blocklist URLs are specified. 'ALWAYS' results in always checking for, and removing, duplicates, even if just one blocklist URL is specified. Checking for duplicates consumes extra memory during the processing phase, so it should be ensured that sufficient spare memory exists. For lower memory routers or for those that do not care about duplicates, this value can be set to 'NEVER'.   
 
