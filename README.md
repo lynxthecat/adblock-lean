@@ -59,6 +59,20 @@ Concerning `remove_duplicates`, the default behaviour 'DEFAULT' is to only check
 
 An important factor in selecting blocklist(s) is how much free memory is available for blocklist use. It is the responsibility of the user to ensure that there is sufficient free memory to prevent an out of memory situation.
 
+Here are two examples for low and high memory devices.
+
+Example blocklist selection for low memory devices:
+
+```
+blocklist_urls="https://github.com/hagezi/dns-blocklists/blob/main/dnsmasq/light.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
+```
+
+Example blocklist selection for high memory devices:
+
+```
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
+```
+
 An excellent breakdown of highly suitable lists and their merits is provided at:
 
 https://github.com/hagezi/dns-blocklists
