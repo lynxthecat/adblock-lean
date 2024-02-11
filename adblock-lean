@@ -335,6 +335,13 @@ start()
 {
 
 	log_msg "Started adblock-lean."
+	
+	if [[ -f /tmp/dnsmasq.d/blocklist ]]
+	then
+		log_msg "Compressing and backing up existing blocklist."
+		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/prev_blocklist.gz
+		rm /tmp/dnsmasq.d/blocklist
+	fi
 
 	if [[ "${RANDOM_DELAY}" == "1" ]]
 	then
@@ -359,11 +366,6 @@ start()
 		log_failure "New blocklist file check failed."
 		rm -f /tmp/blocklist
 		exit
-	fi
-
-	if [[ -f /tmp/dnsmasq.d/blocklist ]]
-	then
-		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/prev_blocklist.gz
 	fi
 
 	mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
