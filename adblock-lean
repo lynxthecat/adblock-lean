@@ -141,6 +141,14 @@ generate_preprocessed_blocklist_file()
 	else
 		log_msg "No local blocklist identified."
 	fi
+	
+	if [[ "${RANDOM_DELAY}" == "1" ]]
+	then
+		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
+		log_msg "Delaying download by ${random_delay_mins} minutes (thundering herd prevention)."
+		sleep "${random_delay_mins}m"
+	fi
+
 
 	[[ -n "${blocklist_urls}" ]] && log_msg "Downloading new blocklist file part(s)."
 
@@ -341,13 +349,6 @@ start()
 		log_msg "Compressing and backing up existing blocklist."
 		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/prev_blocklist.gz
 		rm /tmp/dnsmasq.d/blocklist
-	fi
-
-	if [[ "${RANDOM_DELAY}" == "1" ]]
-	then
-		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
-		log_msg "Delaying download by ${random_delay_mins} minutes (thundering herd prevention)."
-		sleep "${random_delay_mins}m"
 	fi
 
 	if generate_preprocessed_blocklist_file
