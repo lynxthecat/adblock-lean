@@ -91,6 +91,9 @@ gen_config()
 	# Minimum number of good lines in final postprocessed blocklist
 	min_good_line_count=100000
 
+	# compress blocklist to save memory once blocklist has been loaded
+	compress_blocklist=1 # enable (1) or disable (0) blocklist compression
+
 	# Rogue element action:
 	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
 	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
@@ -124,8 +127,7 @@ gen_config()
 
 generate_preprocessed_blocklist_file_parts()
 {
-	
-	> /tmp/blocklist
+	rm -f /tmp/blocklist*
 
 	if [[ -f "${local_blocklist_path}" ]] 
 	then
@@ -158,7 +160,6 @@ generate_preprocessed_blocklist_file_parts()
 			then
 				blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
 				blocklist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist.${blocklist_id})
-				preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
 
 				if [[ "${blocklist_file_part_size_KB}" -gt "${min_blocklist_file_part_size_KB}" ]]
 				then
@@ -183,10 +184,13 @@ generate_preprocessed_blocklist_file_parts()
 								return 1
 							else
 								log_msg "Skipping file part and continuing."
+								rm -f "/tmp/blocklist.${blocklist_id}"
+								continue 2
 							fi
 						fi
 					fi
-					gzip /tmp/blocklist.${blocklist_id}
+					preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
+					gzip "/tmp/blocklist.${blocklist_id}"
 					blocklist_id=$((blocklist_id+1))
 					continue 2
 				else
@@ -238,9 +242,10 @@ generate_and_process_blocklist_file()
 	then
 		log_msg "Found local allowlist with ${local_allowlist_line_count} lines.  Removing (sub)domain matches from blocklist."
 		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d' ${local_allowlist_path} > /tmp/allowlist
-		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" "/tmp/blocklist" > "/tmp/blocklist.tmp"
-		rm /tmp/allowlist
-		mv /tmp/blocklist.tmp /tmp/blocklist
+		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" "/tmp/blocklist" | gzip -c > "/tmp/blocklist.tmp.gz"
+		gunzip -c /tmp/blocklist.tmp.gz > /tmp/blocklist
+		rm -f /tmp/blocklist.tmp.gz /tmp/allowlist
+
 		log_msg "Removal of allowlist (sub)domain matches from blocklist complete."
 	else
 		log_msg "No local allowlist identified."
@@ -324,24 +329,94 @@ restart_dnsmasq()
 	log_msg "Restart of dnsmasq completed."
 }
 
+extract_existing_blocklist()
+{
+	if [[ -f /tmp/dnsmasq.d/.blocklist.gz ]]
+	then
+		log_msg "Extracting and saving existing compressed blocklist."
+		mv /tmp/dnsmasq.d/.blocklist.gz /tmp/prev_blocklist.gz
+		return 0
+	elif [[ -f /tmp/dnsmasq.d/blocklist ]]
+	then
+		log_msg "Extracting and saving existing uncompressed blocklist."
+		gzip /tmp/dnsmasq.d/blocklist
+		mv /tmp/dnsmasq.d/blocklist.gz /tmp/prev_blocklist.gz
+		return 0
+	else
+		log_msg "No existing compressed or uncompressed blocklist identified."
+		return 1
+	fi
+}
+
+restore_saved_blocklist()
+{
+	if [[ -f /tmp/prev_blocklist.gz ]]
+	then
+		log_msg "Restoring saved blocklist file."
+		mv /tmp/prev_blocklist.gz /tmp/blocklist.gz
+		gunzip /tmp/blocklist.gz
+		inject_blocklist_file
+		return 0
+	else
+		log_msg "No previous blocklist file found."
+		return 1
+	fi
+}
+
+clean_dnsmasq_dir()
+{
+	rm -f /tmp/dnsmasq.d/.blocklist.gz /tmp/dnsmasq.d/blocklist /tmp/dnsmasq.d/adblock-lean_conf /tmp/dnsmasq.d/.adblock-lean_extract
+}
+
+inject_blocklist_file()
+{
+	[[ -f /tmp/blocklist ]] || return 1
+
+	if [[ "${compress_blocklist}" == 1 ]]
+	then
+		addnmount_str=$(uci get dhcp.@dnsmasq[0].addnmount 2> /dev/null)
+		case "${addnmount_str}" in
+
+			/bin|/bin/busybox) 
+				clean_dnsmasq_dir
+				printf "conf-script=\"sh /tmp/dnsmasq.d/.adblock-lean_extract\"\n" > /tmp/dnsmasq.d/adblock-lean_conf
+				printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.adblock-lean_extract
+				gzip /tmp/blocklist 
+				mv /tmp/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz
+				injected_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/.blocklist.gz | awk '{print $1}')
+				return 0
+				;;
+			*) 
+				log_msg "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
+				log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist."
+				log_msg "Please add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
+				log_msg "Or simply call run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit"
+				log_msg "Unable to use compressed blocklist."
+				return 1
+				;;
+		esac
+	else
+			clean_dnsmasq_dir
+			mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
+			injected_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/blocklist | awk '{print $1}')
+			return 0
+	fi
+}
+
 start() 
 {
 
 	log_msg "Started adblock-lean."
 	
-	if [[ -f /tmp/dnsmasq.d/blocklist ]]
-	then
-		log_msg "Compressing and backing up existing blocklist."
-		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/prev_blocklist.gz
-		rm /tmp/dnsmasq.d/blocklist
-	fi
+	extract_existing_blocklist
 
 	if generate_preprocessed_blocklist_file_parts
 	then
 		log_msg "Successfully generated preprocessed blocklist file with ${preprocessed_blocklist_line_count} line(s)."
 	else
 		log_failure "Failed to generate preprocessed blocklist file with at least one line."
-		rm -f /tmp/uclient-fetch_err /tmp/blocklist*
+		restore_saved_blocklist
+		rm -f /tmp/uclient-fetch_err /tmp/blocklist* /tmp/prev_blocklist.gz
 		exit
 	fi
 
@@ -350,11 +425,20 @@ start()
 		log_msg "New blocklist file check passed."
 	else
 		log_failure "New blocklist file check failed."
-		rm -f /tmp/blocklist
+		restore_saved_blocklist
+		rm -f /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/allowlist
 		exit
 	fi
 
-	mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
+	if inject_blocklist_file
+	then
+		log_msg "Successfully injected new blocklist file for use by dnsmasq with size: ${injected_blocklist_file_size_KB} KB."
+	else
+		log_failure "Failed to inject new blocklist file."
+		restore_saved_blocklist
+		rm -f /tmp/blocklist* /tmp/prev_blocklist.gz
+		exit
+	fi
 
 	restart_dnsmasq
 
@@ -362,41 +446,34 @@ start()
 	then
 		log_msg "The dnsmasq check passed with new blocklist file."
 		log_success "New blocklist installed with good line count: ${good_line_count}."
-		[[ -f /tmp/prev_blocklist.gz ]] && rm /tmp/prev_blocklist.gz
+		rm -f /tmp/prev_blocklist.gz
 	else	
 		log_failure "The dnsmasq check failed with new blocklist file."
 
-		rm /tmp/dnsmasq.d/blocklist
-
-		if [[ -f /tmp/prev_blocklist.gz ]]
+		if restore_saved_blocklist
 		then
-			log_msg "Found previous blocklist file. Attempting to recover."
-			gunzip -c /tmp/prev_blocklist.gz > /tmp/dnsmasq.d/blocklist
-			rm /tmp/prev_blocklist.gz
 
 			restart_dnsmasq
 
 			if check_dnsmasq
 			then
-				log_msg "Previous blocklist recovered and dnsmasq check passed."
+				log_msg "Previous blocklist restored and dnsmasq check passed."
 			else
 				log_msg "The dnsmasq check failed with previous blocklist file. Stopping adblock-lean."
-				stop
-			fi
-		else
-			log_msg "No previous blocklist file found. Stopping adblock-lean."
 			stop
+			fi
 		fi
-		
 	fi
 }
 
 stop()
 {
 	log_msg "Stopping adblock-lean." 
-	log_msg "Removing /tmp/dnsmasq.d/blocklist and restarting dnsmasq."
-	[[ -f /tmp/dnsmasq.d/blocklist ]] && rm /tmp/dnsmasq.d/blocklist
+	log_msg "Removing any adblock-lean blocklist files in /tmp/dnsmasq.d/ and restarting dnsmasq."
+	clean_dnsmasq_dir
 	/etc/init.d/dnsmasq restart &> /dev/null
+	log_msg "Removing any leftover adblock-lean temporary files."
+	rm -f /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/allowlist
 	log_msg "Stopped adblock-lean."
 }
 
@@ -409,51 +486,44 @@ gen_stats()
 
 status()
 {
-	if ! [[ -f /tmp/dnsmasq.d/blocklist ]]
+	if ! [[ -f /tmp/dnsmasq.d/.blocklist.gz || -f /tmp/dnsmasq.d/blocklist ]]
 	then
-		log_msg "No /tmp/dnsmasq.d/blocklist identified."
+		log_msg "Blocklist in /tmp/dnsmasq.d/ not identified."
 		log_msg "adblock-lean is not active."
 		return
 	fi
 	if check_dnsmasq
 	then
-		good_line_count=$(grep -vEc '^\s*$|^#' /tmp/dnsmasq.d/blocklist)
+		if [[ -f /tmp/dnsmasq.d/.blocklist.gz ]] 
+		then
+			good_line_count=$(gunzip -c /tmp/dnsmasq.d/.blocklist.gz | grep -vEc '^\s*$|^#')
+		elif [[ -f /tmp/dnsmasq.d/blocklist ]]
+		then
+			good_line_count=$(grep -vEc '^\s*$|^#' /tmp/dnsmasq.d/blocklist)
+		fi
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
 		gen_stats
 	else
 		log_msg "The dnsmasq check failed with existing blocklist file."
+		log_msg "Considering a full reset by running service adblock stop."
 	fi
 }
 
 pause()
 {
 	log_msg "Received pause request."
-	if [[ -f /tmp/dnsmasq.d/blocklist ]]
-	then
-		log_msg "Saving /tmp/dnsmasq.d/blocklist as /tmp/blocklist.gz."
-		gzip -c /tmp/dnsmasq.d/blocklist > /tmp/blocklist.gz
-		rm /tmp/dnsmasq.d/blocklist
-		restart_dnsmasq
-		log_msg "adblock-lean is now paused."
-	else
-		log_msg "No active /tmp/dnsmasq.d/blocklist identified."
-	fi
+	extract_existing_blocklist
+	restart_dnsmasq
+	log_msg "adblock-lean is now paused."
 }
 
 resume()
 {
 	log_msg "Received resume request."
-	if [[ -f /tmp/blocklist.gz ]]
-	then
-		log_msg "Restoring saved /tmp/blocklist.gz to /tmp/dnsmasq.d/blocklist"
-		gunzip -c /tmp/blocklist.gz > /tmp/dnsmasq.d/blocklist
-		rm /tmp/blocklist.gz
-		restart_dnsmasq
-		log_msg "adblock-lean is now active."
-	else
-		log_msg "No stored /tmp/blocklist.gz identified."
-	fi	
+	restore_saved_blocklist
+	restart_dnsmasq
+	log_msg "adblock-lean is now resumed."
 }
 
 if [[ "${action}" != "help" && "${action}" != "gen_config" ]]

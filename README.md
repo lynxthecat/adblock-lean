@@ -15,6 +15,7 @@ adblock-lean includes, inter alia, the following features:
 - check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
 - check good lines in blocklist file exceeds configurable minimum (default: 100,000)
 - set up dnsmasq with new blocklist file and save any previous blocklist file as compressed file
+- supports blocklist compression by leveraging the new conf-script functionality of dnsmasq
 - perform checks on restarted dnsmasq with new blocklist file
 - revert to previous blocklist file if checks fail
 - if checks on previous blocklist file also fail then revert to not using any blocklist file
@@ -27,6 +28,7 @@ wget https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean
 chmod +x /etc/init.d/adblock-lean
 service adblock-lean gen_config # generates default config in /root/adblock-lean/config
 vi /root/adblock-lean/config # modify default config as required
+uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit # to enable use of compressed blocklist
 service adblock-lean enable
 ```
 
@@ -45,8 +47,9 @@ Each configuration option is internally documented with comments in /root/adbloc
 |             `local_blocklist_path` | Path to local blocklist (domain will be blocked)                       |
 |  `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part               |
 |  `min_blocklist_file_part_size_KB` | Minimum size of any individual downloaded blocklist part               |
-|       `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                       |
+|       `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                          |
 |              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist          |
+|               `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded    |
 |             `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'     |
 |           `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'             |
 |                   `report_failure` | Used for performing user-defined action(s) on failure                  |
