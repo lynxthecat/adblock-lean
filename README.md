@@ -12,7 +12,7 @@ adblock-lean includes, inter alia, the following features:
 - suport for local allowlist
 - check individual blocklist file parts and total blocklist size do not exceeed configurable maximum file sizes
 - generate blocklist file from local blocklist and allowlist and the one or more downloaded blocklist file part(s)
-- check for rogue entries in blocklist file (e.g. check for redirection to specific IP)
+- check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
 - check good lines in blocklist file exceeds configurable minimum (default: 100,000)
 - set up dnsmasq with new blocklist file and save any previous blocklist file as compressed file
 - perform checks on restarted dnsmasq with new blocklist file
@@ -45,15 +45,12 @@ Each configuration option is internally documented with comments in /root/adbloc
 |             `local_blocklist_path` | Path to local blocklist (domain will be blocked)                       |
 |  `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part               |
 |  `min_blocklist_file_part_size_KB` | Minimum size of any individual downloaded blocklist part               |
-|       `max_blocklist_file_size_KB` | Maximim size of combined, preprocessed blocklist                       |
+|       `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                       |
 |              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist          |
-|                `remove_duplicates` | Governs whether duplicates are removed: 'ALWAYS', 'DEFAULT' or 'NEVER' |
 |             `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'     |
 |           `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'             |
 |                   `report_failure` | Used for performing user-defined action(s) on failure                  |
 |                  `report_successs` | Used for performing user-defined action(s) on success                  |
-
-Concerning `remove_duplicates`, the default behaviour 'DEFAULT' is to only check for, and remove, duplicates when multiple blocklist URLs are specified. 'ALWAYS' results in always checking for, and removing, duplicates, even if just one blocklist URL is specified. Checking for duplicates consumes extra memory during the processing phase, so it should be ensured that sufficient spare memory exists. For lower memory routers or for those that do not care about duplicates, this value can be set to 'NEVER'.   
 
 ## Selection of blocklist(s)
 

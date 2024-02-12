@@ -86,16 +86,10 @@ gen_config()
 	max_blocklist_file_part_size_KB=20000
 	# Minimimum size of any individual downloaded blocklist part
 	min_blocklist_file_part_size_KB=100
-	# Maximum total size of combined, preprocessed blocklist
+	# Maximum total size of combined, processed blocklist
 	max_blocklist_file_size_KB=30000
 	# Minimum number of good lines in final postprocessed blocklist
 	min_good_line_count=100000
-
-	# Remove duplicates:
-	# DEFAULT - only remove duplicates if multiple blocklist urls are specified
-	# ALWAYS  - always remove duplicates
-	# NEVER   - never remove duplicates
-	remove_duplicates="DEFAULT"
 
 	# Rogue element action:
 	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
@@ -128,7 +122,7 @@ gen_config()
 	fi
 }
 
-generate_preprocessed_blocklist_file()
+generate_preprocessed_blocklist_file_parts()
 {
 	
 	> /tmp/blocklist
@@ -152,6 +146,7 @@ generate_preprocessed_blocklist_file()
 
 	[[ -n "${blocklist_urls}" ]] && log_msg "Downloading new blocklist file part(s)."
 
+	preprocessed_blocklist_line_count=0
 	blocklist_id=0
 	for blocklist_url in ${blocklist_urls}
 	do
@@ -162,9 +157,12 @@ generate_preprocessed_blocklist_file()
 			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
 				blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
+				blocklist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist.${blocklist_id})
+				preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
+
 				if [[ "${blocklist_file_part_size_KB}" -gt "${min_blocklist_file_part_size_KB}" ]]
 				then
-					log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded (downloaded file size: ${blocklist_file_part_size_KB} KB)."
+					log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded (downloaded file size: ${blocklist_file_part_size_KB} KB; line count: ${blocklist_file_part_line_count})."
 					
 					log_msg "Sanitizing blocklist file part."
 					# 1 Convert to lowercase; 2 Remove trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=; 5 Add newline
@@ -188,8 +186,7 @@ generate_preprocessed_blocklist_file()
 							fi
 						fi
 					fi
-					cat "/tmp/blocklist.${blocklist_id}" >> /tmp/blocklist
-					rm -f "/tmp/blocklist.${blocklist_id}"
+					gzip /tmp/blocklist.${blocklist_id}
 					blocklist_id=$((blocklist_id+1))
 					continue 2
 				else
@@ -222,39 +219,20 @@ generate_preprocessed_blocklist_file()
 
 	rm -f /tmp/uclient-fetch_err
 
-	preprocessed_blocklist_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist)
 	[[ "${preprocessed_blocklist_line_count}" -gt 0 ]] || return 1
 
 	return 0
 }
 
-process_and_check_blocklist_file()
+generate_and_process_blocklist_file()
 {
-	log_msg "Processing and checking new blocklist file."
+ 	log_msg "Removing duplicates and forming new preprocessed blocklist file."
 
-	blocklist_file_size_KB=$(du -bk /tmp/blocklist | awk '{print $1}')
-
-	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
-	then
-		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
-		return 1
-	fi
-
-	log_msg "Preprocessed blocklist file size: ${blocklist_file_size_KB} KB."
-
-	if [[ "${remove_duplicates}" == "NEVER" ]]
-	then
-		log_msg "Skipping removal of duplicates (disabled in config)."
-	else
-		if [[ "${remove_duplicates}" == "DEFAULT" ]] && [[ "$(echo ${blocklist_urls} | wc -w)" -eq 1 ]]
-		then
-			log_msg "Skippping removal of duplicates (only one blocklist URL specified)."
-		else
-			log_msg "Removing duplicates from blocklist file."
-			echo "$(sort -u /tmp/blocklist)" > /tmp/blocklist
-			log_msg "Duplicates removed."
-		fi
-	fi
+	for blocklist_file_part_gz in /tmp/blocklist.*.gz
+	do
+		gunzip -c "${blocklist_file_part_gz}"
+		rm -f "${blocklist_file_part_gz}"
+	done | sort -u > /tmp/blocklist
 
 	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
 	then
@@ -277,6 +255,13 @@ process_and_check_blocklist_file()
 	fi
 
 	blocklist_file_size_KB=$(du -bk /tmp/blocklist | awk '{print $1}')
+	
+	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
+	then
+		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
+		return 1
+	fi
+
 	log_msg "Processed blocklist file size: ${blocklist_file_size_KB} KB."
 
 	log_msg "Performing dnsmasq --test on the processed blocklist."
@@ -351,7 +336,7 @@ start()
 		rm /tmp/dnsmasq.d/blocklist
 	fi
 
-	if generate_preprocessed_blocklist_file
+	if generate_preprocessed_blocklist_file_parts
 	then
 		log_msg "Successfully generated preprocessed blocklist file with ${preprocessed_blocklist_line_count} line(s)."
 	else
@@ -360,7 +345,7 @@ start()
 		exit
 	fi
 
-	if process_and_check_blocklist_file
+	if generate_and_process_blocklist_file
 	then
 		log_msg "New blocklist file check passed."
 	else
