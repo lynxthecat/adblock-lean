@@ -1,7 +1,6 @@
 #!/bin/sh /etc/rc.common
 
-# adblock-lean blocks ads using the highly popular oisd dnsmasq file and
-# offers a leaner solution to adblocking than the existing alternatives on OpenWrt
+# adblock-lean - super simple and lightweight adblocking for OpenWrt
 
 # Project homepage: https://github.com/lynxthecat/adblock-lean
 
