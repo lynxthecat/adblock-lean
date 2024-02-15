@@ -111,6 +111,9 @@ gen_config()
 	# The variables '\${failure_msg}' and '\${success_msg}' can be employed
 	report_failure="" 	 
 	report_success=""	
+
+	# Start delay in seconds when service is started from system boot
+	boot_start_delay_s=120
 	
 	EOT
 	
@@ -403,11 +406,18 @@ inject_blocklist_file()
 	fi
 }
 
+boot()
+{
+	log_msg "Sleeping for: ${boot_start_delay_s} seconds."
+	sleep "${boot_start_delay_s}"
+	start "$@"
+}
+
 start() 
 {
 
 	log_msg "Started adblock-lean."
-	
+
 	extract_existing_blocklist
 
 	if generate_preprocessed_blocklist_file_parts
