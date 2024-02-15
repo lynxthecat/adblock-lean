@@ -235,24 +235,28 @@ generate_and_process_blocklist_file()
 {
  	log_msg "Removing duplicates and forming new preprocessed blocklist file."
 
+	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
+	then
+		log_msg "Found local allowlist with ${local_allowlist_line_count} lines.  Will remove any (sub)domain matches from blocklist."
+		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d' ${local_allowlist_path} > /tmp/allowlist
+		use_allowlist=1
+	else
+		log_msg "No local allowlist identified."
+		use_allowlist=0
+	fi
+
 	for blocklist_file_part_gz in /tmp/blocklist.*.gz
 	do
-		gunzip -c "${blocklist_file_part_gz}"
+		if [[ "${use_allowlist}" == 1 ]]
+		then
+			gunzip -c "${blocklist_file_part_gz}" | awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" -
+		else  
+			gunzip -c "${blocklist_file_part_gz}"
+		fi
 		rm -f "${blocklist_file_part_gz}"
 	done | sort -u > /tmp/blocklist
 
-	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
-	then
-		log_msg "Found local allowlist with ${local_allowlist_line_count} lines.  Removing (sub)domain matches from blocklist."
-		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d' ${local_allowlist_path} > /tmp/allowlist
-		awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" "/tmp/blocklist" | gzip -cf > "/tmp/blocklist.tmp.gz"
-		gunzip -c /tmp/blocklist.tmp.gz > /tmp/blocklist
-		rm -f /tmp/blocklist.tmp.gz /tmp/allowlist
-
-		log_msg "Removal of allowlist (sub)domain matches from blocklist complete."
-	else
-		log_msg "No local allowlist identified."
-	fi
+	rm -f /tmp/allowlist
 
 	good_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist)
 
