@@ -177,7 +177,7 @@ generate_preprocessed_blocklist_file_parts()
 						log_msg "Checking for any rogue elements."
 
 						# Get line number and match of any rogue elements
-						rogue_element=$(sed -nE '\~(^(local|server|address)=/)[[:alnum:]][[:alnum:].-]+(/$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist.${blocklist_id} | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
+						rogue_element=$(sed -nE '\~(^(local|server|address)=/)[[:alnum:]*][[:alnum:]*_.-]+(/$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist.${blocklist_id} | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
 
 						if [[ ! -z "${rogue_element}" ]]
 						then
