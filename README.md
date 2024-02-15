@@ -42,18 +42,19 @@ Each configuration option is internally documented with comments in /root/adbloc
 
 | Variable | Setting                                          |
 | -------: | :----------------------------------------------- |
-|                   `blocklist_urls` | One or more blocklist URLs to download and process                     |
-|             `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                   |
-|             `local_blocklist_path` | Path to local blocklist (domain will be blocked)                       |
-|  `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part               |
-|  `min_blocklist_file_part_size_KB` | Minimum size of any individual downloaded blocklist part               |
-|       `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                          |
-|              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist          |
-|               `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded    |
-|             `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'     |
-|           `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'             |
-|                   `report_failure` | Used for performing user-defined action(s) on failure                  |
-|                  `report_successs` | Used for performing user-defined action(s) on success                  |
+|                   `blocklist_urls` | One or more blocklist URLs to download and process                   |
+|             `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                 |
+|             `local_blocklist_path` | Path to local blocklist (domain will be blocked)                     |
+|  `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part             |
+|  `min_blocklist_file_part_size_KB` | Minimum size of any individual downloaded blocklist part             |
+|       `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                        |
+|              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist        |
+|               `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded  |
+|             `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'   |
+|           `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'           |
+|                   `report_failure` | Used for performing user-defined action(s) on failure                |
+|                  `report_successs` | Used for performing user-defined action(s) on success                |
+|               `boot_start_delay_s` | Start delay in seconds when service is started from system boot      |
 
 ## Selection of blocklist(s)
 
