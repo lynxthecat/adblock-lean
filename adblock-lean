@@ -82,10 +82,10 @@ gen_config()
 	local_allowlist_path="${PREFIX}/allowlist"
 	local_blocklist_path="${PREFIX}/blocklist"
 
+	# Mininum number of lines of any individual downloaded blocklist part
+	min_blocklist_file_part_line_count=1
 	# Maximum size of any individual downloaded blocklist part
 	max_blocklist_file_part_size_KB=20000
-	# Minimimum size of any individual downloaded blocklist part
-	min_blocklist_file_part_size_KB=100
 	# Maximum total size of combined, processed blocklist
 	max_blocklist_file_size_KB=30000
 	# Minimum number of good lines in final postprocessed blocklist
@@ -164,7 +164,7 @@ generate_preprocessed_blocklist_file_parts()
 				blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
 				blocklist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist.${blocklist_id})
 
-				if [[ "${blocklist_file_part_size_KB}" -gt "${min_blocklist_file_part_size_KB}" ]]
+				if [[ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]]
 				then
 					log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded (downloaded file size: ${blocklist_file_part_size_KB} KB; line count: ${blocklist_file_part_line_count})."
 					
@@ -197,7 +197,8 @@ generate_preprocessed_blocklist_file_parts()
 					blocklist_id=$((blocklist_id+1))
 					continue 2
 				else
-					log_msg "Downloaded blocklist file part size: ${blocklist_file_part_size_KB} KB less than configured minimum: ${min_blocklist_file_part_size_KB} KB"
+					log_msg "Downloaded blocklist file part line count: ${blocklist_file_part_line_count} less than configured minimum: ${min_blocklist_file_part_line_count}."
+					break
 				fi
 			else
 				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
@@ -208,7 +209,7 @@ generate_preprocessed_blocklist_file_parts()
 					then
 						log_msg "Downloaded blocklist file part size exceeded the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
 						log_msg "Consider either increasing this value in the config or removing the correasponding blocklist url."
-						return 1
+						break
 					fi
 				fi
 			fi
