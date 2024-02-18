@@ -458,7 +458,10 @@ start()
 		check_addnmount_str || exit
 	fi
 
-	extract_existing_blocklist
+	if extract_existing_blocklist
+	then
+		restart_dnsmasq
+	fi
 
 	if generate_preprocessed_blocklist_file_parts
 	then
