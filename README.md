@@ -50,11 +50,14 @@ Each configuration option is internally documented with comments in /root/adbloc
 |       `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                        |
 |              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist        |
 |               `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded  |
+|          `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory  |
 |             `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'   |
 |           `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'           |
 |                   `report_failure` | Used for performing user-defined action(s) on failure                |
 |                  `report_successs` | Used for performing user-defined action(s) on success                |
 |               `boot_start_delay_s` | Start delay in seconds when service is started from system boot      |
+
+For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
 ## Selection of blocklist(s)
 
