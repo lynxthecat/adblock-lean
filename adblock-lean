@@ -72,6 +72,7 @@ load_config()
 	-z "${max_blocklist_file_size_KB+set}" || \
 	-z "${min_good_line_count+set}" || \
 	-z "${compress_blocklist+set}" || \
+	-z "${initial_dnsmasq_restart+set}" || \
 	-z "${rogue_element_action+set}" || \
 	-z "${download_failed_action+set}" || \
 	-z "${report_failure+set}" || \
@@ -115,6 +116,10 @@ gen_config()
 
 	# compress blocklist to save memory once blocklist has been loaded
 	compress_blocklist=1 # enable (1) or disable (0) blocklist compression
+
+	# restart dnsmasq if previous blocklist was extracted and before generation of
+	# new blocklist thereby to free up memory during generaiton of new blocklist
+	initial_dnsmasq_restart=0 # enable (1) or disable (0) initial dnsmasq restart
 
 	# Rogue element action:
 	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
@@ -457,7 +462,7 @@ start()
 
 	if extract_existing_blocklist
 	then
-		restart_dnsmasq
+		[[ "${initial_dnsmasq_restart}" == 1 ]] && restart_dnsmasq
 	fi
 
 	if generate_preprocessed_blocklist_file_parts
