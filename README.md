@@ -1,8 +1,10 @@
-# adblock-lean
+# ⚔ adblock-lean
+
+If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
 adblock-lean is a super simple and lightweight adblocking solution that leverages the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86 that drastically improves performance and reduces memory foot-print, facilitating the use of very large blocklists for even older, low performance devices.
 
-adblock-lean was designed primarily for use with the dnsmasq variants of the popular [hagezi](https://github.com/hagezi/dns-blocklists) and [oisd](https://oisd.nl/) blocklists used by major adblockers and which are intended to block ads without interfering with normal use.  
+adblock-lean was originally designed primarily for use with the dnsmasq variants of the popular [hagezi](https://github.com/hagezi/dns-blocklists) and [oisd](https://oisd.nl/) blocklists used by major adblockers and which are intended to block ads without interfering with normal use.  
 
 adblock-lean is written as a service and 'service adblock-lean start' will download and setup dnsmasq with a new blocklist file. Various checks are performed and, in dependence upon the outcome of those checks, the script will either: accept the new blocklist file; fallback to a previous blocklist file if available; or restart dnsmasq with no blocklist file.
 
@@ -42,20 +44,20 @@ Each configuration option is internally documented with comments in /root/adbloc
 
 | Variable | Setting                                          |
 | -------: | :----------------------------------------------- |
-|                   `blocklist_urls` | One or more blocklist URLs to download and process                   |
-|             `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                 |
-|             `local_blocklist_path` | Path to local blocklist (domain will be blocked)                     |
-|  `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part             |
-|  `min_blocklist_file_part_size_KB` | Minimum size of any individual downloaded blocklist part             |
-|       `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                        |
-|              `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist        |
-|               `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded  |
-|          `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory  |
-|             `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'   |
-|           `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'           |
-|                   `report_failure` | Used for performing user-defined action(s) on failure                |
-|                  `report_successs` | Used for performing user-defined action(s) on success                |
-|               `boot_start_delay_s` | Start delay in seconds when service is started from system boot      |
+|                     `blocklist_urls` | One or more blocklist URLs to download and process                   |
+|               `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                 |
+|               `local_blocklist_path` | Path to local blocklist (domain will be blocked)                     |
+| `min_blocklist_file_part_line_count` | Minimum number of lines of individual downloaded blocklist part      |
+|    `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part             |
+|         `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                        |
+|                `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist        |
+|                 `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded  |
+|            `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory  |
+|               `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'   |
+|             `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'           |
+|                     `report_failure` | Used for performing user-defined action(s) on failure                |
+|                    `report_successs` | Used for performing user-defined action(s) on success                |
+|                 `boot_start_delay_s` | Start delay in seconds when service is started from system boot      |
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
