@@ -387,16 +387,16 @@ restart_dnsmasq()
 	log_msg "Restart of dnsmasq completed."
 }
 
-extract_existing_blocklist()
+export_existing_blocklist()
 {
 	if [[ -f /tmp/dnsmasq.d/.blocklist.gz ]]
 	then
-		log_msg "Extracting and saving existing compressed blocklist."
+		log_msg "Exporting and saving existing compressed blocklist."
 		mv /tmp/dnsmasq.d/.blocklist.gz /tmp/prev_blocklist.gz
 		return 0
 	elif [[ -f /tmp/dnsmasq.d/blocklist ]]
 	then
-		log_msg "Extracting and saving existing uncompressed blocklist."
+		log_msg "Exporting and saving existing uncompressed blocklist."
 		gzip -f /tmp/dnsmasq.d/blocklist
 		mv /tmp/dnsmasq.d/blocklist.gz /tmp/prev_blocklist.gz
 		return 0
@@ -413,7 +413,7 @@ restore_saved_blocklist()
 		log_msg "Restoring saved blocklist file."
 		mv /tmp/prev_blocklist.gz /tmp/blocklist.gz
 		gunzip -f /tmp/blocklist.gz
-		inject_blocklist_file
+		import_blocklist_file
 		return 0
 	else
 		log_msg "No previous blocklist file found."
@@ -426,7 +426,7 @@ clean_dnsmasq_dir()
 	rm -f /tmp/dnsmasq.d/.blocklist.gz /tmp/dnsmasq.d/blocklist /tmp/dnsmasq.d/conf-script /tmp/dnsmasq.d/.extract_blocklist
 }
 
-inject_blocklist_file()
+import_blocklist_file()
 {
 	[[ -f /tmp/blocklist ]] || return 1
 
@@ -437,11 +437,11 @@ inject_blocklist_file()
 		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist
 		gzip -f /tmp/blocklist
 		mv /tmp/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz
-		injected_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/.blocklist.gz | awk '{print $1}')
+		imported_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/.blocklist.gz | awk '{print $1}')
 	else
 			clean_dnsmasq_dir
 			mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
-			injected_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/blocklist | awk '{print $1}')
+			imported_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/blocklist | awk '{print $1}')
 			return 0
 	fi
 }
@@ -463,7 +463,7 @@ start()
 		check_addnmount_str || exit
 	fi
 
-	if extract_existing_blocklist
+	if export_existing_blocklist
 	then
 		[[ "${initial_dnsmasq_restart}" == 1 ]] && restart_dnsmasq
 	fi
@@ -488,11 +488,11 @@ start()
 		exit
 	fi
 
-	if inject_blocklist_file
+	if import_blocklist_file
 	then
-		log_msg "Successfully injected new blocklist file for use by dnsmasq with size: ${injected_blocklist_file_size_KB} KB."
+		log_msg "Successfully imported new blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_KB} KB."
 	else
-		log_failure "Failed to inject new blocklist file."
+		log_failure "Failed to import new blocklist file."
 		restore_saved_blocklist
 		rm -f /tmp/blocklist* /tmp/prev_blocklist.gz
 		exit
@@ -571,7 +571,7 @@ status()
 pause()
 {
 	log_msg "Received pause request."
-	extract_existing_blocklist
+	export_existing_blocklist
 	restart_dnsmasq
 	log_msg "adblock-lean is now paused."
 }
