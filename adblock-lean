@@ -433,7 +433,7 @@ import_blocklist_file()
 	if [[ "${compress_blocklist}" == 1 ]]
 	then
 		clean_dnsmasq_dir
-		printf "conf-script=\"sh /tmp/dnsmasq.d/.extract_blocklist\"\n" > /tmp/dnsmasq.d/conf-script
+		printf "conf-script=\"busybox sh /tmp/dnsmasq.d/.extract_blocklist\"\n" > /tmp/dnsmasq.d/conf-script
 		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist
 		gzip -f /tmp/blocklist
 		mv /tmp/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz
