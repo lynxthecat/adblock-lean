@@ -161,21 +161,18 @@ check_addnmount_str()
 {
 	addnmount_str=$(uci get dhcp.@dnsmasq[0].addnmount 2> /dev/null)
 
-	case "${addnmount_str}" in
+	for addnmount_path in ${addnmount_str}
+	do
+		printf "%s" "$addnmount_path" | grep -qE "^/bin(/*|/busybox)?$" && return 0
+	done
 
-		/bin|/bin/busybox)
-			return 0
-			;;
-		*)
-			log_msg "Unable to use compressed blocklist."
-			log_msg "Either edit /etc/config/dhcp as described below or disable blocklist compression in config."
-			log_msg "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
-			log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist."
-			log_msg "Please add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
-			log_msg "Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit"
-			return 1
-			;;
-	esac
+	log_msg "Unable to use compressed blocklist."
+	log_msg "Either edit /etc/config/dhcp as described below or disable blocklist compression in config."
+	log_msg "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
+	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist."
+	log_msg "Please add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
+	log_msg "Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit"
+	return 1
 }
 
 generate_preprocessed_blocklist_file_parts()
