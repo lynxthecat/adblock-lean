@@ -154,11 +154,19 @@ gen_config()
 		mv "${PREFIX}/config.tmp" "${PREFIX}/config"
 	fi
 
-	check_addnmount_str
+	check_blocklist_compression_support
 }
 
-check_addnmount_str()
+check_blocklist_compression_support()
 {
+	if ! dnsmasq --help | grep -qe "--conf-script"
+	then
+		log_msg "The version of dnsmasq installed on this system does not support blocklist compression."
+		log_msg "Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\""
+		log_msg "Either upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression or disable blocklist compression in config."
+		return 1
+	fi
+
 	addnmount_str=$(uci get dhcp.@dnsmasq[0].addnmount 2> /dev/null)
 
 	for addnmount_path in ${addnmount_str}
@@ -166,12 +174,11 @@ check_addnmount_str()
 		printf "%s" "$addnmount_path" | grep -qE "^/bin(/*|/busybox)?$" && return 0
 	done
 
-	log_msg "Unable to use compressed blocklist."
-	log_msg "Either edit /etc/config/dhcp as described below or disable blocklist compression in config."
 	log_msg "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
 	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist."
-	log_msg "Please add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
+	log_msg "Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
 	log_msg "Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit"
+	log_msg "Either edit /etc/config/dhcp as described above or disable blocklist compression in config."
 	return 1
 }
 
@@ -457,7 +464,7 @@ start()
 
 	if [[ "${compress_blocklist}" == 1 ]]
 	then
-		check_addnmount_str || exit
+		check_blocklist_compression_support || exit
 	fi
 
 	if export_existing_blocklist
