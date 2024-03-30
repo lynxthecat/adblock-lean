@@ -346,7 +346,7 @@ check_dnsmasq()
 {
 	log_msg "Checking dnsmasq instance."
 
-	if ! pgrep -x dnsmasq &> /dev/null
+	if ! pgrep -x /usr/sbin/dnsmasq &> /dev/null
 	then
 		log_msg "No instance of dnsmasq detected with new blocklist."
 		return 1
