@@ -136,3 +136,7 @@ Just add the files:
 to the list of files to backup in the Configuration tab in LuCi here:
 
 http://openwrt.lan/cgi-bin/luci/admin/system/flash
+
+## :stars: Stargazers <a name="stargazers"></a>
+
+[![Star History Chart](https://api.star-history.com/svg?repos=lynxthecat/adblock-lean&type=Date)](https://star-history.com/#lynxthecat/adblock-lean&Date)
