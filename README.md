@@ -70,7 +70,7 @@ Here are two examples for low and high memory devices.
 Example blocklist selection for low memory devices:
 
 ```
-blocklist_urls="https://github.com/hagezi/dns-blocklists/blob/main/dnsmasq/light.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
 ```
 
 Example blocklist selection for high memory devices:
