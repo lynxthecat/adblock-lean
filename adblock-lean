@@ -14,14 +14,15 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="status pause resume gen_stats gen_config"
+EXTRA_COMMANDS="status pause resume gen_stats gen_config update"
 EXTRA_HELP="	
 adblock-lean custom commands:
 	status		check dnsmasq and good line count of existing blocklist
 	pause		pause adblock-lean
 	resume		resume adblock-lean
 	gen_stats	generate dnsmasq stats for system log
-	gen_config	generate default config"
+	gen_config	generate default config
+	update		update adblock-lean to the latest version"
 
 log_msg()
 {
@@ -585,6 +586,22 @@ resume()
 	restore_saved_blocklist
 	restart_dnsmasq
 	log_msg "adblock-lean is now resumed."
+}
+
+update()
+{
+        log_msg "Obtaining latest version of adblock-lean."
+        uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O /tmp/adblock-lean.latest 1> /dev/null 2> /tmp/uclient-fetch_err
+	if grep -q "Download completed" /tmp/uclient-fetch_err
+	then
+		mv -f /tmp/adblock-lean.latest /etc/init.d/adblock-lean
+		chmod +x /etc/init.d/adblock-lean
+		/etc/init.d/adblock-lean enable
+		log_msg "adblock-lean has been updated to the latest version."
+	else
+		log_msg "Unable to download latest version of adblock-lean."
+	fi
+        rm -f /tmp/adblock-lean.latest /tmp/uclient-fetch_err
 }
 
 if [[ "${action}" != "help" && "${action}" != "gen_config" ]]
