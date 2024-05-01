@@ -526,6 +526,8 @@ start()
 			fi
 		fi
 	fi
+
+	check_for_updates
 }
 
 stop()
@@ -570,6 +572,7 @@ status()
 		log_msg "The dnsmasq check failed with existing blocklist file."
 		log_msg "Consider a full reset by running: 'service adblock stop'."
 	fi
+	check_for_updates
 }
 
 pause()
@@ -586,6 +589,26 @@ resume()
 	restore_saved_blocklist
 	restart_dnsmasq
 	log_msg "adblock-lean is now resumed."
+}
+
+check_for_updates()
+{
+	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | awk '{print $1}')
+	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - 2> /tmp/uclient-fetch_err | sha256sum | awk '{print $1}')
+
+	if grep -q "Download completed" /tmp/uclient-fetch_err
+	then
+		if [[ "${sha256sum_adblock_lean_local}" == "${sha256sum_adblock_lean_remote}" ]]
+		then
+			log_msg "The locally installed adblock-lean is the latest version."
+		else
+			log_msg "The locally installed adblock-lean seems to be outdated."
+			log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
+		fi
+	else
+		log_msg "Unable to download latest version of adblock-lean to check for any updates."
+	fi
+	rm -f /tmp/uclient-fetch_err
 }
 
 update()
