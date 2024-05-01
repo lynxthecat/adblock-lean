@@ -22,6 +22,7 @@ adblock-lean includes, inter alia, the following features:
 - revert to previous blocklist file if checks fail
 - if checks on previous blocklist file also fail then revert to not using any blocklist file
 - user-configurable calls on success or failure
+- automatically check for any updates and self update functionality
 
 ## Installation on OpenWrt
 
@@ -124,7 +125,37 @@ Are evaluated on success or failure, and the variables: ${success_msg} and ${fai
 - the Brevo password is supplied within their website, not the one created on sign-up.
 - with each adblock-lean start call an email with a header such as "New blocklist installed with good line count: 248074." should be sent on success or a failure message sent on failure
 
-## Preserve service file and config across upgrades
+## Checking status of adblock-lean
+
+The status of a running adblock-lean instance can be obtained by running:
+
+```bash
+service adblock-lean status
+```
+
+Example output:
+
+```bash
+root@OpenWrt-1:~# service adblock-lean status
+Checking dnsmasq instance.
+The dnsmasq check passed and the presently installed blocklist has good line count: 736225.
+adblock-lean appears to be active.
+Generating dnsmasq stats.
+dnsmasq stats available for reading using 'logread'.
+The locally installed adblock-lean is the latest version.
+```
+
+## Keeping adblock-lean up-to-date
+
+adblock-lean automatically checks for any version updates both at the end of the `start` and `status` routines.
+
+adblock-lean can be updated to the latest version by simply running: 
+
+```bash
+service adblock-lean update
+```
+
+## Preserve service file and config across OpenWrt upgrades
 
 Just add the files:
 
