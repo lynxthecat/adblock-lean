@@ -567,7 +567,7 @@ status()
 		gen_stats
 	else
 		log_msg "The dnsmasq check failed with existing blocklist file."
-		log_msg "Considering a full reset by running service adblock stop."
+		log_msg "Consider a full reset by running: 'service adblock stop'."
 	fi
 }
 
