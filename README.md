@@ -121,7 +121,11 @@ Are evaluated on success or failure, and the variables: ${success_msg} and ${fai
 
 - install mailsend package in OpenWRT
 - sign up for free Brevo account (not affiliated!) - provides 300 free email sends per day
-- edit /root/adblock-lean/config lines with Brevo specific user details (user variables in CAPITALS below): report_failure="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub "$failure_msg" -M " "" report_success="mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVOUSERNAME@EMAIL.COM -pass BREVOPASSWORD -sub "$success_msg" -M " ""
+- edit /root/adblock-lean/config lines with Brevo specific user details (user variables in CAPITALS below):
+  ```bash
+  report_failure="mailbody=\$(logread -e adblock-lean | tail -n 35); mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.com -t TO@EMAIL.com -user SENDINBLUE@USERNAME.com -pass PASSWORD -sub \"\$failure_msg\" -M \"\$mailbody\""
+  report_success="mailbody=\$(logread -e adblock-lean | tail -n 35); mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.com -t TO@EMAIL.com -user SENDINBLUE@USERNAME.com -pass PASSWORD -sub \"\$success_msg\" -M \"\$mailbody\""
+  ```
 - the Brevo password is supplied within their website, not the one created on sign-up.
 - with each adblock-lean start call an email with a header such as "New blocklist installed with good line count: 248074." should be sent on success or a failure message sent on failure
 
