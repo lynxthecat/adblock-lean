@@ -285,7 +285,8 @@ generate_and_process_blocklist_file()
 
 	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
 	then
-		log_msg "Found local allowlist with ${local_allowlist_line_count} lines.  Will remove any (sub)domain matches from blocklist."
+		log_msg "Found local allowlist with ${local_allowlist_line_count} lines."
+		log_msg "Will remove any (sub)domain matches from the blocklist and append corresponding server entries to the blocklist."
 		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d' ${local_allowlist_path} > /tmp/allowlist
 		use_allowlist=1
 	else
@@ -303,6 +304,8 @@ generate_and_process_blocklist_file()
 		fi
 		rm -f "${blocklist_file_part_gz}"
 	done | sort -u > /tmp/blocklist
+
+	[[ "${use_allowlist}" == 1 ]] && sed 's~.*~server=/&/#~; $a\' /tmp/allowlist >> /tmp/blocklist
 
 	rm -f /tmp/allowlist
 
