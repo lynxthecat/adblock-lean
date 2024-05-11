@@ -281,8 +281,6 @@ generate_preprocessed_blocklist_file_parts()
 
 generate_and_process_blocklist_file()
 {
- 	log_msg "Removing duplicates and forming new preprocessed blocklist file."
-
 	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
 	then
 		log_msg "Found local allowlist with ${local_allowlist_line_count} lines."
@@ -293,6 +291,8 @@ generate_and_process_blocklist_file()
 		log_msg "No local allowlist identified."
 		use_allowlist=0
 	fi
+
+	log_msg "Removing duplicates and forming new preprocessed blocklist file."
 
 	for blocklist_file_part_gz in /tmp/blocklist.*.gz
 	do
