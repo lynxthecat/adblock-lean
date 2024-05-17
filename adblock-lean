@@ -191,7 +191,7 @@ generate_preprocessed_blocklist_file_parts()
 	then
 		local_blocklist_line_count=$(grep -vEc '^\s*$|^#' "${local_blocklist_path}")
 		log_msg "Found local blocklist with ${local_blocklist_line_count} line(s)."
-		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\' "${local_blocklist_path}" >> /tmp/blocklist
+		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\' "${local_blocklist_path}" | gzip > /tmp/blocklist.0.gz
 	else
 		log_msg "No local blocklist identified."
 	fi
@@ -199,7 +199,7 @@ generate_preprocessed_blocklist_file_parts()
 	[[ -n "${blocklist_urls}" ]] && log_msg "Downloading new blocklist file part(s)."
 
 	preprocessed_blocklist_line_count=0
-	blocklist_id=0
+	blocklist_id=1
 	for blocklist_url in ${blocklist_urls}
 	do
 		for retries in $(seq 1 3)
