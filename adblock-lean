@@ -220,8 +220,8 @@ generate_preprocessed_blocklist_file_parts()
 					log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded (downloaded file size: ${blocklist_file_part_size_KB} KB; line count: ${blocklist_file_part_line_count})."
 					
 					log_msg "Sanitizing blocklist file part."
-					# 1 Convert to lowercase; 2 Remove trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=; 5 Add newline
-					sed -i 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/; s/\([^#]\)#.*$/\1/g; s/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/\(^address=\|^server=\)/local=/; $a\' "/tmp/blocklist.${blocklist_id}"
+					# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=; 5 Add newline
+					sed -i 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/; s/\([^#]\)#.*$/\1/g; /^#/d; s/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/\(^address=\|^server=\)/local=/; $a\' "/tmp/blocklist.${blocklist_id}"
 
 					if [[ "${rogue_element_action}" != "IGNORE" ]] 
 					then
