@@ -77,7 +77,7 @@ blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dns
 Example blocklist selection for high memory devices:
 
 ```
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif-ips.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
 ```
 
 An excellent breakdown of highly suitable lists and their merits is provided at:

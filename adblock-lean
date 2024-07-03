@@ -99,7 +99,7 @@ gen_config()
 	# adblock-lean configuration options
 
 	# One or more dnsmasq blocklist urls separated by spaces
-	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt"
+	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif-ips.txt"
 
 	# One or more allowlist urls separated by spaces
 	allowlist_urls=""
@@ -228,7 +228,7 @@ generate_preprocessed_blocklist_file_parts()
 						log_msg "Checking for any rogue elements."
 
 						# Get line number and match of any rogue elements
-						rogue_element=$(sed -nE '\~(^(local|server|address)=/)[[:alnum:]*][[:alnum:]*_.-]+(/$)|^#|^\s*$~d;{p;=;q}' /tmp/blocklist.${blocklist_id} | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
+						rogue_element=$(sed -nE '\~(^(local|server|address)=/)[[:alnum:]*][[:alnum:]*_.-]+(/$)|^#|^\s*$|^bogus-nxdomain=[0-9.]+$~d;{p;=;q}' /tmp/blocklist.${blocklist_id} | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
 
 						if [[ ! -z "${rogue_element}" ]]
 						then
