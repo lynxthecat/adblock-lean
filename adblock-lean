@@ -189,6 +189,56 @@ check_blocklist_compression_support()
 
 generate_preprocessed_blocklist_file_parts()
 {
+	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
+	then
+		log_msg "Found local allowlist with ${local_allowlist_line_count} lines."
+		log_msg "Sanitizing allowlist file part."
+		# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
+		sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/; s/\([^#]\)#.*$/\1/g; /^#/d; s/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' ${local_allowlist_path} > /tmp/allowlist
+	else
+		log_msg "No local allowlist identified."
+	fi
+
+	allowlist_id=0
+	for allowlist_url in ${allowlist_urls}
+	do
+		for retries in $(seq 1 3)
+		do
+			log_msg "Downloading new allowlist file part from: ${allowlist_url}."
+			uclient-fetch "${allowlist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err > /tmp/allowlist.${allowlist_id}
+			if grep -q "Download completed" /tmp/uclient-fetch_err
+			then
+				allowlist_file_part_size_KB=$(du -bk /tmp/allowlist.${allowlist_id} | awk '{print $1}')
+				allowlist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/allowlist.${allowlist_id})
+				log_msg "Download of new allowlist file part from: ${allowlist_url} suceeded (downloaded file size: ${allowlist_file_part_size_KB} KB; line count: ${allowlist_file_part_line_count})."
+				log_msg "Sanitizing allowlist file part."
+				# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
+				sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/; s/\([^#]\)#.*$/\1/g; /^#/d; s/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' /tmp/allowlist.${allowlist_id} >> /tmp/allowlist
+				rm -f  /tmp/allowlist.${allowlist_id}
+				allowlist_id=$((allowlist_id+1))
+				continue 2
+			else
+				log_msg "Download of new allowlist file part from: ${allowlist_url} failed."
+				log_msg "Sleeping for 5 seconds after failed download attempt."
+				sleep 5
+				continue
+			fi
+		done
+		log_msg "Download failed after three failed download attempts. Continuing further operation."
+	done
+
+	rm -f /tmp/allowlist.*
+
+	if [[ -f "/tmp/allowlist" ]] && allowlist_line_count=$(grep -vEc '^\s*$|^#' /tmp/allowlist) && [[ $allowlist_line_count -gt 0 ]]
+	then
+		log_msg "Successfully generated allowlist with ${allowlist_line_count} lines."
+		log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
+		use_allowlist=1
+	else
+		log_msg "Not using any allowlist for blocklist processing."
+		use_allowlist=0
+	fi
+
 	rm -f /tmp/blocklist*
 
 	if [[ -f "${local_blocklist_path}" ]] 
@@ -243,7 +293,17 @@ generate_preprocessed_blocklist_file_parts()
 							fi
 						fi
 					fi
-					preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
+
+					if [[ "${use_allowlist}" == 1 ]]
+					then
+						log_msg "Removing any (sub)domain matches present in the generated allowlist from the blocklist file part."
+						awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" "/tmp/blocklist.${blocklist_id}" > "/tmp/blocklist.${blocklist_id}.new"
+						mv /tmp/blocklist.${blocklist_id}.new /tmp/blocklist.${blocklist_id}
+					fi
+
+					preprocessed_blocklist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist.${blocklist_id})
+					log_msg "Preprocessing of blocklist file part from: ${blocklist_url} suceeded (preprocesssed line count: ${preprocessed_blocklist_file_part_line_count})"
+					preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + preprocessed_blocklist_file_part_line_count ))
 					gzip -f "/tmp/blocklist.${blocklist_id}"
 					blocklist_id=$((blocklist_id+1))
 					continue 2
@@ -285,64 +345,9 @@ generate_preprocessed_blocklist_file_parts()
 
 generate_and_process_blocklist_file()
 {
-	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
-	then
-		log_msg "Found local allowlist with ${local_allowlist_line_count} lines."
-		log_msg "Sanitizing allowlist file part."
-		# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
-		sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/; s/\([^#]\)#.*$/\1/g; /^#/d; s/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' ${local_allowlist_path} > /tmp/allowlist
-	else
-		log_msg "No local allowlist identified."
-	fi
-
-	allowlist_id=0
-	for allowlist_url in ${allowlist_urls}
-	do
-		for retries in $(seq 1 3)
-		do
-			log_msg "Downloading new allowlist file part from: ${allowlist_url}."
-			uclient-fetch "${allowlist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err > /tmp/allowlist.${allowlist_id}
-			if grep -q "Download completed" /tmp/uclient-fetch_err
-			then
-				allowlist_file_part_size_KB=$(du -bk /tmp/allowlist.${allowlist_id} | awk '{print $1}')
-				allowlist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/allowlist.${allowlist_id})
-				log_msg "Download of new allowlist file part from: ${allowlist_url} suceeded (downloaded file size: ${allowlist_file_part_size_KB} KB; line count: ${allowlist_file_part_line_count})."
-				log_msg "Sanitizing allowlist file part."
-				# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
-				sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/; s/\([^#]\)#.*$/\1/g; /^#/d; s/#$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' /tmp/allowlist.${allowlist_id} >> /tmp/allowlist
-				rm -f  /tmp/allowlist.${allowlist_id}
-				allowlist_id=$((allowlist_id+1))
-				continue 2
-			else
-				log_msg "Download of new allowlist file part from: ${allowlist_url} failed."
-				log_msg "Sleeping for 5 seconds after failed download attempt."
-				sleep 5
-				continue
-			fi
-		done
-		log_msg "Download failed after three failed download attempts. Continuing further operation."
-	done
-
-	rm -f /tmp/allowlist.*
-
-	if [[ -f "/tmp/allowlist" ]] && allowlist_line_count=$(grep -vEc '^\s*$|^#' /tmp/allowlist) && [[ $allowlist_line_count -gt 0 ]]
-	then
-		log_msg "Successfully generated allowlist with ${allowlist_line_count} lines."
-		log_msg "Will remove any (sub)domain matches from the blocklist and append corresponding server entries to the blocklist."
-		use_allowlist=1
-	else
-		log_msg "Not using any allowlist for blocklist processing."
-		use_allowlist=0
-	fi
-
 	for blocklist_file_part_gz in /tmp/blocklist.*.gz
 	do
-		if [[ "${use_allowlist}" == 1 ]]
-		then
-			gunzip -c "${blocklist_file_part_gz}" | awk -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" -
-		else  
-			gunzip -c "${blocklist_file_part_gz}"
-		fi
+		gunzip -c "${blocklist_file_part_gz}"
 		rm -f "${blocklist_file_part_gz}"
 	done | sort -u > /tmp/blocklist
 
