@@ -534,6 +534,8 @@ start()
 		[[ "${initial_dnsmasq_restart}" == 1 ]] && restart_dnsmasq
 	fi
 
+	blocklist_processing_time_start_s=$(date +%s)
+
 	if generate_preprocessed_blocklist_file_parts
 	then
 		log_msg "Successfully generated preprocessed blocklist file based on ${preprocessed_blocklist_line_count} lines."
@@ -563,6 +565,11 @@ start()
 		rm -f /tmp/blocklist* /tmp/prev_blocklist.gz
 		exit
 	fi
+
+	blocklist_processing_time_s=$(($(date +%s) - blocklist_processing_time_start_s))
+	blocklist_processing_time_str=$(printf '%dm:%ds' $((blocklist_processing_time_s/60)) $((blocklist_processing_time_s%60)))
+
+	log_msg "Processing time for blocklist generation and import: ${blocklist_processing_time_str}."
 
 	restart_dnsmasq
 
