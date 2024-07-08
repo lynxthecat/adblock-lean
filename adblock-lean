@@ -314,11 +314,7 @@ generate_preprocessed_blocklist_file_parts()
 					if [[ "${rogue_element_action}" != "IGNORE" ]] 
 					then
 						log_msg "Checking for any rogue elements."
-
-						# Get line number and match of any rogue elements
-						rogue_element=$(sed -nE '\~^(local=/)[[:alnum:]*][[:alnum:]*_.-]+(/$)|^bogus-nxdomain=[0-9.]+$~d;{p;=;q}' /tmp/blocklist.${blocklist_id} | { read match; read line; [[ ! -z "${match}" ]] && echo "${line}: ${match}"; })
-
-						if [[ ! -z "${rogue_element}" ]]
+						if rogue_element="$(grep -Evn -m1 '^(local=/[[:alnum:]*][[:alnum:]*_.-]+/|bogus-nxdomain=[0-9.]+){0,1}$' /tmp/blocklist.${blocklist_id})"
 						then
 							log_msg "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
 							if [[ "${rogue_element_action}" == "STOP" ]]
