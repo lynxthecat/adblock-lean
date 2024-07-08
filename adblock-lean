@@ -26,6 +26,22 @@ adblock-lean custom commands:
 	gen_config	generate default config
 	update		update adblock-lean to the latest version"
 
+get_uptime_ms()
+{
+	read -r uptime_ms _ < /proc/uptime
+	printf "${uptime_ms%.*}${uptime_ms#*.}0"
+}
+
+get_elapsed_time_str()
+{
+	# To use, first set initial uptime: initial_uptime_ms=$(get_uptime_ms)
+	# Then call this function to get elapsed time string at desired intervals, e.g.:
+	# printf "Elapsed time: $(get_elapsed_time_str)\n"
+
+	elapsed_time_s=$(( ($(get_uptime_ms)-${initial_uptime_ms:-$(get_uptime_ms)})/1000 ))
+	printf '%dm:%ds' $((elapsed_time_s/60)) $((elapsed_time_s%60))
+}
+
 log_msg()
 {
 	local msg="${1}"
@@ -534,7 +550,7 @@ start()
 		[[ "${initial_dnsmasq_restart}" == 1 ]] && restart_dnsmasq
 	fi
 
-	blocklist_processing_time_start_s=$(date +%s)
+	initial_uptime_ms=$(get_uptime_ms)
 
 	if generate_preprocessed_blocklist_file_parts
 	then
@@ -566,10 +582,8 @@ start()
 		exit
 	fi
 
-	blocklist_processing_time_s=$(($(date +%s) - blocklist_processing_time_start_s))
-	blocklist_processing_time_str=$(printf '%dm:%ds' $((blocklist_processing_time_s/60)) $((blocklist_processing_time_s%60)))
-
-	log_msg "Processing time for blocklist generation and import: ${blocklist_processing_time_str}."
+	elapsed_time_str=$(get_elapsed_time_str)
+	log_msg "Processing time for blocklist generation and import: ${elapsed_time_str}."
 
 	restart_dnsmasq
 
