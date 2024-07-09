@@ -45,7 +45,7 @@ get_elapsed_time_str()
 log_msg()
 {
 	local msg="${1}"
-	[[ -t 1 ]] && printf "${msg}\n"
+	printf "${msg}\n" > /dev/tty
 	logger -t adblock-lean "${msg}"
 }
 
@@ -308,28 +308,29 @@ generate_preprocessed_blocklist_file_parts()
 						${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" -
 					else
 						cat
-					fi > /tmp/blocklist.${blocklist_id}.tmp
-					mv "/tmp/blocklist.${blocklist_id}.tmp" "/tmp/blocklist.${blocklist_id}"
+					fi |
 
 					if [[ "${rogue_element_action}" != "IGNORE" ]] 
 					then
 						log_msg "Checking for any rogue elements."
-						if rogue_element="$(grep -Evn -m1 '^(local=/[[:alnum:]*][[:alnum:]*_.-]+/|bogus-nxdomain=[0-9.]+){0,1}$' /tmp/blocklist.${blocklist_id})"
+						tee >(grep -Evn -m1 '^(local=/[[:alnum:]*][[:alnum:]*_.-]+/|bogus-nxdomain=[0-9.]+){0,1}$' > /tmp/rogue_element)
+					fi | gzip > "/tmp/blocklist.${blocklist_id}.gz"
+
+					if read -r rogue_element < /tmp/rogue_element
+					then
+						log_msg "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
+
+						if [[ "${rogue_element_action}" == "STOP" ]]
 						then
-							log_msg "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
-							if [[ "${rogue_element_action}" == "STOP" ]]
-							then
-								return 1
-							else
-								log_msg "Skipping file part and continuing."
-								rm -f "/tmp/blocklist.${blocklist_id}"
-								continue 2
-							fi
+							return 1
+						else
+							log_msg "Skipping file part and continuing."
+							rm -f "/tmp/blocklist.${blocklist_id}" /tmp/rogue_element
+							continue 2
 						fi
 					fi
 
-					gzip "/tmp/blocklist.${blocklist_id}"
-					rm -f "/tmp/blocklist.${blocklist_id}"
+					rm -f "/tmp/blocklist.${blocklist_id}" /tmp/rogue_element
 
 					preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
 					blocklist_id=$((blocklist_id+1))
@@ -556,7 +557,7 @@ start()
 	else
 		log_failure "Failed to generate preprocessed blocklist file with at least one line."
 		restore_saved_blocklist
-		rm -f /tmp/uclient-fetch_err /tmp/blocklist* /tmp/prev_blocklist.gz
+		rm -f /tmp/allowlist* /tmp/uclient-fetch_err /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/rogue_element
 		exit
 	fi
 
@@ -566,7 +567,7 @@ start()
 	else
 		log_failure "New blocklist file check failed."
 		restore_saved_blocklist
-		rm -f /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/allowlist*
+		rm -f /tmp/allowlist* /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/rogue_element
 		exit
 	fi
 
@@ -618,7 +619,7 @@ stop()
 	clean_dnsmasq_dir
 	/etc/init.d/dnsmasq restart &> /dev/null
 	log_msg "Removing any leftover adblock-lean temporary files."
-	rm -f /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/allowlist*
+	rm -f /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/allowlist* /tmp/rogue_element
 	log_msg "Stopped adblock-lean."
 }
 
