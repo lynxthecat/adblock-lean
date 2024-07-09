@@ -373,11 +373,27 @@ generate_preprocessed_blocklist_file_parts()
 
 generate_and_process_blocklist_file()
 {
+	log_msg "Performing dnsmasq --test on the blocklist file parts and sorting and merging the blocklist lines into a single blocklist file."
+
+	rm -f /tmp/dnsmasq_err
+
 	for blocklist_file_part_gz in /tmp/blocklist.*.gz
 	do
-		gunzip -c "${blocklist_file_part_gz}"
+		gunzip -c "${blocklist_file_part_gz}" | tee >(dnsmasq_test_output=$(dnsmasq --test -C - 2>&1); [[ $? != 0 ]] && "printf $dnsmasq_test_output" > /tmp/dnsmasq_err)
 		rm -f "${blocklist_file_part_gz}"
 	done | sort -u > /tmp/blocklist
+
+	if [[ -f /tmp/dnsmasq_err ]]
+	then
+		log_msg "The dnsmasq --test on one of the blocklist file parts failed."
+		log_msg "Last dnsmasq --test error:"
+		log_msg "$(cat /tmp/dnsmasq_err)"
+		return 1
+	else
+		log_msg "The dnsmasq --test on all of the blocklist file parts passed."
+	fi
+
+	rm -f /tmp/dnsmasq_err
 
 	[[ "${use_allowlist}" == 1 ]] && sed 's~.*~server=/&/#~; $a\' /tmp/allowlist >> /tmp/blocklist
 
@@ -395,27 +411,11 @@ generate_and_process_blocklist_file()
 	
 	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
 	then
-		log_msg "New blocklist file size: ${blocklist_file_size_KB} KB too large."
+		log_msg "New processed blocklist file size: ${blocklist_file_size_KB} KB too large."
 		return 1
 	fi
 
 	log_msg "Processed blocklist file size: ${blocklist_file_size_KB} KB."
-
-	log_msg "Performing dnsmasq --test on the processed blocklist."
-
-	dnsmasq_test_output=$(dnsmasq --test --conf-file=/tmp/blocklist 2>&1)
-	
-	dnsmasq_test_result=${?}
-
-	log_msg "dnsmasq --test output: ${dnsmasq_test_output}"
-
-	if [[ ${dnsmasq_test_result} == 0 ]] 
-	then
-		log_msg "The dnsmasq --test on the processed blocklist passed."
-	else
-		log_msg "The dnsmasq --test on the processed blocklist failed."
-		return 1
-	fi
 
 	return 0
 }
@@ -567,7 +567,7 @@ start()
 	else
 		log_failure "New blocklist file check failed."
 		restore_saved_blocklist
-		rm -f /tmp/allowlist* /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/rogue_element
+		rm -f /tmp/allowlist* /tmp/dnsmasq_err /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/rogue_element
 		exit
 	fi
 
