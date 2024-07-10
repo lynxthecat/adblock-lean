@@ -208,18 +208,26 @@ check_blocklist_compression_support()
 generate_preprocessed_blocklist_file_parts()
 {
 	rm -f /tmp/allowlist*
+	allowlist_line_count=0
+	allowlist_id=0
 
-	if [[ -f "${local_allowlist_path}" ]] && local_allowlist_line_count=$(grep -vEc '^\s*$|^#' ${local_allowlist_path}) && [[ $local_allowlist_line_count -gt 0 ]]
+	if [[ -f "${local_allowlist_path}" ]]
 	then
-		log_msg "Found local allowlist with ${local_allowlist_line_count} lines."
+		log_msg "Found local allowlist."
 		log_msg "Sanitizing allowlist file part."
 		# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
-		cat ${local_allowlist_path} | tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' > /tmp/allowlist
+		allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < "${local_allowlist_path}" | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee /tmp/allowlist | wc -l)"
+		if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
+		then
+			log_msg "Sanitized allowlist file part line count: ${allowlist_file_part_line_count}."
+		else
+			log_msg "No lines remaining in allowlist file part after sanitization."
+		fi
+		allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count))
 	else
 		log_msg "No local allowlist identified."
 	fi
 
-	allowlist_id=0
 	for allowlist_url in ${allowlist_urls}
 	do
 		for retries in $(seq 1 3)
@@ -229,11 +237,17 @@ generate_preprocessed_blocklist_file_parts()
 			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
 				allowlist_file_part_size_KB=$(du -bk /tmp/allowlist.${allowlist_id} | awk '{print $1}')
-				allowlist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/allowlist.${allowlist_id})
-				log_msg "Download of new allowlist file part from: ${allowlist_url} suceeded (downloaded file size: ${allowlist_file_part_size_KB} KB; line count: ${allowlist_file_part_line_count})."
+				log_msg "Download of new allowlist file part from: ${allowlist_url} suceeded (downloaded file size: ${allowlist_file_part_size_KB} KB)."
 				log_msg "Sanitizing allowlist file part."
 				# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
-				cat /tmp/allowlist.${allowlist_id} | tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' >> /tmp/allowlist
+				allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < /tmp/allowlist.${allowlist_id} | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee -a /tmp/allowlist | wc -l)"
+				if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
+				then
+					log_msg "Sanitized allowlist file part line count: ${allowlist_file_part_line_count}."
+				else
+					log_msg "No lines remaining in allowlist file part after sanitization."
+				fi
+				allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count))
 				rm -f  /tmp/allowlist.${allowlist_id}
 				allowlist_id=$((allowlist_id+1))
 				continue 2
@@ -249,7 +263,7 @@ generate_preprocessed_blocklist_file_parts()
 
 	rm -f /tmp/allowlist.*
 
-	if [[ -f "/tmp/allowlist" ]] && allowlist_line_count=$(grep -vEc '^\s*$|^#' /tmp/allowlist) && [[ $allowlist_line_count -gt 0 ]]
+	if [[ -f "/tmp/allowlist" ]] && [[ $allowlist_line_count -gt 0 ]]
 	then
 		log_msg "Successfully generated allowlist with ${allowlist_line_count} lines."
 		log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
@@ -271,7 +285,7 @@ generate_preprocessed_blocklist_file_parts()
 
 	rm -f /tmp/blocklist*
 
-	if [[ -f "${local_blocklist_path}" ]] 
+	if [[ -f "${local_blocklist_path}" ]]
 	then
 		local_blocklist_line_count=$(grep -vEc '^\s*$|^#' "${local_blocklist_path}")
 		log_msg "Found local blocklist with ${local_blocklist_line_count} line(s)."
