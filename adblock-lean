@@ -26,6 +26,11 @@ adblock-lean custom commands:
 	gen_config	generate default config
 	update		update adblock-lean to the latest version"
 
+get_file_size_KB()
+{
+	du -bk "$1" | awk '{print $1}'
+}
+
 get_uptime_ms()
 {
 	read -r uptime_ms _ < /proc/uptime
@@ -236,7 +241,7 @@ generate_preprocessed_blocklist_file_parts()
 			uclient-fetch "${allowlist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err > /tmp/allowlist.${allowlist_id}
 			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
-				allowlist_file_part_size_KB=$(du -bk /tmp/allowlist.${allowlist_id} | awk '{print $1}')
+				allowlist_file_part_size_KB=$(get_file_size_KB /tmp/allowlist.${allowlist_id})
 				log_msg "Download of new allowlist file part from: ${allowlist_url} suceeded (downloaded file size: ${allowlist_file_part_size_KB} KB)."
 				log_msg "Sanitizing allowlist file part."
 				# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
@@ -306,7 +311,7 @@ generate_preprocessed_blocklist_file_parts()
 			uclient-fetch "${blocklist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
 			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
-				blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
+				blocklist_file_part_size_KB=$(get_file_size_KB /tmp/blocklist.${blocklist_id})
 				blocklist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist.${blocklist_id})
 
 				if [[ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]]
@@ -357,7 +362,7 @@ generate_preprocessed_blocklist_file_parts()
 				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
 				if [[ -f "/tmp/blocklist.${blocklist_id}" ]]
 				then
-					blocklist_file_part_size_KB=$(du -bk /tmp/blocklist.${blocklist_id} | awk '{print $1}')
+					blocklist_file_part_size_KB=$(get_file_size_KB /tmp/blocklist.${blocklist_id})
 					if [[ "${blocklist_file_part_size_KB}" -eq "${max_blocklist_file_part_size_KB}" ]]
 					then
 						log_msg "Downloaded blocklist file part size exceeded the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
@@ -421,7 +426,7 @@ generate_and_process_blocklist_file()
 		return 1
 	fi
 
-	blocklist_file_size_KB=$(du -bk /tmp/blocklist | awk '{print $1}')
+	blocklist_file_size_KB=$(get_file_size_KB /tmp/blocklist)
 	
 	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
 	then
@@ -525,11 +530,11 @@ import_blocklist_file()
 		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist
 		gzip -f /tmp/blocklist
 		mv /tmp/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz
-		imported_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/.blocklist.gz | awk '{print $1}')
+		imported_blocklist_file_size_KB=$(get_file_size_KB /tmp/dnsmasq.d/.blocklist.gz)
 	else
 			clean_dnsmasq_dir
 			mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
-			imported_blocklist_file_size_KB=$(du -bk /tmp/dnsmasq.d/blocklist | awk '{print $1}')
+			imported_blocklist_file_size_KB=$(get_file_size_KB /tmp/dnsmasq.d/blocklist)
 			return 0
 	fi
 }
