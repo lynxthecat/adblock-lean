@@ -13,6 +13,14 @@ PREFIX=/root/adblock-lean
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
 
+tmp_blocklist_path="/tmp/adblock-lean_blocklist"
+tmp_allowlist_path="/tmp/adblock-lean_allowlist"
+tmp_prev_blocklist_path="/tmp/adblock-lean_prev_blocklist"
+rogue_element_path="/tmp/adblock-lean_rogue_element"
+dnsmasq_gz_blocklist_path="/tmp/dnsmasq.d/.adblock-lean_blocklist.gz"
+dnsmasq_blocklist_path="/tmp/dnsmasq.d/adblock-lean_blocklist"
+dnsmasq_extract_blocklist_path="/tmp/dnsmasq.d/.adblock-lean_extract_blocklist"
+
 START=99
 STOP=4
 
@@ -186,9 +194,9 @@ gen_config()
 
 	# Start delay in seconds when service is started from system boot
 	boot_start_delay_s=120
-	
+
 	EOT
-	
+
 	if [[ -f "${PREFIX}/config" ]]
 	then
 		log_msg "WARNING: config file ${PREFIX}/config already exists."
@@ -229,7 +237,7 @@ check_blocklist_compression_support()
 
 generate_preprocessed_blocklist_file_parts()
 {
-	rm -f /tmp/allowlist*
+	rm -f "${tmp_allowlist_path}"*
 	allowlist_line_count=0
 	allowlist_id=0
 
@@ -238,7 +246,7 @@ generate_preprocessed_blocklist_file_parts()
 		log_msg "Found local allowlist."
 		log_msg "Sanitizing allowlist file part."
 		# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
-		allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < "${local_allowlist_path}" | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee /tmp/allowlist | wc -l)"
+		allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < "${local_allowlist_path}" | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee "${tmp_allowlist_path}" | wc -l)"
 		if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
 		then
 			log_msg "Sanitized allowlist file part line count: ${allowlist_file_part_line_count}."
@@ -257,14 +265,14 @@ generate_preprocessed_blocklist_file_parts()
 		do
 			retry=$((retry + 1))
 			log_msg "Downloading new allowlist file part from: ${allowlist_url}."
-			uclient-fetch "${allowlist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err > /tmp/allowlist.${allowlist_id}
+			uclient-fetch "${allowlist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err > "${tmp_allowlist_path}.${allowlist_id}"
 			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
-				allowlist_file_part_size_KB=$(get_file_size_KB /tmp/allowlist.${allowlist_id})
+				allowlist_file_part_size_KB=$(get_file_size_KB "${tmp_allowlist_path}.${allowlist_id}")
 				log_msg "Download of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_KB} KB)."
 				log_msg "Sanitizing allowlist file part."
 				# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
-				allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < /tmp/allowlist.${allowlist_id} | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee -a /tmp/allowlist | wc -l)"
+				allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < "${tmp_allowlist_path}.${allowlist_id}" | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee -a "${tmp_allowlist_path}" | wc -l)"
 				if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
 				then
 					log_msg "Sanitized allowlist file part line count: ${allowlist_file_part_line_count}."
@@ -272,7 +280,7 @@ generate_preprocessed_blocklist_file_parts()
 					log_msg "No lines remaining in allowlist file part after sanitization."
 				fi
 				allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count))
-				rm -f  /tmp/allowlist.${allowlist_id}
+				rm -f  "${tmp_allowlist_path}.${allowlist_id}"
 				allowlist_id=$((allowlist_id+1))
 				continue 2
 			else
@@ -285,9 +293,9 @@ generate_preprocessed_blocklist_file_parts()
 		log_msg "Download failed after three failed download attempts. Continuing further operation."
 	done
 
-	rm -f /tmp/allowlist.*
+	rm -f "${tmp_allowlist_path}".*
 
-	if [[ -f "/tmp/allowlist" ]] && [[ $allowlist_line_count -gt 0 ]]
+	if [[ -f "${tmp_allowlist_path}" ]] && [[ $allowlist_line_count -gt 0 ]]
 	then
 		log_msg "Successfully generated allowlist with ${allowlist_line_count} lines."
 		log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
@@ -297,13 +305,13 @@ generate_preprocessed_blocklist_file_parts()
 		use_allowlist=0
 	fi
 
-	rm -f /tmp/blocklist*
+	rm -f "${tmp_blocklist_path}"*
 
 	if [[ -f "${local_blocklist_path}" ]]
 	then
 		local_blocklist_line_count=$(grep -vEc '^\s*$|^#' "${local_blocklist_path}")
 		log_msg "Found local blocklist with ${local_blocklist_line_count} line(s)."
-		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\' "${local_blocklist_path}" | gzip > /tmp/blocklist.0.gz
+		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\' "${local_blocklist_path}" | gzip > "${tmp_blocklist_path}.0.gz"
 	else
 		log_msg "No local blocklist identified."
 	fi
@@ -319,11 +327,11 @@ generate_preprocessed_blocklist_file_parts()
 		do
 			retry=$((retry + 1))
 			log_msg "Downloading new blocklist file part from: ${blocklist_url}."
-			uclient-fetch "${blocklist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
+			uclient-fetch "${blocklist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" > "${tmp_blocklist_path}.${blocklist_id}"
 			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
-				blocklist_file_part_size_KB=$(get_file_size_KB /tmp/blocklist.${blocklist_id})
-				blocklist_file_part_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist.${blocklist_id})
+				blocklist_file_part_size_KB=$(get_file_size_KB "${tmp_blocklist_path}.${blocklist_id}")
+				blocklist_file_part_line_count=$(grep -vEc '^\s*$|^#' "${tmp_blocklist_path}.${blocklist_id}")
 
 				if [[ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]]
 				then
@@ -332,10 +340,10 @@ generate_preprocessed_blocklist_file_parts()
 					log_msg "Sanitizing blocklist file part."
 
 					# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=; 5 Add newline
-					tr 'A-Z' 'a-z' < /tmp/blocklist.${blocklist_id} | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/^\(address=\|server=\)/local=/; $a\' |
+					tr 'A-Z' 'a-z' < "${tmp_blocklist_path}.${blocklist_id}" | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/^\(address=\|server=\)/local=/; $a\' |
 					if [[ "${use_allowlist}" == 1 ]]
 					then
-						${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "/tmp/allowlist" -
+						${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${tmp_allowlist_path}" -
 					else
 						cat
 					fi |
@@ -343,10 +351,10 @@ generate_preprocessed_blocklist_file_parts()
 					if [[ "${rogue_element_action}" != "IGNORE" ]] 
 					then
 						log_msg "Checking for any rogue elements."
-						tee >(grep -Evn -m1 '^(local=/[[:alnum:]*][[:alnum:]*_.-]+/|bogus-nxdomain=[0-9.]+){0,1}$' > /tmp/rogue_element)
-					fi | gzip > "/tmp/blocklist.${blocklist_id}.gz"
+						tee >(grep -Evn -m1 '^(local=/[[:alnum:]*][[:alnum:]*_.-]+/|bogus-nxdomain=[0-9.]+){0,1}$' > "${rogue_element_path}")
+					fi | gzip > "${tmp_blocklist_path}.${blocklist_id}.gz"
 
-					if read -r rogue_element < /tmp/rogue_element
+					if read -r rogue_element < "${rogue_element_path}"
 					then
 						log_msg "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
 
@@ -355,12 +363,12 @@ generate_preprocessed_blocklist_file_parts()
 							return 1
 						else
 							log_msg "Skipping file part and continuing."
-							rm -f "/tmp/blocklist.${blocklist_id}" /tmp/rogue_element
+							rm -f "${tmp_blocklist_path}.${blocklist_id}" "${rogue_element_path}"
 							continue 2
 						fi
 					fi
 
-					rm -f "/tmp/blocklist.${blocklist_id}" /tmp/rogue_element
+					rm -f "${tmp_blocklist_path}.${blocklist_id}" "${rogue_element_path}"
 
 					preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
 					blocklist_id=$((blocklist_id+1))
@@ -371,9 +379,9 @@ generate_preprocessed_blocklist_file_parts()
 				fi
 			else
 				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
-				if [[ -f "/tmp/blocklist.${blocklist_id}" ]]
+				if [[ -f "${tmp_blocklist_path}.${blocklist_id}" ]]
 				then
-					blocklist_file_part_size_KB=$(get_file_size_KB /tmp/blocklist.${blocklist_id})
+					blocklist_file_part_size_KB=$(get_file_size_KB ${tmp_blocklist_path}.${blocklist_id})
 					if [[ "${blocklist_file_part_size_KB}" -eq "${max_blocklist_file_part_size_KB}" ]]
 					then
 						log_msg "Downloaded blocklist file part size exceeded the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
@@ -408,15 +416,15 @@ generate_and_process_blocklist_file()
 	rm -f /tmp/dnsmasq_err
 
 	{
-		[[ "${use_allowlist}" == 1 ]] && sed 's~.*~server=/&/#~; $a\' /tmp/allowlist
-		rm -f /tmp/allowlist
+		[[ "${use_allowlist}" == 1 ]] && sed 's~.*~server=/&/#~; $a\' "${tmp_allowlist_path}"
+		rm -f "${tmp_allowlist_path}"
 
-		for blocklist_file_part_gz in /tmp/blocklist.*.gz
+		for blocklist_file_part_gz in "${tmp_blocklist_path}".*.gz
 		do
 			gunzip -c "${blocklist_file_part_gz}"
 			rm -f "${blocklist_file_part_gz}"
 		done
-	} | sort -u | tee >(dnsmasq_test_output=$(dnsmasq --test -C - 2>&1); [[ $? != 0 ]] && "printf $dnsmasq_test_output" > /tmp/dnsmasq_err) > /tmp/blocklist
+	} | sort -u | tee >(dnsmasq_test_output=$(dnsmasq --test -C - 2>&1); [[ $? != 0 ]] && "printf $dnsmasq_test_output" > /tmp/dnsmasq_err) > "${tmp_blocklist_path}"
 
 	if [[ -f /tmp/dnsmasq_err ]]
 	then
@@ -430,7 +438,7 @@ generate_and_process_blocklist_file()
 
 	rm -f /tmp/dnsmasq_err
 
-	good_line_count=$(grep -vEc '^\s*$|^#' /tmp/blocklist)
+	good_line_count=$(grep -vEc '^\s*$|^#' "${tmp_blocklist_path}")
 
 	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
 	then
@@ -438,7 +446,7 @@ generate_and_process_blocklist_file()
 		return 1
 	fi
 
-	blocklist_file_size_KB=$(get_file_size_KB /tmp/blocklist)
+	blocklist_file_size_KB=$(get_file_size_KB "${tmp_blocklist_path}")
 	
 	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
 	then
@@ -494,16 +502,16 @@ restart_dnsmasq()
 
 export_existing_blocklist()
 {
-	if [[ -f /tmp/dnsmasq.d/.blocklist.gz ]]
+	if [[ -f "${dnsmasq_gz_blocklist_path}" ]]
 	then
 		log_msg "Exporting and saving existing compressed blocklist."
-		mv /tmp/dnsmasq.d/.blocklist.gz /tmp/prev_blocklist.gz
+		mv "${dnsmasq_gz_blocklist_path}" "${tmp_prev_blocklist_path}.gz"
 		return 0
-	elif [[ -f /tmp/dnsmasq.d/blocklist ]]
+	elif [[ -f "${dnsmasq_blocklist_path}" ]]
 	then
 		log_msg "Exporting and saving existing uncompressed blocklist."
-		gzip -f /tmp/dnsmasq.d/blocklist
-		mv /tmp/dnsmasq.d/blocklist.gz /tmp/prev_blocklist.gz
+		gzip -f "${dnsmasq_blocklist_path}"
+		mv "${dnsmasq_blocklist_path}.gz" "${tmp_prev_blocklist_path}.gz"
 		return 0
 	else
 		log_msg "No existing compressed or uncompressed blocklist identified."
@@ -513,11 +521,11 @@ export_existing_blocklist()
 
 restore_saved_blocklist()
 {
-	if [[ -f /tmp/prev_blocklist.gz ]]
+	if [[ -f "${tmp_prev_blocklist_path}.gz" ]]
 	then
 		log_msg "Restoring saved blocklist file."
-		mv /tmp/prev_blocklist.gz /tmp/blocklist.gz
-		gunzip -f /tmp/blocklist.gz
+		mv "${tmp_prev_blocklist_path}.gz" "${tmp_blocklist_path}.gz"
+		gunzip -f "${tmp_blocklist_path}.gz"
 		import_blocklist_file
 		return 0
 	else
@@ -528,25 +536,28 @@ restore_saved_blocklist()
 
 clean_dnsmasq_dir()
 {
-	rm -f /tmp/dnsmasq.d/.blocklist.gz /tmp/dnsmasq.d/blocklist /tmp/dnsmasq.d/conf-script /tmp/dnsmasq.d/.extract_blocklist
+	rm -f "${dnsmasq_gz_blocklist_path}" "${dnsmasq_blocklist_path}" "${dnsmasq_extract_blocklist_path}" /tmp/dnsmasq.d/conf-script
 }
 
 import_blocklist_file()
 {
-	[[ -f /tmp/blocklist ]] || return 1
+	[[ -f "${tmp_blocklist_path}" ]] || return 1
 
 	if [[ "${compress_blocklist}" == 1 ]]
 	then
 		clean_dnsmasq_dir
-		printf "conf-script=\"busybox sh /tmp/dnsmasq.d/.extract_blocklist\"\n" > /tmp/dnsmasq.d/conf-script
-		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist
-		gzip -f /tmp/blocklist
-		mv /tmp/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz
-		imported_blocklist_file_size_KB=$(get_file_size_KB /tmp/dnsmasq.d/.blocklist.gz)
+		{
+			grep -v "adblock-lean" "/tmp/dnsmasq.d/conf-script" 2>/dev/null
+			printf '%s\n' "conf-script=\"busybox sh ${dnsmasq_extract_blocklist_path}\""
+		} > /tmp/dnsmasq.d/conf-script
+		printf '%s\n%s\n' "busybox gunzip -c ${dnsmasq_gz_blocklist_path}" "exit 0" > "${dnsmasq_extract_blocklist_path}"
+		gzip -f "${tmp_blocklist_path}"
+		mv "${tmp_blocklist_path}.gz" "${dnsmasq_gz_blocklist_path}"
+		imported_blocklist_file_size_KB=$(get_file_size_KB "${dnsmasq_gz_blocklist_path}")
 	else
 			clean_dnsmasq_dir
-			mv /tmp/blocklist /tmp/dnsmasq.d/blocklist
-			imported_blocklist_file_size_KB=$(get_file_size_KB /tmp/dnsmasq.d/blocklist)
+			mv "${tmp_blocklist_path}" "${dnsmasq_blocklist_path}"
+			imported_blocklist_file_size_KB=$(get_file_size_KB "${dnsmasq_blocklist_path}")
 			return 0
 	fi
 }
@@ -558,7 +569,7 @@ boot()
 	start "$@"
 }
 
-start() 
+start()
 {
 
 	log_msg "Started adblock-lean."
@@ -590,7 +601,7 @@ start()
 	else
 		log_failure "Failed to generate preprocessed blocklist file with at least one line."
 		restore_saved_blocklist
-		rm -f /tmp/allowlist* /tmp/uclient-fetch_err /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/rogue_element
+		rm -f "${tmp_allowlist_path}"* /tmp/uclient-fetch_err "${tmp_blocklist_path}"* "${tmp_prev_blocklist_path}.gz" "${rogue_element_path}"
 		exit
 	fi
 
@@ -600,7 +611,7 @@ start()
 	else
 		log_failure "New blocklist file check failed."
 		restore_saved_blocklist
-		rm -f /tmp/allowlist* /tmp/dnsmasq_err /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/rogue_element
+		rm -f "${tmp_allowlist_path}"* /tmp/dnsmasq_err "${tmp_blocklist_path}"* "${tmp_prev_blocklist_path}.gz" "${rogue_element_path}"
 		exit
 	fi
 
@@ -610,7 +621,7 @@ start()
 	else
 		log_failure "Failed to import new blocklist file."
 		restore_saved_blocklist
-		rm -f /tmp/blocklist* /tmp/prev_blocklist.gz
+		rm -f "${tmp_blocklist_path}"* "${tmp_prev_blocklist_path}.gz"
 		exit
 	fi
 
@@ -623,7 +634,7 @@ start()
 	then
 		log_msg "The dnsmasq check passed with new blocklist file."
 		log_success "New blocklist installed with good line count: ${good_line_count}."
-		rm -f /tmp/prev_blocklist.gz
+		rm -f "${tmp_prev_blocklist_path}.gz"
 	else	
 		log_failure "The dnsmasq check failed with new blocklist file."
 
@@ -652,7 +663,7 @@ stop()
 	clean_dnsmasq_dir
 	/etc/init.d/dnsmasq restart &> /dev/null
 	log_msg "Removing any leftover adblock-lean temporary files."
-	rm -f /tmp/blocklist* /tmp/prev_blocklist.gz /tmp/allowlist* /tmp/rogue_element
+	rm -f "${tmp_blocklist_path}"* "${tmp_prev_blocklist_path}.gz" "${tmp_allowlist_path}"* "${rogue_element_path}"
 	log_msg "Stopped adblock-lean."
 }
 
@@ -665,7 +676,7 @@ gen_stats()
 
 status()
 {
-	if ! [[ -f /tmp/dnsmasq.d/.blocklist.gz || -f /tmp/dnsmasq.d/blocklist ]]
+	if ! [[ -f "${dnsmasq_gz_blocklist_path}" || -f "${dnsmasq_blocklist_path}" ]]
 	then
 		log_msg "Blocklist in /tmp/dnsmasq.d/ not identified."
 		log_msg "adblock-lean is not active."
@@ -673,12 +684,12 @@ status()
 	fi
 	if check_dnsmasq
 	then
-		if [[ -f /tmp/dnsmasq.d/.blocklist.gz ]] 
+		if [[ -f "${dnsmasq_gz_blocklist_path}" ]] 
 		then
-			good_line_count=$(gunzip -c /tmp/dnsmasq.d/.blocklist.gz | grep -vEc '^\s*$|^#')
-		elif [[ -f /tmp/dnsmasq.d/blocklist ]]
+			good_line_count=$(gunzip -c "${dnsmasq_gz_blocklist_path}" | grep -vEc '^\s*$|^#')
+		elif [[ -f "${dnsmasq_blocklist_path}" ]]
 		then
-			good_line_count=$(grep -vEc '^\s*$|^#' /tmp/dnsmasq.d/blocklist)
+			good_line_count=$(grep -vEc '^\s*$|^#' "${dnsmasq_blocklist_path}")
 		fi
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
