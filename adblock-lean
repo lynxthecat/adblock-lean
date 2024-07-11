@@ -242,7 +242,7 @@ generate_preprocessed_blocklist_file_parts()
 			if grep -q "Download completed" /tmp/uclient-fetch_err
 			then
 				allowlist_file_part_size_KB=$(get_file_size_KB /tmp/allowlist.${allowlist_id})
-				log_msg "Download of new allowlist file part from: ${allowlist_url} suceeded (downloaded file size: ${allowlist_file_part_size_KB} KB)."
+				log_msg "Download of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_KB} KB)."
 				log_msg "Sanitizing allowlist file part."
 				# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
 				allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < /tmp/allowlist.${allowlist_id} | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee -a /tmp/allowlist | wc -l)"
@@ -316,7 +316,7 @@ generate_preprocessed_blocklist_file_parts()
 
 				if [[ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]]
 				then
-					log_msg "Download of new blocklist file part from: ${blocklist_url} suceeded (downloaded file size: ${blocklist_file_part_size_KB} KB; line count: ${blocklist_file_part_line_count})."
+					log_msg "Download of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_KB} KB; line count: ${blocklist_file_part_line_count})."
 
 					log_msg "Sanitizing blocklist file part."
 
