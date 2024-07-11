@@ -26,6 +26,19 @@ adblock-lean custom commands:
 	gen_config	generate default config
 	update		update adblock-lean to the latest version"
 
+set_awk_cmd()
+{
+	if type gawk &> /dev/null
+	then
+		log_msg "gawk detected so using gawk for fast (sub)domain match removal."
+		awk_cmd="gawk"
+	else
+		log_msg "gawk not detected so using awk for the (sub)domain match removal."
+		log_msg "Consider installing the gawk package 'opkg install gawk' for faster (sub)domain match removal."
+		awk_cmd="awk"
+	fi
+}
+
 get_file_size_KB()
 {
 	du -bk "$1" | awk '{print $1}'
@@ -272,16 +285,6 @@ generate_preprocessed_blocklist_file_parts()
 	then
 		log_msg "Successfully generated allowlist with ${allowlist_line_count} lines."
 		log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
-
-		if type gawk &> /dev/null
-		then
-			log_msg "gawk detected so using gawk for fast (sub)domain match removal."
-			awk_cmd="gawk"
-		else
-			log_msg "gawk not detected so using awk for the (sub)domain match removal."
-			log_msg "Consider installing the gawk package 'opkg install gawk' for faster (sub)domain match removal."
-			awk_cmd="awk"
-		fi
 		use_allowlist=1
 	else
 		log_msg "Not using any allowlist for blocklist processing."
@@ -550,6 +553,8 @@ start()
 {
 
 	log_msg "Started adblock-lean."
+
+	set_awk_cmd
 
 	if [[ "${compress_blocklist}" == 1 ]]
 	then
