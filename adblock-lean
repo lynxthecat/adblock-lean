@@ -101,6 +101,7 @@ load_config()
 	fi
 
 	if [[ \
+	-z "${max_download_retries+set}" || \
 	-z "${blocklist_urls+set}" || \
 	-z "${allowlist_urls+set}" || \
 	-z "${local_allowlist_path+set}" || \
@@ -167,6 +168,9 @@ gen_config()
 	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
 	# IGNORE - ignore any rogue elements (warning: use with caution)
 	rogue_element_action="SKIP_PARTIAL"
+
+	# Maximum number of download retries
+	max_download_retries=3
 
 	# Download failed action:
 	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
@@ -248,8 +252,10 @@ generate_preprocessed_blocklist_file_parts()
 
 	for allowlist_url in ${allowlist_urls}
 	do
-		for retries in $(seq 1 3)
+		retry=0
+		while [[ "$retry" -le "$max_download_retries" ]]
 		do
+			retry=$((retry + 1))
 			log_msg "Downloading new allowlist file part from: ${allowlist_url}."
 			uclient-fetch "${allowlist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err > /tmp/allowlist.${allowlist_id}
 			if grep -q "Download completed" /tmp/uclient-fetch_err
@@ -308,8 +314,10 @@ generate_preprocessed_blocklist_file_parts()
 	blocklist_id=1
 	for blocklist_url in ${blocklist_urls}
 	do
-		for retries in $(seq 1 3)
+		retry=0
+		while [[ "$retry" -le "$max_download_retries" ]]
 		do
+			retry=$((retry + 1))
 			log_msg "Downloading new blocklist file part from: ${blocklist_url}."
 			uclient-fetch "${blocklist_url}" -O- --timeout=2 2> /tmp/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" > "/tmp/blocklist.${blocklist_id}"
 			if grep -q "Download completed" /tmp/uclient-fetch_err
