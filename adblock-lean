@@ -42,6 +42,31 @@ get_file_size_KB()
 	du -bk "$1" | awk '{print $1}'
 }
 
+get_file_size_human()
+{
+	bytes2human "$(du -b "$1" | awk '{print $1}')"
+}
+
+# converts unsigned integer to [xB|xKiB|xMiB|xTiB|xPiB]
+# if result is not an integer, outputs up to 2 digits after decimal point
+# 1 - int
+bytes2human()
+{
+	local i=${1:-0} s=0 d=0 m=1024 fp='' S=''
+	case "$i" in *[!0-9]*) log_msg "bytes2human: Invalid unsigned integer '$i'."; return 1; esac
+	for S in B KiB MiB GiB TiB; do
+		[ $((i > m && s < 4)) = 0 ] && break
+		d=$i i=$((i/m)) s=$((s+1))
+	done
+	d=$((d % m * 100 / m))
+	case $d in
+		0) printf "%s %s\n" "$i" "$S"; return ;;
+		[1-9]) fp="02" ;;
+		*0) d=${d%0}; fp="01"
+	esac
+	printf "%s.%${fp}d %s\n" "$i" "$d" "$S"
+}
+
 get_uptime_ms()
 {
 	read -r uptime_ms _ < /proc/uptime
@@ -261,7 +286,7 @@ generate_preprocessed_blocklist_file_parts()
 			tee >(wc -l > /var/run/adblock-lean/allowlist_file_part_line_count) > \
 				/var/run/adblock-lean/allowlist.${allowlist_id}
 
-			allowlist_file_part_size_KB=$(( ($(cat /var/run/adblock-lean/allowlist_file_part_size_B 2>/dev/null) + 0) / 1024 ))
+			allowlist_file_part_size_human="$(bytes2human "$(cat /var/run/adblock-lean/allowlist_file_part_size_B 2>/dev/null)" )"
 			allowlist_file_part_line_count="$(cat /var/run/adblock-lean/allowlist_file_part_line_count 2>/dev/null)"
 			: "${allowlist_file_part_line_count:=0}"
 			rm -f /var/run/adblock-lean/allowlist_file_part_size_B /var/run/adblock-lean/allowlist_file_part_line_count
@@ -274,7 +299,7 @@ generate_preprocessed_blocklist_file_parts()
 				continue
 			fi
 
-			log_msg "Download of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_KB} KB)."
+			log_msg "Download of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_human})."
 
 			if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
 			then
@@ -345,7 +370,9 @@ generate_preprocessed_blocklist_file_parts()
 				cat
 			fi | gzip > /var/run/adblock-lean/blocklist.${blocklist_id}.gz
 
-			blocklist_file_part_size_KB=$(( ($(cat /var/run/adblock-lean/blocklist_part_size_B 2>/dev/null) + 0) / 1024 ))
+			blocklist_file_part_size_B="$(cat /var/run/adblock-lean/blocklist_part_size_B 2>/dev/null)"
+			blocklist_file_part_size_KB=$(( (blocklist_file_part_size_B + 0) / 1024 ))
+			blocklist_file_part_size_human="$(bytes2human "${blocklist_file_part_size_B}")"
 			blocklist_file_part_line_count="$(cat /var/run/adblock-lean/blocklist_part_line_count 2>/dev/null)"
 			: "${blocklist_file_part_line_count:=0}"
 
@@ -381,7 +408,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if [[ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]]
 			then
-				log_msg "Download of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_KB} KB; sanitized line count: ${blocklist_file_part_line_count})."
+				log_msg "Download of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_human}; sanitized line count: ${blocklist_file_part_line_count})."
 
 				rm -f /var/run/adblock-lean/rogue_element
 
@@ -554,11 +581,11 @@ import_blocklist_file()
 		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist
 		gzip -f /var/run/adblock-lean/blocklist
 		mv /var/run/adblock-lean/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz
-		imported_blocklist_file_size_KB=$(get_file_size_KB /tmp/dnsmasq.d/.blocklist.gz)
+		imported_blocklist_file_size_human=$(get_file_size_human /tmp/dnsmasq.d/.blocklist.gz)
 	else
 			clean_dnsmasq_dir
 			mv /var/run/adblock-lean/blocklist /tmp/dnsmasq.d/blocklist
-			imported_blocklist_file_size_KB=$(get_file_size_KB /tmp/dnsmasq.d/blocklist)
+			imported_blocklist_file_size_human=$(get_file_size_human /tmp/dnsmasq.d/blocklist)
 			return 0
 	fi
 }
@@ -624,7 +651,7 @@ start()
 
 	if import_blocklist_file
 	then
-		log_msg "Successfully imported new blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_KB} KB."
+		log_msg "Successfully imported new blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_human}."
 	else
 		log_failure "Failed to import new blocklist file."
 		restore_saved_blocklist
