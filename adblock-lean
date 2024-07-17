@@ -135,8 +135,9 @@ load_config()
 	-z "${min_good_line_count+set}" || \
 	-z "${compress_blocklist+set}" || \
 	-z "${initial_dnsmasq_restart+set}" || \
-	-z "${rogue_element_action+set}" || \
 	-z "${download_failed_action+set}" || \
+	-z "${rogue_element_action+set}" || \
+	-z "${dnsmasq_test_failed_action+set}" || \
 	-z "${report_failure+set}" || \
 	-z "${report_success+set}" || \
 	-z "${boot_start_delay_s+set}" ]]
@@ -186,12 +187,6 @@ gen_config()
 	# new blocklist thereby to free up memory during generaiton of new blocklist
 	initial_dnsmasq_restart=0 # enable (1) or disable (0) initial dnsmasq restart
 
-	# Rogue element action:
-	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
-	# IGNORE - ignore any rogue elements (warning: use with caution)
-	rogue_element_action="SKIP_PARTIAL"
-
 	# Maximum number of download retries
 	max_download_retries=3
 
@@ -199,6 +194,17 @@ gen_config()
 	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
 	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
 	download_failed_action="SKIP_PARTIAL"
+
+	# Rogue element action:
+	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	# IGNORE - ignore any rogue elements (warning: use with caution)
+	rogue_element_action="SKIP_PARTIAL"
+
+	# dnsmasq --test failed action:
+	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	dnsmasq_test_failed_action="SKIP_PARTIAL"
 
 	# The following shell variables are invoked using:
 	# 'eval \${report_failure}' and 'eval \${report_success}'
@@ -299,7 +305,7 @@ generate_preprocessed_blocklist_file_parts()
 				continue
 			fi
 
-			log_msg "Download of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_human})."
+			log_msg "Processing of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_human})."
 
 			if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
 			then
@@ -368,7 +374,8 @@ generate_preprocessed_blocklist_file_parts()
 				tee >(sed -nE '\~^(local=/[[:alnum:]*][[:alnum:]*_.-]+/$|bogus-nxdomain=[0-9.]+$|$)~d;p;:1 n;b1' > /var/run/adblock-lean/rogue_element)
 			else
 				cat
-			fi | gzip > /var/run/adblock-lean/blocklist.${blocklist_id}.gz
+			fi | tee >(dnsmasq --test -C - 2> /var/run/adblock-lean/dnsmasq_err && rm -f /var/run/adblock-lean/dnsmasq_err) |
+			gzip > /var/run/adblock-lean/blocklist.${blocklist_id}.gz
 
 			blocklist_file_part_size_B="$(cat /var/run/adblock-lean/blocklist_part_size_B 2>/dev/null)"
 			blocklist_file_part_size_KB=$(( (blocklist_file_part_size_B + 0) / 1024 ))
@@ -401,14 +408,30 @@ generate_preprocessed_blocklist_file_parts()
 					return 1
 				else
 					log_msg "Skipping file part and continuing."
-					rm -f /var/run/adblock-lean/rogue_element
 					continue 2
 				fi
 			fi
 
+			if [[ -f /var/run/adblock-lean/dnsmasq_err ]]
+			then
+				log_msg "The dnsmasq --test on the blocklist file part failed."
+				log_msg "dnsmasq --test error:"
+				log_msg "$(cat /var/run/adblock-lean/dnsmasq_err)"
+				if [[ "${dnsmasq_test_fail_action}" == "STOP" ]]
+				then
+					return 1
+				else
+					log_msg "Skipping file part and continuing."
+					continue 2
+				fi
+				return 1
+			fi
+
+			rm -f /var/run/adblock-lean/dnsmasq_err
+
 			if [[ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]]
 			then
-				log_msg "Download of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_human}; sanitized line count: ${blocklist_file_part_line_count})."
+				log_msg "Processing of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_human}; sanitized line count: ${blocklist_file_part_line_count})."
 
 				rm -f /var/run/adblock-lean/rogue_element
 
@@ -442,7 +465,7 @@ generate_preprocessed_blocklist_file_parts()
 
 generate_and_process_blocklist_file()
 {
-	log_msg "Performing dnsmasq --test on the blocklist file parts and sorting and merging the blocklist lines into a single blocklist file."
+	log_msg "Sorting and merging the blocklist lines into a single blocklist file."
 
 	rm -f /var/run/adblock-lean/dnsmasq_err
 
@@ -455,19 +478,7 @@ generate_and_process_blocklist_file()
 			gunzip -c "${blocklist_file_part_gz}"
 			rm -f "${blocklist_file_part_gz}"
 		done
-	} | sort -u | tee >(dnsmasq_test_output=$(dnsmasq --test -C - 2>&1); [[ $? != 0 ]] && "printf $dnsmasq_test_output" > /var/run/adblock-lean/dnsmasq_err) > /var/run/adblock-lean/blocklist
-
-	if [[ -f /var/run/adblock-lean/dnsmasq_err ]]
-	then
-		log_msg "The dnsmasq --test on one of the blocklist file parts failed."
-		log_msg "Last dnsmasq --test error:"
-		log_msg "$(cat /var/run/adblock-lean/dnsmasq_err)"
-		return 1
-	else
-		log_msg "The dnsmasq --test on all of the blocklist file parts passed."
-	fi
-
-	rm -f /var/run/adblock-lean/dnsmasq_err
+	} | sort -u > /var/run/adblock-lean/blocklist
 
 	good_line_count=$(grep -vEc '^\s*$|^#' /var/run/adblock-lean/blocklist)
 
