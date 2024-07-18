@@ -9,6 +9,13 @@
 
 LC_ALL=C
 
+if [[ -t 0 ]]
+then
+	msgs_dest="/dev/tty"
+else
+	msgs_dest="/dev/null"
+fi
+
 PREFIX=/root/adblock-lean
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -87,7 +94,7 @@ get_elapsed_time_str()
 log_msg()
 {
 	local msg="${1}"
-	printf "${msg}\n" > /dev/tty
+	printf "${msg}\n" > "$msgs_dest"
 	logger -t adblock-lean "${msg}"
 }
 
@@ -624,7 +631,6 @@ boot()
 
 start() 
 {
-
 	log_msg "Started adblock-lean."
 
 	if type gawk &> /dev/null
