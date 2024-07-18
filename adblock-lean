@@ -636,6 +636,14 @@ start()
 		awk_cmd="awk"
 	fi
 
+	if grep <(sort --version) -qe coreutils
+	then
+		log_msg "coreutils-sort detected so sort will be fast."
+	else
+		log_msg "coreutils-sort not detected so sort will be a little slower."
+		log_msg "Consider installing the coreutils-sort package `opkg install coreutils-sort` for faster sort."
+	fi
+
 	if [[ "${compress_blocklist}" == 1 ]]
 	then
 		check_blocklist_compression_support || exit
