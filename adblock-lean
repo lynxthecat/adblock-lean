@@ -750,10 +750,10 @@ status()
 	then
 		if [[ -f /tmp/dnsmasq.d/.blocklist.gz ]]
 		then
-			good_line_count=$(gunzip -c /tmp/dnsmasq.d/.blocklist.gz | grep -vEc '^\s*$|^#')
+			good_line_count=$(gunzip -c /tmp/dnsmasq.d/.blocklist.gz | wc -l)
 		elif [[ -f /tmp/dnsmasq.d/blocklist ]]
 		then
-			good_line_count=$(grep -vEc '^\s*$|^#' /tmp/dnsmasq.d/blocklist)
+			good_line_count=$(wc -l /tmp/dnsmasq.d/blocklist)
 		fi
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: ${good_line_count}."
 		log_msg "adblock-lean appears to be active."
