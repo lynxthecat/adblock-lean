@@ -5,6 +5,7 @@
 # Project homepage: https://github.com/lynxthecat/adblock-lean
 
 # Authors: @Lynx and @Wizballs (OpenWrt forum)
+# Contributors: @antonk; @dave14305 (OpenWrt forum)
 
 LC_ALL=C
 
