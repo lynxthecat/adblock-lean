@@ -287,7 +287,7 @@ generate_preprocessed_blocklist_file_parts()
 		do
 			retry=$((retry + 1))
 			log_msg "Downloading and sanitizing new allowlist file part from: ${allowlist_url}."
-			uclient-fetch "${allowlist_url}" -O- --timeout=2 2> /var/run/adblock-lean/uclient-fetch_err |
+			uclient-fetch "${allowlist_url}" -O- --timeout=3 2> /var/run/adblock-lean/uclient-fetch_err |
 			tee >(wc -c > /var/run/adblock-lean/allowlist_file_part_size_B) |
 			tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' |
 			tee >(wc -l > /var/run/adblock-lean/allowlist_file_part_line_count) > \
@@ -358,7 +358,7 @@ generate_preprocessed_blocklist_file_parts()
 		do
 			retry=$((retry + 1))
 			log_msg "Downloading, checking and sanitizing new blocklist file part from: ${blocklist_url}."
-			uclient-fetch "${blocklist_url}" -O- --timeout=2 2> /var/run/adblock-lean/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" |
+			uclient-fetch "${blocklist_url}" -O- --timeout=3 2> /var/run/adblock-lean/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" |
 			tee >(wc -c > /var/run/adblock-lean/blocklist_part_size_B) |
 			# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=; 5 Add newline
 			tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/^\(address=\|server=\)/local=/; $a\' |
