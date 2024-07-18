@@ -478,9 +478,20 @@ generate_and_process_blocklist_file()
 			gunzip -c "${blocklist_file_part_gz}"
 			rm -f "${blocklist_file_part_gz}"
 		done
-	} | sort -u > /var/run/adblock-lean/blocklist
+	} | sort -u |
 
-	good_line_count=$(grep -vEc '^\s*$|^#' /var/run/adblock-lean/blocklist)
+	tee >(wc -l > /var/run/adblock-lean/blocklist_file_line_count) |
+	tee >(wc -c > /var/run/adblock-lean/blocklist_file_size_B) |
+
+	if  [[ "${compress_blocklist}" == 1 ]]
+	then
+		gzip > /var/run/adblock-lean/blocklist.gz
+	else
+		cat > /var/run/adblock-lean/blocklist
+	fi
+
+	good_line_count="$(cat /var/run/adblock-lean/blocklist_file_line_count 2>/dev/null)"
+	: "${good_line_count:=0}"
 
 	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
 	then
@@ -488,15 +499,17 @@ generate_and_process_blocklist_file()
 		return 1
 	fi
 
-	blocklist_file_size_KB=$(get_file_size_KB /var/run/adblock-lean/blocklist)
-	
+	blocklist_file_size_B="$(cat /var/run/adblock-lean/blocklist_file_size_B 2>/dev/null)"
+	blocklist_file_size_KB=$(( (blocklist_file_size_B + 0) / 1024 ))
+	blocklist_file_size_human="$(bytes2human "${blocklist_file_size_B}")"
+
 	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
 	then
 		log_msg "New processed blocklist file size: ${blocklist_file_size_KB} KB too large."
 		return 1
 	fi
 
-	log_msg "Processed blocklist file size: ${blocklist_file_size_KB} KB."
+	log_msg "Processed blocklist uncompressed file size: ${blocklist_file_size_human}."
 
 	return 0
 }
@@ -583,22 +596,22 @@ clean_dnsmasq_dir()
 
 import_blocklist_file()
 {
-	[[ -f /var/run/adblock-lean/blocklist ]] || return 1
-
 	if [[ "${compress_blocklist}" == 1 ]]
 	then
+		[[ -f /var/run/adblock-lean/blocklist.gz ]] || return 1
 		clean_dnsmasq_dir
 		printf "conf-script=\"busybox sh /tmp/dnsmasq.d/.extract_blocklist\"\n" > /tmp/dnsmasq.d/conf-script
 		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist
-		gzip -f /var/run/adblock-lean/blocklist
 		mv /var/run/adblock-lean/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz
 		imported_blocklist_file_size_human=$(get_file_size_human /tmp/dnsmasq.d/.blocklist.gz)
 	else
-			clean_dnsmasq_dir
-			mv /var/run/adblock-lean/blocklist /tmp/dnsmasq.d/blocklist
-			imported_blocklist_file_size_human=$(get_file_size_human /tmp/dnsmasq.d/blocklist)
-			return 0
+		[[ -f /var/run/adblock-lean/blocklist ]] || return 1
+		clean_dnsmasq_dir
+		mv /var/run/adblock-lean/blocklist /tmp/dnsmasq.d/blocklist
+		imported_blocklist_file_size_human=$(get_file_size_human /tmp/dnsmasq.d/blocklist)
 	fi
+
+	return 0
 }
 
 boot()
