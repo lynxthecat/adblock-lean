@@ -75,9 +75,29 @@ bytes2human()
 	printf "%s.%${fp}d %s\n" "$i" "$d" "$S"
 }
 
-lines2human()
-{
-	echo "$1" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta'
+int2human() {
+	case "$1" in *[!0-9]*) log_msg -err "int2human: Invalid unsigned integer '$1'."; return 1; esac
+	local in_num="$1" out_num=''
+
+	# strip leading zeroes
+	while true; do
+		case "$in_num" in
+			0*) in_num="${in_num#0}" ;;
+			*) break
+		esac
+	done
+
+	while true; do
+		case "$in_num" in 
+			????*)
+				out_num=",${in_num#"${in_num%???}"}${out_num}"
+				in_num="${in_num%???}" ;;
+			*) break
+		esac
+	done
+	out_num="${in_num}${out_num}"
+
+	echo "${out_num#,}"
 }
 
 get_uptime_ms()
@@ -294,7 +314,7 @@ generate_preprocessed_blocklist_file_parts()
 		allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < "${local_allowlist_path}" | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee /var/run/adblock-lean/allowlist | wc -l)"
 		if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
 		then
-			log_msg "Sanitized allowlist file part line count: $(lines2human ${allowlist_file_part_line_count})."
+			log_msg "Sanitized allowlist file part line count: $(int2human ${allowlist_file_part_line_count})."
 		else
 			log_msg -warn "No lines remaining in allowlist file part after sanitization."
 		fi
@@ -338,7 +358,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if [[ "${allowlist_file_part_line_count}" -gt 0 ]]
 			then
-				log_msg "Sanitized allowlist file part line count: $(lines2human ${allowlist_file_part_line_count})."
+				log_msg "Sanitized allowlist file part line count: $(int2human ${allowlist_file_part_line_count})."
 				allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count ))
 				cat "/var/run/adblock-lean/allowlist.${allowlist_id}" >> /var/run/adblock-lean/allowlist
 			else
@@ -356,7 +376,7 @@ generate_preprocessed_blocklist_file_parts()
 
 	if [[ -f /var/run/adblock-lean/allowlist ]] && [[ $allowlist_line_count -gt 0 ]]
 	then
-		log_msg "Successfully generated allowlist with $(lines2human ${allowlist_line_count}) lines."
+		log_msg "Successfully generated allowlist with $(int2human ${allowlist_line_count}) lines."
 		log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
 		use_allowlist=1
 	else
@@ -369,7 +389,7 @@ generate_preprocessed_blocklist_file_parts()
 	if [[ -f "${local_blocklist_path}" ]]
 	then
 		local_blocklist_line_count=$(grep -vEc '^\s*$|^#' "${local_blocklist_path}")
-		log_msg "Found local blocklist with $(lines2human ${local_blocklist_line_count}) lines."
+		log_msg "Found local blocklist with $(int2human ${local_blocklist_line_count}) lines."
 		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\' "${local_blocklist_path}" | gzip > /var/run/adblock-lean/blocklist.0.gz
 	else
 		log_msg "No local blocklist identified."
@@ -465,7 +485,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if [[ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]]
 			then
-				log_msg "Processing of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_human}; sanitized line count: $(lines2human ${blocklist_file_part_line_count}))."
+				log_msg "Processing of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_human}; sanitized line count: $(int2human ${blocklist_file_part_line_count}))."
 
 				rm -f /var/run/adblock-lean/rogue_element
 
@@ -473,7 +493,7 @@ generate_preprocessed_blocklist_file_parts()
 				blocklist_id=$((blocklist_id+1))
 				continue 2
 			else
-				log_msg -err "Downloaded blocklist file part line count: $(lines2human ${blocklist_file_part_line_count}) less than configured minimum: $(lines2human ${min_blocklist_file_part_line_count})."
+				log_msg -err "Downloaded blocklist file part line count: $(int2human ${blocklist_file_part_line_count}) less than configured minimum: $(int2human ${min_blocklist_file_part_line_count})."
 				break
 			fi
 
@@ -535,7 +555,7 @@ generate_and_process_blocklist_file()
 
 	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
 	then
-		log_msg -err "Good line count: $(lines2human ${good_line_count}) below $(lines2human ${min_good_line_count})."
+		log_msg -err "Good line count: $(int2human ${good_line_count}) below $(int2human ${min_good_line_count})."
 		return 1
 	fi
 
@@ -704,7 +724,7 @@ start()
 
 	if generate_preprocessed_blocklist_file_parts
 	then
-		log_msg "Successfully generated preprocessed blocklist file based on $(lines2human ${preprocessed_blocklist_line_count}) lines."
+		log_msg "Successfully generated preprocessed blocklist file based on $(int2human ${preprocessed_blocklist_line_count}) lines."
 	else
 		log_failure "Failed to generate preprocessed blocklist file with at least one line."
 		restore_saved_blocklist
@@ -737,7 +757,7 @@ start()
 	if check_dnsmasq
 	then
 		log_msg "The dnsmasq check passed with new blocklist file."
-		log_success "New blocklist installed with good line count: $(lines2human ${good_line_count})."
+		log_success "New blocklist installed with good line count: $(int2human ${good_line_count})."
 		rm -f /var/run/adblock-lean/prev_blocklist.gz
 	else	
 		log_failure "The dnsmasq check failed with new blocklist file."
@@ -793,7 +813,7 @@ status()
 		then
 			good_line_count=$(wc -l /tmp/dnsmasq.d/blocklist)
 		fi
-		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: $(lines2human ${good_line_count})."
+		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: $(int2human ${good_line_count})."
 		log_msg "adblock-lean appears to be active."
 		gen_stats
 	else
