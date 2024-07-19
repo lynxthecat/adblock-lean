@@ -61,7 +61,7 @@ get_file_size_human()
 bytes2human()
 {
 	local i=${1:-0} s=0 d=0 m=1024 fp='' S=''
-	case "$i" in *[!0-9]*) log_msg "bytes2human: Invalid unsigned integer '$i'."; return 1; esac
+	case "$i" in *[!0-9]*) log_msg -err "bytes2human: Invalid unsigned integer '$i'."; return 1; esac
 	for S in B KiB MiB GiB TiB; do
 		[ $((i > m && s < 4)) = 0 ] && break
 		d=$i i=$((i/m)) s=$((s+1))
@@ -93,14 +93,25 @@ get_elapsed_time_str()
 
 log_msg()
 {
-	local msg="${1}"
+	local msg='' _arg='' err_l=info
+
+	for _arg in "$@"; do
+		case "${_arg}" in
+			"-err") err_l=err ;;
+			"-warn") err_l=warn ;;
+			'') ;;
+			*) msg="${msg}${_arg} "
+		esac
+	done
+	_msg="${_msg% }"
+
 	printf "${msg}\n" > "$msgs_dest"
-	logger -t adblock-lean "${msg}"
+	logger -t adblock-lean -p user."${err_l}" "${msg}"
 }
 
 log_failure()
 {
-	log_msg "${1}"
+	log_msg -err "${1}"
 	if [[ -n "${report_failure}" ]]
 	then
 		failure_msg="${1}"
@@ -126,7 +137,7 @@ load_config()
 	then
 		. "${PREFIX}/config"
 	else
-		log_msg "ERROR: no config file identified at: ${PREFIX}/config."
+		log_msg -err "ERROR: no config file identified at: ${PREFIX}/config."
 		log_msg "Generate default config using 'service adblock-lean gen_config'."
 		exit
 	fi
@@ -150,7 +161,7 @@ load_config()
 	-z "${report_success+set}" || \
 	-z "${boot_start_delay_s+set}" ]]
 	then
-		log_msg "ERROR: config file entry missing."
+		log_msg -err "ERROR: config file entry missing."
 		log_msg "Generate new default config using 'service adblock-lean gen_config'."
 		log_msg "A new default config will be saved to: ${PREFIX}/config.new"
 		log_msg "Check differences and/or overwrite old config with the newly generated config."
@@ -228,7 +239,7 @@ gen_config()
 	
 	if [[ -f "${PREFIX}/config" ]]
 	then
-		log_msg "WARNING: config file ${PREFIX}/config already exists."
+		log_msg -warn "WARNING: config file ${PREFIX}/config already exists."
 		log_msg "Saving new config file as: '${PREFIX}/config.new'."
 		mv "${PREFIX}/config.tmp" "${PREFIX}/config.new"
 	else
@@ -243,7 +254,7 @@ check_blocklist_compression_support()
 {
 	if ! dnsmasq --help | grep -qe "--conf-script"
 	then
-		log_msg "The version of dnsmasq installed on this system does not support blocklist compression."
+		log_msg -err "The version of dnsmasq installed on this system does not support blocklist compression."
 		log_msg "Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\""
 		log_msg "Either upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression or disable blocklist compression in config."
 		return 1
@@ -256,7 +267,7 @@ check_blocklist_compression_support()
 		printf "%s" "$addnmount_path" | grep -qE "^/bin(/*|/busybox)?$" && return 0
 	done
 
-	log_msg "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
+	log_msg -err "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
 	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist."
 	log_msg "Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
 	log_msg "Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit"
@@ -280,7 +291,7 @@ generate_preprocessed_blocklist_file_parts()
 		then
 			log_msg "Sanitized allowlist file part line count: ${allowlist_file_part_line_count}."
 		else
-			log_msg "No lines remaining in allowlist file part after sanitization."
+			log_msg -warn "No lines remaining in allowlist file part after sanitization."
 		fi
 		allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count ))
 	else
@@ -307,7 +318,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
 			then
-				log_msg "Download of new allowlist file part from: ${allowlist_url} failed."
+				log_msg -err "Download of new allowlist file part from: ${allowlist_url} failed."
 				log_msg "Sleeping for 5 seconds after failed download attempt."
 				sleep 5
 				continue
@@ -321,14 +332,14 @@ generate_preprocessed_blocklist_file_parts()
 				allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count ))
 				cat "/var/run/adblock-lean/allowlist.${allowlist_id}" >> /var/run/adblock-lean/allowlist
 			else
-				log_msg "No lines remaining in allowlist file part after sanitization."
+				log_msg -warn "No lines remaining in allowlist file part after sanitization."
 			fi
 
 			rm -f  "/var/run/adblock-lean/allowlist.${allowlist_id}"
 			allowlist_id=$(( allowlist_id + 1 ))
 			continue 2
 		done
-		log_msg "Download failed after three failed download attempts. Continuing further operation."
+		log_msg -err "Download failed after three failed download attempts. Continuing further operation."
 	done
 
 	rm -f /var/run/adblock-lean/allowlist.*
@@ -395,10 +406,10 @@ generate_preprocessed_blocklist_file_parts()
 
 			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
 			then
-				log_msg "Download of new blocklist file part from: ${blocklist_url} failed."
+				log_msg -err "Download of new blocklist file part from: ${blocklist_url} failed."
 				if [[ "${blocklist_file_part_size_KB}" -ge "${max_blocklist_file_part_size_KB}" ]]
 				then
-						log_msg "Downloaded blocklist file part size exceeded the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
+						log_msg -err "Downloaded blocklist file part size exceeded the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
 						log_msg "Consider either increasing this value in the config or removing the correasponding blocklist url."
 						break
 				fi
@@ -409,7 +420,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if read -r rogue_element < /var/run/adblock-lean/rogue_element
 			then
-				log_msg "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
+				log_msg -warn "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
 
 				if [[ "${rogue_element_action}" == "STOP" ]]
 				then
@@ -422,7 +433,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if [[ -f /var/run/adblock-lean/dnsmasq_err ]]
 			then
-				log_msg "The dnsmasq --test on the blocklist file part failed."
+				log_msg -err "The dnsmasq --test on the blocklist file part failed."
 				log_msg "dnsmasq --test error:"
 				log_msg "$(cat /var/run/adblock-lean/dnsmasq_err)"
 				if [[ "${dnsmasq_test_failed_action}" == "STOP" ]]
@@ -447,7 +458,7 @@ generate_preprocessed_blocklist_file_parts()
 				blocklist_id=$((blocklist_id+1))
 				continue 2
 			else
-				log_msg "Downloaded blocklist file part line count: ${blocklist_file_part_line_count} less than configured minimum: ${min_blocklist_file_part_line_count}."
+				log_msg -err "Downloaded blocklist file part line count: ${blocklist_file_part_line_count} less than configured minimum: ${min_blocklist_file_part_line_count}."
 				break
 			fi
 
@@ -457,7 +468,7 @@ generate_preprocessed_blocklist_file_parts()
 
 		if [[ "${download_failed_action}" == "STOP" ]]
 		then
-			log_msg "Exiting after three failed download attempts."
+			log_msg -err "Exiting after three failed download attempts."
 			return 1
 		else
 			log_msg "Skipping file part and continuing."
@@ -503,7 +514,7 @@ generate_and_process_blocklist_file()
 
 	if [[ "${good_line_count}" -lt "${min_good_line_count}" ]]
 	then
-		log_msg "Good line count: ${good_line_count} below ${min_good_line_count}."
+		log_msg -err "Good line count: ${good_line_count} below ${min_good_line_count}."
 		return 1
 	fi
 
@@ -513,7 +524,7 @@ generate_and_process_blocklist_file()
 
 	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
 	then
-		log_msg "New processed blocklist file size: ${blocklist_file_size_KB} KB too large."
+		log_msg -err "New processed blocklist file size: ${blocklist_file_size_KB} KB too large."
 		return 1
 	fi
 
@@ -528,7 +539,7 @@ check_dnsmasq()
 
 	if ! pgrep -x /usr/sbin/dnsmasq &> /dev/null
 	then
-		log_msg "No instance of dnsmasq detected with new blocklist."
+		log_msg -err "No instance of dnsmasq detected with new blocklist."
 		return 1
 	fi
 
@@ -536,11 +547,11 @@ check_dnsmasq()
 	do
 		if ! nslookup "${domain}" 127.0.0.1 &> /dev/null 
 		then
-			log_msg "Lookup of '${domain}' failed with new blocklist."
+			log_msg -err "Lookup of '${domain}' failed with new blocklist."
 			return 1
 		elif nslookup "${domain}" 127.0.0.1 | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
 		then
-			log_msg "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
+			log_msg -err "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
 			return 1
 		fi
 	done
@@ -577,7 +588,7 @@ export_existing_blocklist()
 		mv /tmp/dnsmasq.d/blocklist.gz /var/run/adblock-lean/prev_blocklist.gz
 		return 0
 	else
-		log_msg "No existing compressed or uncompressed blocklist identified."
+		log_msg -err "No existing compressed or uncompressed blocklist identified."
 		return 1
 	fi
 }
@@ -592,7 +603,7 @@ restore_saved_blocklist()
 		import_blocklist_file
 		return 0
 	else
-		log_msg "No previous blocklist file found."
+		log_msg -err "No previous blocklist file found."
 		return 1
 	fi
 }
@@ -648,7 +659,7 @@ start()
 		log_msg "coreutils-sort detected so sort will be fast."
 	else
 		log_msg "coreutils-sort not detected so sort will be a little slower."
-		log_msg "Consider installing the coreutils-sort package `opkg install coreutils-sort` for faster sort."
+		log_msg "Consider installing the coreutils-sort package (opkg install coreutils-sort) for faster sort."
 	fi
 
 	if [[ "${compress_blocklist}" == 1 ]]
@@ -719,7 +730,7 @@ start()
 			then
 				log_msg "Previous blocklist restored and dnsmasq check passed."
 			else
-				log_msg "The dnsmasq check failed with previous blocklist file. Stopping adblock-lean."
+				log_msg -err "The dnsmasq check failed with previous blocklist file. Stopping adblock-lean."
 			stop
 			fi
 		fi
@@ -765,7 +776,7 @@ status()
 		log_msg "adblock-lean appears to be active."
 		gen_stats
 	else
-		log_msg "The dnsmasq check failed with existing blocklist file."
+		log_msg -err "The dnsmasq check failed with existing blocklist file."
 		log_msg "Consider a full reset by running: 'service adblock stop'."
 	fi
 	check_for_updates
@@ -802,7 +813,7 @@ check_for_updates()
 			log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
 		fi
 	else
-		log_msg "Unable to download latest version of adblock-lean to check for any updates."
+		log_msg -err "Unable to download latest version of adblock-lean to check for any updates."
 	fi
 	rm -f /var/run/adblock-lean/uclient-fetch_err
 }
@@ -818,7 +829,7 @@ update()
 		/etc/init.d/adblock-lean enable
 		log_msg "adblock-lean has been updated to the latest version."
 	else
-		log_msg "Unable to download latest version of adblock-lean."
+		log_msg -err "Unable to download latest version of adblock-lean."
 	fi
         rm -f /var/run/adblock-lean/adblock-lean.latest /var/run/adblock-lean/uclient-fetch_err
 }
