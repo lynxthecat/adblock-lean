@@ -305,8 +305,8 @@ generate_preprocessed_blocklist_file_parts()
 
 	for allowlist_url in ${allowlist_urls}
 	do
-		retry=1
-		while [[ "$retry" -le "$max_download_retries" ]]
+		retry=0
+		while [[ "${retry}" -le "${max_download_retries}" ]]
 		do
 			retry=$((retry + 1))
 			log_msg "Downloading and sanitizing new allowlist file part from: ${allowlist_url}."
@@ -324,9 +324,14 @@ generate_preprocessed_blocklist_file_parts()
 			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
 			then
 				log_msg -err "Download of new allowlist file part from: ${allowlist_url} failed."
-				log_msg "Sleeping for 5 seconds after failed download attempt."
-				sleep 5
-				continue
+				if [[ "${retry}" -lt "${max_download_retries}" ]]
+				then
+					log_msg "Sleeping for 5 seconds after failed download attempt."
+					sleep 5
+					continue
+				else
+					break
+				fi
 			fi
 
 			log_msg "Processing of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_human})."
@@ -376,8 +381,8 @@ generate_preprocessed_blocklist_file_parts()
 	blocklist_id=1
 	for blocklist_url in ${blocklist_urls}
 	do
-		retry=1
-		while [[ "$retry" -le "$max_download_retries" ]]
+		retry=0
+		while [[ "${retry}" -le "${max_download_retries}" ]]
 		do
 			retry=$((retry + 1))
 			log_msg "Downloading, checking and sanitizing new blocklist file part from: ${blocklist_url}."
@@ -418,9 +423,14 @@ generate_preprocessed_blocklist_file_parts()
 						log_msg "Consider either increasing this value in the config or removing the correasponding blocklist url."
 						break
 				fi
-				log_msg "Sleeping for 5 seconds after failed download attempt."
-				sleep 5
-				continue
+				if [[ "${retry}" -lt "${max_download_retries}" ]]
+				then
+					log_msg "Sleeping for 5 seconds after failed download attempt."
+					sleep 5
+					continue
+				else
+					break
+				fi
 			fi
 
 			if read -r rogue_element < /var/run/adblock-lean/rogue_element
@@ -467,8 +477,14 @@ generate_preprocessed_blocklist_file_parts()
 				break
 			fi
 
-			log_msg "Sleeping for 5 seconds after failed download attempt."
-			sleep 5
+			if [[ "${retry}" -lt "${max_download_retries}" ]]
+			then
+				log_msg "Sleeping for 5 seconds after failed download attempt."
+				sleep 5
+				continue
+			else
+				break
+			fi
 		done
 
 		if [[ "${download_failed_action}" == "STOP" ]]
