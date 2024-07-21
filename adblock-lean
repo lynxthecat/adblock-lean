@@ -346,6 +346,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
 			then
+				rm -f "/var/run/adblock-lean/allowlist.${allowlist_id}"
 				log_msg -err "Download of new allowlist file part from: ${allowlist_url} failed."
 				if [[ "${retry}" -lt "${max_download_retries}" ]]
 				then
@@ -404,6 +405,7 @@ generate_preprocessed_blocklist_file_parts()
 	blocklist_id=1
 	for blocklist_url in ${blocklist_urls}
 	do
+		rm -f /var/run/adblock-lean/rogue_element /var/run/adblock-lean/dnsmasq_err /var/run/adblock-lean/uclient-fetch_err
 		retry=0
 		while [[ "${retry}" -le "${max_download_retries}" ]]
 		do
@@ -426,8 +428,8 @@ generate_preprocessed_blocklist_file_parts()
 				tee >(sed -nE '\~^(local=/[[:alnum:]*][[:alnum:]*_.-]+/$|bogus-nxdomain=[0-9.]+$|$)~d;p;:1 n;b1' > /var/run/adblock-lean/rogue_element)
 			else
 				cat
-			fi | tee >(dnsmasq --test -C - 2> /var/run/adblock-lean/dnsmasq_err && rm -f /var/run/adblock-lean/dnsmasq_err) |
-			gzip > /var/run/adblock-lean/blocklist.${blocklist_id}.gz
+			fi | tee >(gzip > /var/run/adblock-lean/blocklist.${blocklist_id}.gz) |
+			{ dnsmasq --test -C - 2> /var/run/adblock-lean/dnsmasq_err && rm -f /var/run/adblock-lean/dnsmasq_err; cat 1>/dev/null; }
 
 			blocklist_file_part_size_B="$(cat /var/run/adblock-lean/blocklist_part_size_B 2>/dev/null)"
 			blocklist_file_part_size_KB=$(( (blocklist_file_part_size_B + 0) / 1024 ))
@@ -439,6 +441,7 @@ generate_preprocessed_blocklist_file_parts()
 
 			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
 			then
+				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
 				log_msg -err "Download of new blocklist file part from: ${blocklist_url} failed."
 				if [[ "${blocklist_file_part_size_KB}" -ge "${max_blocklist_file_part_size_KB}" ]]
 				then
@@ -446,6 +449,7 @@ generate_preprocessed_blocklist_file_parts()
 						log_msg "Consider either increasing this value in the config or removing the correasponding blocklist url."
 						break
 				fi
+
 				if [[ "${retry}" -lt "${max_download_retries}" ]]
 				then
 					log_msg "Sleeping for 5 seconds after failed download attempt."
@@ -458,6 +462,8 @@ generate_preprocessed_blocklist_file_parts()
 
 			if read -r rogue_element < /var/run/adblock-lean/rogue_element
 			then
+				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
+
 				log_msg -warn "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
 
 				if [[ "${rogue_element_action}" == "STOP" ]]
@@ -468,9 +474,11 @@ generate_preprocessed_blocklist_file_parts()
 					continue 2
 				fi
 			fi
+			rm -f /var/run/adblock-lean/rogue_element
 
 			if [[ -f /var/run/adblock-lean/dnsmasq_err ]]
 			then
+				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
 				log_msg -err "The dnsmasq --test on the blocklist file part failed."
 				log_msg "dnsmasq --test error:"
 				log_msg "$(cat /var/run/adblock-lean/dnsmasq_err)"
@@ -490,14 +498,12 @@ generate_preprocessed_blocklist_file_parts()
 			then
 				log_msg "Processing of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_human}; sanitized line count: $(int2human ${blocklist_file_part_line_count}))."
 
-				rm -f /var/run/adblock-lean/rogue_element
-
 				preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
 				blocklist_id=$((blocklist_id+1))
 				continue 2
 			else
+				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
 				log_msg -err "Downloaded blocklist file part line count: $(int2human ${blocklist_file_part_line_count}) less than configured minimum: $(int2human ${min_blocklist_file_part_line_count})."
-				break
 			fi
 
 			if [[ "${retry}" -lt "${max_download_retries}" ]]
