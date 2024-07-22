@@ -411,7 +411,8 @@ generate_preprocessed_blocklist_file_parts()
 		do
 			retry=$((retry + 1))
 			log_msg "Downloading, checking and sanitizing new blocklist file part from: ${blocklist_url}."
-			uclient-fetch "${blocklist_url}" -O- --timeout=3 2> /var/run/adblock-lean/uclient-fetch_err | head -c "${max_blocklist_file_part_size_KB}k" |
+			uclient-fetch "${blocklist_url}" -O- --timeout=3 2> /var/run/adblock-lean/uclient-fetch_err | 
+			head -c "${max_blocklist_file_part_size_KB}k" |
 			tee >(wc -c > /var/run/adblock-lean/blocklist_part_size_B) |
 			# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=
 			tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/^\(address=\|server=\)/local=/' |
@@ -439,16 +440,19 @@ generate_preprocessed_blocklist_file_parts()
 
 			rm -f /var/run/adblock-lean/blocklist_part_size_B /var/run/adblock-lean/blocklist_part_line_count
 
+			if [[ "${blocklist_file_part_size_KB}" -ge "${max_blocklist_file_part_size_KB}" ]]
+			then
+				log_msg -err "Downloaded blocklist file part size reached the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
+				log_msg "Consider either increasing this value in the config or removing the corresponding blocklist url."
+				log_msg "Skipping file part and continuing."
+				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
+				break
+			fi
+
 			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
 			then
 				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
 				log_msg -err "Download of new blocklist file part from: ${blocklist_url} failed."
-				if [[ "${blocklist_file_part_size_KB}" -ge "${max_blocklist_file_part_size_KB}" ]]
-				then
-						log_msg -err "Downloaded blocklist file part size exceeded the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
-						log_msg "Consider either increasing this value in the config or removing the correasponding blocklist url."
-						break
-				fi
 
 				if [[ "${retry}" -lt "${max_download_retries}" ]]
 				then
@@ -549,6 +553,8 @@ generate_and_process_blocklist_file()
 		done
 	} | sort -u |
 
+	head -c "${max_blocklist_file_size_KB}k" |
+
 	tee >(wc -l > /var/run/adblock-lean/blocklist_file_line_count) |
 	tee >(wc -c > /var/run/adblock-lean/blocklist_file_size_B) |
 
@@ -572,9 +578,10 @@ generate_and_process_blocklist_file()
 	blocklist_file_size_KB=$(( (blocklist_file_size_B + 0) / 1024 ))
 	blocklist_file_size_human="$(bytes2human "${blocklist_file_size_B}")"
 
-	if [[ "${blocklist_file_size_KB}" -gt "${max_blocklist_file_size_KB}" ]]
+	if [[ "${blocklist_file_size_KB}" -ge "${max_blocklist_file_size_KB}" ]]
 	then
-		log_msg -err "New processed blocklist file size: ${blocklist_file_size_KB} KB too large."
+		log_msg -err "Blocklist file size reached the maximum value set in config (${max_blocklist_file_size_KB} KB)."
+		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
 		return 1
 	fi
 
