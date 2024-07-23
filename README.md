@@ -26,6 +26,10 @@ adblock-lean includes, inter alia, the following features:
 
 ## Installation on OpenWrt
 
+adblock-lean is written as a service script and is designed to run on a base OpenWrt installation without any dependencies.
+
+Example installation steps:
+
 ```bash
 wget https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
 chmod +x /etc/init.d/adblock-lean
@@ -33,6 +37,13 @@ service adblock-lean gen_config # generates default config in /root/adblock-lean
 vi /root/adblock-lean/config # modify default config as required
 uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit # to enable use of compressed blocklist
 service adblock-lean enable
+```
+
+Whilst adblock-lean does not require any dependencies to run, its performance can be improved by installing `gawk` and `coreutils-sort`:
+
+```bash
+opkg update
+opkg install gawk coreutils-sort
 ```
 
 ## Config
