@@ -48,58 +48,103 @@ opkg install gawk coreutils-sort
 
 ## Config
 
-adblock-lean reads in a config file from /root/adblock-lean/config.
+adblock-lean reads in a config file from `/root/adblock-lean/config`.
 
-A default config can be generated using: `service adblock-lean gen_config`.
+A default config can be generated using: `service adblock-lean gen_config`. 
 
-Each configuration option is internally documented with comments in /root/adblock-lean/config.
+Each configuration option is internally documented with comments in `/root/adblock-lean/config`.
 
 | Variable | Setting                                          |
 | -------: | :----------------------------------------------- |
-|                     `blocklist_urls` | One or more blocklist URLs to download and process                   |
-|               `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                 |
-|               `local_blocklist_path` | Path to local blocklist (domain will be blocked)                     |
-| `min_blocklist_file_part_line_count` | Minimum number of lines of individual downloaded blocklist part      |
-|    `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part             |
-|         `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                        |
-|                `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist        |
-|                 `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded  |
-|            `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory  |
-|               `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'   |
-|             `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'           |
-|                     `report_failure` | Used for performing user-defined action(s) on failure                |
-|                    `report_successs` | Used for performing user-defined action(s) on success                |
-|                 `boot_start_delay_s` | Start delay in seconds when service is started from system boot      |
+|                     `blocklist_urls` | One or more blocklist URLs to download and process                       |
+|                     `allowlist_urls` | One or more allowlist URLs to download and process                       |
+|               `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                     |
+|               `local_blocklist_path` | Path to local blocklist (domain will be blocked)                         |
+| `min_blocklist_file_part_line_count` | Minimum number of lines of individual downloaded blocklist part          |
+|    `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part                 |
+|         `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                            |
+|                `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist            |
+|                 `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded      |
+|            `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory      |
+|               `max_download_retries` | Maximum number of download retries for allowlist/blocklist parts         |
+|             `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'               |
+|               `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'       |
+| `dnsmasq_test_failed_element_action` | Governs failed dnsmasq test handling: 'SKIP_PARTIAL' or 'STOP'           |
+|                     `report_failure` | Used for performing user-defined action(s) on failure                    |
+|                    `report_successs` | Used for performing user-defined action(s) on success                    |
+|                 `boot_start_delay_s` | Start delay in seconds when service is started from system boot          |
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
-## Selection of blocklist(s)
+## Config Updates
+
+During certain upgrades, adblock-lean will require a configuration update. 
+
+A new compatible config can be generated using: `service adblock-lean gen_config`. 
+
+When an existing configuration is detected, the new config will be generated at `/root/adblock-lean/config.new`. Users can then copy over compatible configuration settings from the old config to /root/adblock-lean/config.new and then rename the updated config to `/root/adblock-lean/config` (overwriting the old config). 
+
+```bash
+service adblock-lean gen_config
+# manually inspect /root/adblock-lean/config and copy over old settings to /root/adblock-lean/config.new
+mv /root/adblock-lean/config.new /root/adblock-lean/config
+```
+
+Alternatively, to start from scratch, just delete the old config and generate a new one:
+
+```bash
+rm /root/adblock-lean/config
+service adblock-lean gen_config
+```
+
+## Selection of blocklist(s) and download and processing parameters
 
 An important factor in selecting blocklist(s) is how much free memory is available for blocklist use. It is the responsibility of the user to ensure that there is sufficient free memory to prevent an out of memory situation.
-
-Here are two examples for low and high memory devices.
-
-Example blocklist selection for low memory devices:
-
-```
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
-```
-
-Example blocklist selection for high memory devices:
-
-```
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif-ips.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.winoffice.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.apple.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/native.amazon.txt"
-```
-
-An excellent breakdown of highly suitable lists and their merits is provided at:
-
-https://github.com/hagezi/dns-blocklists
-
-## Selection of blocklist download and processing parameters
 
 The parameters described in the config section above relating to the intermediate sizes, good line count and duplicate removal should be set in dependence on the selected blocklist and available memory. These are considered self-explanatory, but if in any doubt please post on the OpenWrt thread at: 
 
 https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076.
+
+Here are some example configuration settings:
+
+- Mini 64mb routers. Aim for <100k entries. Example below: circa 83k entries
+```bash
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.mini.txt"
+min_blocklist_file_part_line_count=1
+max_blocklist_file_part_size_KB=4000
+max_blocklist_file_size_KB=4000
+min_good_line_count=40000
+```
+
+- Small 128mb routers. Aim for <300k entries. Example below: circa 249k entries
+```bash
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.mini.txt"
+min_blocklist_file_part_line_count=1
+max_blocklist_file_part_size_KB=7000
+max_blocklist_file_size_KB=10000
+min_good_line_count=100000
+```
+
+- Medium 256mb routers. Aim for <600k entries. Example below: circa 430k entries
+```bash
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.medium.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/popupads.txt"
+min_blocklist_file_part_line_count=1
+max_blocklist_file_part_size_KB=10000
+max_blocklist_file_size_KB=20000
+min_good_line_count=200000
+```
+
+- Large =>512mb routers. Aim for <1,200k entries. Example below: circa 913k entries
+```bash
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.txt"
+min_blocklist_file_part_line_count=1
+max_blocklist_file_part_size_KB=30000
+max_blocklist_file_size_KB=50000
+min_good_line_count=400000
+```
+An excellent breakdown of highly suitable lists and their merits is provided at:
+
+https://github.com/hagezi/dns-blocklists
 
 ## Automatically deploy blocklist on router reboot
 
