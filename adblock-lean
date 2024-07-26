@@ -711,7 +711,7 @@ start()
 		awk_cmd="awk"
 	fi
 
-	if grep <(sort --version) -qe coreutils
+	if sort --version 2>/dev/null | grep -qe coreutils
 	then
 		log_msg "coreutils-sort detected so sort will be fast."
 	else
