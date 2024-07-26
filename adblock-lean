@@ -34,6 +34,16 @@ adblock-lean custom commands:
 	gen_config	generate default config
 	update		update adblock-lean to the latest version"
 
+# Result values used by various functions.
+# If values are changed here, they must change in luci-app-adblock-lean as well (overview and status)
+RESULT_DNSMASQ_LOOKUP_FAILED=1
+RESULT_DNSMASQ_LOOKUP_QUADZERO=2
+RESULT_DNSMASQ_NOT_RUNNING=3
+RESULT_NOT_ACTIVE=4
+RESULT_UPDATE_CHECK_ERROR=5
+RESULT_UPDATE_CHECK_LATEST=6
+RESULT_UPDATE_CHECK_OUTDATED=7
+
 mkdir -p /var/run/adblock-lean
 
 trap cleanup_and_exit INT TERM EXIT
@@ -597,7 +607,7 @@ check_dnsmasq()
 	if ! pgrep -x /usr/sbin/dnsmasq &> /dev/null
 	then
 		log_msg -err "No instance of dnsmasq detected with new blocklist."
-		return 1
+		return $RESULT_DNSMASQ_NOT_RUNNING
 	fi
 
 	for domain in google.com amazon.com microsoft.com
@@ -605,11 +615,11 @@ check_dnsmasq()
 		if ! nslookup "${domain}" 127.0.0.1 &> /dev/null 
 		then
 			log_msg -err "Lookup of '${domain}' failed with new blocklist."
-			return 2
+			return $RESULT_DNSMASQ_LOOKUP_FAILED
 		elif nslookup "${domain}" 127.0.0.1 | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
 		then
 			log_msg -err "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
-			return 3
+			return $RESULT_DNSMASQ_LOOKUP_QUADZERO
 		fi
 	done
 	
@@ -845,7 +855,7 @@ luci_status()
 	msgs_dest="/dev/null"
 
 	# Default values, which may be updated below based on current status
-	status=4 # 4 = Not running (check_dnsmasq returns values 1-3 for its error status, so we start at 4 here)
+	status=$RESULT_NOT_ACTIVE
 	good_line_count=0
 	secs_since_blocklist_update=0
 
@@ -902,7 +912,7 @@ resume()
 
 check_for_updates()
 {
-	result=0
+	result=$RESULT_UPDATE_CHECK_ERROR
 
 	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | awk '{print $1}')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - 2> /var/run/adblock-lean/uclient-fetch_update_check_err | sha256sum | awk '{print $1}')
@@ -912,15 +922,15 @@ check_for_updates()
 		if [[ "${sha256sum_adblock_lean_local}" == "${sha256sum_adblock_lean_remote}" ]]
 		then
 			log_msg "The locally installed adblock-lean is the latest version."
-			result=0
+			result=$RESULT_UPDATE_CHECK_LATEST
 		else
 			log_msg "The locally installed adblock-lean seems to be outdated."
 			log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
-			result=1
+			result=$RESULT_UPDATE_CHECK_OUTDATED
 		fi
 	else
 		log_msg -err "Unable to download latest version of adblock-lean to check for any updates."
-		result=2
+		result=$RESULT_UPDATE_CHECK_ERROR
 	fi
 	rm -f /var/run/adblock-lean/uclient-fetch_update_check_err
 
