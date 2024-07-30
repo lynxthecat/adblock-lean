@@ -590,6 +590,11 @@ generate_and_process_blocklist_file()
 	return 0
 }
 
+# return values:
+# 0 - dnsmasq is running, and all checks passed
+# 1 - dnsmasq is not running
+# 2 - dnsmasq is running, but one of the test domains failed to resolve
+# 3 - dnsmasq is running, but one of the test domains resolved to 0.0.0.0
 check_dnsmasq()
 {
 	log_msg "Checking dnsmasq instance."
@@ -605,15 +610,15 @@ check_dnsmasq()
 		if ! nslookup "${domain}" 127.0.0.1 &> /dev/null 
 		then
 			log_msg -err "Lookup of '${domain}' failed with new blocklist."
-			return 1
+			return 2
 		elif nslookup "${domain}" 127.0.0.1 | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
 		then
 			log_msg -err "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
-			return 1
+			return 3
 		fi
 	done
 	
-	return 0
+	:
 }
 
 restart_dnsmasq()
@@ -812,15 +817,21 @@ gen_stats()
 	log_msg "dnsmasq stats available for reading using 'logread'."
 }
 
+# return values:
+# 0 - adblock-lean is active
+# 1 - adblock-lean is not active
 status()
 {
 	if ! [[ -f /tmp/dnsmasq.d/.blocklist.gz || -f /tmp/dnsmasq.d/blocklist ]]
 	then
 		log_msg "Blocklist in /tmp/dnsmasq.d/ not identified."
 		log_msg "adblock-lean is not active."
-		return
+		return 1
 	fi
-	if check_dnsmasq
+	check_dnsmasq
+	dnsmasq_status=${?}
+	luci_dnsmasq_status=${dnsmasq_status}
+	if [ ${dnsmasq_status} = 0 ]
 	then
 		if [[ -f /tmp/dnsmasq.d/.blocklist.gz ]]
 		then
@@ -829,6 +840,7 @@ status()
 		then
 			good_line_count=$(wc -l /tmp/dnsmasq.d/blocklist)
 		fi
+		luci_good_line_count=${good_line_count}
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: $(int2human ${good_line_count})."
 		log_msg "adblock-lean appears to be active."
 		gen_stats
@@ -837,6 +849,9 @@ status()
 		log_msg "Consider a full reset by running: 'service adblock stop'."
 	fi
 	check_for_updates
+	luci_update_status=${?}
+
+	:
 }
 
 pause()
@@ -855,24 +870,34 @@ resume()
 	log_msg "adblock-lean is now resumed."
 }
 
+# return values:
+# 0 - up-to-date
+# 1 - not up-to-date
+# 2 - update check failed
 check_for_updates()
 {
 	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | awk '{print $1}')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - 2> /var/run/adblock-lean/uclient-fetch_err | sha256sum | awk '{print $1}')
 
+	local update_check_result
 	if grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
 	then
 		if [[ "${sha256sum_adblock_lean_local}" == "${sha256sum_adblock_lean_remote}" ]]
 		then
 			log_msg "The locally installed adblock-lean is the latest version."
+			update_check_result=0
 		else
 			log_msg "The locally installed adblock-lean seems to be outdated."
 			log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
+			update_check_result=1
 		fi
 	else
 		log_msg -err "Unable to download latest version of adblock-lean to check for any updates."
+		update_check_result=2
 	fi
 	rm -f /var/run/adblock-lean/uclient-fetch_err
+
+	return ${update_check_result}
 }
 
 update()
