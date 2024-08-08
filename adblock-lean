@@ -50,17 +50,8 @@ adblock-lean custom commands:
 	gen_config	generate default config
 	update		update adblock-lean to the latest version"
 
-# exit with code ${1}
-# if function 'abl_luci_exit' is defined, execute it before exit
-cleanup_and_exit()
-{
-	trap - INT TERM EXIT
-	[ -n "${cleanup_req}" ] && rm -rf "/var/run/adblock-lean"
-	[ -n "${lock_req}" ] && rm_lock
-	[ -z "${luci_sourced}" ] && [ -n "${report_failure}" ] && [ -n "${failure_msg}" ] && eval "${report_failure}"
-	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
-	exit "${1}"
-}
+
+### UTILITY FUNCTIONS
 
 get_file_size_human()
 {
@@ -161,14 +152,24 @@ try_mv()
 	:
 }
 
-try_export_existing_blocklist()
+
+### HELPER FUNCTIONS
+
+clean_dnsmasq_dir()
 {
-	export_existing_blocklist
-	case ${?} in
-		1) reg_failure "Error: failed to export the blocklist."; return 1 ;;
-		2) return 2
-	esac
-	:	
+	rm -f /tmp/dnsmasq.d/.blocklist.gz /tmp/dnsmasq.d/blocklist /tmp/dnsmasq.d/conf-script /tmp/dnsmasq.d/.extract_blocklist
+}
+
+# exit with code ${1}
+# if function 'abl_luci_exit' is defined, execute it before exit
+cleanup_and_exit()
+{
+	trap - INT TERM EXIT
+	[ -n "${cleanup_req}" ] && rm -rf "/var/run/adblock-lean"
+	[ -n "${lock_req}" ] && rm_lock
+	[ -z "${luci_sourced}" ] && [ -n "${report_failure}" ] && [ -n "${failure_msg}" ] && eval "${report_failure}"
+	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
+	exit "${1}"
 }
 
 # return codes:
@@ -182,17 +183,6 @@ check_active_blocklist_file()
 		[ -f "${f}" ] && return 0
 	done
 	return 1
-}
-
-# 1 - action
-reg_action()
-{
-	log_msg "${1}"
-	if [ -n "${lock_req}" ]
-	then
-		update_pid_action "${1}" || return 1
-	fi
-	:
 }
 
 reg_failure()
@@ -252,87 +242,14 @@ load_config()
 	:
 }
 
-gen_config()
+try_export_existing_blocklist()
 {
-	init_command gen_config || exit 1
-	reg_action "Generating new default config for adblock-lean." || exit 1
-
-	mkdir -p "${PREFIX}"
-
-	cat > "${PREFIX}/config.tmp" <<-EOT
-	# adblock-lean configuration options
-
-	# One or more dnsmasq blocklist urls separated by spaces
-	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.mini.txt"
-
-	# One or more allowlist urls separated by spaces
-	allowlist_urls=""
-
-	# Path to optional local allowlist/blocklist files in the form:
-	# site1.com
-	# site2.com
-	local_allowlist_path="${PREFIX}/allowlist"
-	local_blocklist_path="${PREFIX}/blocklist"
-
-	# Mininum number of lines of any individual downloaded blocklist part
-	min_blocklist_file_part_line_count=1
-	# Maximum size of any individual downloaded blocklist part
-	max_blocklist_file_part_size_KB=20000
-	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB=30000
-	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count=100000
-
-	# compress blocklist to save memory once blocklist has been loaded
-	compress_blocklist=1 # enable (1) or disable (0) blocklist compression
-
-	# restart dnsmasq if previous blocklist was extracted and before generation of
-	# new blocklist thereby to free up memory during generaiton of new blocklist
-	initial_dnsmasq_restart=0 # enable (1) or disable (0) initial dnsmasq restart
-
-	# Maximum number of download retries
-	max_download_retries=3
-
-	# Download failed action:
-	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
-	download_failed_action="SKIP_PARTIAL"
-
-	# Rogue element action:
-	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
-	# IGNORE - ignore any rogue elements (warning: use with caution)
-	rogue_element_action="SKIP_PARTIAL"
-
-	# dnsmasq --test failed action:
-	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
-	dnsmasq_test_failed_action="SKIP_PARTIAL"
-
-	# The following shell variables are invoked using:
-	# 'eval \${report_failure}' and 'eval \${report_success}'
-	# thereby to facilitate sending e.g. mailsend/sms notifications
-	# The variables '\${failure_msg}' and '\${success_msg}' can be employed
-	report_failure="" 	 
-	report_success=""	
-
-	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s=120
-	
-	EOT
-	
-	if [ -f "${PREFIX}/config" ]
-	then
-		log_msg -warn "WARNING: config file ${PREFIX}/config already exists."
-		log_msg "Saving new config file as: '${PREFIX}/config.new'."
-		try_mv "${PREFIX}/config.tmp" "${PREFIX}/config.new" || exit 1
-	else
-		log_msg "Saving new config file as: '${PREFIX}/config'."
-		try_mv "${PREFIX}/config.tmp" "${PREFIX}/config" || exit 1
-	fi
-
-	check_blocklist_compression_support
-	exit ${?}
+	export_existing_blocklist
+	case ${?} in
+		1) reg_failure "Error: failed to export the blocklist."; return 1 ;;
+		2) return 2
+	esac
+	:	
 }
 
 check_blocklist_compression_support()
@@ -745,11 +662,6 @@ restore_saved_blocklist()
 	fi
 }
 
-clean_dnsmasq_dir()
-{
-	rm -f /tmp/dnsmasq.d/.blocklist.gz /tmp/dnsmasq.d/blocklist /tmp/dnsmasq.d/conf-script /tmp/dnsmasq.d/.extract_blocklist
-}
-
 import_blocklist_file()
 {
 	if [ "${compress_blocklist}" = 1 ]
@@ -768,6 +680,316 @@ import_blocklist_file()
 	fi
 
 	:
+}
+
+# return values:
+# 0 - up-to-date
+# 1 - not up-to-date
+# 2 - update check failed
+check_for_updates()
+{
+	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | awk '{print $1}')
+	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - 2> /var/run/adblock-lean/uclient-fetch_err | sha256sum | awk '{print $1}')
+
+	local update_check_result
+	if grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
+	then
+		if [ "${sha256sum_adblock_lean_local}" = "${sha256sum_adblock_lean_remote}" ]
+		then
+			log_msg "The locally installed adblock-lean is the latest version."
+			update_check_result=0
+		else
+			log_msg "The locally installed adblock-lean seems to be outdated."
+			log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
+			update_check_result=1
+		fi
+	else
+		reg_failure "Unable to download latest version of adblock-lean to check for any updates."
+		update_check_result=2
+	fi
+	rm -f /var/run/adblock-lean/uclient-fetch_err
+
+	return ${update_check_result}
+}
+
+# updates the pid file with a new action
+# 1 - new action
+update_pid_action() {
+	check_lock
+	case ${?} in
+		3) ;;
+		1) return 1 ;;
+		2) reg_failure "update_pid_action(): Error: pid file '${pid_file}' has unexpected pid '${_pid}'."; return 1 ;;
+		0) reg_failure "update_pid_action(): Error: pid file '${pid_file}' not found."; return 1
+	esac
+	mk_lock -f "${1}"
+	return ${?}
+}
+
+# args:
+# 1 - (optional) -f to skip check for existing lock
+# 1/2 - action to write to the pid file
+#
+# return codes:
+# 0 - success
+# 1 - error
+# 254 - lock file already exists
+mk_lock()
+{
+	if [ "${1}" != '-f' ]
+	then
+		check_lock
+		case ${?} in
+			1) return 1 ;;
+			2)
+				report_pid_action
+				log_msg "Refusing to open another instance."
+				return 254
+		esac
+	else
+		shift
+	fi
+
+	[ -z "${1%.}" ] && { log_msg "mk_lock(): Error: pid action is unspecified."; return 1; }
+	if [ -n "${pid_file}" ]
+	then
+		if [ ! -d "${pid_file%/*}" ]
+		then
+			mkdir -p "${pid_file%/*}" || { reg_failure "Error: Failed to create directory '${pid_file%/*}'."; return 1; }
+		fi
+		printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "Error: Failed to write to pid file '${pid_file}'."; return 1; }
+	else
+		reg_failure "Internal error: \${pid_file} variable is unset."
+		return 1
+	fi
+	:
+}
+
+rm_lock()
+{
+	if [ -f "${pid_file}" ]
+	then
+		rm -f "${pid_file}" || { reg_failure "Error: Failed to delete the pid file '${pid_file}'."; return 1; }
+	fi
+	:
+}
+
+# return codes:
+# 0 - no lock
+# 1 - error
+# 2 - lock file exists and belongs to another PID
+# 3 - lock file belongs to current PID
+check_lock()
+{
+	unset _pid pid_action
+	[ -z "${pid_file}" ] && { reg_failure "Internal error: \${pid_file} variable is unset."; return 1; }
+	[ ! -f "${pid_file}" ] && return 0
+	if read -r _pid pid_action < "${pid_file}"
+	then
+		case "${_pid}" in
+			${$}) return 3 ;;
+			*[!0-9]*) reg_failure "Error: pid file '${pid_file}' contains unexpected string."; return 1 ;;
+			*) kill -0 "${_pid}" 2>/dev/null && return 2
+		esac
+	else
+		reg_failure "Error: Failed to read the pid file '${pid_file}'."
+		return 1
+	fi
+
+	log_msg -warn "Warning: detected stale pid file '${pid_file}'. Removing."
+	rm_lock || return 1
+	:
+}
+
+# kills any running adblock-lean instances
+kill_abl_pids()
+{
+	local _killed _p _pid IFS=$'\n' k_attempt=0
+	while true; do
+		k_attempt=$((k_attempt+1))
+		_killed=
+		for _p in $(pgrep -fa '(/etc/rc.common /etc/init.d/adblock-lean|luci.adblock-lean)')
+		do
+			_pid="${_p%% *}"
+			case ${_pid} in "${$}"|*[!0-9]*) continue; esac
+			kill "${_pid}" 2>/dev/null
+			_killed=1
+		done
+		[ -z "${_killed}" ] || [ ${k_attempt} -gt 10 ] && break
+		sleep 1
+	done
+	:
+}
+
+# 1 - action
+reg_action()
+{
+	log_msg "${1}"
+	if [ -n "${lock_req}" ]
+	then
+		update_pid_action "${1}" || return 1
+	fi
+	:
+}
+
+report_pid_action()
+{
+	local reported_pid="unknown PID"
+	[ -n "${_pid}" ] && reported_pid="PID ${_pid}"
+	: "${pid_action:="unknown action"}"
+	print_msg "adblock-lean (${reported_pid}) is performing action '${pid_action}'."
+	luci_pid_action=${pid_action}
+	:
+}
+
+init_command()
+{
+	action="${1}"
+	pid_file="/tmp/adblock-lean/adblock-lean.pid"
+	unset lock_req kill_req cleanup_req failure_msg luci_errors
+
+	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
+	luci_sourced=
+	command -v "abl_luci_exit" 1>/dev/null && luci_sourced=1
+
+	trap 'cleanup_and_exit 1' INT TERM
+	trap 'cleanup_and_exit ${?}' EXIT
+
+	case ${action} in
+		help|status|gen_stats|enabled|enable|disable|'') ;;
+		gen_config|pause) lock_req=1 ;;
+		boot|start|update|resume) cleanup_req=1 lock_req=1 ;;
+		stop)
+			reg_action "Stopping adblock-lean." || exit 1
+			cleanup_req=1 kill_req=1 lock_req=1 ;;
+		reload|restart)
+			reg_action "Restarting adblock-lean." || exit 1
+			cleanup_req=1 kill_req=1 lock_req=1 ;;
+		*)
+			reg_failure "Error: invalid action '${action}'."
+			exit 1
+	esac
+
+	if [ -n "${kill_req}" ]
+	then
+		kill_abl_pids
+		check_lock
+		case ${?} in
+			1) exit 1 ;;
+			2)
+				reg_failure "Error: failed to kill running adblock-lean processes."
+				exit 1
+		esac
+	fi
+
+	if [ -n "${lock_req}" ]
+	then
+		mk_lock "${action}" || { unset lock_req cleanup_req; exit ${?}; }
+	fi
+
+	case ${action} in
+		help|gen_config|enable|disable|enabled|stop|'') ;;
+		status) mkdir -p /var/run/adblock-lean ;;
+		*)
+			mkdir -p /var/run/adblock-lean
+			load_config || exit 1
+	esac
+
+	:
+}
+
+### MAIN COMMAND FUNCTIONS
+
+# 1 - (optional) '-noexit' to return to the calling function
+gen_stats()
+{
+	reg_action "Generating dnsmasq stats." || exit 1
+	kill -USR1 $(pgrep dnsmasq)
+	print_msg "dnsmasq stats available for reading using 'logread'."
+	[ "${1}" != '-noexit' ] && exit 0
+}
+
+gen_config()
+{
+	init_command gen_config || exit 1
+	reg_action "Generating new default config for adblock-lean." || exit 1
+
+	mkdir -p "${PREFIX}"
+
+	cat > "${PREFIX}/config.tmp" <<-EOT
+	# adblock-lean configuration options
+
+	# One or more dnsmasq blocklist urls separated by spaces
+	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.mini.txt"
+
+	# One or more allowlist urls separated by spaces
+	allowlist_urls=""
+
+	# Path to optional local allowlist/blocklist files in the form:
+	# site1.com
+	# site2.com
+	local_allowlist_path="${PREFIX}/allowlist"
+	local_blocklist_path="${PREFIX}/blocklist"
+
+	# Mininum number of lines of any individual downloaded blocklist part
+	min_blocklist_file_part_line_count=1
+	# Maximum size of any individual downloaded blocklist part
+	max_blocklist_file_part_size_KB=20000
+	# Maximum total size of combined, processed blocklist
+	max_blocklist_file_size_KB=30000
+	# Minimum number of good lines in final postprocessed blocklist
+	min_good_line_count=100000
+
+	# compress blocklist to save memory once blocklist has been loaded
+	compress_blocklist=1 # enable (1) or disable (0) blocklist compression
+
+	# restart dnsmasq if previous blocklist was extracted and before generation of
+	# new blocklist thereby to free up memory during generaiton of new blocklist
+	initial_dnsmasq_restart=0 # enable (1) or disable (0) initial dnsmasq restart
+
+	# Maximum number of download retries
+	max_download_retries=3
+
+	# Download failed action:
+	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	download_failed_action="SKIP_PARTIAL"
+
+	# Rogue element action:
+	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	# IGNORE - ignore any rogue elements (warning: use with caution)
+	rogue_element_action="SKIP_PARTIAL"
+
+	# dnsmasq --test failed action:
+	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	dnsmasq_test_failed_action="SKIP_PARTIAL"
+
+	# The following shell variables are invoked using:
+	# 'eval \${report_failure}' and 'eval \${report_success}'
+	# thereby to facilitate sending e.g. mailsend/sms notifications
+	# The variables '\${failure_msg}' and '\${success_msg}' can be employed
+	report_failure="" 	 
+	report_success=""	
+
+	# Start delay in seconds when service is started from system boot
+	boot_start_delay_s=120
+	
+	EOT
+	
+	if [ -f "${PREFIX}/config" ]
+	then
+		log_msg -warn "WARNING: config file ${PREFIX}/config already exists."
+		log_msg "Saving new config file as: '${PREFIX}/config.new'."
+		try_mv "${PREFIX}/config.tmp" "${PREFIX}/config.new" || exit 1
+	else
+		log_msg "Saving new config file as: '${PREFIX}/config'."
+		try_mv "${PREFIX}/config.tmp" "${PREFIX}/config" || exit 1
+	fi
+
+	check_blocklist_compression_support
+	exit ${?}
 }
 
 boot()
@@ -924,15 +1146,6 @@ reload()
 	restart
 }
 
-# 1 - (optional) '-noexit' to return to the calling function
-gen_stats()
-{
-	reg_action "Generating dnsmasq stats." || exit 1
-	kill -USR1 $(pgrep dnsmasq)
-	print_msg "dnsmasq stats available for reading using 'logread'."
-	[ "${1}" != '-noexit' ] && exit 0
-}
-
 # return values:
 # 0 - adblock-lean blocklist is loaded
 # 1 - error
@@ -1002,36 +1215,6 @@ resume()
 	exit 0
 }
 
-# return values:
-# 0 - up-to-date
-# 1 - not up-to-date
-# 2 - update check failed
-check_for_updates()
-{
-	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | awk '{print $1}')
-	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - 2> /var/run/adblock-lean/uclient-fetch_err | sha256sum | awk '{print $1}')
-
-	local update_check_result
-	if grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
-	then
-		if [ "${sha256sum_adblock_lean_local}" = "${sha256sum_adblock_lean_remote}" ]
-		then
-			log_msg "The locally installed adblock-lean is the latest version."
-			update_check_result=0
-		else
-			log_msg "The locally installed adblock-lean seems to be outdated."
-			log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
-			update_check_result=1
-		fi
-	else
-		reg_failure "Unable to download latest version of adblock-lean to check for any updates."
-		update_check_result=2
-	fi
-	rm -f /var/run/adblock-lean/uclient-fetch_err
-
-	return ${update_check_result}
-}
-
 update()
 {
 	init_command update || exit 1
@@ -1048,181 +1231,6 @@ update()
 	fi
 	rm -f /var/run/adblock-lean/adblock-lean.latest /var/run/adblock-lean/uclient-fetch_err
 	exit 0
-}
-
-# args:
-# 1 - (optional) -f to skip check for existing lock
-# 1/2 - action to write to the pid file
-#
-# return codes:
-# 0 - success
-# 1 - error
-# 254 - lock file already exists
-mk_lock()
-{
-	if [ "${1}" != '-f' ]
-	then
-		check_lock
-		case ${?} in
-			1) return 1 ;;
-			2)
-				report_pid_action
-				log_msg "Refusing to open another instance."
-				return 254
-		esac
-	else
-		shift
-	fi
-
-	[ -z "${1%.}" ] && { log_msg "mk_lock(): Error: pid action is unspecified."; return 1; }
-	if [ -n "${pid_file}" ]
-	then
-		if [ ! -d "${pid_file%/*}" ]
-		then
-			mkdir -p "${pid_file%/*}" || { reg_failure "Error: Failed to create directory '${pid_file%/*}'."; return 1; }
-		fi
-		printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "Error: Failed to write to pid file '${pid_file}'."; return 1; }
-	else
-		reg_failure "Internal error: \${pid_file} variable is unset."
-		return 1
-	fi
-	:
-}
-
-# updates the pid file with a new action
-# 1 - new action
-update_pid_action() {
-	check_lock
-	case ${?} in
-		3) ;;
-		1) return 1 ;;
-		2) reg_failure "update_pid_action(): Error: pid file '${pid_file}' has unexpected pid '${_pid}'."; return 1 ;;
-		0) reg_failure "update_pid_action(): Error: pid file '${pid_file}' not found."; return 1
-	esac
-	mk_lock -f "${1}"
-	return ${?}
-}
-
-rm_lock()
-{
-	if [ -f "${pid_file}" ]
-	then
-		rm -f "${pid_file}" || { reg_failure "Error: Failed to delete the pid file '${pid_file}'."; return 1; }
-	fi
-	:
-}
-
-# return codes:
-# 0 - no lock
-# 1 - error
-# 2 - lock file exists and belongs to another PID
-# 3 - lock file belongs to current PID
-check_lock()
-{
-	unset _pid pid_action
-	[ -z "${pid_file}" ] && { reg_failure "Internal error: \${pid_file} variable is unset."; return 1; }
-	[ ! -f "${pid_file}" ] && return 0
-	if read -r _pid pid_action < "${pid_file}"
-	then
-		case "${_pid}" in
-			${$}) return 3 ;;
-			*[!0-9]*) reg_failure "Error: pid file '${pid_file}' contains unexpected string."; return 1 ;;
-			*) kill -0 "${_pid}" 2>/dev/null && return 2
-		esac
-	else
-		reg_failure "Error: Failed to read the pid file '${pid_file}'."
-		return 1
-	fi
-
-	log_msg -warn "Warning: detected stale pid file '${pid_file}'. Removing."
-	rm_lock || return 1
-	:
-}
-
-# kills any running adblock-lean instances
-kill_abl_pids()
-{
-	local _killed _p _pid IFS=$'\n' k_attempt=0
-	while true; do
-		k_attempt=$((k_attempt+1))
-		_killed=
-		for _p in $(pgrep -fa '(/etc/rc.common /etc/init.d/adblock-lean|luci.adblock-lean)')
-		do
-			_pid="${_p%% *}"
-			case ${_pid} in "${$}"|*[!0-9]*) continue; esac
-			kill "${_pid}" 2>/dev/null
-			_killed=1
-		done
-		[ -z "${_killed}" ] || [ ${k_attempt} -gt 10 ] && break
-		sleep 1
-	done
-	:
-}
-
-report_pid_action()
-{
-	local reported_pid="unknown PID"
-	[ -n "${_pid}" ] && reported_pid="PID ${_pid}"
-	: "${pid_action:="unknown action"}"
-	print_msg "adblock-lean (${reported_pid}) is performing action '${pid_action}'."
-	luci_pid_action=${pid_action}
-	:
-}
-
-init_command()
-{
-	action="${1}"
-	pid_file="/tmp/adblock-lean/adblock-lean.pid"
-	unset lock_req kill_req cleanup_req failure_msg luci_errors
-
-	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
-	luci_sourced=
-	command -v "abl_luci_exit" 1>/dev/null && luci_sourced=1
-
-	trap 'cleanup_and_exit 1' INT TERM
-	trap 'cleanup_and_exit ${?}' EXIT
-
-	case ${action} in
-		help|status|gen_stats|enabled|enable|disable|'') ;;
-		gen_config|pause) lock_req=1 ;;
-		boot|start|update|resume) cleanup_req=1 lock_req=1 ;;
-		stop)
-			reg_action "Stopping adblock-lean." || exit 1
-			cleanup_req=1 kill_req=1 lock_req=1 ;;
-		reload|restart)
-			reg_action "Restarting adblock-lean." || exit 1
-			cleanup_req=1 kill_req=1 lock_req=1 ;;
-		*)
-			reg_failure "Error: invalid action '${action}'."
-			exit 1
-	esac
-
-	if [ -n "${kill_req}" ]
-	then
-		kill_abl_pids
-		check_lock
-		case ${?} in
-			1) exit 1 ;;
-			2)
-				reg_failure "Error: failed to kill running adblock-lean processes."
-				exit 1
-		esac
-	fi
-
-	if [ -n "${lock_req}" ]
-	then
-		mk_lock "${action}" || { unset lock_req cleanup_req; exit ${?}; }
-	fi
-
-	case ${action} in
-		help|gen_config|enable|disable|enabled|stop|'') ;;
-		status) mkdir -p /var/run/adblock-lean ;;
-		*)
-			mkdir -p /var/run/adblock-lean
-			load_config || exit 1
-	esac
-
-	:
 }
 
 :
