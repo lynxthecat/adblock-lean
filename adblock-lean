@@ -33,6 +33,7 @@ else
 fi
 
 PREFIX=/root/adblock-lean
+abl_dir=/var/run/adblock-lean
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -165,7 +166,7 @@ clean_dnsmasq_dir()
 cleanup_and_exit()
 {
 	trap - INT TERM EXIT
-	[ -n "${cleanup_req}" ] && rm -rf "/var/run/adblock-lean"
+	[ -n "${cleanup_req}" ] && rm -rf "${abl_dir}"
 	[ -n "${lock_req}" ] && rm_lock
 	[ -z "${luci_sourced}" ] && [ -n "${report_failure}" ] && [ -n "${failure_msg}" ] && eval "${report_failure}"
 	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
@@ -219,15 +220,13 @@ load_config()
 			[ "${allowlist_urls+set}" ] &&
 			[ "${local_allowlist_path+set}" ] &&
 			[ "${local_blocklist_path+set}" ] &&
-			[ "${min_blocklist_file_part_line_count+set}" ] &&
-			[ "${max_blocklist_file_part_size_KB+set}" ] &&
+			[ "${min_blocklist_part_line_count+set}" ] &&
+			[ "${max_file_part_size_KB+set}" ] &&
 			[ "${max_blocklist_file_size_KB+set}" ] &&
 			[ "${min_good_line_count+set}" ] &&
 			[ "${compress_blocklist+set}" ] &&
 			[ "${initial_dnsmasq_restart+set}" ] &&
-			[ "${download_failed_action+set}" ] &&
-			[ "${rogue_element_action+set}" ] &&
-			[ "${dnsmasq_test_failed_action+set}" ] &&
+			[ "${list_part_failed_action+set}" ] &&
 			[ "${report_failure+set}" ] &&
 			[ "${report_success+set}" ] &&
 			[ "${boot_start_delay_s+set}" ]
@@ -239,6 +238,9 @@ load_config()
 		log_msg "Check differences and/or overwrite old config with the newly generated config."
 		return 1
 	fi
+
+	min_allowlist_part_line_count=1
+
 	:
 }
 
@@ -277,237 +279,232 @@ check_blocklist_compression_support()
 	return 1
 }
 
-generate_preprocessed_blocklist_file_parts()
+cleanup_dl_status_files()
 {
-	rm -f /var/run/adblock-lean/allowlist*
-	allowlist_line_count=0
-	allowlist_id=0
+	rm -f "${abl_dir}/rogue_element" "${abl_dir}/dnsmasq_err" "${abl_dir}/uclient-fetch_err"
+}
 
-	if [ -f "${local_allowlist_path}" ]
+# 1 - list id
+# 2 - list type (allowlist or blocklist)
+# 3 - list URL
+#
+# return codes:
+# 0 - Success
+# 1 - General error (stop processing)
+# 2 - Bad List (retry doesn't make sense)
+# 3 - Download Failure (retry makes sense)
+download_and_process_list_part()
+{
+	local list_id="${1}" list_type="${2}" list_url="${3}" me="download_and_process_list_part"
+	local dest_file="${abl_dir}/${list_type}.${list_id}" compress='' convert_to_local='' \
+		min_list_part_line_count='' list_part_size_B='' list_part_size_KB=''
+
+	[ -z "${list_id}" ] && { reg_failure "${me}: Error: no list id specified."; return 1; }
+	case ${list_type} in
+		allowlist) ;;
+		blocklist)
+			convert_to_local="; s/^\(address=\|server=\)/local=/"
+			dest_file="${dest_file}.gz"
+			compress=1 ;;
+		*) reg_failure "${me}: Error: missing or invalid list type '${list_type}'"; return 1
+	esac
+	[ -z "${list_url}" ] && { reg_failure "${me}: Error: no URL specified."; return 1; }
+
+	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
+
+	cleanup_dl_status_files
+
+	reg_action "Downloading, checking and sanitizing new ${list_type} file part from: ${list_url}." || return 1
+	uclient-fetch "${list_url}" -O- --timeout=3 2> "${abl_dir}/uclient-fetch_err" | 
+	{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
+	tee >(wc -c > "${abl_dir}/list_part_size_B") |
+	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=
+	tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d'"${convert_to_local}" |
+	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
-		log_msg "Found local allowlist."
-		reg_action "Sanitizing allowlist file part." || return 1
-		# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
-		allowlist_file_part_line_count="$(tr 'A-Z' 'a-z' < "${local_allowlist_path}" | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' | tee /var/run/adblock-lean/allowlist | wc -l)"
-		if [ "${allowlist_file_part_line_count}" -gt 0 ]
+		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
+			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
+	else
+		cat
+	fi |
+	tee >(wc -l > "${abl_dir}/list_part_line_count") |
+	tee >(sed -nE '\~^((local|server)=/[[:alnum:]*][[:alnum:]*_.-]+/$|bogus-nxdomain=[0-9.]+$|$)~d;p;:1 n;b1' > "${abl_dir}/rogue_element") |
+	if [ -n "${compress}" ]
+	then
+		tee >(gzip > "${dest_file}")
+	else
+		tee "${dest_file}"
+	fi |
+	{ dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err" && rm -f "${abl_dir}/dnsmasq_err"; cat 1>/dev/null; }
+
+	read -r list_part_size_B _ < "${abl_dir}/list_part_size_B" 2>/dev/null
+	list_part_size_KB=$(( (list_part_size_B + 0) / 1024 ))
+	list_part_size_human="$(bytes2human "${list_part_size_B:-0}")"
+	read -r list_part_line_count _ < "${abl_dir}/list_part_line_count" 2>/dev/null
+	: "${list_part_line_count:=0}"
+
+	rm -f "${abl_dir}/list_part_size_B" "${abl_dir}/list_part_line_count"
+
+	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
+	then
+		reg_failure "Downloaded ${list_type} part size reached the maximum value set in config (${max_file_part_size_KB} KB)."
+		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} url."
+		log_msg "Skipping ${list_type} part and continuing."
+		rm -f "${dest_file}"
+		return 2
+	fi
+
+	if ! grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
+	then
+		rm -f "${dest_file}"
+		reg_failure "Download of new ${list_type} file part from: ${list_url} failed."
+		return 3
+	fi
+
+	if read -r rogue_element < "${abl_dir}/rogue_element"
+	then
+		rm -f "${dest_file}"
+		log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file part from: ${list_url}."
+		return 2
+	fi
+	rm -f "${abl_dir}/rogue_element"
+
+	if [ -f "${abl_dir}/dnsmasq_err" ]
+	then
+		rm -f "${dest_file}"
+		reg_failure "The dnsmasq --test on the ${list_type} part failed."
+		log_msg "dnsmasq --test error:"
+		log_msg "$(cat "${abl_dir}/dnsmasq_err")"
+		return 2
+	fi
+	rm -f "${abl_dir}/dnsmasq_err"
+
+	if [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
+	then
+		rm -f "${dest_file}"
+		reg_failure "Downloaded ${list_type} part line count: $(int2human ${list_part_line_count}) less than configured minimum: $(int2human ${min_list_part_line_count})."
+		return 3
+	fi
+
+	cleanup_dl_status_files
+	log_msg "Processing of new ${list_type} part from: ${list_url} succeeded."
+	log_msg "Downloaded file size: ${list_part_size_human}; sanitized line count: $(int2human ${list_part_line_count})."
+
+	:
+}
+
+gen_list_parts()
+{
+	local list_type='' list_id list_line_count=0 list_part_line_count=0 and_compressing='' sed_expr list_urls list_url local_list_path
+
+	for list_type in allowlist blocklist
+	do
+		case ${list_type} in
+			allowlist) sed_expr='s/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' ;;
+			blocklist)
+				sed_expr='s/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\'
+				and_compressing=" and compressing"
+		esac
+		list_id=0
+
+		rm -f "${abl_dir}/${list_type}"*
+
+		# Local list
+		eval "local_list_path=\"\${local_${list_type}_path}\""
+		eval "list_urls=\"\${${list_type}_urls}\""
+
+		if [ -s "${local_list_path}" ]
 		then
-			log_msg "Sanitized allowlist file part line count: $(int2human ${allowlist_file_part_line_count})."
+			log_msg "Found local ${list_type}."
+			reg_action "Sanitizing${and_compressing} the local ${list_type}." || return 1
+			# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
+			list_part_line_count="$(
+				tr 'A-Z' 'a-z' < "${local_list_path}" | sed "${sed_expr}" |
+				if [ "${list_type}" = blocklist ]
+				then
+					tee >(gzip > "${abl_dir}/blocklist.${list_id}.gz")
+				else
+					tee -a "${abl_dir}/allowlist"
+				fi | wc -l
+			)"
+			case ${list_part_line_count} in
+				''|*[!0-9]*) report_failure "Error: failed to process local ${list_type}."; return 1 ;;
+				0) log_msg -warn "No lines remaining in local ${list_type} after sanitization." ;;
+				*)
+					log_msg "Sanitized local ${list_type} line count: $(int2human ${list_part_line_count})."
+					list_line_count=$(( list_line_count + list_part_line_count ))
+			esac
+		elif [ -f "${local_list_path}" ]
+		then
+			log_msg -warn "Warning: local ${list_type} file is empty."
 		else
-			log_msg -warn "No lines remaining in allowlist file part after sanitization."
+			log_msg "No local ${list_type} identified."
 		fi
-		allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count ))
-	else
-		log_msg "No local allowlist identified."
-	fi
 
-	for allowlist_url in ${allowlist_urls}
-	do
-		retry=0
-		while [ "${retry}" -le "${max_download_retries}" ]
+		# List parts download
+
+		rm -f "${abl_dir}/${list_type}".*
+		[ -n "${list_urls}" ] && { reg_action "Downloading new ${list_type} file part(s)." || return 1; }
+
+		for list_url in ${list_urls}
 		do
-			retry=$((retry + 1))
-			reg_action "Downloading and sanitizing new allowlist file part from: ${allowlist_url}." || return 1
-			uclient-fetch "${allowlist_url}" -O- --timeout=3 2> /var/run/adblock-lean/uclient-fetch_err |
-			tee >(wc -c > /var/run/adblock-lean/allowlist_file_part_size_B) |
-			tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' |
-			tee >(wc -l > /var/run/adblock-lean/allowlist_file_part_line_count) > \
-				/var/run/adblock-lean/allowlist.${allowlist_id}
+			list_id=$((list_id+1))
+			retry=0
+			while [ "${retry}" -le "${max_download_retries}" ]
+			do
+				retry=$((retry + 1))
+				download_and_process_list_part "${list_id}" "${list_type}" "${list_url}"
+				case ${?} in
+					0)
+						list_line_count=$(( list_line_count + list_part_line_count ))
+						if [ "${list_type}" = allowlist ]
+						then
+							cat "${abl_dir}/${list_type}.${list_id}" >> "${abl_dir}/allowlist" ||
+								{ reg_failure "Error: Failed to merge allowlist part."; return 1; }
+						fi
+						continue 2 ;;
+					1) return 1 ;;
+					2)
+						[ "${list_part_failed_action}" = "STOP" ] && { reg_failure "list_part_failed_action is set to 'STOP', exiting."; return 1; }
+						log_msg "Skipping file part and continuing."
+						continue 2 ;;
+					3) ;;
+				esac
 
-			allowlist_file_part_size_human="$(bytes2human "$(cat /var/run/adblock-lean/allowlist_file_part_size_B 2>/dev/null)" )"
-			allowlist_file_part_line_count="$(cat /var/run/adblock-lean/allowlist_file_part_line_count 2>/dev/null)"
-			: "${allowlist_file_part_line_count:=0}"
-			rm -f /var/run/adblock-lean/allowlist_file_part_size_B /var/run/adblock-lean/allowlist_file_part_line_count
-
-			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
-			then
-				rm -f "/var/run/adblock-lean/allowlist.${allowlist_id}"
-				reg_failure "Download of new allowlist file part from: ${allowlist_url} failed."
-				if [ "${retry}" -lt "${max_download_retries}" ]
+				if [ "${retry}" -ge "${max_download_retries}" ]
 				then
-					reg_action "Sleeping for 5 seconds after failed download attempt." || return 1
-					sleep 5
-					continue
-				else
-					break
-				fi
-			fi
-
-			log_msg "Processing of new allowlist file part from: ${allowlist_url} succeeded (downloaded file size: ${allowlist_file_part_size_human})."
-
-			if [ "${allowlist_file_part_line_count}" -gt 0 ]
-			then
-				log_msg "Sanitized allowlist file part line count: $(int2human ${allowlist_file_part_line_count})."
-				allowlist_line_count=$(( allowlist_line_count + allowlist_file_part_line_count ))
-				cat "/var/run/adblock-lean/allowlist.${allowlist_id}" >> /var/run/adblock-lean/allowlist
-			else
-				log_msg -warn "No lines remaining in allowlist file part after sanitization."
-			fi
-
-			rm -f  "/var/run/adblock-lean/allowlist.${allowlist_id}"
-			allowlist_id=$(( allowlist_id + 1 ))
-			continue 2
-		done
-		reg_failure "Download failed after three failed download attempts. Continuing further operation."
-	done
-
-	rm -f /var/run/adblock-lean/allowlist.*
-
-	if [ -f /var/run/adblock-lean/allowlist ] && [ $allowlist_line_count -gt 0 ]
-	then
-		log_msg "Successfully generated allowlist with $(int2human ${allowlist_line_count}) lines."
-		log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
-		use_allowlist=1
-	else
-		log_msg "Not using any allowlist for blocklist processing."
-		use_allowlist=0
-	fi
-
-	rm -f /var/run/adblock-lean/blocklist*
-
-	if [ -f "${local_blocklist_path}" ]
-	then
-		local_blocklist_line_count=$(grep -vEc '^\s*$|^#' "${local_blocklist_path}")
-		log_msg "Found local blocklist with $(int2human ${local_blocklist_line_count}) lines."
-		reg_action "Sanitizing and compressing the local blocklist." || return 1
-		sed 's/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\' "${local_blocklist_path}" | gzip > /var/run/adblock-lean/blocklist.0.gz
-	else
-		log_msg "No local blocklist identified."
-	fi
-
-	[ -n "${blocklist_urls}" ] && { reg_action "Downloading new blocklist file part(s)." || return 1; }
-
-	preprocessed_blocklist_line_count=0
-	blocklist_id=1
-	for blocklist_url in ${blocklist_urls}
-	do
-		rm -f /var/run/adblock-lean/rogue_element /var/run/adblock-lean/dnsmasq_err /var/run/adblock-lean/uclient-fetch_err
-		retry=0
-		while [ "${retry}" -le "${max_download_retries}" ]
-		do
-			retry=$((retry + 1))
-			reg_action "Downloading, checking and sanitizing new blocklist file part from: ${blocklist_url}." || return 1
-			uclient-fetch "${blocklist_url}" -O- --timeout=3 2> /var/run/adblock-lean/uclient-fetch_err | 
-			head -c "${max_blocklist_file_part_size_KB}k" |
-			tee >(wc -c > /var/run/adblock-lean/blocklist_part_size_B) |
-			# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=
-			tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; s/^\(address=\|server=\)/local=/' |
-			if [ "${use_allowlist}" = 1 ]
-			then
-				${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' /var/run/adblock-lean/allowlist -
-			else
-				cat
-			fi |
-			tee >(wc -l > /var/run/adblock-lean/blocklist_part_line_count) |
-
-			if [ "${rogue_element_action}" != "IGNORE" ]
-			then
-				tee >(sed -nE '\~^(local=/[[:alnum:]*][[:alnum:]*_.-]+/$|bogus-nxdomain=[0-9.]+$|$)~d;p;:1 n;b1' > /var/run/adblock-lean/rogue_element)
-			else
-				cat
-			fi | tee >(gzip > /var/run/adblock-lean/blocklist.${blocklist_id}.gz) |
-			{ dnsmasq --test -C - 2> /var/run/adblock-lean/dnsmasq_err && rm -f /var/run/adblock-lean/dnsmasq_err; cat 1>/dev/null; }
-
-			blocklist_file_part_size_B="$(cat /var/run/adblock-lean/blocklist_part_size_B 2>/dev/null)"
-			blocklist_file_part_size_KB=$(( (blocklist_file_part_size_B + 0) / 1024 ))
-			blocklist_file_part_size_human="$(bytes2human "${blocklist_file_part_size_B}")"
-			blocklist_file_part_line_count="$(cat /var/run/adblock-lean/blocklist_part_line_count 2>/dev/null)"
-			: "${blocklist_file_part_line_count:=0}"
-
-			rm -f /var/run/adblock-lean/blocklist_part_size_B /var/run/adblock-lean/blocklist_part_line_count
-
-			if [ "${blocklist_file_part_size_KB}" -ge "${max_blocklist_file_part_size_KB}" ]
-			then
-				reg_failure "Downloaded blocklist file part size reached the maximum value set in config (${max_blocklist_file_part_size_KB} KB)."
-				log_msg "Consider either increasing this value in the config or removing the corresponding blocklist url."
-				log_msg "Skipping file part and continuing."
-				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
-				continue 2
-			fi
-
-			if ! grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
-			then
-				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
-				reg_failure "Download of new blocklist file part from: ${blocklist_url} failed."
-
-				if [ "${retry}" -lt "${max_download_retries}" ]
-				then
-					reg_action "Sleeping for 5 seconds after failed download attempt." || return 1
-					sleep 5
-					continue
-				else
-					break
-				fi
-			fi
-
-			if read -r rogue_element < /var/run/adblock-lean/rogue_element
-			then
-				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
-
-				log_msg -warn "Rogue element: '${rogue_element}' identified originating in blocklist file part from: ${blocklist_url}."
-
-				if [ "${rogue_element_action}" = "STOP" ]
-				then
-					return 1
-				else
+					[ "${list_part_failed_action}" = "STOP" ] && { reg_failure "Giving up after three failed download attempts."; return 1; }
 					log_msg "Skipping file part and continuing."
 					continue 2
 				fi
-			fi
-			rm -f /var/run/adblock-lean/rogue_element
 
-			if [ -f /var/run/adblock-lean/dnsmasq_err ]
-			then
-				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
-				reg_failure "The dnsmasq --test on the blocklist file part failed."
-				log_msg "dnsmasq --test error:"
-				log_msg "$(cat /var/run/adblock-lean/dnsmasq_err)"
-				if [ "${dnsmasq_test_failed_action}" = "STOP" ]
-				then
-					return 1
-				else
-					log_msg "Skipping file part and continuing."
-					continue 2
-				fi
-				return 1
-			fi
-
-			rm -f /var/run/adblock-lean/dnsmasq_err
-
-			if [ "${blocklist_file_part_line_count}" -ge "${min_blocklist_file_part_line_count}" ]
-			then
-				log_msg "Processing of new blocklist file part from: ${blocklist_url} succeeded (downloaded file size: ${blocklist_file_part_size_human}; sanitized line count: $(int2human ${blocklist_file_part_line_count}))."
-
-				preprocessed_blocklist_line_count=$(( preprocessed_blocklist_line_count + blocklist_file_part_line_count ))
-				blocklist_id=$((blocklist_id+1))
-				continue 2
-			else
-				rm -f "/var/run/adblock-lean/blocklist.${blocklist_id}.gz"
-				reg_failure "Downloaded blocklist file part line count: $(int2human ${blocklist_file_part_line_count}) less than configured minimum: $(int2human ${min_blocklist_file_part_line_count})."
-			fi
-
-			if [ "${retry}" -lt "${max_download_retries}" ]
-			then
 				reg_action "Sleeping for 5 seconds after failed download attempt." || return 1
 				sleep 5
 				continue
-			else
-				break
-			fi
+			done
+
 		done
 
-		if [ "${download_failed_action}" = "STOP" ]
+		if [ "${list_line_count}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${abl_dir}/allowlist" ]; }
 		then
-			reg_failure "Exiting after three failed download attempts."
-			return 1
+			case ${list_type} in
+				blocklist) return 1 ;;
+				allowlist)
+					log_msg "Not using any allowlist for blocklist processing."
+					use_allowlist=0
+					continue
+			esac
+		fi
+
+		if [ "${list_type}" = allowlist ]
+		then
+			log_msg "Successfully generated allowlist with $(int2human ${list_line_count}) lines."
+			log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
+			use_allowlist=1
 		else
-			log_msg "Skipping file part and continuing."
+			preprocessed_blocklist_line_count="${list_line_count}"
 		fi
 	done
-
-	rm -f /var/run/adblock-lean/uclient-fetch_err
-
-	[ "${preprocessed_blocklist_line_count}" -gt 0 ] || return 1
-
 	:
 }
 
@@ -515,48 +512,40 @@ generate_and_process_blocklist_file()
 {
 	reg_action "Sorting and merging the blocklist lines into a single blocklist file." || return 1
 
-	rm -f /var/run/adblock-lean/dnsmasq_err
-
 	{
-		[ "${use_allowlist}" = 1 ] && sed '/^$/d; s~.*~server=/&/#~' /var/run/adblock-lean/allowlist
-		rm -f /var/run/adblock-lean/allowlist
+		[ "${use_allowlist}" = 1 ] && sed '/^$/d; s~.*~server=/&/#~' "${abl_dir}/allowlist"
+		rm -f "${abl_dir}/allowlist"
 
-		for blocklist_file_part_gz in /var/run/adblock-lean/blocklist.*.gz
-		do
-			gunzip -c "${blocklist_file_part_gz}"
-			rm -f "${blocklist_file_part_gz}"
-		done
+		find "${abl_dir}" -name 'blocklist.*.gz' -exec gunzip -c {} \; -exec rm -f {} \;
 	} | sort -u |
-
-	head -c "${max_blocklist_file_size_KB}k" |
-
-	tee >(wc -l > /var/run/adblock-lean/blocklist_file_line_count) |
-	tee >(wc -c > /var/run/adblock-lean/blocklist_file_size_B) |
+	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
+	tee >(wc -l > "${abl_dir}/blocklist_file_line_count") |
+	tee >(wc -c > "${abl_dir}/blocklist_file_size_B") |
 
 	if  [ "${compress_blocklist}" = 1 ]
 	then
-		gzip > /var/run/adblock-lean/blocklist.gz
+		gzip > "${abl_dir}/blocklist.gz"
 	else
-		cat > /var/run/adblock-lean/blocklist
+		cat > "${abl_dir}/blocklist"
 	fi
 
-	good_line_count="$(cat /var/run/adblock-lean/blocklist_file_line_count 2>/dev/null)"
+	good_line_count="$(cat "${abl_dir}/blocklist_file_line_count" 2>/dev/null)"
 	: "${good_line_count:=0}"
 
-	if [ "${good_line_count}" -lt "${min_good_line_count}" ]
-	then
-		reg_failure "Good line count: $(int2human ${good_line_count}) below $(int2human ${min_good_line_count})."
-		return 1
-	fi
-
-	blocklist_file_size_B="$(cat /var/run/adblock-lean/blocklist_file_size_B 2>/dev/null)"
+	blocklist_file_size_B="$(cat "${abl_dir}/blocklist_file_size_B" 2>/dev/null)"
 	blocklist_file_size_KB=$(( (blocklist_file_size_B + 0) / 1024 ))
 	blocklist_file_size_human="$(bytes2human "${blocklist_file_size_B}")"
 
 	if [ "${blocklist_file_size_KB}" -ge "${max_blocklist_file_size_KB}" ]
 	then
-		reg_failure "Blocklist file size reached the maximum value set in config (${max_blocklist_file_size_KB} KB)."
+		reg_failure "Blocklist file size reached the maximum value set in config ($(int2human "${max_blocklist_file_size_KB}") KB)."
 		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
+		return 1
+	fi
+
+	if [ "${good_line_count}" -lt "${min_good_line_count}" ]
+	then
+		reg_failure "Good line count: $(int2human "${good_line_count}") below the minimum value set in config ($(int2human "${min_good_line_count}"))."
 		return 1
 	fi
 
@@ -626,14 +615,14 @@ export_existing_blocklist()
 	if [ -f /tmp/dnsmasq.d/.blocklist.gz ]
 	then
 		log_msg "Exporting and saving existing compressed blocklist."
-		try_mv /tmp/dnsmasq.d/.blocklist.gz /var/run/adblock-lean/prev_blocklist.gz || return 1
+		try_mv /tmp/dnsmasq.d/.blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
 		return 0
 	elif [ -f /tmp/dnsmasq.d/blocklist ]
 	then
 		reg_action "Exporting and saving existing uncompressed blocklist." || return 1
 		gzip -f /tmp/dnsmasq.d/blocklist ||
 			{ reg_failure "Error: failed to compress '/tmp/dnsmasq.d/blocklist'."; return 1; }
-		try_mv /tmp/dnsmasq.d/blocklist.gz /var/run/adblock-lean/prev_blocklist.gz || return 1
+		try_mv /tmp/dnsmasq.d/blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
 		return 0
 	else
 		log_msg "No existing compressed or uncompressed blocklist identified."
@@ -643,14 +632,14 @@ export_existing_blocklist()
 
 restore_saved_blocklist()
 {
-	if [ -f /var/run/adblock-lean/prev_blocklist.gz ]
+	if [ -f "${abl_dir}/prev_blocklist.gz" ]
 	then
 		reg_action "Restoring saved blocklist file." || return 1
-		try_mv /var/run/adblock-lean/prev_blocklist.gz /var/run/adblock-lean/blocklist.gz || return 1
+		try_mv "${abl_dir}/prev_blocklist.gz" "${abl_dir}/blocklist.gz" || return 1
 		if [ "${compress_blocklist}" != 1 ]
 		then
-			gunzip -f /var/run/adblock-lean/blocklist.gz ||
-				{ reg_failure "Error: failed to extract '/var/run/adblock-lean/blocklist.gz'."; return 1; }
+			gunzip -f "${abl_dir}/blocklist.gz" ||
+				{ reg_failure "Error: failed to extract '${abl_dir}/blocklist.gz'."; return 1; }
 
 		fi
 		import_blocklist_file ||
@@ -664,19 +653,18 @@ restore_saved_blocklist()
 
 import_blocklist_file()
 {
+	local src_file="${abl_dir}/blocklist" dest_file="/tmp/dnsmasq.d/blocklist"
+	[ "${compress_blocklist}" = 1 ] && { src_file="${src_file}.gz" dest_file="/tmp/dnsmasq.d/.blocklist.gz"; }
+	[ -f "${src_file}" ] || return 1
+	clean_dnsmasq_dir
+	try_mv "${src_file}" "${dest_file}" || return 1
+	imported_blocklist_file_size_human=$(get_file_size_human "${dest_file}")
+
 	if [ "${compress_blocklist}" = 1 ]
 	then
-		[ -f /var/run/adblock-lean/blocklist.gz ] || return 1
-		clean_dnsmasq_dir
-		printf "conf-script=\"busybox sh /tmp/dnsmasq.d/.extract_blocklist\"\n" > /tmp/dnsmasq.d/conf-script
-		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist
-		try_mv /var/run/adblock-lean/blocklist.gz /tmp/dnsmasq.d/.blocklist.gz || return 1
-		imported_blocklist_file_size_human=$(get_file_size_human /tmp/dnsmasq.d/.blocklist.gz)
-	else
-		[ -f /var/run/adblock-lean/blocklist ] || return 1
-		clean_dnsmasq_dir
-		try_mv /var/run/adblock-lean/blocklist /tmp/dnsmasq.d/blocklist || return 1
-		imported_blocklist_file_size_human=$(get_file_size_human /tmp/dnsmasq.d/blocklist)
+		printf "conf-script=\"busybox sh /tmp/dnsmasq.d/.extract_blocklist\"\n" > /tmp/dnsmasq.d/conf-script &&
+		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist ||
+			{ reg_failure "Error: failed to create conf-script for dnsmasq."; return 1; }
 	fi
 
 	:
@@ -688,11 +676,17 @@ import_blocklist_file()
 # 2 - update check failed
 check_for_updates()
 {
-	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | awk '{print $1}')
-	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - 2> /var/run/adblock-lean/uclient-fetch_err | sha256sum | awk '{print $1}')
+	rm -f "${abl_dir}/uclient-fetch_err"
+	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed 's/[ \t]*-.*//')
+	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
+		2> "${abl_dir}/uclient-fetch_err" | sha256sum | sed 's/[ \t]*-.*//')
 
-	local update_check_result
-	if grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
+	local bad_dl='' update_check_result=''
+
+	# safeguard against receiving empty string or empty string+newline
+	case "${sha256sum_adblock_lean_remote}" in *9805daca546b|*991b7852b855) bad_dl=1; esac
+
+	if [ -z "${bad_dl}" ] && grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
 	then
 		if [ "${sha256sum_adblock_lean_local}" = "${sha256sum_adblock_lean_remote}" ]
 		then
@@ -707,7 +701,7 @@ check_for_updates()
 		reg_failure "Unable to download latest version of adblock-lean to check for any updates."
 		update_check_result=2
 	fi
-	rm -f /var/run/adblock-lean/uclient-fetch_err
+	rm -f "${abl_dir}/uclient-fetch_err"
 
 	return ${update_check_result}
 }
@@ -889,9 +883,9 @@ init_command()
 
 	case ${action} in
 		help|gen_config|enable|disable|enabled|stop|'') ;;
-		status) mkdir -p /var/run/adblock-lean ;;
+		status) mkdir -p "${abl_dir}" ;;
 		*)
-			mkdir -p /var/run/adblock-lean
+			mkdir -p "${abl_dir}"
 			load_config || exit 1
 	esac
 
@@ -932,9 +926,9 @@ gen_config()
 	local_blocklist_path="${PREFIX}/blocklist"
 
 	# Mininum number of lines of any individual downloaded blocklist part
-	min_blocklist_file_part_line_count=1
+	min_blocklist_part_line_count=1
 	# Maximum size of any individual downloaded blocklist part
-	max_blocklist_file_part_size_KB=20000
+	max_file_part_size_KB=20000
 	# Maximum total size of combined, processed blocklist
 	max_blocklist_file_size_KB=30000
 	# Minimum number of good lines in final postprocessed blocklist
@@ -950,21 +944,11 @@ gen_config()
 	# Maximum number of download retries
 	max_download_retries=3
 
-	# Download failed action:
-	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
+	# List part failed action:
+	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
+	# SKIP - skip failed blocklist file part and continue blocklist generation
 	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
-	download_failed_action="SKIP_PARTIAL"
-
-	# Rogue element action:
-	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
-	# IGNORE - ignore any rogue elements (warning: use with caution)
-	rogue_element_action="SKIP_PARTIAL"
-
-	# dnsmasq --test failed action:
-	# SKIP_PARTIAL - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
-	dnsmasq_test_failed_action="SKIP_PARTIAL"
+	list_part_failed_action="SKIP"
 
 	# The following shell variables are invoked using:
 	# 'eval \${report_failure}' and 'eval \${report_success}'
@@ -1045,7 +1029,7 @@ start()
 
 	initial_uptime_ms=$(get_uptime_ms)
 
-	if ! generate_preprocessed_blocklist_file_parts
+	if ! gen_list_parts
 	then
 		reg_failure "Failed to generate preprocessed blocklist file with at least one line."
 		restore_saved_blocklist
@@ -1070,7 +1054,9 @@ start()
 		exit 1
 	fi
 
-	log_msg "Successfully imported new blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_human}."
+	compressed=
+	[ "${compress_blocklist}" = 1 ] && compressed=" compressed"
+	log_msg "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_human}."
 
 	elapsed_time_str=$(get_elapsed_time_str)
 	log_msg "Processing time for blocklist generation and import: ${elapsed_time_str}."
@@ -1105,7 +1091,7 @@ start()
 
 	log_msg "The dnsmasq check passed with new blocklist file."
 	log_success "New blocklist installed with good line count: $(int2human ${good_line_count})."
-	rm -f /var/run/adblock-lean/prev_blocklist.gz
+	rm -f "${abl_dir}/prev_blocklist.gz"
 
 	check_for_updates
 	exit 0
@@ -1219,17 +1205,18 @@ update()
 {
 	init_command update || exit 1
 	reg_action "Obtaining latest version of adblock-lean." || exit 1
-	uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O /var/run/adblock-lean/adblock-lean.latest 1> /dev/null 2> /var/run/adblock-lean/uclient-fetch_err
-	if grep -q "Download completed" /var/run/adblock-lean/uclient-fetch_err
+	uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean \
+		-O "${abl_dir}/adblock-lean.latest" 1> /dev/null 2> "${abl_dir}/uclient-fetch_err"
+	if grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
 	then
-		try_mv /var/run/adblock-lean/adblock-lean.latest /etc/init.d/adblock-lean || exit 1
+		try_mv "${abl_dir}/adblock-lean.latest" /etc/init.d/adblock-lean || exit 1
 		chmod +x /etc/init.d/adblock-lean
 		/etc/init.d/adblock-lean enable
 		log_msg "adblock-lean has been updated to the latest version."
 	else
 		reg_failure "Unable to download latest version of adblock-lean."
 	fi
-	rm -f /var/run/adblock-lean/adblock-lean.latest /var/run/adblock-lean/uclient-fetch_err
+	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
 	exit 0
 }
 
