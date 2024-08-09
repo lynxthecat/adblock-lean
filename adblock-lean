@@ -24,6 +24,8 @@
 
 
 LC_ALL=C
+IFS='	 
+'
 
 if [ -t 0 ]
 then
@@ -53,6 +55,13 @@ adblock-lean custom commands:
 
 
 ### UTILITY FUNCTIONS
+
+# sets variables for colors
+set_colors()
+{
+	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[0m')
+	red="$1" green="$2" blue="$3" yellow="$4" purple="$5" n_c="$6"
+}
 
 get_file_size_human()
 {
@@ -130,19 +139,20 @@ print_msg()
 
 log_msg()
 {
-	local msg='' _arg='' err_l=info
+	local msg='' _arg='' err_l=info color=
 
 	for _arg in "$@"; do
 		case "${_arg}" in
-			"-err") err_l=err ;;
-			"-warn") err_l=warn ;;
+			"-err") err_l=err; color="${red}" ;;
+			"-warn") err_l=warn; color="${yellow}" ;;
+			-blue|-red|-green|-purple|-yellow) eval "color=\"\$${_arg#-}\"" ;;
 			'') ;;
 			*) msg="${msg}${_arg} "
 		esac
 	done
 	msg="${msg% }"
 
-	print_msg "${msg}"
+	print_msg "${color}${msg}${n_c}"
 	logger -t adblock-lean -p user."${err_l}" "${msg}"
 }
 
@@ -195,7 +205,7 @@ reg_failure()
 
 log_success()
 {
-	log_msg "${1}"
+	log_msg -green "${1}"
 	if [ -n "${report_success}" ]
 	then
 		success_msg="${1}"
@@ -284,6 +294,18 @@ cleanup_dl_status_files()
 	rm -f "${abl_dir}/rogue_element" "${abl_dir}/dnsmasq_err" "${abl_dir}/uclient-fetch_err"
 }
 
+# ugly hack to compensate for 'wc -l' issue (subtract 1 if cnt>1)
+# 1 - var name to fix the value of
+fix_line_cnt()
+{
+	local cnt
+	eval "cnt=\"\$${1}\""
+	case ${cnt} in
+		''|0|1|*[!0-9]*) ;;
+		*) eval "${1}=$((cnt-1))"
+	esac
+}
+
 # 1 - list id
 # 2 - list type (allowlist or blocklist)
 # 3 - list URL
@@ -319,7 +341,7 @@ download_and_process_list_part()
 	{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
 	tee >(wc -c > "${abl_dir}/list_part_size_B") |
 	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=
-	tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d'"${convert_to_local}" |
+	tr 'A-Z' 'a-z' | sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d'"${convert_to_local}"'; $a' |
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
 		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
@@ -379,6 +401,7 @@ download_and_process_list_part()
 	fi
 	rm -f "${abl_dir}/dnsmasq_err"
 
+	fix_line_cnt list_part_line_count
 	if [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
 		rm -f "${dest_file}"
@@ -400,9 +423,9 @@ gen_list_parts()
 	for list_type in allowlist blocklist
 	do
 		case ${list_type} in
-			allowlist) sed_expr='s/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a\' ;;
+			allowlist) sed_expr='s/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d; $a' ;;
 			blocklist)
-				sed_expr='s/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a\'
+				sed_expr='s/^[ \t]*//; s/[ \t]*$//; /^$/d; s~.*~local=/&/~; $a'
 				and_compressing=" and compressing"
 		esac
 		list_id=0
@@ -410,13 +433,14 @@ gen_list_parts()
 		rm -f "${abl_dir}/${list_type}"*
 
 		# Local list
+		echo
 		eval "local_list_path=\"\${local_${list_type}_path}\""
 		eval "list_urls=\"\${${list_type}_urls}\""
 
 		if [ -s "${local_list_path}" ]
 		then
-			log_msg "Found local ${list_type}."
-			reg_action "Sanitizing${and_compressing} the local ${list_type}." || return 1
+			log_msg -blue "Found local ${list_type}. Sanitizing${and_compressing}."
+			reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
 			# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
 			list_part_line_count="$(
 				tr 'A-Z' 'a-z' < "${local_list_path}" | sed "${sed_expr}" |
@@ -427,6 +451,8 @@ gen_list_parts()
 					tee -a "${abl_dir}/allowlist"
 				fi | wc -l
 			)"
+
+			fix_line_cnt list_part_line_count
 			case ${list_part_line_count} in
 				''|*[!0-9]*) report_failure "Error: failed to process local ${list_type}."; return 1 ;;
 				0) log_msg -warn "No lines remaining in local ${list_type} after sanitization." ;;
@@ -438,13 +464,18 @@ gen_list_parts()
 		then
 			log_msg -warn "Warning: local ${list_type} file is empty."
 		else
-			log_msg "No local ${list_type} identified."
+			log_msg -blue "No local ${list_type} identified."
 		fi
 
+		echo
 		# List parts download
-
-		rm -f "${abl_dir}/${list_type}".*
-		[ -n "${list_urls}" ] && { reg_action "Downloading new ${list_type} file part(s)." || return 1; }
+		if [ -n "${list_urls}" ]
+		then
+			reg_action -blue "Downloading new ${list_type} file part(s)." || return 1
+		elif [ "${list_type}" = blocklist ]
+		then
+			log_msg "NOTE: No URLs specified for blocklist download. Skipping download."
+		fi
 
 		for list_url in ${list_urls}
 		do
@@ -478,7 +509,7 @@ gen_list_parts()
 					continue 2
 				fi
 
-				reg_action "Sleeping for 5 seconds after failed download attempt." || return 1
+				reg_action -blue "Sleeping for 5 seconds after failed download attempt." || return 1
 				sleep 5
 				continue
 			done
@@ -498,8 +529,8 @@ gen_list_parts()
 
 		if [ "${list_type}" = allowlist ]
 		then
-			log_msg "Successfully generated allowlist with $(int2human ${list_line_count}) lines."
-			log_msg "Will remove any (sub)domain matches present in the generated allowlist from the blocklist file part(s) and append corresponding server entries to the combined blocklist."
+			log_msg -green "Successfully generated allowlist with $(int2human ${list_line_count}) lines."
+			log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 			use_allowlist=1
 		else
 			preprocessed_blocklist_line_count="${list_line_count}"
@@ -510,7 +541,8 @@ gen_list_parts()
 
 generate_and_process_blocklist_file()
 {
-	reg_action "Sorting and merging the blocklist lines into a single blocklist file." || return 1
+	echo
+	reg_action -blue "Sorting and merging the blocklist lines into a single blocklist file." || return 1
 
 	{
 		[ "${use_allowlist}" = 1 ] && sed '/^$/d; s~.*~server=/&/#~' "${abl_dir}/allowlist"
@@ -561,7 +593,7 @@ generate_and_process_blocklist_file()
 # 3 - dnsmasq is running, but one of the test domains resolved to 0.0.0.0
 check_dnsmasq()
 {
-	reg_action "Checking dnsmasq instance." || return 1
+	reg_action -blue "Checking dnsmasq instance." || return 1
 
 	if ! pgrep -x /usr/sbin/dnsmasq &> /dev/null
 	then
@@ -587,7 +619,8 @@ check_dnsmasq()
 
 restart_dnsmasq()
 {
-	reg_action "Restarting dnsmasq." || return 1
+	echo
+	reg_action -blue "Restarting dnsmasq." || return 1
 
 	/etc/init.d/dnsmasq restart &> /dev/null || 
 		{ reg_failure "Error: failed to restart dnsmasq."; return 1; }
@@ -602,7 +635,7 @@ restart_dnsmasq()
 
 	[ -z "$dnsmasq_ok" ] && { reg_failure "Error: dnsmasq initialization failed. Failed to restart dnsmasq."; return 1; }
 
-	log_msg "Restart of dnsmasq completed."
+	log_msg -green "Restart of dnsmasq completed."
 	:
 }
 
@@ -612,6 +645,7 @@ restart_dnsmasq()
 # 2 - blocklist file not found (nothing to export)
 export_existing_blocklist()
 {
+	echo
 	if [ -f /tmp/dnsmasq.d/.blocklist.gz ]
 	then
 		log_msg "Exporting and saving existing compressed blocklist."
@@ -619,7 +653,7 @@ export_existing_blocklist()
 		return 0
 	elif [ -f /tmp/dnsmasq.d/blocklist ]
 	then
-		reg_action "Exporting and saving existing uncompressed blocklist." || return 1
+		reg_action -blue "Exporting and saving existing uncompressed blocklist." || return 1
 		gzip -f /tmp/dnsmasq.d/blocklist ||
 			{ reg_failure "Error: failed to compress '/tmp/dnsmasq.d/blocklist'."; return 1; }
 		try_mv /tmp/dnsmasq.d/blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
@@ -634,7 +668,7 @@ restore_saved_blocklist()
 {
 	if [ -f "${abl_dir}/prev_blocklist.gz" ]
 	then
-		reg_action "Restoring saved blocklist file." || return 1
+		reg_action -blue "Restoring saved blocklist file." || return 1
 		try_mv "${abl_dir}/prev_blocklist.gz" "${abl_dir}/blocklist.gz" || return 1
 		if [ "${compress_blocklist}" != 1 ]
 		then
@@ -676,6 +710,7 @@ import_blocklist_file()
 # 2 - update check failed
 check_for_updates()
 {
+	echo
 	rm -f "${abl_dir}/uclient-fetch_err"
 	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed 's/[ \t]*-.*//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
@@ -815,13 +850,24 @@ kill_abl_pids()
 	:
 }
 
-# 1 - action
+# (optional) -nolog
+# (optional) -[color]
+# other args - action
 reg_action()
 {
-	log_msg "${1}"
+	local msg='' nolog='' color=''
+	for _arg in "$@"; do
+		case "${_arg}" in
+			-nolog) nolog=1 ;;
+			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
+			*) msg="${msg}${_arg} "
+		esac
+	done
+
+	[ -z "${nolog}" ] && log_msg "${color}" "${msg}"
 	if [ -n "${lock_req}" ]
 	then
-		update_pid_action "${1}" || return 1
+		update_pid_action "${msg}" || return 1
 	fi
 	:
 }
@@ -854,10 +900,10 @@ init_command()
 		gen_config|pause) lock_req=1 ;;
 		boot|start|update|resume) cleanup_req=1 lock_req=1 ;;
 		stop)
-			reg_action "Stopping adblock-lean." || exit 1
+			reg_action -purple "Stopping adblock-lean." || exit 1
 			cleanup_req=1 kill_req=1 lock_req=1 ;;
 		reload|restart)
-			reg_action "Restarting adblock-lean." || exit 1
+			reg_action -purple "Restarting adblock-lean." || exit 1
 			cleanup_req=1 kill_req=1 lock_req=1 ;;
 		*)
 			reg_failure "Error: invalid action '${action}'."
@@ -897,7 +943,7 @@ init_command()
 # 1 - (optional) '-noexit' to return to the calling function
 gen_stats()
 {
-	reg_action "Generating dnsmasq stats." || exit 1
+	reg_action -purple "Generating dnsmasq stats." || exit 1
 	kill -USR1 $(pgrep dnsmasq)
 	print_msg "dnsmasq stats available for reading using 'logread'."
 	[ "${1}" != '-noexit' ] && exit 0
@@ -906,7 +952,7 @@ gen_stats()
 gen_config()
 {
 	init_command gen_config || exit 1
-	reg_action "Generating new default config for adblock-lean." || exit 1
+	reg_action -purple "Generating new default config for adblock-lean." || exit 1
 
 	mkdir -p "${PREFIX}"
 
@@ -947,7 +993,7 @@ gen_config()
 	# List part failed action:
 	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
 	# SKIP - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fallback to previous blocklist if available)
+	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
 	list_part_failed_action="SKIP"
 
 	# The following shell variables are invoked using:
@@ -979,7 +1025,7 @@ gen_config()
 boot()
 {
 	init_command boot || exit 1
-	reg_action "Sleeping for: ${boot_start_delay_s} seconds." || exit 1
+	reg_action -purple "Sleeping for: ${boot_start_delay_s} seconds." || exit 1
 	sleep "${boot_start_delay_s}"
 	start "$@"
 }
@@ -987,7 +1033,7 @@ boot()
 start() 
 {
 	init_command start || exit 1
-	log_msg "Started adblock-lean."
+	log_msg -purple "Started adblock-lean."
 
 	if type gawk &> /dev/null
 	then
@@ -1015,7 +1061,7 @@ start()
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
 		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
-		reg_action "Delaying adblock-lean by: ${random_delay_mins} minutes (thundering herd prevention)." || exit 1
+		reg_action -purple "Delaying adblock-lean by: ${random_delay_mins} minutes (thundering herd prevention)." || exit 1
 		sleep "${random_delay_mins}m"
 	fi
 
@@ -1036,7 +1082,7 @@ start()
 		exit 1
 	fi
 
-	log_msg "Successfully generated preprocessed blocklist file based on $(int2human ${preprocessed_blocklist_line_count}) lines."
+	log_msg -green "Successfully generated preprocessed blocklist file based on $(int2human ${preprocessed_blocklist_line_count}) lines."
 
 	if ! generate_and_process_blocklist_file
 	then
@@ -1045,7 +1091,7 @@ start()
 		exit 1
 	fi
 
-	log_msg "New blocklist file check passed."
+	log_msg -green "New blocklist file check passed."
 
 	if ! import_blocklist_file
 	then
@@ -1115,7 +1161,7 @@ stop()
 	reg_action "Removing any adblock-lean blocklist files in /tmp/dnsmasq.d/ and restarting dnsmasq." || exit 1
 	clean_dnsmasq_dir
 	/etc/init.d/dnsmasq restart &> /dev/null
-	log_msg "Stopped adblock-lean."
+	log_msg -purple "Stopped adblock-lean."
 	[ -n "$noexit" ] && return "${stop_rc}"
 	exit "${stop_rc}"
 }
@@ -1180,7 +1226,7 @@ pause()
 {
 	init_command pause || exit 1
 	check_active_blocklist_file || { log_msg -err "Error: adblock-lean doesn't appear to be active."; exit 1; }
-	reg_action "Pausing adblock-lean." || exit 1
+	reg_action -purple "Pausing adblock-lean." || exit 1
 	try_export_existing_blocklist || exit 1
 	restart_dnsmasq || exit 1
 	log_msg "adblock-lean is now paused."
@@ -1193,7 +1239,7 @@ resume()
 	check_active_blocklist_file &&
 		{ log_msg -err "Error: the blocklist file exists. adblock-lean doesn't appear to be paused."; exit 1; }
 
-	reg_action "Resuming adblock-lean." || exit 1
+	reg_action -purple "Resuming adblock-lean." || exit 1
 	restore_saved_blocklist || 
 		{ reg_failure "Error: failed to restore saved blocklist. Stopping adblock-lean."; stop 1; }
 	restart_dnsmasq || exit 1
@@ -1204,7 +1250,7 @@ resume()
 update()
 {
 	init_command update || exit 1
-	reg_action "Obtaining latest version of adblock-lean." || exit 1
+	reg_action -purple "Obtaining latest version of adblock-lean." || exit 1
 	uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean \
 		-O "${abl_dir}/adblock-lean.latest" 1> /dev/null 2> "${abl_dir}/uclient-fetch_err"
 	if grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
@@ -1219,5 +1265,7 @@ update()
 	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
 	exit 0
 }
+
+set_colors
 
 :
