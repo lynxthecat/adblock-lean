@@ -1202,6 +1202,7 @@ gen_config()
 	mkdir -p "${PREFIX}"
 	write_config "$(print_def_config)" || exit 1
 	parse_config "${config_file}" || exit 1
+	check_blocklist_compression_support
 	:
 }
 
