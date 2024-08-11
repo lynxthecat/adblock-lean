@@ -1169,7 +1169,7 @@ init_command()
 			then
 				custom_scr_sourced=
 				[ -f "${custom_script}" ] && . "${custom_script}" && custom_scr_sourced=1
-				[ -z "${custom_scr_sourced}" ] && report_failure "Custom script '${custom_script}' doesn't exist or it returned error."
+				[ -z "${custom_scr_sourced}" ] && reg_failure "Custom script '${custom_script}' doesn't exist or it returned error."
 			fi
 	esac
 
