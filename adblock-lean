@@ -463,7 +463,7 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	[ -n "${cleanup_req}" ] && rm -rf "${abl_dir}"
 	[ -n "${lock_req}" ] && rm_lock
-	[ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_script}" ] && command -v report_failure 1>/dev/null &&
+	[ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && command -v report_failure 1>/dev/null &&
 		report_failure "${failure_msg}"
 	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
 	exit "${1}"
@@ -479,7 +479,7 @@ reg_failure()
 log_success()
 {
 	log_msg "${1}"
-	if [ -n "${custom_script}" ] && command -v report_sucess 1>/dev/null
+	if [ -n "${custom_scr_sourced}" ] && command -v report_sucess 1>/dev/null
 	then
 		report_sucess "${1}"
 	fi
@@ -1165,6 +1165,12 @@ init_command()
 		*)
 			mkdir -p "${abl_dir}" "/tmp/dnsmasq.d"
 			load_config || { reg_failure "Failed to load config."; exit 1; }
+			if [ -n "${custom_script}" ]
+			then
+				custom_scr_sourced=
+				[ -f "${custom_script}" ] && . "${custom_script}" && custom_scr_sourced=1
+				[ -z "${custom_scr_sourced}" ] && report_failure "Custom script '${custom_script}' doesn't exist or it returned error."
+			fi
 	esac
 
 	:
