@@ -230,10 +230,10 @@ print_def_config()
 	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
 	list_part_failed_action="SKIP"
 
-	# If a path to custom script is specified and that script defines functions 'report_sucess()' and 'report_failure()'',
+	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
 	# with the success or failure message passed in first argument
-	# report_sucess() is only executed upon completion of the 'start' command
+	# report_success() is only executed upon completion of the 'start' command
 	custom_script=""
 
 	# Start delay in seconds when service is started from system boot
@@ -479,9 +479,9 @@ reg_failure()
 log_success()
 {
 	log_msg "${1}"
-	if [ -n "${custom_scr_sourced}" ] && command -v report_sucess 1>/dev/null
+	if [ -n "${custom_scr_sourced}" ] && command -v report_success 1>/dev/null
 	then
-		report_sucess "${1}"
+		report_success "${1}"
 	fi
 }
 
