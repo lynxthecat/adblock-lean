@@ -563,14 +563,18 @@ fix_line_cnt()
 download_and_process_list_part()
 {
 	local list_id="${1}" list_type="${2}" list_url="${3}" me="download_and_process_list_part"
-	local dest_file="${abl_dir}/${list_type}.${list_id}" compress='' convert_to_local='' \
+	local dest_file="${abl_dir}/${list_type}.${list_id}" compress='' \
 		min_list_part_line_count='' list_part_size_B='' list_part_size_KB=''
+	local sed_rogue_expr='(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+' sed_conv_expr=''
 
 	[ -z "${list_id}" ] && { reg_failure "${me}: No list id specified."; return 1; }
 	case ${list_type} in
-		allowlist) ;;
+		allowlist)
+			sed_rogue_expr="^(server=/${sed_rogue_expr}/#$|$)"
+			sed_conv_expr='s~.*~server=/&/#~' ;;
 		blocklist)
-			convert_to_local="; s/^\(address=\|server=\)/local=/"
+			sed_rogue_expr="^(local=/${sed_rogue_expr}/$|bogus-nxdomain=[0-9]+([.][0-9]+)+$|$)"
+			sed_conv_expr="s/^address=/local=/"
 			dest_file="${dest_file}.gz"
 			compress=1 ;;
 		*) reg_failure "${me}: Missing or invalid list type '${list_type}'"; return 1
@@ -585,8 +589,9 @@ download_and_process_list_part()
 	uclient-fetch "${list_url}" -O- --timeout=3 2> "${abl_dir}/uclient-fetch_err" | 
 	{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
 	tee >(wc -c > "${abl_dir}/list_part_size_B") |
-	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Convert to local=
-	tr 'A-Z' 'a-z' | sed "s/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d${convert_to_local}"'; $a' |
+	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace
+	# 4 Convert to blocklist to 'local=/[domain]/', allowlist to 'server=/[domain]/#'
+	tr 'A-Z' 'a-z' | sed "${sed_san_expr}; ${sed_conv_expr}; \$a" |
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
 		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
@@ -595,7 +600,7 @@ download_and_process_list_part()
 		cat
 	fi |
 	tee >(wc -l > "${abl_dir}/list_part_line_count") |
-	tee >(sed -nE '\~^((local|server)=/[[:alnum:]*][[:alnum:]*_.-]+/$|bogus-nxdomain=[0-9.]+$|$)~d;p;:1 n;b1' > "${abl_dir}/rogue_element") |
+	tee >(sed -nE "\~${sed_rogue_expr}~d;p;:1 n;b1" > "${abl_dir}/rogue_element") |
 	if [ -n "${compress}" ]
 	then
 		tee >(gzip > "${dest_file}")
@@ -663,14 +668,14 @@ download_and_process_list_part()
 
 gen_list_parts()
 {
-	local list_type='' list_id list_line_count=0 list_part_line_count=0 and_compressing='' sed_expr list_urls list_url local_list_path
+	local list_type='' list_id list_line_count=0 list_part_line_count=0 and_compressing='' sed_expr_local list_urls list_url local_list_path
 
 	for list_type in allowlist blocklist
 	do
 		case ${list_type} in
-			allowlist) sed_expr="${sed_san_expr}"'; $a' ;;
+			allowlist) sed_expr_local="${sed_san_expr}; s~.*~server=/&/#~; \$a" ;;
 			blocklist)
-				sed_expr="${sed_san_expr}"'; s~.*~local=/&/~; $a'
+				sed_expr_local="${sed_san_expr}; s~.*~local=/&/~; \$a"
 				and_compressing=" and compressing"
 		esac
 		list_id=0
@@ -688,7 +693,7 @@ gen_list_parts()
 			reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
 			# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace; 4 Add newline
 			list_part_line_count="$(
-				tr 'A-Z' 'a-z' < "${local_list_path}" | sed "${sed_expr}" |
+				tr 'A-Z' 'a-z' < "${local_list_path}" | sed "${sed_expr_local}" |
 				if [ "${list_type}" = blocklist ]
 				then
 					tee >(gzip > "${abl_dir}/blocklist.${list_id}.gz")
@@ -790,7 +795,7 @@ generate_and_process_blocklist_file()
 	reg_action -blue "Sorting and merging the blocklist lines into a single blocklist file." || return 1
 
 	{
-		[ "${use_allowlist}" = 1 ] && sed '/^$/d; s~.*~server=/&/#~' "${abl_dir}/allowlist"
+		[ "${use_allowlist}" = 1 ] && cat "${abl_dir}/allowlist"
 		rm -f "${abl_dir}/allowlist"
 
 		find "${abl_dir}" -name 'blocklist.*.gz' -exec gunzip -c {} \; -exec rm -f {} \;
