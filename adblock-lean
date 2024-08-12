@@ -797,6 +797,7 @@ generate_and_process_blocklist_file()
 	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
 	tee >(wc -l > "${abl_dir}/blocklist_file_line_count") |
 	tee >(wc -c > "${abl_dir}/blocklist_file_size_B") |
+	{ cat; printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
 
 	if  [ "${compress_blocklist}" = 1 ]
 	then
@@ -854,15 +855,15 @@ check_active_blocklist()
 
 	check_dnsmasq_instance || return 1
 
-	for domain in google.com amazon.com microsoft.com
+	for domain in google.com amazon.com microsoft.com adblocklean-test123.info
 	do
-		! ns_res="$(nslookup "${domain}" 127.0.0.1 2>/dev/null)" &&
+		ns_res="$(nslookup "${domain}" 127.0.0.1 2>/dev/null)" ||
 			{ reg_failure "Lookup of '${domain}' failed with new blocklist."; return 2; }
 
 		printf %s "${ns_res}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' &&
 			{ reg_failure "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."; return 3; }
 	done
-	
+
 	:
 }
 
