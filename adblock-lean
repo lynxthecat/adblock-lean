@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254
+# shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090
 
 # adblock-lean - super simple and lightweight adblocking for OpenWrt
 
@@ -455,7 +455,7 @@ write_config()
 get_abl_run_state()
 {
 	local f
-	for f in "/tmp/dnsmasq.d/.blocklist.gz" "/tmp/dnsmasq.d/blocklist"
+	for f in "${dnsmasq_tmp_d}/.blocklist.gz" "${dnsmasq_tmp_d}/blocklist"
 	do
 		[ -f "${f}" ] && return 0
 	done
@@ -466,7 +466,7 @@ get_abl_run_state()
 
 clean_dnsmasq_dir()
 {
-	rm -f /tmp/dnsmasq.d/.blocklist.gz /tmp/dnsmasq.d/blocklist /tmp/dnsmasq.d/conf-script /tmp/dnsmasq.d/.extract_blocklist
+	rm -f "${dnsmasq_tmp_d}"/.blocklist.gz "${dnsmasq_tmp_d}"/blocklist "${dnsmasq_tmp_d}"/conf-script "${dnsmasq_tmp_d}"/.extract_blocklist
 }
 
 # exit with code ${1}
@@ -830,33 +830,37 @@ generate_and_process_blocklist_file()
 	:
 }
 
+
+# return codes:
+# 0 - dnsmasq running
+# 1 - dnsmasq not running or failed to detect dnsmasq directory
+check_dnsmasq_instance()
+{
+	! pgrep -x /usr/sbin/dnsmasq &>/dev/null && { reg_failure "No running instance of dnsmasq detected."; return 1; }
+	[ ! -d "${dnsmasq_tmp_d}" ] &&
+		{ reg_failure "Directory '${dnsmasq_tmp_d}' does not exist. Failed to detect dnsmasq directory or dnsmasq is not running."; return 1; }
+	:
+}
+
 # return values:
 # 0 - dnsmasq is running, and all checks passed
 # 1 - dnsmasq is not running
 # 2 - dnsmasq is running, but one of the test domains failed to resolve
 # 3 - dnsmasq is running, but one of the test domains resolved to 0.0.0.0
-check_dnsmasq()
+check_active_blocklist()
 {
 	echo
-	reg_action -blue "Checking dnsmasq instance." || return 1
+	reg_action -blue "Checking active blocklist." || return 1
 
-	if ! pgrep -x /usr/sbin/dnsmasq &> /dev/null
-	then
-		reg_failure "No instance of dnsmasq detected with new blocklist."
-		return 1
-	fi
+	check_dnsmasq_instance || return 1
 
 	for domain in google.com amazon.com microsoft.com
 	do
-		if ! nslookup "${domain}" 127.0.0.1 &> /dev/null 
-		then
-			reg_failure "Lookup of '${domain}' failed with new blocklist."
-			return 2
-		elif nslookup "${domain}" 127.0.0.1 | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$'
-		then
-			reg_failure "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."
-			return 3
-		fi
+		! ns_res="$(nslookup "${domain}" 127.0.0.1 2>/dev/null)" &&
+			{ reg_failure "Lookup of '${domain}' failed with new blocklist."; return 2; }
+
+		printf %s "${ns_res}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' &&
+			{ reg_failure "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."; return 3; }
 	done
 	
 	:
@@ -891,17 +895,17 @@ restart_dnsmasq()
 export_existing_blocklist()
 {
 	echo
-	if [ -f /tmp/dnsmasq.d/.blocklist.gz ]
+	if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
 	then
 		log_msg -blue "Exporting and saving existing compressed blocklist."
-		try_mv /tmp/dnsmasq.d/.blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
+		try_mv "${dnsmasq_tmp_d}"/.blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
 		return 0
-	elif [ -f /tmp/dnsmasq.d/blocklist ]
+	elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
 	then
 		reg_action -blue "Exporting and saving existing uncompressed blocklist." || return 1
-		gzip -f /tmp/dnsmasq.d/blocklist ||
-			{ reg_failure "Failed to compress '/tmp/dnsmasq.d/blocklist'."; return 1; }
-		try_mv /tmp/dnsmasq.d/blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
+		gzip -f "${dnsmasq_tmp_d}"/blocklist ||
+			{ reg_failure "Failed to compress '${dnsmasq_tmp_d}/blocklist'."; return 1; }
+		try_mv "${dnsmasq_tmp_d}"/blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
 		return 0
 	else
 		log_msg "No existing compressed or uncompressed blocklist identified."
@@ -932,8 +936,8 @@ restore_saved_blocklist()
 
 import_blocklist_file()
 {
-	local src_file="${abl_dir}/blocklist" dest_file="/tmp/dnsmasq.d/blocklist"
-	[ "${compress_blocklist}" = 1 ] && { src_file="${src_file}.gz" dest_file="/tmp/dnsmasq.d/.blocklist.gz"; }
+	local src_file="${abl_dir}/blocklist" dest_file="${dnsmasq_tmp_d}/blocklist"
+	[ "${compress_blocklist}" = 1 ] && { src_file="${src_file}.gz" dest_file="${dnsmasq_tmp_d}/.blocklist.gz"; }
 	[ -f "${src_file}" ] || return 1
 	clean_dnsmasq_dir
 	try_mv "${src_file}" "${dest_file}" || return 1
@@ -941,8 +945,8 @@ import_blocklist_file()
 
 	if [ "${compress_blocklist}" = 1 ]
 	then
-		printf "conf-script=\"busybox sh /tmp/dnsmasq.d/.extract_blocklist\"\n" > /tmp/dnsmasq.d/conf-script &&
-		printf "busybox gunzip -c /tmp/dnsmasq.d/.blocklist.gz\nexit 0\n" > /tmp/dnsmasq.d/.extract_blocklist ||
+		printf "conf-script=\"busybox sh ${dnsmasq_tmp_d}/.extract_blocklist\"\n" > "${dnsmasq_tmp_d}"/conf-script &&
+		printf "busybox gunzip -c ${dnsmasq_tmp_d}/.blocklist.gz\nexit 0\n" > "${dnsmasq_tmp_d}"/.extract_blocklist ||
 			{ reg_failure "Failed to create conf-script for dnsmasq."; return 1; }
 	fi
 
@@ -1167,6 +1171,14 @@ init_command()
 		esac
 	fi
 
+	case ${action} in
+		help|gen_config|enable|disable|enabled|'') ;;
+		*)
+			dnsmasq_tmp_d="$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+			: "${dnsmasq_tmp_d:=/tmp/dnsmasq.d}"
+			check_dnsmasq_instance || exit 1
+	esac
+
 	if [ -n "${lock_req}" ]
 	then
 		mk_lock "${action}" || { unset lock_req cleanup_req; exit ${?}; }
@@ -1176,7 +1188,7 @@ init_command()
 		help|gen_config|enable|disable|enabled|stop|'') ;;
 		status) mkdir -p "${abl_dir}" ;;
 		*)
-			mkdir -p "${abl_dir}" "/tmp/dnsmasq.d"
+			mkdir -p "${abl_dir}" "${dnsmasq_tmp_d}"
 			load_config || { reg_failure "Failed to load config."; exit 1; }
 			if [ -n "${custom_script}" ]
 			then
@@ -1307,9 +1319,9 @@ start()
 
 	restart_dnsmasq || exit 1
 
-	if ! check_dnsmasq
+	if ! check_active_blocklist
 	then
-		reg_failure "The dnsmasq check failed with new blocklist file."
+		reg_failure "Active blocklist check failed with new blocklist file."
 
 		if ! restore_saved_blocklist
 		then
@@ -1323,9 +1335,9 @@ start()
 			stop 1
 		fi
 
-		if ! check_dnsmasq
+		if ! check_active_blocklist
 		then
-			reg_failure "The dnsmasq check failed with previous blocklist file."
+			reg_failure "Active blocklist check failed with previous blocklist file."
 			stop 1
 		fi
 
@@ -1333,8 +1345,8 @@ start()
 		exit 1
 	fi
 
-	log_msg -green "The dnsmasq check passed with new blocklist file."
-	log_success "New blocklist installed with good line count: $(int2human ${good_line_count})."
+	log_msg -green "Active blocklist check passed with new blocklist file."
+	log_success "New blocklist installed with good line count: $(int2human "${good_line_count}")."
 	rm -f "${abl_dir}/prev_blocklist.gz"
 
 	check_for_updates
@@ -1356,7 +1368,7 @@ stop()
 	msg="${msg% }"
 
 	init_command stop || exit 1
-	reg_action "Removing any adblock-lean blocklist files in /tmp/dnsmasq.d/ and restarting dnsmasq." || exit 1
+	reg_action "Removing any adblock-lean blocklist files in ${dnsmasq_tmp_d}/ and restarting dnsmasq." || exit 1
 	clean_dnsmasq_dir
 	/etc/init.d/dnsmasq restart &> /dev/null
 	log_msg -purple "Stopped adblock-lean."
@@ -1399,17 +1411,17 @@ status()
 		3) log_msg -purple "adblock-lean is currently paused."; exit 3 ;;
 		4) log_msg -purple "adblock-lean is stopped."; exit 4;
 	esac
-	check_dnsmasq
+	check_active_blocklist
 	dnsmasq_status=${?}
 	luci_dnsmasq_status=${dnsmasq_status}
 	if [ ${dnsmasq_status} = 0 ]
 	then
-		if [ -f /tmp/dnsmasq.d/.blocklist.gz ]
+		if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
 		then
-			good_line_count=$(gunzip -c /tmp/dnsmasq.d/.blocklist.gz | wc -l)
-		elif [ -f /tmp/dnsmasq.d/blocklist ]
+			good_line_count=$(gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz | wc -l)
+		elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
 		then
-			good_line_count=$(wc -l /tmp/dnsmasq.d/blocklist)
+			good_line_count=$(wc -l "${dnsmasq_tmp_d}"/blocklist)
 		fi
 		: "${good_line_count:=0}"
 		luci_good_line_count=${good_line_count}
