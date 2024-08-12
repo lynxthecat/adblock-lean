@@ -426,7 +426,7 @@ load_config() {
 	rm -f "${temp_config_f}"
 	[ "${val_res}" != 0 ] && { reg_failure "Failed to recreate the config."; log_msg "${tip_msg}"; return 1; }
 	mkdir -p "${PREFIX}"
-	write_config "${fixed_config}" || { rm -f "${temp_config_f}"; return 1; }
+	write_config "${fixed_config}" || return 1
 
 	:
 }
@@ -590,7 +590,7 @@ download_and_process_list_part()
 	{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
 	tee >(wc -c > "${abl_dir}/list_part_size_B") |
 	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments; 3 Remove trailing address hash, and all whitespace
-	# 4 Convert to blocklist to 'local=/[domain]/', allowlist to 'server=/[domain]/#'
+	# 4 Convert blocklist to 'local=/[domain]/', allowlist to 'server=/[domain]/#'
 	tr 'A-Z' 'a-z' | sed "${sed_san_expr}; ${sed_conv_expr}; \$a" |
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
@@ -1183,7 +1183,6 @@ init_command()
 		*)
 			dnsmasq_tmp_d="$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
 			: "${dnsmasq_tmp_d:=/tmp/dnsmasq.d}"
-			check_dnsmasq_instance || exit 1
 	esac
 
 	if [ -n "${lock_req}" ]
@@ -1195,6 +1194,7 @@ init_command()
 		help|gen_config|enable|disable|enabled|stop|'') ;;
 		status) mkdir -p "${abl_dir}" ;;
 		*)
+			check_dnsmasq_instance || exit 1
 			mkdir -p "${abl_dir}"
 			load_config || { reg_failure "Failed to load config."; exit 1; }
 			if [ -n "${custom_script}" ]
