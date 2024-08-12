@@ -1189,7 +1189,7 @@ init_command()
 		help|gen_config|enable|disable|enabled|stop|'') ;;
 		status) mkdir -p "${abl_dir}" ;;
 		*)
-			mkdir -p "${abl_dir}" "${dnsmasq_tmp_d}"
+			mkdir -p "${abl_dir}"
 			load_config || { reg_failure "Failed to load config."; exit 1; }
 			if [ -n "${custom_script}" ]
 			then
