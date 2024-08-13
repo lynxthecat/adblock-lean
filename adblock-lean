@@ -189,6 +189,8 @@ print_def_config()
 {
 	cat <<-EOT
 	# adblock-lean configuration options
+	# config_format=v2
+	#
 	# values must be enclosed in double-quotes
 	# comments must start at newline or inline after the closing double-quote
 
@@ -274,8 +276,9 @@ parse_config() {
 		esac
 
 		case "${val}" in
-			\"*\"*\") inval_e; return 1 ;; # do not allow more than 2 double-quote marks
+			*\"*\"*\"*) inval_e; return 1 ;; # do not allow more than 2 double-quote marks
 			\"*\"*) ;;
+			*\"*\"*) inval_e; return 1 ;; # double quote mark must be the first character
 			*\"*) inval_e; return 1 ;; # do not allow 1 double-quote mark
 			*"#"*) inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
 			*) legacy_entries="${legacy_entries}${entry}"$'\n'; legacy_keys="${legacy_keys}${key} "
@@ -291,7 +294,8 @@ parse_config() {
 		unexp_entries="${unexp_entries}${entry}"$'\n'
 	}
 
-	local def_config bad_config='' curr_config test_keys entry key val
+	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_keys='' legacy_entries='' \
+		curr_config_format def_config_format test_keys entry key val
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
 
@@ -306,6 +310,12 @@ parse_config() {
 
 	# read and sanitize current config
 	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
+
+	# get config versions
+	curr_config_format="$(sed -n '/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}' "${1}")"
+	luci_curr_config_format=${curr_config_format}
+	def_config_format="$(print_def_config | sed -n '/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}')"
+	luci_def_config_format=${def_config_format}
 
 	local IFS=$'\n'
 	for entry in ${curr_config}; do
@@ -339,7 +349,7 @@ parse_config() {
 		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
 		print_msg "Corresponding config entries:"
 		print_msg "${unexp_entries%$'\n'}"
-		bad_config=1
+		needs_fix="${needs_fix}Remove unexpected entries from the config"$'\n'
 	fi
 
 	if [ -n "${missing_keys% }" ]
@@ -348,7 +358,7 @@ parse_config() {
 		reg_failure "Missing keys in config: '${missing_keys% }'."
 		print_msg "Corresponding default config entries:"
 		print_msg "${missing_entries}"
-		bad_config=1
+		needs_fix="${needs_fix}Re-add missing config entries with default values"$'\n'
 	fi
 
 	if [ -n "${legacy_entries}" ]
@@ -357,16 +367,31 @@ parse_config() {
 		reg_failure "Config entries for keys '${legacy_keys% }' are in legacy format (missing double-quotes)."
 		print_msg "The following config entries must be converted to the new config format:"
 		print_msg "${legacy_entries%$'\n'}"
-		bad_config=1
+		needs_fix="${needs_fix}Convert legacy config entries to the new format"$'\n'
 	fi
 
-	[ -n "${bad_config}" ] && return 2
+	case "${curr_config_format}" in *[!0-9]*|'')
+		echo
+		log_msg -warn "Config format version is unknown or invalid."
+		conf_format_old=1
+		needs_fix="${needs_fix}Update config format version"$'\n'
+	esac
+
+	if [ -z "${conf_format_old}" ] && [ "${curr_config_format}" -lt "${def_config_format}" ]
+	then
+		echo
+		log_msg -warn "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+		needs_fix="${needs_fix}Update config format version"$'\n'
+	fi
+
+	needs_fix="${needs_fix%$'\n'}"
+
+	[ -n "${needs_fix}" ] && return 2
 	:
 }
 
 load_config() {
-	local missing_keys='' missing_entries='' unexp_keys='' unexp_entries='' legacy_keys='' legacy_entries='' fixed_config='' key val line fix cnt val_res \
-		rm_unexp add_missing conv_legacy temp_config_f="${tmp_abl_dir}/fix-config.tmp" \
+	local needs_fix='' fixed_config='' missing_keys='' key val line fix cnt \
 		tip_msg="Fix your config file '${config_file}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
@@ -380,22 +405,19 @@ load_config() {
 
 	[ "${msgs_dest}" != "/dev/tty" ] && { log_msg "${tip_msg}"; return 1; }
 
-	[ -z "$unexp_keys" ] && [ -z "$missing_keys" ] && [ -z "$legacy_entries" ] &&
-		{ reg_failure "Internal error when parsing config."; return 1; }
-
-	[ -n "$unexp_keys" ] && rm_unexp="Remove unexpected entries from the config"
-	[ -n "$missing_keys" ] && add_missing="Re-add missing config entries with default values"
-	[ -n "$legacy_entries" ] && conv_legacy="Convert legacy config entries to the new format"
+	[ -z "${needs_fix}" ] && { reg_failure "Failed to parse config."; return 1; }
 
 	echo
 	print_msg "${blue}Perform following automatic changes?${n_c}"
 	cnt=0
-	for fix in "${rm_unexp}" "${add_missing}" "${conv_legacy}"
+	local IFS=$'\n'
+	for fix in ${needs_fix}
 	do
 		[ -z "${fix}" ] && continue
 		cnt=$((cnt+1))
 		print_msg "${cnt}. ${fix}"
 	done
+	IFS="${default_IFS}"
 	pick_opt "y|n" || return 1
 	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
@@ -419,30 +441,27 @@ load_config() {
 		done
 	)"
 
-	printf '%s\n' "${fixed_config}" > "${temp_config_f}" || return 1
-	unset missing_keys missing_entries unexp_keys unexp_entries legacy_keys legacy_entries
-	parse_config "${temp_config_f}"
-	val_res=${?}
-	rm -f "${temp_config_f}"
-	[ "${val_res}" != 0 ] && { reg_failure "Failed to recreate the config."; log_msg "${tip_msg}"; return 1; }
-	mkdir -p "${PREFIX}"
-	write_config "${fixed_config}" || return 1
+	write_config "${fixed_config}" || { log_msg "${tip_msg}"; return 1; }
 
 	:
 }
 
+# Writes config to temp file, validates it, moves it to permanent storage
 # 1 - new config file contents
 write_config()
 {
-	local tmp_config="${tmp_abl_dir}/write-config.tmp"
+	local tmp_config="${tmp_abl_dir}/write-config.tmp" missing_keys needs_fix
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
 	mkdir -p "${tmp_abl_dir}"
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
+	parse_config "${tmp_config}" ||
+		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
 	echo
 	log_msg "Saving new config file to '${config_file}'."
+	mkdir -p "${PREFIX}"
 	try_mv "${tmp_config}" "${config_file}" && return 0
 	rm -f "${tmp_config}"
 	return 1
@@ -1223,7 +1242,6 @@ gen_stats()
 gen_config()
 {
 	init_command gen_config || exit 1
-	local missing_keys='' missing_entries='' unexp_keys='' unexp_entries='' legacy_keys='' legacy_entries=''
 	reg_action -purple "Generating new default config for adblock-lean." || exit 1
 	if [ "${msgs_dest}" = "/dev/tty" ] && [ -f "${config_file}" ]
 	then
@@ -1231,9 +1249,7 @@ gen_config()
 		pick_opt "y|n" || exit 1
 		[ "${REPLY}" = n ] && exit 1
 	fi
-	mkdir -p "${PREFIX}"
 	write_config "$(print_def_config)" || exit 1
-	parse_config "${config_file}" || exit 1
 	check_blocklist_compression_support
 	:
 }
