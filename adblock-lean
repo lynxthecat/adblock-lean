@@ -260,6 +260,11 @@ parse_config() {
 		reg_failure "Invalid entry '$entry' in config."
 	}
 
+	add_conf_fix()
+	{
+		needs_fix="${needs_fix}${1}"$'\n'
+	}
+
 	# Following 2 function are needed to minimize ugly hacks and tinkering inside eval
 	# shellcheck disable=SC2317
 	parse_entry()
@@ -311,10 +316,11 @@ parse_config() {
 	# read and sanitize current config
 	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
 
+	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
 	# get config versions
-	curr_config_format="$(sed -n '/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}' "${1}")"
+	curr_config_format="$(sed -n "${conf_form_sed_expr}" "${1}")"
 	luci_curr_config_format=${curr_config_format}
-	def_config_format="$(print_def_config | sed -n '/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}')"
+	def_config_format="$(print_def_config | sed -n "${conf_form_sed_expr}")"
 	luci_def_config_format=${def_config_format}
 
 	local IFS=$'\n'
@@ -349,7 +355,7 @@ parse_config() {
 		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
 		print_msg "Corresponding config entries:"
 		print_msg "${unexp_entries%$'\n'}"
-		needs_fix="${needs_fix}Remove unexpected entries from the config"$'\n'
+		add_conf_fix "Remove unexpected entries from the config"
 	fi
 
 	if [ -n "${missing_keys% }" ]
@@ -358,30 +364,30 @@ parse_config() {
 		reg_failure "Missing keys in config: '${missing_keys% }'."
 		print_msg "Corresponding default config entries:"
 		print_msg "${missing_entries}"
-		needs_fix="${needs_fix}Re-add missing config entries with default values"$'\n'
+		add_conf_fix "Re-add missing config entries with default values"
 	fi
 
 	if [ -n "${legacy_entries}" ]
 	then
 		echo
-		reg_failure "Config entries for keys '${legacy_keys% }' are in legacy format (missing double-quotes)."
+		reg_failure "Detected config entries in legacy format (missing double-quotes)."
 		print_msg "The following config entries must be converted to the new config format:"
 		print_msg "${legacy_entries%$'\n'}"
-		needs_fix="${needs_fix}Convert legacy config entries to the new format"$'\n'
+		add_conf_fix "Convert legacy config entries to the new format"
 	fi
 
 	case "${curr_config_format}" in *[!0-9]*|'')
 		echo
 		log_msg -warn "Config format version is unknown or invalid."
 		conf_format_old=1
-		needs_fix="${needs_fix}Update config format version"$'\n'
+		add_conf_fix "Update config format version"
 	esac
 
 	if [ -z "${conf_format_old}" ] && [ "${curr_config_format}" -lt "${def_config_format}" ]
 	then
 		echo
 		log_msg -warn "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
-		needs_fix="${needs_fix}Update config format version"$'\n'
+		add_conf_fix "Update config format version"
 	fi
 
 	needs_fix="${needs_fix%$'\n'}"
@@ -440,6 +446,17 @@ load_config() {
 			esac
 		done
 	)"
+
+	local old_config_f="/tmp/adblock-lean_config.old"
+	if ! cp "${config_file}" "${old_config_f}"
+	then
+		reg_failure "Failed to save old config file as ${old_config_f}."
+		log_msg "Proceed with suggested config changes?"
+		pick_opt "y|n" || return 1
+		[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+	else
+		log_msg "Old config file was saved as ${old_config_f}."
+	fi
 
 	write_config "${fixed_config}" || { log_msg "${tip_msg}"; return 1; }
 
@@ -1506,7 +1523,8 @@ update()
 		try_mv "${abl_dir}/adblock-lean.latest" /etc/init.d/adblock-lean || exit 1
 		chmod +x /etc/init.d/adblock-lean
 		/etc/init.d/adblock-lean enable
-		log_msg "adblock-lean has been updated to the latest version."
+		log_msg -green "adblock-lean has been updated to the latest version."
+		load_config || { reg_failure "Failed to load config."; exit 1; }
 	else
 		reg_failure "Unable to download latest version of adblock-lean."
 	fi
