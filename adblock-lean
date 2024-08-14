@@ -254,7 +254,9 @@ print_def_config()
 # 1 - Error
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
 #
-# sets the ${missing_keys}, ${needs_fix}, ${luci_conf_needs_fix} variables
+# sets ${missing_keys}, ${needs_fix}
+# and variables for luci:
+# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries *_legacy_entries *_bad_conf_format *_conf_needs_fix
 parse_config() {
 	inval_e()
 	{
@@ -310,6 +312,9 @@ parse_config() {
 	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
 		curr_config_format def_config_format test_keys entry key val tab="$(printf '\t')"
 
+	unset luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
+		luci_legacy_entries luci_bad_conf_format luci_conf_needs_fix
+
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
 
 	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
@@ -364,6 +369,8 @@ parse_config() {
 		print_msg "Corresponding config entries:"
 		print_msg "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
+		luci_unexp_keys=${unexp_keys% }
+		luci_unexp_entries=${unexp_entries%$'\n'}
 	fi
 
 	if [ -n "${missing_keys% }" ]
@@ -373,6 +380,8 @@ parse_config() {
 		print_msg "Corresponding default config entries:"
 		print_msg "${missing_entries}"
 		add_conf_fix "Re-add missing config entries with default values"
+		luci_missing_keys=${missing_keys% }
+		luci_missing_entries=${missing_entries}
 	fi
 
 	if [ -n "${legacy_entries}" ]
@@ -382,6 +391,7 @@ parse_config() {
 		print_msg "The following config entries must be converted to the new config format:"
 		print_msg "${legacy_entries%$'\n'}"
 		add_conf_fix "Convert legacy config entries to the new format"
+		luci_legacy_entries=${legacy_entries%$'\n'}
 	fi
 
 	case "${curr_config_format}" in *[!0-9]*|'')
@@ -396,6 +406,7 @@ parse_config() {
 		echo
 		log_msg -warn "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
 		add_conf_fix "Update config format version"
+		luci_bad_conf_format=1
 	fi
 
 	needs_fix="${needs_fix%$'\n'}"
