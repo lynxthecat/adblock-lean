@@ -450,7 +450,6 @@ load_config()
 # 1 - missing keys (whitespace-separated)
 fix_config()
 {
-	[ -z "${1}" ] && { reg_failure "fix_config(): invalid argument."; return 1; }
 	local missing_keys="${1}"
 
 	# recreate config from default while replacing values with values from the existing config
