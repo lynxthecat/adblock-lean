@@ -13,12 +13,7 @@
 # 1 - Error
 # 254 - Failed to acquire lock
 
-# special variables for luci:
-# luci_errors
-# luci_good_line_count
-# luci_dnsmasq_status
-# luci_update_status
-# luci_pid_action
+# special variables for luci have the prefix 'luci_'
 
 # expects that the RPC script for luci UI is named specifically 'luci.adblock-lean'
 
