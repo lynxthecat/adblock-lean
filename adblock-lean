@@ -253,6 +253,8 @@ print_def_config()
 # 0 - Success
 # 1 - Error
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
+#
+# sets the ${missing_keys}, ${needs_fix}, ${luci_conf_needs_fix} variables
 parse_config() {
 	inval_e()
 	{
@@ -265,16 +267,16 @@ parse_config() {
 		needs_fix="${needs_fix}${1}"$'\n'
 	}
 
-	# Following 2 function are needed to minimize ugly hacks and tinkering inside eval
+	# Following 2 functions are needed to minimize ugly hacks and tinkering inside eval
 	# shellcheck disable=SC2317
 	parse_entry()
 	{
 		val=${entry#"${key}="}
 
-		# Following 'case' is a temporarily solution to allow easy config migration - remove a few months from now (Aug 2024)
+		# Following 'case' is a temporary solution to allow easy config migration - remove a few months from now (Aug 2024)
 		case "${entry}" in
 			"compress_blocklist="?" #"*|"initial_dnsmasq_restart="?" #"*)
-				legacy_entries="${legacy_entries}${entry}"$'\n'; legacy_keys="${legacy_keys}${key} "
+				legacy_entries="${legacy_entries}${entry}"$'\n'
 				test_keys="${test_keys%%"${key}|"*}${test_keys#*"${key}|"}"
 				val=${val%% *}
 				return 0
@@ -282,11 +284,17 @@ parse_config() {
 
 		case "${val}" in
 			*\"*\"*\"*) inval_e; return 1 ;; # do not allow more than 2 double-quote marks
-			\"*\"*) ;;
+			\"*\"*)
+				local tmp_val="${val##*\"}" # remove value enclosed in double-quotes
+				case "${tmp_val%%\#*}" in # do not allow characters between 2nd double-quote and in-line comment
+					'') ;;
+					*[!\ ${tab}]*) inval_e; return 1
+				esac
+				;;
 			*\"*\"*) inval_e; return 1 ;; # double quote mark must be the first character
 			*\"*) inval_e; return 1 ;; # do not allow 1 double-quote mark
 			*"#"*) inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
-			*) legacy_entries="${legacy_entries}${entry}"$'\n'; legacy_keys="${legacy_keys}${key} "
+			*) legacy_entries="${legacy_entries}${entry}"$'\n'
 		esac
 		val=${val#\"}
 		val=${val%\"*} # throw away everything after the 2nd double-quote mark
@@ -299,8 +307,8 @@ parse_config() {
 		unexp_entries="${unexp_entries}${entry}"$'\n'
 	}
 
-	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_keys='' legacy_entries='' \
-		curr_config_format def_config_format test_keys entry key val
+	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
+		curr_config_format def_config_format test_keys entry key val tab="$(printf '\t')"
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
 
@@ -391,12 +399,16 @@ parse_config() {
 	fi
 
 	needs_fix="${needs_fix%$'\n'}"
+	luci_conf_needs_fix="${needs_fix}"
 
 	[ -n "${needs_fix}" ] && return 2
 	:
 }
 
-load_config() {
+# shellcheck disable=SC2120
+# 1 - (optional) '-f' to force fixing the config if it has issues
+load_config()
+{
 	local needs_fix='' fixed_config='' missing_keys='' key val line fix cnt \
 		tip_msg="Fix your config file '${config_file}' or generate default config using 'service adblock-lean gen_config'."
 
@@ -409,23 +421,37 @@ load_config() {
 		2)
 	esac
 
-	[ "${msgs_dest}" != "/dev/tty" ] && { log_msg "${tip_msg}"; return 1; }
+	[ "${msgs_dest}" != "/dev/tty" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
 
 	[ -z "${needs_fix}" ] && { reg_failure "Failed to parse config."; return 1; }
 
-	echo
-	print_msg "${blue}Perform following automatic changes?${n_c}"
-	cnt=0
-	local IFS=$'\n'
-	for fix in ${needs_fix}
-	do
-		[ -z "${fix}" ] && continue
-		cnt=$((cnt+1))
-		print_msg "${cnt}. ${fix}"
-	done
-	IFS="${default_IFS}"
-	pick_opt "y|n" || return 1
-	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+	if [ "${msgs_dest}" = "/dev/tty" ]
+	then
+		echo
+		print_msg "${blue}Perform following automatic changes?${n_c}"
+		cnt=0
+		local IFS=$'\n'
+		for fix in ${needs_fix}
+		do
+			[ -z "${fix}" ] && continue
+			cnt=$((cnt+1))
+			print_msg "${cnt}. ${fix}"
+		done
+		IFS="${default_IFS}"
+		pick_opt "y|n" || return 1
+		[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+	fi
+
+	fix_config "${missing_keys}" || { report_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+
+	:
+}
+
+# 1 - missing keys (whitespace-separated)
+fix_config()
+{
+	[ -z "${1}" ] && { reg_failure "fix_config(): invalid argument."; return 1; }
+	local missing_keys="${1}"
 
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
@@ -436,7 +462,7 @@ load_config() {
 				\#*|'') printf '%s\n' "${line}"; continue ;;
 				*=*)
 					key=${line%%=*}
-					case " ${missing_keys}" in
+					case " ${missing_keys} " in
 						*" ${key} "*) printf '%s\n' "${line}"; continue ;;
 						*)
 							eval "val=\"\${${key}}\""
@@ -451,14 +477,15 @@ load_config() {
 	if ! cp "${config_file}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
+		[ "${msgs_dest}" != "/dev/tty" ] && return 1
 		log_msg "Proceed with suggested config changes?"
 		pick_opt "y|n" || return 1
-		[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+		[ "${REPLY}" = n ] && return 1
 	else
 		log_msg "Old config file was saved as ${old_config_f}."
 	fi
 
-	write_config "${fixed_config}" || { log_msg "${tip_msg}"; return 1; }
+	write_config "${fixed_config}" || return 1
 
 	:
 }
