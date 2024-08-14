@@ -927,6 +927,7 @@ check_dnsmasq_instance()
 # 1 - dnsmasq is not running
 # 2 - dnsmasq is running, but one of the test domains failed to resolve
 # 3 - dnsmasq is running, but one of the test domains resolved to 0.0.0.0
+# 4 - dnsmasq is running, but the blocklist test domain failed to resolve (blocklist not loaded)
 check_active_blocklist()
 {
 	echo
@@ -934,7 +935,10 @@ check_active_blocklist()
 
 	check_dnsmasq_instance || return 1
 
-	for domain in google.com amazon.com microsoft.com adblocklean-test123.info
+	nslookup "adblocklean-test123.info" 127.0.0.1 1>/dev/null 2>/dev/null ||
+			{ reg_failure "Lookup of the blocklist test domain failed with new blocklist."; return 4; }
+
+	for domain in google.com amazon.com microsoft.com
 	do
 		ns_res="$(nslookup "${domain}" 127.0.0.1 2>/dev/null)" ||
 			{ reg_failure "Lookup of '${domain}' failed with new blocklist."; return 2; }
@@ -1465,7 +1469,7 @@ reload()
 	restart
 }
 
-# return values:
+# return codes:
 # 0 - adblock-lean blocklist is loaded
 # 1 - error
 # 2 - adblock-lean is performing an action
@@ -1489,7 +1493,7 @@ status()
 		4) log_msg -purple "adblock-lean is stopped."; exit 4;
 	esac
 	check_active_blocklist
-	dnsmasq_status=${?}
+	local dnsmasq_status=${?}
 	luci_dnsmasq_status=${dnsmasq_status}
 	if [ ${dnsmasq_status} = 0 ]
 	then
@@ -1503,16 +1507,17 @@ status()
 		: "${good_line_count:=0}"
 		luci_good_line_count=${good_line_count}
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: $(int2human ${good_line_count})."
-		log_msg -green "adblock-lean appears to be active."
+		log_msg -green "adblock-lean is active."
 		gen_stats -noexit
 	else
 		reg_failure "The dnsmasq check failed with existing blocklist file."
-		log_msg "Consider a full reset by running: 'service adblock stop'."
+		log_msg "Consider a full reset by running: 'service adblock restart'."
 	fi
 	check_for_updates
 	luci_update_status=${?}
 
-	exit 0
+	[ ${dnsmasq_status} = 0 ] && exit 0
+	exit 1
 }
 
 pause()
