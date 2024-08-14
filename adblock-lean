@@ -249,9 +249,9 @@ print_def_config()
 # 1 - Error
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
 #
-# sets ${missing_keys}, ${needs_fix}
+# sets ${missing_keys}, ${conf_fixes}
 # and variables for luci:
-# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries *_legacy_entries *_bad_conf_format *_conf_needs_fix
+# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries *_legacy_entries *_bad_conf_format *_conf_fixes
 parse_config() {
 	inval_e()
 	{
@@ -261,7 +261,7 @@ parse_config() {
 
 	add_conf_fix()
 	{
-		needs_fix="${needs_fix}${1}"$'\n'
+		conf_fixes="${conf_fixes}${1}"$'\n'
 	}
 
 	# Following 2 functions are needed to minimize ugly hacks and tinkering inside eval
@@ -308,7 +308,7 @@ parse_config() {
 		curr_config_format def_config_format test_keys entry key val tab="$(printf '\t')"
 
 	unset luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
-		luci_legacy_entries luci_bad_conf_format luci_conf_needs_fix
+		luci_legacy_entries luci_bad_conf_format luci_conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
 
@@ -404,10 +404,10 @@ parse_config() {
 		luci_bad_conf_format=1
 	fi
 
-	needs_fix="${needs_fix%$'\n'}"
-	luci_conf_needs_fix="${needs_fix}"
+	conf_fixes="${conf_fixes%$'\n'}"
+	luci_conf_fixes="${conf_fixes}"
 
-	[ -n "${needs_fix}" ] && return 2
+	[ -n "${conf_fixes}" ] && return 2
 	:
 }
 
@@ -415,7 +415,7 @@ parse_config() {
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local needs_fix='' fixed_config='' missing_keys='' key val line fix cnt \
+	local conf_fixes='' fixed_config='' missing_keys='' key val line fix cnt \
 		tip_msg="Fix your config file '${config_file}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
@@ -429,7 +429,7 @@ load_config()
 
 	[ "${msgs_dest}" != "/dev/tty" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
 
-	[ -z "${needs_fix}" ] && { reg_failure "Failed to parse config."; return 1; }
+	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
 
 	if [ "${msgs_dest}" = "/dev/tty" ]
 	then
@@ -437,7 +437,7 @@ load_config()
 		print_msg "${blue}Perform following automatic changes?${n_c}"
 		cnt=0
 		local IFS=$'\n'
-		for fix in ${needs_fix}
+		for fix in ${conf_fixes}
 		do
 			[ -z "${fix}" ] && continue
 			cnt=$((cnt+1))
@@ -499,7 +499,7 @@ fix_config()
 # 1 - new config file contents
 write_config()
 {
-	local tmp_config="${tmp_abl_dir}/write-config.tmp" missing_keys needs_fix
+	local tmp_config="${tmp_abl_dir}/write-config.tmp" missing_keys conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
