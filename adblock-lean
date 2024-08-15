@@ -32,7 +32,7 @@ fi
 
 PREFIX=/root/adblock-lean
 abl_dir=/var/run/adblock-lean
-tmp_abl_dir=/tmp/adblock-lean
+abl_pid_dir=/tmp/adblock-lean
 config_file="${PREFIX}/config"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -73,7 +73,8 @@ bytes2human()
 {
 	local i=${1:-0} s=0 d=0 m=1024 fp='' S=''
 	case "$i" in *[!0-9]*) reg_failure "bytes2human: Invalid unsigned integer '$i'."; return 1; esac
-	for S in B KiB MiB GiB TiB; do
+	for S in B KiB MiB GiB TiB
+	do
 		[ $((i > m && s < 4)) = 0 ] && break
 		d=$i i=$((i/m)) s=$((s+1))
 	done
@@ -139,7 +140,8 @@ log_msg()
 {
 	local msg='' msg_prefix='' _arg err_l=info color=
 
-	for _arg in "$@"; do
+	for _arg in "$@"
+	do
 		case "${_arg}" in
 			"-err") err_l=err color="${red}" msg_prefix="Error: " ;;
 			"-warn") err_l=warn color="${yellow}" msg_prefix="Warning: " ;;
@@ -164,9 +166,11 @@ try_mv()
 # asks the user to pick an option
 # 1 - input in the format 'a|b|c'
 # output via $REPLY
-pick_opt() {
+pick_opt()
+{
 	update_pid_action "Waiting for user input in console" || return 1
-	while :; do
+	while :
+	do
 		printf %s "$1: " 1>${msgs_dest}
 		read -r REPLY
 		case "$REPLY" in *[!A-Za-z0-9]*) printf '\n%s\n\n' "Please enter $1" 1>${msgs_dest}; continue; esac
@@ -252,7 +256,8 @@ print_def_config()
 # sets ${missing_keys}, ${conf_fixes}
 # and variables for luci:
 # *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries *_legacy_entries *_bad_conf_format *_conf_fixes
-parse_config() {
+parse_config()
+{
 	inval_e()
 	{
 		IFS="${default_IFS}"
@@ -332,7 +337,8 @@ parse_config() {
 	luci_def_config_format=${def_config_format}
 
 	local IFS=$'\n'
-	for entry in ${curr_config}; do
+	for entry in ${curr_config}
+	do
 		case ${entry} in
 			*?=*) ;;
 			*) { inval_e; return 1; } ;;
@@ -499,11 +505,11 @@ fix_config()
 # 1 - new config file contents
 write_config()
 {
-	local tmp_config="${tmp_abl_dir}/write-config.tmp" missing_keys conf_fixes
+	local tmp_config="${abl_dir}/write-config.tmp" missing_keys conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
-	mkdir -p "${tmp_abl_dir}"
+	mkdir -p "${abl_dir}"
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
@@ -1124,9 +1130,9 @@ mk_lock()
 	[ -z "${1%.}" ] && { log_msg "mk_lock(): pid action is unspecified."; return 1; }
 	if [ -n "${pid_file}" ]
 	then
-		if [ ! -d "${tmp_abl_dir}" ]
+		if [ ! -d "${abl_pid_dir}" ]
 		then
-			mkdir -p "${tmp_abl_dir}" || { reg_failure "Failed to create directory '${tmp_abl_dir}'."; return 1; }
+			mkdir -p "${abl_pid_dir}" || { reg_failure "Failed to create directory '${abl_pid_dir}'."; return 1; }
 		fi
 		printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "Failed to write to pid file '${pid_file}'."; return 1; }
 	else
@@ -1176,7 +1182,8 @@ check_lock()
 kill_abl_pids()
 {
 	local _killed _p _pid IFS=$'\n' k_attempt=0
-	while :; do
+	while :
+	do
 		k_attempt=$((k_attempt+1))
 		_killed=
 		for _p in $(pgrep -fa '(/etc/rc.common /etc/init.d/adblock-lean|luci.adblock-lean)')
@@ -1198,7 +1205,8 @@ kill_abl_pids()
 reg_action()
 {
 	local msg='' nolog='' color=''
-	for _arg in "$@"; do
+	for _arg in "$@"
+	do
 		case "${_arg}" in
 			-nolog) nolog=1 ;;
 			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
@@ -1227,7 +1235,7 @@ report_pid_action()
 init_command()
 {
 	action="${1}"
-	pid_file="${tmp_abl_dir}/adblock-lean.pid"
+	pid_file="${abl_pid_dir}/adblock-lean.pid"
 	unset lock_req kill_req cleanup_req failure_msg luci_errors
 
 	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
@@ -1448,7 +1456,8 @@ start()
 stop()
 {
 	local stop_rc=0 noexit=
-	for _arg in "$@"; do
+	for _arg in "$@"
+	do
 		case "${_arg}" in
 			"-noexit") noexit=1 ;;
 			*[!0-9]*|'') ;;
