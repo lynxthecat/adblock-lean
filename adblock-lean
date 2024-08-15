@@ -619,6 +619,14 @@ fix_line_cnt()
 	esac
 }
 
+# removes allowlist domains from STDIN, outputs to STDOUT
+# 1 - path to allowlist file
+rm_allow_domains()
+{
+	${awk_cmd} -F'/' 'NR==FNR { sub(/^server=\//,""); sub(/\/#$/,""); allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
+							for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${1}" -
+}
+
 # 1 - list id
 # 2 - list type (allowlist or blocklist)
 # 3 - list URL
@@ -662,8 +670,7 @@ download_and_process_list_part()
 	tr 'A-Z' 'a-z' | sed "${sed_san_expr}; ${sed_conv_expr}; \$a" |
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
-		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
-			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
+		rm_allow_domains "${abl_dir}/allowlist"
 	else
 		cat
 	fi |
@@ -764,6 +771,12 @@ gen_list_parts()
 				tr 'A-Z' 'a-z' < "${local_list_path}" | sed "${sed_expr_local}" |
 				if [ "${list_type}" = blocklist ]
 				then
+					if [ "${use_allowlist}" = 1 ]
+					then
+						rm_allow_domains "${abl_dir}/allowlist"
+					else
+						cat
+					fi |
 					tee >(gzip > "${abl_dir}/blocklist.${list_id}.gz")
 				else
 					tee -a "${abl_dir}/allowlist"
@@ -867,7 +880,7 @@ generate_and_process_blocklist_file()
 		rm -f "${abl_dir}/allowlist"
 
 		find "${abl_dir}" -name 'blocklist.*.gz' -exec gunzip -c {} \; -exec rm -f {} \;
-	} | sort -u |
+	} | sort -u | sed -n '/^$/d;p; $a' |
 	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
 	tee >(wc -l > "${abl_dir}/blocklist_file_line_count") |
 	tee >(wc -c > "${abl_dir}/blocklist_file_size_B") |
@@ -882,6 +895,7 @@ generate_and_process_blocklist_file()
 
 	good_line_count="$(cat "${abl_dir}/blocklist_file_line_count" 2>/dev/null)"
 	: "${good_line_count:=0}"
+	fix_line_cnt good_line_count
 
 	blocklist_file_size_B="$(cat "${abl_dir}/blocklist_file_size_B" 2>/dev/null)"
 	blocklist_file_size_KB=$(( (blocklist_file_size_B + 0) / 1024 ))
@@ -1494,12 +1508,14 @@ status()
 	then
 		if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
 		then
-			good_line_count=$(gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz | wc -l)
+			good_line_count=$(gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz | sed -n '/^$/d; $a' | wc -l)
 		elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
 		then
-			good_line_count=$(wc -l "${dnsmasq_tmp_d}"/blocklist)
+			good_line_count=$(wc -l < "${dnsmasq_tmp_d}/blocklist")
 		fi
 		: "${good_line_count:=0}"
+		fix_line_cnt good_line_count
+		fix_line_cnt good_line_count # 2nd time to account for domain test entry
 		luci_good_line_count=${good_line_count}
 		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: $(int2human ${good_line_count})."
 		log_msg -green "adblock-lean is active."
