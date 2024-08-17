@@ -1515,7 +1515,7 @@ status()
 		gen_stats -noexit
 	else
 		reg_failure "The dnsmasq check failed with existing blocklist file."
-		log_msg "Consider a full reset by running: 'service adblock restart'."
+		log_msg "Consider a full reset by running: 'service adblock-lean restart'."
 	fi
 	check_for_updates
 	luci_update_status=${?}
