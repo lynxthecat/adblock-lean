@@ -244,6 +244,19 @@ print_def_config()
 	EOT
 }
 
+# get config format from config file contents
+# input via STDIN or ${1}
+get_config_format()
+{
+	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
+	if [ -n "${1}" ]
+	then
+		sed -n "${conf_form_sed_expr}" "${1}"
+	else
+		sed -n "${conf_form_sed_expr}"
+	fi
+}
+
 # validate config and assign to variables
 #
 # 1 - path to file
@@ -310,9 +323,9 @@ parse_config()
 	}
 
 	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
-		curr_config_format def_config_format test_keys entry key val tab="$(printf '\t')"
+		test_keys entry key val tab="$(printf '\t')"
 
-	unset luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
+	unset curr_config_format def_config_format luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_legacy_entries luci_bad_conf_format luci_conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
@@ -329,11 +342,10 @@ parse_config()
 	# read and sanitize current config
 	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
 
-	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
 	# get config versions
-	curr_config_format="$(sed -n "${conf_form_sed_expr}" "${1}")"
+	curr_config_format="$(get_config_format "${1}")"
 	luci_curr_config_format=${curr_config_format}
-	def_config_format="$(print_def_config | sed -n "${conf_form_sed_expr}")"
+	def_config_format="$(print_def_config | get_config_format)"
 	luci_def_config_format=${def_config_format}
 
 	local IFS=$'\n'
@@ -1047,9 +1059,14 @@ check_for_updates()
 	rm -f "${abl_dir}/uclient-fetch_err"
 	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed -E 's/[ \t]+.*$//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
-		2> "${abl_dir}/uclient-fetch_err" | sha256sum | sed -E 's/[ \t]+.*$//')
+		2> "${abl_dir}/uclient-fetch_err" |
+		tee >(cat > "${abl_dir}/remote_abl"; . "${abl_dir}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config |
+			get_config_format > "${abl_dir}/upd_config_format") |
+		sha256sum | sed -E 's/[ \t]+.*$//')
 
 	local bad_dl='' update_check_result=''
+	read -r luci_upd_config_format _ < "${abl_dir}/upd_config_format" 2>/dev/null
+	rm -f "${abl_dir}/remote_abl" "${abl_dir}/upd_config_format"
 
 	# safeguard against receiving empty string or empty string+newline
 	case "${sha256sum_adblock_lean_remote}" in *9805daca546b|*991b7852b855) bad_dl=1; esac
@@ -1560,20 +1577,55 @@ resume()
 
 update()
 {
+	log_fallback()
+	{
+		if command -v log_msg
+		then
+			log_msg "${1}"
+		else
+			printf '%s\n' "${1}" > "${msgs_dest:-/dev/tty}"
+			logger -t adblock-lean "${1}"
+		fi
+	}
+
 	init_command update || exit 1
 	reg_action -purple "Obtaining latest version of adblock-lean." || exit 1
 	uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean \
 		-O "${abl_dir}/adblock-lean.latest" 1> /dev/null 2> "${abl_dir}/uclient-fetch_err"
-	if grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
+	if ! grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
 	then
-		try_mv "${abl_dir}/adblock-lean.latest" /etc/init.d/adblock-lean || exit 1
-		chmod +x /etc/init.d/adblock-lean
-		/etc/init.d/adblock-lean enable
-		log_msg -green "adblock-lean has been updated to the latest version."
-		load_config || { reg_failure "Failed to load config."; exit 1; }
-	else
 		reg_failure "Unable to download latest version of adblock-lean."
+		rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
+		exit 1
 	fi
+
+	(
+		prev_config_format="${curr_config_format}"
+		. "${abl_dir}/adblock-lean.latest" || exit 1
+		command -v print_def_config && command -v get_config_format && upd_config_format="$(print_def_config | get_config_format)"
+		if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
+		then
+			log_fallback "NOTE: config format has changed."
+			if command -v load_config
+			then
+				load_config
+			else
+				log_fallback "Please run 'service adblock-lean start' to initialize the new config."
+			fi
+		fi
+		:
+	) 1>/dev/null ||
+	{
+		report_failure "Failed to source the downloaded file. Canceling the update."
+		rm -f "${abl_dir}/adblock-lean.latest"
+		exit 1
+	}
+
+	try_mv "${abl_dir}/adblock-lean.latest" /etc/init.d/adblock-lean || exit 1
+	chmod +x /etc/init.d/adblock-lean
+	/etc/init.d/adblock-lean enable
+	log_msg -green "adblock-lean has been updated to the latest version."
+
 	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
 	exit 0
 }
