@@ -324,7 +324,7 @@ parse_config()
 
 	# extract keys from default config, convert to '|' separated list
 	# 'dummy|' is needed to avoid errors in eval
-	test_keys="dummy|$(print_def_config | sed "${sed_conf_san_exp}"'s/=.*//' | tr '\n' '|')"
+	test_keys="dummy|$(print_def_config | sed "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
 
 	# read and sanitize current config
 	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
