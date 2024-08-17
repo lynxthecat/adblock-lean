@@ -1045,9 +1045,9 @@ check_for_updates()
 {
 	echo
 	rm -f "${abl_dir}/uclient-fetch_err"
-	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed 's/[ \t]*-.*//')
+	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed -E 's/[ \t]+.*$//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
-		2> "${abl_dir}/uclient-fetch_err" | sha256sum | sed 's/[ \t]*-.*//')
+		2> "${abl_dir}/uclient-fetch_err" | sha256sum | sed -E 's/[ \t]+.*$//')
 
 	local bad_dl='' update_check_result=''
 
