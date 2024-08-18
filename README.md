@@ -2,18 +2,68 @@
 
 If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
-adblock-lean is a super simple and lightweight adblocking solution that leverages the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86 that drastically improves performance and reduces memory foot-print, facilitating the use of very large blocklists for even older, low performance devices.
+adblock-lean is **highly optimized for RAM & CPU efficiency** during blocklist downloading & processing, and does not remain running in memory after each execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, that drastically improves dnsmasq performance and reduces memory foot-print.  This facilitates the use of very large blocklists even for low spec, low performance devices.
 
-adblock-lean was originally designed primarily for use with the dnsmasq variants of the popular [hagezi](https://github.com/hagezi/dns-blocklists) and [oisd](https://oisd.nl/) blocklists used by major adblockers and which are intended to block ads without interfering with normal use.  
+The default Hagezi dnsmasq format lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible.  Any other dnsmasq format lists of your choice can also be configured and used.
 
+## Installation on OpenWrt
+
+adblock-lean is written as a service script and is designed to run on a base OpenWrt installation without any dependencies.
+
+```bash
+uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
+chmod +x /etc/init.d/adblock-lean
+service adblock-lean gen_config   # generates default config in /root/adblock-lean/config
+uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit   # Optional/recommended.  Enables blocklist compression to reduce RAM usage
+service adblock-lean enable   # this will allow the script to automatically run on boot
+```
+
+A text editor like nano or vi can be used to modify the config file as needed:
+```bash
+opkg update
+opkg install nano
+nano /root/adblock-lean/config
+```
+
+Whilst adblock-lean does not require any dependencies to run, its performance can be improved by installing `gawk` and `coreutils-sort`:
+```bash
+opkg update
+opkg install gawk coreutils-sort
+```
+
+adblock-lean automatically checks for any version updates both at the end of the `start` and `status` routines.
+adblock-lean can be updated to the latest version by simply running: 
+```bash
+service adblock-lean update
+```
+
+## Automatically update blocklist at 5am following delay by random number of minutes
+
+Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-system/cron):
+```bash
+0 5 * * * /etc/init.d/adblock-lean enabled && export RANDOM_DELAY="1" && /etc/init.d/adblock-lean start
+```
+This tests whether the adblock-lean service is enabled and if so launches the start function, which updates to the new blocklist list. 
+
+The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on the blocklist server; and from a selfish perspective, increase the prospect that the server is not loaded during the download. 
+
+## Config Updates
+
+During certain updates, adblock-lean will require a configuration update.  adblock-lean will detect any out-of-date configurations and prompt you to automatically update the config, using your existing settings where possible.
+
+A new compatible config can be generated, which will overwrite the previous config fie:
+```bash
+service adblock-lean gen_config
+```
+
+## Features
 adblock-lean is written as a service and 'service adblock-lean start' will download and setup dnsmasq with a new blocklist file. Various checks are performed and, in dependence upon the outcome of those checks, the script will either: accept the new blocklist file; fallback to a previous blocklist file if available; or restart dnsmasq with no blocklist file.
 
 adblock-lean includes, inter alia, the following features:
 
-- support for local blocklist and one or more blocklists to be downloaded from urls
-- suport for local allowlist
+- support for local blocklist and multiple blocklists to be downloaded from urls
+- support for local allowlist and multiple allowlists to be downloaded from urls
 - check individual blocklist file parts and total blocklist size do not exceeed configurable maximum file sizes
-- generate blocklist file from local blocklist and allowlist and the one or more downloaded blocklist file part(s)
 - check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
 - check good lines in blocklist file exceeds configurable minimum (default: 100,000)
 - set up dnsmasq with new blocklist file and save any previous blocklist file as compressed file
@@ -21,30 +71,10 @@ adblock-lean includes, inter alia, the following features:
 - perform checks on restarted dnsmasq with new blocklist file
 - revert to previous blocklist file if checks fail
 - if checks on previous blocklist file also fail then revert to not using any blocklist file
-- user-configurable calls on success or failure
+- user-configurable script calls on success or failure
 - automatically check for any updates and self update functionality
 
-## Installation on OpenWrt
 
-adblock-lean is written as a service script and is designed to run on a base OpenWrt installation without any dependencies.
-
-Example installation steps:
-
-```bash
-wget https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
-chmod +x /etc/init.d/adblock-lean
-service adblock-lean gen_config # generates default config in /root/adblock-lean/config
-vi /root/adblock-lean/config # modify default config as required
-uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit # to enable use of compressed blocklist
-service adblock-lean enable
-```
-
-Whilst adblock-lean does not require any dependencies to run, its performance can be improved by installing `gawk` and `coreutils-sort`:
-
-```bash
-opkg update
-opkg install gawk coreutils-sort
-```
 
 ## Config
 
@@ -67,35 +97,11 @@ Each configuration option is internally documented with comments in `/root/adblo
 |                 `compress_blocklist` | Enable (1) or disable (0) blocklist compression once dnsmasq loaded      |
 |            `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory      |
 |               `max_download_retries` | Maximum number of download retries for allowlist/blocklist parts         |
-|             `download_failed_action` | Governs failed download handling: 'SKIP_PARTIAL' or 'STOP'               |
-|               `rogue_element_action` | Governs rogue element handling: 'SKIP_PARTIAL', 'STOP' or 'IGNORE'       |
-| `dnsmasq_test_failed_element_action` | Governs failed dnsmasq test handling: 'SKIP_PARTIAL' or 'STOP'           |
-|                     `report_failure` | Used for performing user-defined action(s) on failure                    |
-|                    `report_successs` | Used for performing user-defined action(s) on success                    |
+|            `list_part_failed_action` | Governs failed lists handling: 'SKIP_PARTIAL' or 'STOP'                  |
+|                      `custom_script` | Path to custom user scripts to execute on success on failure             |
 |                 `boot_start_delay_s` | Start delay in seconds when service is started from system boot          |
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
-
-## Config Updates
-
-During certain upgrades, adblock-lean will require a configuration update. 
-
-A new compatible config can be generated using: `service adblock-lean gen_config`. 
-
-When an existing configuration is detected, the new config will be generated at `/root/adblock-lean/config.new`. Users can then copy over compatible configuration settings from the old config to /root/adblock-lean/config.new and then rename the updated config to `/root/adblock-lean/config` (overwriting the old config). 
-
-```bash
-service adblock-lean gen_config
-# manually inspect /root/adblock-lean/config and copy over old settings to /root/adblock-lean/config.new
-mv /root/adblock-lean/config.new /root/adblock-lean/config
-```
-
-Alternatively, to start from scratch, just delete the old config and generate a new one:
-
-```bash
-rm /root/adblock-lean/config
-service adblock-lean gen_config
-```
 
 ## Selection of blocklist(s) and download and processing parameters
 
@@ -107,7 +113,7 @@ https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/
 
 Here are some example configuration settings:
 
-- Mini 64mb routers. Aim for <100k entries. Example below: circa 83k entries
+- Mini 64mb routers. Aim for <100k entries. Example below: circa 85k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.mini.txt"
 min_blocklist_file_part_line_count=1
@@ -116,7 +122,7 @@ max_blocklist_file_size_KB=4000
 min_good_line_count=40000
 ```
 
-- Small 128mb routers. Aim for <300k entries. Example below: circa 249k entries
+- Small 128mb routers. Aim for <300k entries. Example below: circa 250k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.mini.txt"
 min_blocklist_file_part_line_count=1
@@ -125,7 +131,7 @@ max_blocklist_file_size_KB=10000
 min_good_line_count=100000
 ```
 
-- Medium 256mb routers. Aim for <600k entries. Example below: circa 430k entries
+- Medium 256mb routers. Aim for <600k entries. Example below: circa 350k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.medium.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/popupads.txt"
 min_blocklist_file_part_line_count=1
@@ -134,56 +140,45 @@ max_blocklist_file_size_KB=20000
 min_good_line_count=200000
 ```
 
-- Large =>512mb routers. Aim for <1,200k entries. Example below: circa 913k entries
+- Large =>512mb routers. Example below: circa 900k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.txt"
 min_blocklist_file_part_line_count=1
 max_blocklist_file_part_size_KB=30000
 max_blocklist_file_size_KB=50000
-min_good_line_count=400000
+min_good_line_count=200000
 ```
 An excellent breakdown of highly suitable lists and their merits is provided at:
 
 https://github.com/hagezi/dns-blocklists
 
-## Automatically deploy blocklist on router reboot
-
-Providing the service is enabled, the service script should automatically start on boot. 
-
-## Automatically update blocklist at 5am following delay by random number of minutes
-
-Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-system/cron):
-
-```bash
-0 5 * * * /etc/init.d/adblock-lean enabled && export RANDOM_DELAY="1" && /etc/init.d/adblock-lean start
-```
-This tests whether the adblock-lean service is enabled and if so launches the start function, which updates to the new blocklist list. 
-
-The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on the blocklist server; and from a selfish perspective, increase the prospect that the server is not loaded during the download. 
 
 ## User-configurable calls on success or failure
 
-adblock-lean supports user-configurable calls on success or failure. 
+adblock-lean supports user-configurable scripts on success or failure (eg send an email/SMS/msg)
 
-The following config paramters:
+**Example below for free Brevo (formerly sendinblue) email service, but use your favourite smtp/email/SMS etc method.**
+
+- Install mailsend package in OpenWRT
+- Sign up for free Brevo account (not affiliated!) - provides 300 free email sends per day
+- Edit your config file custom_script path.  Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
+- Create file /usr/libexec/abl_custom-script.sh - specific user details (user variables in CAPITALS below):
+
+```bash
+report_success()
+{
+mailbody=$(logread -e adblock-lean | tail -n 35)
+mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "${1}" -M "$mailbody"
+}
+
+report_failure()
+{
+mailbody=$(logread -e adblock-lean | tail -n 35)
+mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean blocklist update failed" -M "${1}"
+}
 ```
-report_failure="" 	 
-report_success=""
-```
 
-Are evaluated on success or failure, and the variables: ${success_msg} and ${failure_msg} can be employed in the calls. 
-
-**Example below for Brevo (formerly sendinblue), but use your favourite smtp/email (or SMS) method.**
-
-- install mailsend package in OpenWRT
-- sign up for free Brevo account (not affiliated!) - provides 300 free email sends per day
-- edit /root/adblock-lean/config lines with Brevo specific user details (user variables in CAPITALS below):
-  ```bash
-  report_failure="mailbody=\$(logread -e adblock-lean | tail -n 35); mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.com -t TO@EMAIL.com -user SENDINBLUE@USERNAME.com -pass PASSWORD -sub \"\$failure_msg\" -M \"\$mailbody\""
-  report_success="mailbody=\$(logread -e adblock-lean | tail -n 35); mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.com -t TO@EMAIL.com -user SENDINBLUE@USERNAME.com -pass PASSWORD -sub \"\$success_msg\" -M \"\$mailbody\""
-  ```
 - the Brevo password is supplied within their website, not the one created on sign-up.
-- with each adblock-lean start call an email with a header such as "New blocklist installed with good line count: 248074." should be sent on success or a failure message sent on failure
 
 ## Checking status of adblock-lean
 
@@ -205,23 +200,16 @@ dnsmasq stats available for reading using 'logread'.
 The locally installed adblock-lean is the latest version.
 ```
 
-## Keeping adblock-lean up-to-date
-
-adblock-lean automatically checks for any version updates both at the end of the `start` and `status` routines.
-
-adblock-lean can be updated to the latest version by simply running: 
-
-```bash
-service adblock-lean update
-```
 
 ## Preserve service file and config across OpenWrt upgrades
 
 Just add the files:
 
 ```bash
-/root/adblock-lean
 /etc/init.d/adblock-lean
+/root/adblock-lean
+/root/allowlist   # if used with your config
+/root/blocklist   # if used with your config
 ```
 
 to the list of files to backup in the Configuration tab in LuCi here:
