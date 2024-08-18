@@ -155,30 +155,33 @@ https://github.com/hagezi/dns-blocklists
 
 ## User-configurable calls on success or failure
 
-adblock-lean supports user-configurable scripts on success or failure (eg send an email/SMS/msg)
+adblock-lean supports specifying a custom script to define the functions `report_success` and `report_failure` to be called on success or failure (can be used to eg send an email/SMS/msg)
 
 **Example below for free Brevo (formerly sendinblue) email service, but use your favourite smtp/email/SMS etc method.**
 
 - Install mailsend package in OpenWRT
 - Sign up for free Brevo account (not affiliated!) - provides 300 free email sends per day
-- Edit your config file custom_script path.  Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
+- Edit your config file custom_script path.  Recommended path is '/usr/libexec/abl_custom-script.sh', which the adblock-lean luci app will have permission to access (for when the luci app is ready)
 - Create file /usr/libexec/abl_custom-script.sh - specific user details (user variables in CAPITALS below):
 
 ```bash
+#!/bin/sh
+
 report_success()
 {
-mailbody=$(logread -e adblock-lean | tail -n 35)
-mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "${1}" -M "$mailbody"
+mailbody="Most recent lines from the log:"$'\n'"$(logread -e adblock-lean | tail -n 35)"
+mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "${1}" -M "${mailbody}"
 }
 
 report_failure()
 {
-mailbody=$(logread -e adblock-lean | tail -n 35)
-mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean blocklist update failed" -M "${1}"
+mailbody="${1}"$'\n'$'\n'"Most recent lines from the log:"$'\n'"$(logread -e adblock-lean | tail -n 35)"
+mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean blocklist update failed" -M "${mailbody}"
 }
 ```
 
 - the Brevo password is supplied within their website, not the one created on sign-up.
+- If copy-pasting from Windows, avoid copy-pasting Windows-style newlines. To make sure, in Windows use a text editor which supports changing newline style (such as Notepad++) and make sure it is set to Unix (LF), rather than Windows (CR LF).
 
 ## Checking status of adblock-lean
 
