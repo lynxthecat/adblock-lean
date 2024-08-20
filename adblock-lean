@@ -1192,16 +1192,20 @@ check_lock()
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
-	local _killed _p _pid IFS=$'\n' k_attempt=0
+	local _killed _p _pid child_pid IFS=$'\n' k_attempt=0
 	while :
 	do
 		k_attempt=$((k_attempt+1))
 		_killed=
-		for _p in $(pgrep -fa '(/etc/rc.common /etc/init.d/adblock-lean|luci.adblock-lean)')
+		for _p in $(pgrep -fa "(/etc/rc.common /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)")
 		do
 			_pid="${_p%% *}"
 			case ${_pid} in "${$}"|*[!0-9]*) continue; esac
 			kill "${_pid}" 2>/dev/null
+			for child_pid in $(pgrep -P "${_pid}")
+			do
+				kill "${child_pid}" 2>/dev/null
+			done
 			_killed=1
 		done
 		[ -z "${_killed}" ] || [ ${k_attempt} -gt 10 ] && break
@@ -1278,6 +1282,7 @@ init_command()
 			1) exit 1 ;;
 			2)
 				reg_failure "Failed to kill running adblock-lean processes."
+				unset lock_req cleanup_req
 				exit 1
 		esac
 	fi
