@@ -169,13 +169,13 @@ adblock-lean supports specifying a custom script to define the functions `report
 
 report_success()
 {
-mailbody="Most recent lines from the log:"$'\n'"$(logread -e adblock-lean | tail -n 35)"
-mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "${1}" -M "${mailbody}"
+mailbody="${1}"
+mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean blocklist update success" -M "${mailbody}"
 }
 
 report_failure()
 {
-mailbody="${1}"$'\n'$'\n'"Most recent lines from the log:"$'\n'"$(logread -e adblock-lean | tail -n 35)"
+mailbody="${1}"
 mailsend -port 587 -smtp smtp-relay.sendinblue.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean blocklist update failed" -M "${mailbody}"
 }
 ```
