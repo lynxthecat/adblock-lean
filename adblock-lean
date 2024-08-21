@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090
+# shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090,SC3045
 
 # adblock-lean - super simple and lightweight adblocking for OpenWrt
 
@@ -34,6 +34,8 @@ PREFIX=/root/adblock-lean
 abl_dir=/var/run/adblock-lean
 abl_pid_dir=/tmp/adblock-lean
 config_file="${PREFIX}/config"
+update_log_file="/var/log/abl_update.log"
+session_log_file="/var/log/abl_session.log"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -41,7 +43,7 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="status pause resume gen_stats gen_config update"
+EXTRA_COMMANDS="status pause resume gen_stats gen_config print_log update"
 EXTRA_HELP="	
 adblock-lean custom commands:
 	status		check dnsmasq and good line count of existing blocklist
@@ -49,6 +51,7 @@ adblock-lean custom commands:
 	resume		resume adblock-lean
 	gen_stats	generate dnsmasq stats for system log
 	gen_config	generate default config
+	print_log	print most recent session log
 	update		update adblock-lean to the latest version"
 
 
@@ -154,12 +157,31 @@ log_msg()
 
 	print_msg "${color}${msg}${n_c}"
 	logger -t adblock-lean -p user."${err_l}" "${msg}"
+	write_log_file "${msg}" "${err_l}"
+}
+
+# 1 - msg
+# 2 - err level
+write_log_file()
+{
+	[ -n "${log_file}" ] && { printf '['; date +'%b %d %Y, %H:%M:%S' | tr -d '\n'; printf '] %s\n' "${2:-info}: ${1}"; } >> "${log_file}"
 }
 
 try_mv()
 {
 	[ -z "${1}" ] || [ -z "${2}" ] && { reg_failure "try_mv(): bad arguments."; return 1; }
-	mv -f "${1}" "${2}" || { reg_failure "Failed to rename '${1}'."; return 1; }
+	mv -f "${1}" "${2}" || { reg_failure "Failed to move '${1}' to '${2}'."; return 1; }
+	:
+}
+
+# 0 - (optional) '-p'
+# 1 - path
+try_mkdir()
+{
+	local p=
+	[ "${1}" = '-p' ] && { p='-p'; shift; }
+	[ -d "${1}" ] && return 0
+	mkdir ${p} "${1}" || { reg_failure "Failed to create directory '${1}'."; return 1; }
 	:
 }
 
@@ -521,14 +543,14 @@ write_config()
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
-	mkdir -p "${abl_dir}"
+	try_mkdir -p "${abl_dir}" || return 1
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
 	echo
 	log_msg "Saving new config file to '${config_file}'."
-	mkdir -p "${PREFIX}"
+	try_mkdir -p "${PREFIX}" || return 1
 	try_mv "${tmp_config}" "${config_file}" && return 0
 	rm -f "${tmp_config}"
 	return 1
@@ -563,8 +585,13 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	[ -n "${cleanup_req}" ] && rm -rf "${abl_dir}"
 	[ -n "${lock_req}" ] && rm_lock
-	[ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && command -v report_failure 1>/dev/null &&
+	[ -n "${log_file}" ] && [ -s "${log_file}" ] && read -rd '' recent_log < "${log_file}"
+	luci_log="${recent_log}"
+	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && command -v report_failure 1>/dev/null
+	then
+		[ -n "${recent_log}" ] && failure_msg="${failure_msg}"$'\n'$'\n'"Session log:"$'\n'"${recent_log}"
 		report_failure "${failure_msg}"
+	fi
 	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
 	exit "${1}"
 }
@@ -1124,6 +1151,7 @@ update_pid_action() {
 # 254 - lock file already exists
 mk_lock()
 {
+	local me="mk_lock"
 	if [ "${1}" != '-f' ]
 	then
 		check_lock
@@ -1138,18 +1166,11 @@ mk_lock()
 		shift
 	fi
 
-	[ -z "${1%.}" ] && { log_msg "mk_lock(): pid action is unspecified."; return 1; }
-	if [ -n "${pid_file}" ]
-	then
-		if [ ! -d "${abl_pid_dir}" ]
-		then
-			mkdir -p "${abl_pid_dir}" || { reg_failure "Failed to create directory '${abl_pid_dir}'."; return 1; }
-		fi
-		printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "Failed to write to pid file '${pid_file}'."; return 1; }
-	else
-		reg_failure "\${pid_file} variable is unset."
-		return 1
-	fi
+	[ -z "${1%.}" ] && { reg_failure "${me}: pid action is unspecified."; return 1; }
+	[ -z "${pid_file}" ] && { reg_failure "${me}: \${pid_file} variable is unset."; return 1; }
+
+	try_mkdir "${abl_pid_dir}" || return 1
+	printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "${me}: Failed to write to pid file '${pid_file}'."; return 1; }
 	:
 }
 
@@ -1251,7 +1272,7 @@ init_command()
 {
 	action="${1}"
 	pid_file="${abl_pid_dir}/adblock-lean.pid"
-	unset lock_req kill_req cleanup_req failure_msg luci_errors
+	unset lock_req kill_req cleanup_req failure_msg luci_errors init_action_msg
 
 	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
 	luci_sourced=
@@ -1260,12 +1281,14 @@ init_command()
 	trap 'cleanup_and_exit 1' INT TERM
 	trap 'cleanup_and_exit ${?}' EXIT
 
+	# set requirements
 	case ${action} in
-		help|status|gen_stats|enabled|enable|disable|'') ;;
+		help|status|gen_stats|print_log|enabled|enable|disable|'') ;;
 		gen_config|pause) lock_req=1 ;;
 		boot|start|update|resume) cleanup_req=1 lock_req=1 ;;
 		stop)
-			reg_action -purple "Stopping adblock-lean." || exit 1
+			init_action_msg="Stopping adblock-lean."
+			reg_action -purple "${init_action_msg}" || exit 1
 			cleanup_req=1 kill_req=1 lock_req=1 ;;
 		reload|restart)
 			reg_action -purple "Restarting adblock-lean." || exit 1 ;;
@@ -1274,6 +1297,7 @@ init_command()
 			exit 1
 	esac
 
+	# kill pids if needed
 	if [ -n "${kill_req}" ]
 	then
 		kill_abl_pids
@@ -1287,6 +1311,7 @@ init_command()
 		esac
 	fi
 
+	# set dnsmasq_tmp_d
 	case ${action} in
 		help|gen_config|enable|disable|enabled|restart|reload|'') ;;
 		*)
@@ -1294,17 +1319,37 @@ init_command()
 			: "${dnsmasq_tmp_d:=/tmp/dnsmasq.d}"
 	esac
 
+	# register lock status at init
+	check_lock
+	local init_lock_status=${?}
+
+	# make lock if needed
 	if [ -n "${lock_req}" ]
 	then
 		mk_lock "${action}" || { unset lock_req cleanup_req; exit ${?}; }
 	fi
 
+	# init session log if we have the lock
+	log_file=
+	case ${init_lock_status} in 0|3)
+		case ${action} in
+			start|boot|stop|restart|reload|pause|resume) log_file="${session_log_file}" ;;
+			update) log_file="${update_log_file}"
+		esac
+	esac
+
+	# if creating new session, rotate the old session log file
+	[ "${init_lock_status}" = 0 ] && [ -n "${log_file}" ] && [ -f "${log_file}" ] && mv "${log_file}" "${log_file}.0"
+
+	[ -n "${init_action_msg}" ] && write_log_file "${init_action_msg}" "info"
+
+	# create work dir, check dnsmasq, load config, source custom script
 	case ${action} in
 		help|gen_config|enable|disable|enabled|stop|restart|reload|'') ;;
-		status) mkdir -p "${abl_dir}" ;;
+		status) try_mkdir -p "${abl_dir}" || exit 1 ;;
 		*)
 			check_dnsmasq_instance || exit 1
-			mkdir -p "${abl_dir}"
+			try_mkdir -p "${abl_dir}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; }
 			if [ -n "${custom_script}" ]
 			then
@@ -1318,6 +1363,14 @@ init_command()
 }
 
 ### MAIN COMMAND FUNCTIONS
+
+print_log()
+{
+	[ ! -s "${session_log_file}" ] && { log_msg -err "Session log file '${session_log_file}' doesn't exist or is empty."; exit 1; }
+	echo "Most recent session log:"
+	cat "${session_log_file}"
+	:
+}
 
 # 1 - (optional) '-noexit' to return to the calling function
 gen_stats()
@@ -1647,4 +1700,5 @@ update()
 set_colors
 sed_san_expr='s/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
 sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
+
 :
