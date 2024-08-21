@@ -203,6 +203,11 @@ dnsmasq stats available for reading using 'logread'.
 The locally installed adblock-lean is the latest version.
 ```
 
+## Testing advert blocking
+
+Verify adverts are removed from newspaper sites and e.g. https://www.speedtest.net/. 
+
+This test can also be helpful: https://d3ward.github.io/toolz/adblock
 
 ## Preserve service file and config across OpenWrt upgrades
 
