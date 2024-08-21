@@ -1290,11 +1290,8 @@ init_command()
 			init_action_msg="Stopping adblock-lean."
 			reg_action -purple "${init_action_msg}" || exit 1
 			cleanup_req=1 kill_req=1 lock_req=1 ;;
-		reload|restart)
-			reg_action -purple "Restarting adblock-lean." || exit 1 ;;
-		*)
-			reg_failure "Invalid action '${action}'."
-			exit 1
+		reload|restart) reg_action -purple "Restarting adblock-lean." || exit 1 ;;
+		*) reg_failure "Invalid action '${action}'."; exit 1
 	esac
 
 	# kill pids if needed
@@ -1312,11 +1309,9 @@ init_command()
 	fi
 
 	# set dnsmasq_tmp_d
-	case ${action} in
-		help|gen_config|enable|disable|enabled|restart|reload|'') ;;
-		*)
-			dnsmasq_tmp_d="$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
-			: "${dnsmasq_tmp_d:=/tmp/dnsmasq.d}"
+	case ${action} in boot|start|stop|status|pause|resume|update)
+		dnsmasq_tmp_d="$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+		: "${dnsmasq_tmp_d:=/tmp/dnsmasq.d}"
 	esac
 
 	# register lock status at init
@@ -1345,9 +1340,8 @@ init_command()
 
 	# create work dir, check dnsmasq, load config, source custom script
 	case ${action} in
-		help|gen_config|enable|disable|enabled|stop|restart|reload|'') ;;
 		status) try_mkdir -p "${abl_dir}" || exit 1 ;;
-		*)
+		start|boot|pause|resume|update)
 			check_dnsmasq_instance || exit 1
 			try_mkdir -p "${abl_dir}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; }
@@ -1377,7 +1371,9 @@ gen_stats()
 {
 	echo
 	reg_action -blue "Generating dnsmasq stats." || exit 1
-	kill -USR1 $(pgrep dnsmasq)
+	local dnsmasq_pid
+	dnsmasq_pid="$(pidof /usr/sbin/dnsmasq)" || { reg_failure "Failed to detect dnsmasq PID or dnsmasq is not running."; exit 1; }
+	kill -USR1 "${dnsmasq_pid}"
 	print_msg "dnsmasq stats available for reading using 'logread'."
 	[ "${1}" != '-noexit' ] && exit 0
 }
