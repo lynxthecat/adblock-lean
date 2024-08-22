@@ -585,6 +585,7 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	[ -n "${cleanup_req}" ] && rm -rf "${abl_dir}"
 	[ -n "${lock_req}" ] && rm_lock
+	local recent_log=
 	[ -n "${log_file}" ] && [ -s "${log_file}" ] && read -rd '' recent_log < "${log_file}"
 	luci_log="${recent_log}"
 	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && command -v report_failure 1>/dev/null
@@ -606,6 +607,10 @@ reg_failure()
 log_success()
 {
 	log_msg "${1}"
+	success_msg="${1}"
+	local recent_log=
+	[ -n "${log_file}" ] && [ -s "${log_file}" ] && read -rd '' recent_log < "${log_file}"
+	[ -n "${recent_log}" ] && success_msg="${success_msg}"$'\n'$'\n'"Session log:"$'\n'"${recent_log}"
 	if [ -n "${custom_scr_sourced}" ] && command -v report_success 1>/dev/null
 	then
 		report_success "${1}"
