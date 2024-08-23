@@ -185,6 +185,16 @@ try_mkdir()
 	:
 }
 
+try_gzip()
+{
+	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
+}
+
+try_gunzip()
+{
+	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
+}
+
 # asks the user to pick an option
 # 1 - input in the format 'a|b|c'
 # output via $REPLY
@@ -237,8 +247,8 @@ print_def_config()
 	# Minimum number of good lines in final postprocessed blocklist
 	min_good_line_count="100000"
 
-	# compress blocklist to save memory once blocklist has been loaded - enable (1) or disable (0)
-	compress_blocklist="1"
+	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
+	use_compression="1"
 
 	# restart dnsmasq if previous blocklist was extracted and before generation of
 	# new blocklist thereby to free up memory during generaiton of new blocklist - enable (1) or disable (0)
@@ -585,6 +595,7 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	[ -n "${cleanup_req}" ] && rm -rf "${abl_dir}"
 	[ -n "${lock_req}" ] && rm_lock
+	local recent_log=
 	[ -n "${log_file}" ] && [ -s "${log_file}" ] && read -rd '' recent_log < "${log_file}"
 	luci_log="${recent_log}"
 	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && command -v report_failure 1>/dev/null
@@ -606,6 +617,10 @@ reg_failure()
 log_success()
 {
 	log_msg "${1}"
+	success_msg="${1}"
+	local recent_log=
+	[ -n "${log_file}" ] && [ -s "${log_file}" ] && read -rd '' recent_log < "${log_file}"
+	[ -n "${recent_log}" ] && success_msg="${success_msg}"$'\n'$'\n'"Session log:"$'\n'"${recent_log}"
 	if [ -n "${custom_scr_sourced}" ] && command -v report_success 1>/dev/null
 	then
 		report_success "${1}"
@@ -626,9 +641,10 @@ check_blocklist_compression_support()
 {
 	if ! dnsmasq --help | grep -qe "--conf-script"
 	then
-		reg_failure "The version of dnsmasq installed on this system does not support blocklist compression."
+		echo
+		log_msg "Note: The version of dnsmasq installed on this system does not support blocklist compression."
 		log_msg "Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\""
-		log_msg "Either upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression or disable blocklist compression in config."
+		log_msg "To use dnsmasq compression (which saves memory), upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression."
 		return 1
 	fi
 
@@ -665,7 +681,7 @@ cleanup_dl_status_files()
 process_list_part()
 {
 	local list_id="${1}" list_type="${2}" list_origin="${3}" list_path="${4}" me="process_list_part"
-	local dest_file="${abl_dir}/${list_type}.${list_id}" compress='' \
+	local dest_file="${abl_dir}/${list_type}.${list_id}" compress_part='' \
 		min_list_part_line_count='' list_part_size_B='' list_part_size_KB=''
 	local sed_rogue_expr='(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+' sed_conv_expr=''
 
@@ -681,9 +697,7 @@ process_list_part()
 				local) sed_conv_expr="s~.*~local=/&/~" ;;
 				downloaded) sed_conv_expr="s/^address=/local=/"
 			esac
-
-			dest_file="${dest_file}.gz"
-			compress=1 ;;
+			[ "$use_compression" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
 		*) reg_failure "${me}: Missing or invalid list type '${list_type}'"; return 1
 	esac
 
@@ -724,7 +738,7 @@ process_list_part()
 	fi |
 
 	# compress blocklist parts
-	if [ -n "${compress}" ]
+	if [ -n "${compress_part}" ]
 	then
 		tee >(gzip > "${dest_file}")
 	else
@@ -812,9 +826,10 @@ gen_list_parts()
 		rm -f "${abl_dir}/${list_type}"*
 		list_id=0 list_line_count=0 list_part_line_count=0
 		and_compressing=
-		[ ${list_type} = blocklist ] && and_compressing=" and compressing"
+		[ ${list_type} = blocklist ] && [ "${use_compression}" = 1 ] && and_compressing=" and compressing"
 
 		# Local list
+		echo
 		eval "local_list_path=\"\${local_${list_type}_path}\""
 		if [ ! -f "${local_list_path}" ]
 		then
@@ -916,24 +931,27 @@ generate_and_process_blocklist_file()
 	echo
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
+	local out_f="${abl_dir}/blocklist"
+	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
 	{
 		[ "${use_allowlist}" = 1 ] && cat "${abl_dir}/allowlist"
 		rm -f "${abl_dir}/allowlist"
 
-		find "${abl_dir}" -name 'blocklist.*.gz' -exec gunzip -c {} \; -exec rm -f {} \;
+		local find_name="blocklist.[0-9]*" find_cmd="cat"
+		[ "${use_compression}" = 1 ] && { find_name="blocklist.*.gz" find_cmd="gunzip -c"; }
+		find "${abl_dir}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
 	} | sort -u |
 	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
 	{ tee >(wc -wc > "${abl_dir}/blocklist_stats"); printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
 
-	if  [ "${compress_blocklist}" = 1 ]
+	if  [ -n "${final_compress}" ]
 	then
-		gzip > "${abl_dir}/blocklist.gz"
+		gzip
 	else
-		cat > "${abl_dir}/blocklist"
-	fi
+		cat
+	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; return 1; }
 
 	read -r good_line_count blocklist_file_size_B < "${abl_dir}/blocklist_stats" 2>/dev/null
-
 	: "${good_line_count:=0}"
 
 	blocklist_file_size_KB=$(( (blocklist_file_size_B + 0) / 1024 ))
@@ -1025,57 +1043,97 @@ restart_dnsmasq()
 # 2 - blocklist file not found (nothing to export)
 export_existing_blocklist()
 {
+	reg_export()
+	{
+		reg_action -blue "Creating ${1} backup of existing blocklist." || return 1
+	}
+
+	local src src_d="${dnsmasq_tmp_d}" dest="${abl_dir}/prev_blocklist"
 	echo
-	if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
+	if [ -f "${src_d}/.blocklist.gz" ]
 	then
-		log_msg -blue "Exporting and saving existing compressed blocklist."
-		try_mv "${dnsmasq_tmp_d}"/.blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
-		return 0
-	elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
+		case ${use_compression} in
+			1)
+				src="${src_d}/.blocklist.gz" dest="${dest}.gz"
+				reg_export compressed || return 1 ;;
+			*)
+				reg_export uncompressed || return 1
+				try_gunzip "${src_d}/.blocklist.gz" || { rm -f "${src_d}/.blocklist.gz"; return 1; }
+				src="${src_d}/.blocklist"
+		esac
+	elif [ -f "${src_d}/blocklist" ]
 	then
-		reg_action -blue "Exporting and saving existing uncompressed blocklist." || return 1
-		gzip -f "${dnsmasq_tmp_d}"/blocklist ||
-			{ reg_failure "Failed to compress '${dnsmasq_tmp_d}/blocklist'."; return 1; }
-		try_mv "${dnsmasq_tmp_d}"/blocklist.gz "${abl_dir}/prev_blocklist.gz" || return 1
-		return 0
+		if [ "${use_compression}" = 1 ]
+		then
+			reg_export compressed || return 1
+			try_mv "${src_d}/blocklist" "${src_d}/.blocklist" || return 1
+			try_gzip "${src_d}/.blocklist" || return 1
+			src="${src_d}/.blocklist.gz" dest="${dest}.gz"
+		else
+			reg_export uncompressed || return 1
+			src="${src_d}/blocklist"
+		fi
 	else
 		log_msg "No existing compressed or uncompressed blocklist identified."
 		return 2
 	fi
+	try_mv "${src}" "${dest}" || return 1
+	:
 }
 
 restore_saved_blocklist()
 {
-	if [ -f "${abl_dir}/prev_blocklist.gz" ]
+	local mv_src="${abl_dir}/prev_blocklist" mv_dest="${abl_dir}/blocklist"
+	echo
+	reg_action -blue "Restoring saved blocklist file." || return 1
+	if [ -f "${mv_src}.gz" ]
 	then
-		echo
-		reg_action -blue "Restoring saved blocklist file." || return 1
-		try_mv "${abl_dir}/prev_blocklist.gz" "${abl_dir}/blocklist.gz" || return 1
-		if [ "${compress_blocklist}" != 1 ]
+		try_mv "${mv_src}.gz" "${mv_dest}.gz" || return 1
+		if [ -z "${final_compress}" ]
 		then
-			gunzip -f "${abl_dir}/blocklist.gz" ||
-				{ reg_failure "Failed to extract '${abl_dir}/blocklist.gz'."; return 1; }
-
+			try_gunzip "${mv_dest}.gz" || return 1
 		fi
-		import_blocklist_file ||
-			{ reg_failure "Failed to import the blocklist file."; return 1; }
-		return 0
+	elif [ -f "${mv_src}" ]
+	then
+		try_mv "${mv_src}" "${mv_dest}" || return 1
+		if [ -n "${final_compress}" ]
+		then
+			try_gzip -f "${mv_dest}" ||return 1
+		fi
 	else
 		reg_failure "No previous blocklist file found."
 		return 1
 	fi
+	import_blocklist_file || { reg_failure "Failed to import the blocklist file."; return 1; }
+	:
 }
 
 import_blocklist_file()
 {
-	local src_file="${abl_dir}/blocklist" dest_file="${dnsmasq_tmp_d}/blocklist"
-	[ "${compress_blocklist}" = 1 ] && { src_file="${src_file}.gz" dest_file="${dnsmasq_tmp_d}/.blocklist.gz"; }
-	[ -f "${src_file}" ] || return 1
+	local src src_compressed='' src_file="${abl_dir}/blocklist" dest_file="${dnsmasq_tmp_d}/blocklist"
+	[ -n "${final_compress}" ] && dest_file="${dnsmasq_tmp_d}/.blocklist.gz"
+	for src in "${src_file}" "${src_file}.gz"
+	do
+		case "${src}" in *.gz) src_compressed=1; esac
+		[ -f "${src}" ] && { src_file="${src}"; break; }
+	done || { reg_failure "Failed to find file to import."; return 1; }
+
 	clean_dnsmasq_dir
+
+	if [ -n "${src_compressed}" ] && [ -z "${final_compress}" ]
+	then
+		try_gunzip "${src_file}" || return 1
+		src_file="${src_file%.gz}"
+	elif [ -z "${src_compressed}" ] && [ -n "${final_compress}" ]
+	then
+		try_gzip "${src_file}" || return 1
+		src_file="${src_file}.gz"
+	fi
+
 	try_mv "${src_file}" "${dest_file}" || return 1
 	imported_blocklist_file_size_human=$(get_file_size_human "${dest_file}")
 
-	if [ "${compress_blocklist}" = 1 ]
+	if [ -n "${final_compress}" ]
 	then
 		printf "conf-script=\"busybox sh ${dnsmasq_tmp_d}/.extract_blocklist\"\n" > "${dnsmasq_tmp_d}"/conf-script &&
 		printf "busybox gunzip -c ${dnsmasq_tmp_d}/.blocklist.gz\nexit 0\n" > "${dnsmasq_tmp_d}"/.extract_blocklist ||
@@ -1425,10 +1483,8 @@ start()
 		log_msg "Consider installing the coreutils-sort package (opkg install coreutils-sort) for faster sort."
 	fi
 
-	if [ "${compress_blocklist}" = 1 ]
-	then
-		check_blocklist_compression_support || exit 1
-	fi
+	final_compress=
+	[ "${use_compression}" = 1 ] && check_blocklist_compression_support && final_compress=1
 
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
@@ -1474,14 +1530,14 @@ start()
 	fi
 
 	compressed=
-	[ "${compress_blocklist}" = 1 ] && compressed=" compressed"
+	[ -n "${final_compress}" ] && compressed=" compressed"
 	log_msg "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_human}."
+
+	restart_dnsmasq || exit 1
 
 	elapsed_time_str=$(get_elapsed_time_str)
 	echo
 	log_msg "Processing time for blocklist generation and import: ${elapsed_time_str}."
-
-	restart_dnsmasq || exit 1
 
 	if ! check_active_blocklist
 	then
