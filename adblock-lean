@@ -683,25 +683,14 @@ process_list_part()
 	local list_id="${1}" list_type="${2}" list_origin="${3}" list_path="${4}" me="process_list_part"
 	local dest_file="${abl_dir}/${list_type}.${list_id}" compress_part='' \
 		min_list_part_line_count='' list_part_size_B='' list_part_size_KB=''
-	local sed_rogue_expr='(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+' sed_conv_expr=''
+	local sed_rogue_expr='^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$'
 
 
 	[ -z "${list_id}" ] || [ -z "${list_origin}" ] || [ -z "${list_path}" ] && { reg_failure "${me}: Missing arguments."; return 1; }
 	case ${list_type} in
 		allowlist)
-			sed_rogue_expr="^(server=/${sed_rogue_expr}/#$|$)"
-			sed_conv_expr='s~.*~server=/&/#~'
 			[ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
 		blocklist)
-			sed_rogue_expr="^${sed_rogue_expr}$"
-
-			# generate sed expression combining multiple domains in one 'local=/.../' line
-			local sed_conv_expr='/^$/d;s~$~/~;s~^~#local=/~'
-			local combine_entries=5
-			for i in $(seq $((combine_entries-1))); do
-				sed_conv_expr="${sed_conv_expr};n;/^$/d;s~$~/~;"
-			done
-
 			[ "$use_compression" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
 		*) reg_failure "${me}: Missing or invalid list type '${list_type}'"; return 1
 	esac
@@ -724,15 +713,6 @@ process_list_part()
 	# 3 Convert blocklist to 'local=/[domain]/', allowlist to 'server=/[domain]/#'
 	tr 'A-Z' 'a-z' |
 	sed "${sed_san_expr}" |
-
-	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
-	then
-		# remove allowlist domains from blocklist
-		${awk_cmd} -F'/' 'NR==FNR { sub(/^server=\//,""); sub(/\/#$/,""); allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
-								for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
-	else
-		cat
-	fi |
 	tee >(wc -w > "${abl_dir}/list_part_line_count") |
 
 	# check downloaded lists for rogue elements
@@ -742,18 +722,14 @@ process_list_part()
 	else
 		cat
 	fi |
-	{ sed "${sed_conv_expr}"; printf '#'; } | tr -d '\n' | tr '#' '\n' |
 
 	# compress blocklist parts
 	if [ -n "${compress_part}" ]
 	then
-		tee >(gzip > "${dest_file}")
+		gzip > "${dest_file}"
 	else
-		tee "${dest_file}"
-	fi |
-
-	# check parts with dnsmasq --test
-	{ dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err" && rm -f "${abl_dir}/dnsmasq_err"; cat 1>/dev/null; }
+		cat > "${dest_file}"
+	fi
 
 	read -r list_part_size_B _ < "${abl_dir}/list_part_size_B" 2>/dev/null
 	list_part_size_KB=$(( (list_part_size_B + 0) / 1024 ))
@@ -786,17 +762,6 @@ process_list_part()
 		return 2
 	fi
 	rm -f "${abl_dir}/rogue_element"
-
-	if [ -f "${abl_dir}/dnsmasq_err" ]
-	then
-		rm -f "${dest_file}"
-		reg_failure "The dnsmasq --test on the ${list_type} part failed."
-		log_msg "dnsmasq --test errors:"
-		log_msg "$(head -n10 "${abl_dir}/dnsmasq_err")"
-		rm -f "${abl_dir}/dnsmasq_err"
-		return 2
-	fi
-	rm -f "${abl_dir}/dnsmasq_err"
 
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
@@ -935,21 +900,57 @@ gen_list_parts()
 
 generate_and_process_blocklist_file()
 {
+	# intput from STDIN, output to STDIN
+	# 1 - blocklist|allowlist
+	sed_convert() {
+		local entry_type sed_conv_expr combine_entries=5 nl='@'
+		case "$1" in
+			blocklist) entry_type=local allow_char= ;;
+			allowlist) entry_type=server allow_char="#" ;;
+			''|*) return 1
+		esac
+		# generate sed expression combining multiple domains in one 'local=/.../' and 'server=/.../ line
+		sed_conv_expr="/^$/d;s~$~/${allow_char}~;s~^~${nl}${entry_type}=/~"
+		for i in $(seq $((combine_entries-1))); do
+			sed_conv_expr="${sed_conv_expr};n;/^$/d;s~$~/${allow_char}~"
+		done
+		{ sed "${sed_conv_expr}"; printf %s "${nl}"; } | tr -d '\n' | tr "${nl}" '\n'
+	}
+
 	echo
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
 	local out_f="${abl_dir}/blocklist"
+
+	# combine and process blocklist parts
 	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
 	{
-		[ "${use_allowlist}" = 1 ] && cat "${abl_dir}/allowlist"
-		rm -f "${abl_dir}/allowlist"
-
 		local find_name="blocklist.[0-9]*" find_cmd="cat"
 		[ "${use_compression}" = 1 ] && { find_name="blocklist.*.gz" find_cmd="gunzip -c"; }
 		find "${abl_dir}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
-	} | sort -u |
+	} |
+	sed_convert blocklist |
+
+	if [ "${use_allowlist}" = 1 ]; then
+		# remove allowlist domains from blocklist
+		${awk_cmd} -F'/' 'NR==FNR { sub(/^server=\//,""); sub(/\/#$/,""); allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
+			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
+
+		# convert the allowlist
+		cat "${abl_dir}/allowlist" | sed_convert allowlist
+	else
+		cat
+	fi |
+
+	# limit size
 	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
-	{ tee >(wc -wc > "${abl_dir}/blocklist_stats"); printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
+	tee >(wc -wc > "${abl_dir}/blocklist_stats") |
+
+	# sort and add the blocklist test entry
+	{ sort -u; printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
+
+	# check the final blocklist with dnsmasq --test
+	tee >(dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err" && rm -f "${abl_dir}/dnsmasq_err"; cat 1>/dev/null) |
 
 	if  [ -n "${final_compress}" ]
 	then
@@ -957,6 +958,20 @@ generate_and_process_blocklist_file()
 	else
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; return 1; }
+
+	rm -f "${abl_dir}/allowlist"
+
+	if [ -f "${abl_dir}/dnsmasq_err" ]
+	then
+		cp "${out_f}" /tmp/test
+		rm -f "${out_f}"
+		reg_failure "The dnsmasq --test on the ${list_type} part failed."
+		log_msg "dnsmasq --test errors:"
+		log_msg "$(head -n10 "${abl_dir}/dnsmasq_err")"
+		rm -f "${abl_dir}/dnsmasq_err"
+		return 2
+	fi
+	rm -f "${abl_dir}/dnsmasq_err"
 
 	read -r good_line_count blocklist_file_size_B < "${abl_dir}/blocklist_stats" 2>/dev/null
 	: "${good_line_count:=0}"
