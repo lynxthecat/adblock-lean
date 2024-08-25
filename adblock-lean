@@ -685,6 +685,7 @@ process_list_part()
 		min_list_part_line_count='' list_part_size_B='' list_part_size_KB=''
 	local sed_rogue_expr='(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+' sed_conv_expr=''
 
+
 	[ -z "${list_id}" ] || [ -z "${list_origin}" ] || [ -z "${list_path}" ] && { reg_failure "${me}: Missing arguments."; return 1; }
 	case ${list_type} in
 		allowlist)
@@ -693,10 +694,14 @@ process_list_part()
 			[ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
 		blocklist)
 			sed_rogue_expr="^${sed_rogue_expr}$"
-			case ${list_origin} in
-				local) sed_conv_expr="s~.*~local=/&/~" ;;
-				downloaded) sed_conv_expr="s~.*~local=/&/~"
-			esac
+
+			# generate sed expression combining multiple domains in one 'local=/.../' line
+			local sed_conv_expr='/^$/d;s~$~/~;s~^~#local=/~'
+			local combine_entries=5
+			for i in $(seq $((combine_entries-1))); do
+				sed_conv_expr="${sed_conv_expr};n;/^$/d;s~$~/~;"
+			done
+
 			[ "$use_compression" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
 		*) reg_failure "${me}: Missing or invalid list type '${list_type}'"; return 1
 	esac
@@ -737,7 +742,7 @@ process_list_part()
 	else
 		cat
 	fi |
-	{ sed "${sed_conv_expr}"; printf '\n'; } |
+	{ sed "${sed_conv_expr}"; printf '#'; } | tr -d '\n' | tr '#' '\n' |
 
 	# compress blocklist parts
 	if [ -n "${compress_part}" ]
