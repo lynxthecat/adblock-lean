@@ -692,10 +692,10 @@ process_list_part()
 			sed_conv_expr='s~.*~server=/&/#~'
 			[ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
 		blocklist)
-			sed_rogue_expr="^(local=/${sed_rogue_expr}/$|bogus-nxdomain=[0-9]+([.][0-9]+)+$|$)"
+			sed_rogue_expr="^${sed_rogue_expr}$"
 			case ${list_origin} in
 				local) sed_conv_expr="s~.*~local=/&/~" ;;
-				downloaded) sed_conv_expr="s/^address=/local=/"
+				downloaded) sed_conv_expr="s~.*~local=/&/~"
 			esac
 			[ "$use_compression" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
 		*) reg_failure "${me}: Missing or invalid list type '${list_type}'"; return 1
@@ -717,7 +717,8 @@ process_list_part()
 
 	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments, remove whitespaces
 	# 3 Convert blocklist to 'local=/[domain]/', allowlist to 'server=/[domain]/#'
-	tr 'A-Z' 'a-z' | sed "${sed_san_expr}; ${sed_conv_expr}" |
+	tr 'A-Z' 'a-z' |
+	sed "${sed_san_expr}" |
 
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
@@ -736,6 +737,7 @@ process_list_part()
 	else
 		cat
 	fi |
+	{ sed "${sed_conv_expr}"; printf '\n'; } |
 
 	# compress blocklist parts
 	if [ -n "${compress_part}" ]
