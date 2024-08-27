@@ -46,7 +46,7 @@ STOP=4
 EXTRA_COMMANDS="status pause resume gen_stats gen_config print_log update"
 EXTRA_HELP="	
 adblock-lean custom commands:
-	status		check dnsmasq and good line count of existing blocklist
+	status		check dnsmasq and entries count of existing blocklist
 	pause		pause adblock-lean
 	resume		resume adblock-lean
 	gen_stats	generate dnsmasq stats for system log
@@ -715,6 +715,15 @@ process_list_part()
 	sed "${sed_san_expr}" |
 	tee >(wc -w > "${abl_dir}/list_part_line_count") |
 
+	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
+	then
+		# remove allowlist domains from blocklist
+		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n];
+			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
+	else
+		cat
+	fi |
+
 	# check downloaded lists for rogue elements
 	if [ "${list_origin}" = downloaded ]
 	then
@@ -900,21 +909,29 @@ gen_list_parts()
 
 generate_and_process_blocklist_file()
 {
-	# intput from STDIN, output to STDIN
+	# intput from STDIN, output to STDOUT
 	# 1 - blocklist|allowlist
-	sed_convert() {
-		local entry_type sed_conv_expr combine_entries=5 nl='@'
+	awk_convert()
+	{
+		local entry_type extra_len len_lim=1024
 		case "$1" in
-			blocklist) entry_type=local allow_char= ;;
-			allowlist) entry_type=server allow_char="#" ;;
-			''|*) return 1
+			blocklist) entry_type=local allow_char='' extra_len=7 ;;
+			allowlist) entry_type=server allow_char="#" extra_len=9
 		esac
-		# generate sed expression combining multiple domains in one 'local=/.../' and 'server=/.../ line
-		sed_conv_expr="/^$/d;s~$~/${allow_char}~;s~^~${nl}${entry_type}=/~"
-		for i in $(seq $((combine_entries-1))); do
-			sed_conv_expr="${sed_conv_expr};n;/^$/d;s~$~/${allow_char}~"
-		done
-		{ sed "${sed_conv_expr}"; printf %s "${nl}"; } | tr -d '\n' | tr "${nl}" '\n'
+
+		len_lim=$((len_lim-extra_len))
+		# shellcheck disable=SC2016
+		$awk_cmd -v ORS="" -v m=${len_lim} -v a="${allow_char}" -v t=${entry_type} '
+			BEGIN {al=0; r=0; s=""}
+			NF {
+				r=r+1
+				if (r==1) {print t "=/"}
+				l=length($0)
+				n=al+1+l
+				if (n<=m) {al=n; print $0 "/"; next}
+				else {print a "\n" t "=/" $0 "/"; al=l+1}
+			}
+			END {print a "\n"}'
 	}
 
 	echo
@@ -929,25 +946,27 @@ generate_and_process_blocklist_file()
 		[ "${use_compression}" = 1 ] && { find_name="blocklist.*.gz" find_cmd="gunzip -c"; }
 		find "${abl_dir}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
 	} |
-	sed_convert blocklist |
+
+	# deduplication
+	sort -u |
+	tee >(wc -wc > "${abl_dir}/blocklist_stats") |
+
+	# pack entries in 1024 characters long lines
+	awk_convert blocklist |
 
 	if [ "${use_allowlist}" = 1 ]; then
-		# remove allowlist domains from blocklist
-		${awk_cmd} -F'/' 'NR==FNR { sub(/^server=\//,""); sub(/\/#$/,""); allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
-			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
-
-		# convert the allowlist
-		cat "${abl_dir}/allowlist" | sed_convert allowlist
+		cat
+		# allowlist deduplication
+		sort -u "${abl_dir}/allowlist" |
+		tee >(wc -wc > "${abl_dir}/allowlist_stats") |
+		# pack entries in 1024 characters long lines
+		awk_convert allowlist
 	else
 		cat
 	fi |
 
-	# limit size
-	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
-	tee >(wc -wc > "${abl_dir}/blocklist_stats") |
-
-	# sort and add the blocklist test entry
-	{ sort -u; printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
+	# limit size and add the blocklist test entry
+	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
 
 	# check the final blocklist with dnsmasq --test
 	tee >(dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err" && rm -f "${abl_dir}/dnsmasq_err"; cat 1>/dev/null) |
@@ -973,26 +992,32 @@ generate_and_process_blocklist_file()
 	fi
 	rm -f "${abl_dir}/dnsmasq_err"
 
-	read -r good_line_count blocklist_file_size_B < "${abl_dir}/blocklist_stats" 2>/dev/null
-	: "${good_line_count:=0}"
+	local block_entries_cnt blocklist_size_B allowlist_size_B block_entries_cnt allow_entries_cnt final_list_size_B
+	read -r block_entries_cnt blocklist_size_B 2>/dev/null < "${abl_dir}/blocklist_stats"
+	: "${block_entries_cnt:=0}"
+	read -r allow_entries_cnt allowlist_size_B 2>/dev/null < "${abl_dir}/allowlist_stats"
+	: "${allow_entries_cnt:=0}"
+	: "${allowlist_size_B:=0}"
 
-	blocklist_file_size_KB=$(( (blocklist_file_size_B + 0) / 1024 ))
-	blocklist_file_size_human="$(bytes2human "${blocklist_file_size_B}")"
+	final_entries_cnt=$((block_entries_cnt+allow_entries_cnt))
 
-	if [ "${blocklist_file_size_KB}" -ge "${max_blocklist_file_size_KB}" ]
+	final_list_size_B=$(( blocklist_size_B + 0 + allowlist_size_B ))
+	final_list_size_human="$(bytes2human "${final_list_size_B}")"
+
+	if [ $(( final_list_size_B / 1024 )) -ge "${max_blocklist_file_size_KB}" ]
 	then
 		reg_failure "Blocklist file size reached the maximum value set in config ($(int2human "${max_blocklist_file_size_KB}") KB)."
 		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
 		return 1
 	fi
 
-	if [ "${good_line_count}" -lt "${min_good_line_count}" ]
+	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
 	then
-		reg_failure "Good line count: $(int2human "${good_line_count}") below the minimum value set in config ($(int2human "${min_good_line_count}"))."
+		reg_failure "Entries count: $(int2human "${final_entries_cnt}") below the minimum value set in config ($(int2human "${min_good_line_count}"))."
 		return 1
 	fi
 
-	log_msg "Processed blocklist uncompressed file size: ${blocklist_file_size_human}."
+	log_msg "Final list uncompressed file size: ${final_list_size_human}."
 
 	:
 }
@@ -1153,7 +1178,7 @@ import_blocklist_file()
 	fi
 
 	try_mv "${src_file}" "${dest_file}" || return 1
-	imported_blocklist_file_size_human=$(get_file_size_human "${dest_file}")
+	imported_final_list_size_human=$(get_file_size_human "${dest_file}")
 
 	if [ -n "${final_compress}" ]
 	then
@@ -1553,7 +1578,7 @@ start()
 
 	compressed=
 	[ -n "${final_compress}" ] && compressed=" compressed"
-	log_msg "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_human}."
+	log_msg "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_final_list_size_human}."
 
 	restart_dnsmasq || exit 1
 
@@ -1588,7 +1613,7 @@ start()
 	fi
 
 	log_msg -green "Active blocklist check passed with new blocklist file."
-	log_success "New blocklist installed with good line count: $(int2human "${good_line_count}")."
+	log_success "New blocklist installed with entries count: $(int2human "${final_entries_cnt}")."
 	rm -f "${abl_dir}/prev_blocklist.gz"
 
 	check_for_updates
@@ -1655,21 +1680,22 @@ status()
 		4) log_msg -purple "adblock-lean is stopped."; exit 4;
 	esac
 	check_active_blocklist
+	local active_entries_cnt=0
 	local dnsmasq_status=${?}
 	luci_dnsmasq_status=${dnsmasq_status}
 	if [ ${dnsmasq_status} = 0 ]
 	then
 		if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
 		then
-			good_line_count=$(gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz | wc -w)
+			active_entries_cnt=$(gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz | wc -w)
 		elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
 		then
-			good_line_count=$(wc -w < "${dnsmasq_tmp_d}/blocklist")
+			active_entries_cnt=$(wc -w < "${dnsmasq_tmp_d}/blocklist")
 		fi
-		: "${good_line_count:=0}"
-		[ ${good_line_count} -gt 0 ] && : $((good_line_count--)) # to account for added blocklist test entry
-		luci_good_line_count=${good_line_count}
-		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: $(int2human ${good_line_count})."
+		: "${active_entries_cnt:=0}"
+		[ ${active_entries_cnt} -gt 0 ] && : $((active_entries_cnt--)) # to account for added blocklist test entry
+		luci_min_good_line_count=${active_entries_cnt}
+		log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human ${active_entries_cnt})."
 		log_msg -green "adblock-lean is active."
 		gen_stats -noexit
 	else
