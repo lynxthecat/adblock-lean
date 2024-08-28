@@ -225,8 +225,11 @@ print_def_config()
 	# values must be enclosed in double-quotes
 	# comments must start at newline or inline after the closing double-quote
 
-	# One or more dnsmasq blocklist urls separated by spaces
-	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.mini.txt"
+	# One or more raw domain blocklist urls separated by spaces
+	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
+
+	# One or more raw ipv4 blocklist urls
+	blocklist_ipv4_urls=""
 
 	# One or more allowlist urls separated by spaces
 	allowlist_urls=""
@@ -239,6 +242,7 @@ print_def_config()
 
 	# Mininum number of lines of any individual downloaded part
 	min_blocklist_part_line_count="1"
+	min_blocklist_ipv4_part_line_count="1"
 	min_allowlist_part_line_count="1"
 	# Maximum size of any individual downloaded blocklist part
 	max_file_part_size_KB="20000"
@@ -682,18 +686,20 @@ process_list_part()
 {
 	local list_id="${1}" list_type="${2}" list_origin="${3}" list_path="${4}" me="process_list_part"
 	local dest_file="${abl_dir}/${list_type}.${list_id}" compress_part='' \
-		min_list_part_line_count='' list_part_size_B='' list_part_size_KB=''
-	local sed_rogue_expr='^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$'
+		min_list_part_line_count='' list_part_size_B='' list_part_size_KB='' val_entry_regex
+	case "${list_type}" in
+		allowlist|blocklist) val_entry_regex='^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
+		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$'
+	esac
 
 
 	[ -z "${list_id}" ] || [ -z "${list_origin}" ] || [ -z "${list_path}" ] && { reg_failure "${me}: Missing arguments."; return 1; }
 	case ${list_type} in
-		allowlist)
-			[ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
-		blocklist)
-			[ "$use_compression" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
+		allowlist) [ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
+		blocklist|blocklist_ipv4) [ "$use_compression" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
 		*) reg_failure "${me}: Missing or invalid list type '${list_type}'"; return 1
 	esac
+	# 3 Convert blocklist to '[local=/[domain]/', allowlist to 'server=/[domain]/#', ip list to 'bogux_nxdomain=[ip]'
 
 	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
 
@@ -709,9 +715,9 @@ process_list_part()
 	# Count bytes
 	tee >(wc -c > "${abl_dir}/list_part_size_B") |
 
-	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments, remove whitespaces
-	# 3 Convert blocklist to 'local=/[domain]/', allowlist to 'server=/[domain]/#'
-	tr 'A-Z' 'a-z' |
+	# Convert to lowercase
+	case "${list_type}" in allowlist|blocklist) tr 'A-Z' 'a-z' ;; *) cat; esac |
+	# Remove comment lines and trailing comments, remove whitespaces
 	sed "${sed_san_expr}" |
 	tee >(wc -w > "${abl_dir}/list_part_line_count") |
 
@@ -727,18 +733,18 @@ process_list_part()
 	# check downloaded lists for rogue elements
 	if [ "${list_origin}" = downloaded ]
 	then
-		tee >(sed -nE "\~${sed_rogue_expr}~d;p;:1 n;b1" > "${abl_dir}/rogue_element")
+		tee >(sed -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${abl_dir}/rogue_element")
 	else
 		cat
 	fi |
 
-	# compress blocklist parts
+	# compress parts
 	if [ -n "${compress_part}" ]
 	then
-		gzip > "${dest_file}"
+		gzip
 	else
-		cat > "${dest_file}"
-	fi
+		cat
+	fi > "${dest_file}"
 
 	read -r list_part_size_B _ < "${abl_dir}/list_part_size_B" 2>/dev/null
 	list_part_size_KB=$(( (list_part_size_B + 0) / 1024 ))
@@ -800,36 +806,38 @@ gen_list_parts()
 		:
 	}
 
-	local list_type='' list_id list_line_count list_part_line_count and_compressing='' list_urls list_url local_list_path
+	local list_type='' list_id list_line_cnt list_part_line_count and_compressing='' list_urls list_url local_list_path
 
-	for list_type in allowlist blocklist
+	for list_type in allowlist blocklist blocklist_ipv4
 	do
 		rm -f "${abl_dir}/${list_type}"*
-		list_id=0 list_line_count=0 list_part_line_count=0
+		list_id=0 list_line_cnt=0 list_part_line_count=0
 		and_compressing=
-		[ ${list_type} = blocklist ] && [ "${use_compression}" = 1 ] && and_compressing=" and compressing"
+		case ${list_type} in blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && and_compressing=" and compressing"; esac
 
 		# Local list
-		echo
-		eval "local_list_path=\"\${local_${list_type}_path}\""
-		if [ ! -f "${local_list_path}" ]
+		if [ "${list_type}" != blocklist_ipv4 ]
 		then
-			log_msg -blue "No local ${list_type} identified."
-		elif [ ! -s "${local_list_path}" ]
-		then
-			log_msg -warn "Local ${list_type} file is empty."
-		else
 			echo
-			log_msg -blue "Found local ${list_type}. Sanitizing${and_compressing}."
-			reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
-			process_list_part "${list_id}" "${list_type}" "local" "${local_list_path}"
-			case ${?} in
-				0)
-					log_process_success "local"
-					list_line_count=$(( list_line_count + list_part_line_count )) ;;
-				*)
-					handle_process_failure || return 1
-			esac
+			eval "local_list_path=\"\${local_${list_type}_path}\""
+			if [ ! -f "${local_list_path}" ]
+			then
+				log_msg -blue "No local ${list_type} identified."
+			elif [ ! -s "${local_list_path}" ]
+			then
+				log_msg -warn "Local ${list_type} file is empty."
+			else
+				echo
+				log_msg -blue "Found local ${list_type}. Sanitizing${and_compressing}."
+				reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
+				process_list_part "${list_id}" "${list_type}" "local" "${local_list_path}"
+				case ${?} in
+					0)
+						log_process_success "local"
+						list_line_cnt=$(( list_line_cnt + list_part_line_count )) ;;
+					*) handle_process_failure || return 1
+				esac
+			fi
 		fi
 
 		# List parts download
@@ -861,7 +869,8 @@ gen_list_parts()
 							rm -f "${abl_dir}/${list_type}.${list_id}"
 						fi
 						log_process_success "downloaded"
-						list_line_count=$(( list_line_count + list_part_line_count ))
+						[ "${list_type}" = blocklist_ipv4 ] && use_blocklist_ipv4=1
+						list_line_cnt=$(( list_line_cnt + list_part_line_count ))
 						continue 2 ;;
 					1) return 1 ;;
 					2)
@@ -883,26 +892,26 @@ gen_list_parts()
 			done
 		done
 
-		if [ "${list_line_count}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${abl_dir}/allowlist" ]; }
+		if [ "${list_line_cnt}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${abl_dir}/allowlist" ]; }
 		then
 			case ${list_type} in
 				blocklist) return 1 ;;
 				allowlist)
 					log_msg "Not using any allowlist for blocklist processing."
 					use_allowlist=0
-					continue
+					continue ;;
+				blocklist_ipv4) use_blocklist_ipv4=0
 			esac
 		fi
 
 		if [ "${list_type}" = allowlist ]
 		then
 			echo
-			log_msg -green "Successfully generated allowlist with $(int2human ${list_line_count}) lines."
+			log_msg -green "Successfully generated allowlist with $(int2human ${list_line_cnt}) entries."
 			log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 			use_allowlist=1
-		else
-			preprocessed_blocklist_line_count="${list_line_count}"
 		fi
+		preprocessed_list_line_cnt="$((preprocessed_list_line_cnt+list_line_cnt))"
 	done
 	:
 }
@@ -911,13 +920,14 @@ generate_and_process_blocklist_file()
 {
 	# intput from STDIN, output to STDOUT
 	# 1 - blocklist|allowlist
-	awk_convert()
+	convert_entries()
 	{
-		local entry_type extra_len len_lim=1024
+		local entry_type extra_len len_lim=1024 allow_char=''
 		case "$1" in
-			blocklist) entry_type=local allow_char='' extra_len=7 ;;
-			allowlist) entry_type=server allow_char="#" extra_len=9
+			blocklist) entry_type=local ;;
+			allowlist) entry_type=server allow_char="#" ;;
 		esac
+		extra_len=$((${#entry_type}+${#allow_char}+2))
 
 		len_lim=$((len_lim-extra_len))
 		# shellcheck disable=SC2016
@@ -934,33 +944,62 @@ generate_and_process_blocklist_file()
 			END {print a "\n"}'
 	}
 
+	# 1 - list type (blocklist|blocklist_ipv4)
+	print_list_parts()
+	{
+		local find_name="${1}.[0-9]*" find_cmd="cat"
+		[ "${use_compression}" = 1 ] && { find_name="${1}.*.gz" find_cmd="gunzip -c"; }
+		find "${abl_dir}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
+		printf ''
+	}
+
+	# 1 - list type (block|blocklist_ipv4|allowlist)
+	read_list_stats()
+	{
+		read -r ${1}_entries_cnt ${1}_size_B 2>/dev/null < "${abl_dir}/${1}_stats"
+		eval ": \"\${${1}_entries_cnt:=0}\" \"\${${1}_size_B:=0}\""
+	}
+
 	echo
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
 	local out_f="${abl_dir}/blocklist"
 
-	# combine and process blocklist parts
 	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
-	{
-		local find_name="blocklist.[0-9]*" find_cmd="cat"
-		[ "${use_compression}" = 1 ] && { find_name="blocklist.*.gz" find_cmd="gunzip -c"; }
-		find "${abl_dir}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
-	} |
+
+	# print list parts
+	print_list_parts blocklist |
 
 	# deduplication
 	sort -u |
+
+	# count entries
 	tee >(wc -wc > "${abl_dir}/blocklist_stats") |
 
 	# pack entries in 1024 characters long lines
-	awk_convert blocklist |
+	convert_entries blocklist |
 
-	if [ "${use_allowlist}" = 1 ]; then
+	if [ "${use_allowlist}" = 1 ]
+	then
 		cat
 		# allowlist deduplication
 		sort -u "${abl_dir}/allowlist" |
 		tee >(wc -wc > "${abl_dir}/allowlist_stats") |
 		# pack entries in 1024 characters long lines
-		awk_convert allowlist
+		convert_entries allowlist
+	else
+		cat
+	fi |
+
+	if [ "${use_blocklist_ipv4}" ]
+	then
+		cat
+		# allowlist deduplication
+		print_list_parts blocklist_ipv4 |
+		sort -u |
+		tee >(wc -wc > "${abl_dir}/blocklist_ipv4_stats") |
+		# add prefix
+		sed 's/^/bogus-nxdomain=/'
 	else
 		cat
 	fi |
@@ -992,16 +1031,16 @@ generate_and_process_blocklist_file()
 	fi
 	rm -f "${abl_dir}/dnsmasq_err"
 
-	local block_entries_cnt blocklist_size_B allowlist_size_B block_entries_cnt allow_entries_cnt final_list_size_B
-	read -r block_entries_cnt blocklist_size_B 2>/dev/null < "${abl_dir}/blocklist_stats"
-	: "${block_entries_cnt:=0}"
-	read -r allow_entries_cnt allowlist_size_B 2>/dev/null < "${abl_dir}/allowlist_stats"
-	: "${allow_entries_cnt:=0}"
-	: "${allowlist_size_B:=0}"
+	local blocklist_entries_cnt blocklist_size_B blocklist_ipv4_entries_cnt blocklist_ipv4_size_B allowlist_entries_cnt allowlist_size_B final_list_size_B
 
-	final_entries_cnt=$((block_entries_cnt+allow_entries_cnt))
+	for list_type in blocklist blocklist_ipv4 allowlist
+	do
+		read_list_stats ${list_type}
+	done
 
-	final_list_size_B=$(( blocklist_size_B + 0 + allowlist_size_B ))
+	final_entries_cnt=$(( blocklist_entries_cnt + blocklist_ipv4_entries_cnt + allowlist_entries_cnt ))
+
+	final_list_size_B=$(( blocklist_size_B + blocklist_ipv4_size_B + allowlist_size_B))
 	final_list_size_human="$(bytes2human "${final_list_size_B}")"
 
 	if [ $(( final_list_size_B / 1024 )) -ge "${max_blocklist_file_size_KB}" ]
@@ -1445,7 +1484,9 @@ init_command()
 
 	# create work dir, check dnsmasq, load config, source custom script
 	case ${action} in
-		status) try_mkdir -p "${abl_dir}" || exit 1 ;;
+		status)
+			try_mkdir -p "${abl_dir}" || exit 1
+			load_config || { reg_failure "Failed to load config."; exit 1; } ;;
 		start|boot|pause|resume|update)
 			check_dnsmasq_instance || exit 1
 			try_mkdir -p "${abl_dir}" || exit 1
@@ -1552,13 +1593,13 @@ start()
 
 	if ! gen_list_parts
 	then
-		reg_failure "Failed to generate preprocessed blocklist file with at least one line."
+		reg_failure "Failed to generate preprocessed blocklist file with at least one entry."
 		restore_saved_blocklist
 		exit 1
 	fi
 
 	echo
-	log_msg -green "Successfully generated preprocessed blocklist file with $(int2human ${preprocessed_blocklist_line_count}) lines."
+	log_msg -green "Successfully generated preprocessed blocklist file with $(int2human ${preprocessed_list_line_cnt}) entries."
 
 	if ! generate_and_process_blocklist_file
 	then
@@ -1578,6 +1619,7 @@ start()
 
 	compressed=
 	[ -n "${final_compress}" ] && compressed=" compressed"
+	echo
 	log_msg "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_final_list_size_human}."
 
 	restart_dnsmasq || exit 1
@@ -1679,21 +1721,42 @@ status()
 		3) log_msg -purple "adblock-lean is currently paused."; exit 3 ;;
 		4) log_msg -purple "adblock-lean is stopped."; exit 4;
 	esac
-	check_active_blocklist
-	local active_entries_cnt=0
-	local dnsmasq_status=${?}
+	check_active_blocklist; local dnsmasq_status=${?}
 	luci_dnsmasq_status=${dnsmasq_status}
+	local list_prefix list_prefixes=
+	# 'blocklist_ipv4' prefix doesn't need to be added for counting
+	for entry_type in blocklist allowlist
+	do
+		eval "[ ! \"\${${entry_type}_urls}\" ]" && continue
+		case ${entry_type} in
+			blocklist) list_prefix=local ;;
+			allowlist) list_prefix=server
+		esac
+		list_prefixes="${list_prefixes}${list_prefix}|"
+	done
+
+	local active_entries_cnt=0
 	if [ ${dnsmasq_status} = 0 ]
 	then
-		if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
-		then
-			active_entries_cnt=$(gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz | wc -w)
-		elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
-		then
-			active_entries_cnt=$(wc -w < "${dnsmasq_tmp_d}/blocklist")
-		fi
-		: "${active_entries_cnt:=0}"
-		[ ${active_entries_cnt} -gt 0 ] && : $((active_entries_cnt--)) # to account for added blocklist test entry
+		active_entries_cnt="$(
+			if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
+			then
+				gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz
+			elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
+			then
+				cat "${dnsmasq_tmp_d}/blocklist"
+			else
+				printf ''
+			fi |
+			sed -E "s~^(${list_prefixes%|})=/~~;s~/~\n~g;" |
+			wc -w
+		)"
+		case ${active_entries_cnt} in
+			[0-2]|'')
+				active_entries_cnt=0
+				reg_failure "Entries count in the final blocklist is '${active_entries}' which can not happen with normal operation." ;;
+			*) active_entries_cnt=$((active_entries_cnt-3)) # to account for the blocklist test entry
+		esac
 		luci_min_good_line_count=${active_entries_cnt}
 		log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human ${active_entries_cnt})."
 		log_msg -green "adblock-lean is active."
@@ -1705,7 +1768,7 @@ status()
 	check_for_updates
 	luci_update_status=${?}
 
-	[ ${dnsmasq_status} = 0 ] && exit 0
+	[ ${dnsmasq_status} = 0 ] && [ ${active_entries_cnt} != 0 ] && exit 0
 	exit 1
 }
 
