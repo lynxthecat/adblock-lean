@@ -240,14 +240,20 @@ print_def_config()
 	local_allowlist_path="${PREFIX}/allowlist"
 	local_blocklist_path="${PREFIX}/blocklist"
 
+	# Whether to perform deduplication of entries (increases processing time)
+	deduplication="0"
+
 	# Mininum number of lines of any individual downloaded part
 	min_blocklist_part_line_count="1"
 	min_blocklist_ipv4_part_line_count="1"
 	min_allowlist_part_line_count="1"
+
 	# Maximum size of any individual downloaded blocklist part
 	max_file_part_size_KB="20000"
+
 	# Maximum total size of combined, processed blocklist
 	max_blocklist_file_size_KB="30000"
+
 	# Minimum number of good lines in final postprocessed blocklist
 	min_good_line_count="100000"
 
@@ -960,6 +966,16 @@ generate_and_process_blocklist_file()
 		eval ": \"\${${1}_entries_cnt:=0}\" \"\${${1}_size_B:=0}\""
 	}
 
+	dedup()
+	{
+		if [ "${deduplication}" = 1 ]
+		then
+			sort -u -
+		else
+			cat
+		fi
+	}
+
 	echo
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
@@ -970,8 +986,8 @@ generate_and_process_blocklist_file()
 	# print list parts
 	print_list_parts blocklist |
 
-	# deduplication
-	sort -u |
+	# optional deduplication
+	dedup |
 
 	# count entries
 	tee >(wc -wc > "${abl_dir}/blocklist_stats") |
@@ -983,7 +999,9 @@ generate_and_process_blocklist_file()
 	then
 		cat
 		# allowlist deduplication
-		sort -u "${abl_dir}/allowlist" |
+		cat "${abl_dir}/allowlist" |
+		# optional deduplication
+		dedup |
 		tee >(wc -wc > "${abl_dir}/allowlist_stats") |
 		# pack entries in 1024 characters long lines
 		convert_entries allowlist
@@ -996,7 +1014,8 @@ generate_and_process_blocklist_file()
 		cat
 		# allowlist deduplication
 		print_list_parts blocklist_ipv4 |
-		sort -u |
+		# optional deduplication
+		dedup |
 		tee >(wc -wc > "${abl_dir}/blocklist_ipv4_stats") |
 		# add prefix
 		sed 's/^/bogus-nxdomain=/'
