@@ -979,49 +979,47 @@ generate_and_process_blocklist_file()
 	echo
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
-	local out_f="${abl_dir}/blocklist"
+	local list_type out_f="${abl_dir}/blocklist"
 
 	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
 
-	# print list parts
-	print_list_parts blocklist |
+	for list_type in blocklist blocklist_ipv4
+	do
+		case ${list_type} in
+			blocklist)
+				# print list parts
+				print_list_parts ${list_type} |
+				# optional deduplication
+				dedup |
+				# count entries
+				tee >(wc -wc > "${abl_dir}/${list_type}_stats") |
+				# pack entries in 1024 characters long lines
+				convert_entries ${list_type} |
 
-	# optional deduplication
-	dedup |
-
-	# count entries
-	tee >(wc -wc > "${abl_dir}/blocklist_stats") |
-
-	# pack entries in 1024 characters long lines
-	convert_entries blocklist |
-
-	if [ "${use_allowlist}" = 1 ]
-	then
-		cat
-		# allowlist deduplication
-		cat "${abl_dir}/allowlist" |
-		# optional deduplication
-		dedup |
-		tee >(wc -wc > "${abl_dir}/allowlist_stats") |
-		# pack entries in 1024 characters long lines
-		convert_entries allowlist
-	else
-		cat
-	fi |
-
-	if [ "${use_blocklist_ipv4}" ]
-	then
-		cat
-		# allowlist deduplication
-		print_list_parts blocklist_ipv4 |
-		# optional deduplication
-		dedup |
-		tee >(wc -wc > "${abl_dir}/blocklist_ipv4_stats") |
-		# add prefix
-		sed 's/^/bogus-nxdomain=/'
-	else
-		cat
-	fi |
+				if [ "${use_allowlist}" = 1 ]
+				then
+					cat
+					cat "${abl_dir}/allowlist" |
+					# optional deduplication
+					dedup |
+					tee >(wc -wc > "${abl_dir}/allowlist_stats") |
+					# pack entries in 1024 characters long lines
+					convert_entries allowlist
+					rm -f "${abl_dir}/allowlist"
+				else
+					cat
+				fi ;;
+			blocklist_ipv4)
+				[ ! "${use_blocklist_ipv4}" ] && continue
+				# allowlist deduplication
+				print_list_parts blocklist_ipv4 |
+				# optional deduplication
+				dedup |
+				tee >(wc -wc > "${abl_dir}/blocklist_ipv4_stats") |
+				# add prefix
+				sed 's/^/bogus-nxdomain=/' ;;
+		esac
+	done |
 
 	# limit size and add the blocklist test entry
 	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
@@ -1036,19 +1034,15 @@ generate_and_process_blocklist_file()
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; return 1; }
 
-	rm -f "${abl_dir}/allowlist"
-
 	if [ -f "${abl_dir}/dnsmasq_err" ]
 	then
-		cp "${out_f}" /tmp/test
 		rm -f "${out_f}"
-		reg_failure "The dnsmasq --test on the ${list_type} part failed."
+		reg_failure "The dnsmasq test on the final list failed."
 		log_msg "dnsmasq --test errors:"
-		log_msg "$(head -n10 "${abl_dir}/dnsmasq_err")"
+		log_msg "$(head -n10 "${abl_dir}/dnsmasq_err" | sed '/^$/d')"
 		rm -f "${abl_dir}/dnsmasq_err"
 		return 2
 	fi
-	rm -f "${abl_dir}/dnsmasq_err"
 
 	local blocklist_entries_cnt blocklist_size_B blocklist_ipv4_entries_cnt blocklist_ipv4_size_B allowlist_entries_cnt allowlist_size_B final_list_size_B
 
