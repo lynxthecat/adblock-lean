@@ -243,6 +243,15 @@ print_def_config()
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1"
 
+	# Whether to pack multiple entries into 1 line (produces smaller files, saves memory and may improve performance)
+	pack_entries="1"
+
+	# When pack_entries is enabled and gawk is installed, this option has no effect
+	# When pack_entries is enabled and gawk is not installed, this controls whether to optimize entries packing for memory or for conversion speed
+	# 'memory' will use the slow Busybox awk but produce smallest output files, saving memory
+	# 'speed' will use much faster sed conversion but produce larger output files, still saving memory but not as much as awk
+	packing_policy="speed"
+
 	# Mininum number of lines of any individual downloaded part
 	min_blocklist_part_line_count="1"
 	min_blocklist_ipv4_part_line_count="1"
@@ -924,9 +933,59 @@ gen_list_parts()
 
 generate_and_process_blocklist_file()
 {
+	convert_entries()
+	{
+		case "${pack_entries}" in
+			0) convert_entries_sed "$@" ;;
+			1)
+				if [ "${awk_cmd}" = gawk ] || [ "${packing_policy}" = memory ]
+				then
+					pack_entries_awk "$@"
+				else
+					pack_entries_sed "$@"
+				fi
+		esac
+	}
+
+	# convert to dnsmasq format line by line
+	# intput from STDIN, output to STDIN
+	# 1 - blocklist|allowlist
+	convert_entries_sed()
+	{
+		local entry_type sed_conv_expr nl='@'
+		case "$1" in
+			blocklist) entry_type=local allow_char= ;;
+			allowlist) entry_type=server allow_char="#" ;;
+			''|*) return 1
+		esac
+		sed "/^$/d;s~^.*$~${entry_type}=/&/${allow_char}~"
+	}
+
+	# convert to dnsmasq format and pack 4 input lines into 1 output line
+	# intput from STDIN, output to STDIN
+	# 1 - blocklist|allowlist
+	pack_entries_sed()
+	{
+		local entry_type sed_conv_expr dummy_nl='@' nl='
+			'
+		nl="${nl%%	}"
+		case "$1" in
+			blocklist)
+				entry_type=local
+				sed "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${nl}};\$!{n;a /${nl}};\$!{n; a /${nl}};a ${dummy_nl}" ;;
+			allowlist)
+				entry_type=server allow_char="#"
+				# expression combining 4 domains in one 'local=/.../' and 'server=/.../#'' line
+				sed_conv_expr='/^$/d;$!N;$!N;$!N;s~\n~/~g;'"s~^~${entry_type}=/~;s~/*$~/${allow_char}${dummy_nl}~"
+				{ cat; printf '\n'; } | sed "${sed_conv_expr};" ;;
+			''|*) printf ''; return 1
+		esac | tr -d '\n' | tr "${dummy_nl}" '\n'
+	}
+
+	# convert to dnsmasq format and pack input lines into 1024 characters-long lines
 	# intput from STDIN, output to STDOUT
 	# 1 - blocklist|allowlist
-	convert_entries()
+	pack_entries_awk()
 	{
 		local entry_type len_lim=1024 allow_char=''
 		case "$1" in
@@ -1662,7 +1721,6 @@ start()
 	if ! check_active_blocklist
 	then
 		reg_failure "Active blocklist check failed with new blocklist file."
-
 		restore_saved_blocklist || stop 1
 
 		check_active_blocklist || { reg_failure "Active blocklist check failed with previous blocklist file."; stop 1; }
