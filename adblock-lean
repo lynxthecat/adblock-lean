@@ -1016,21 +1016,12 @@ generate_and_process_blocklist_file()
 			convert_entries allowlist
 			rm -f "${abl_dir}/allowlist"
 		fi
+		# add the blocklist test entry
+		printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"
 	} |
 
-	# limit size and add the blocklist test entry
-	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
-
-	# check the final blocklist with dnsmasq --test
-	tee >(
-		if ! dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err"
-		then
-			touch "${abl_dir}/dnsmasq_err"
-		else
-			rm -f "${abl_dir}/dnsmasq_err"
-		fi
-		cat 1>/dev/null) |
-
+	# limit size
+	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
 	if  [ -n "${final_compress}" ]
 	then
 		gzip
@@ -1038,14 +1029,26 @@ generate_and_process_blocklist_file()
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
 
-	if [ -f "${abl_dir}/dnsmasq_err" ]
+	echo
+	reg_action -blue "Stopping dnsmasq." || return 1
+	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
+
+	# check the final blocklist with dnsmasq --test
+	reg_action "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
+	if  [ -n "${final_compress}" ]
 	then
-		rm -f "${out_f}"
-		reg_failure "The dnsmasq test on the final list failed."
-		[ ! -s "${abl_dir}/dnsmasq_err" ] && echo "No specifics: probably killed because of OOM." > "${abl_dir}/dnsmasq_err"
+		gunzip -fc "${out_f}"
+	else
+		cat "${out_f}"
+	fi |
+	dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err"
+	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${abl_dir}/dnsmasq_err"
+	then
+		local dnsmasq_err="$(head -n10 "${abl_dir}/dnsmasq_err" | sed '/^$/d')"
+		rm -f "${out_f}" "${abl_dir}/dnsmasq_err"
+		reg_failure "The dnsmasq test on the final blocklist failed."
 		log_msg "dnsmasq --test errors:"
-		log_msg "$(head -n10 "${abl_dir}/dnsmasq_err" | sed '/^$/d')"
-		rm -f "${abl_dir}/dnsmasq_err"
+		log_msg "${dnsmasq_err:-"No specifics: probably killed because of OOM."}"
 		return 2
 	fi
 
@@ -1076,6 +1079,7 @@ generate_and_process_blocklist_file()
 		return 1
 	fi
 
+	log_msg -green "New blocklist file check passed."
 	log_msg "Final list uncompressed file size: ${final_list_size_human}."
 
 	:
@@ -1189,28 +1193,37 @@ export_existing_blocklist()
 
 restore_saved_blocklist()
 {
+	restore_failed()
+	{
+		reg_failure "Failed to restore saved blocklist."
+	}
+
 	local mv_src="${abl_dir}/prev_blocklist" mv_dest="${abl_dir}/blocklist"
 	echo
-	reg_action -blue "Restoring saved blocklist file." || return 1
+	reg_action -blue "Restoring saved blocklist file." || { restore_failed; return 1; }
 	if [ -f "${mv_src}.gz" ]
 	then
-		try_mv "${mv_src}.gz" "${mv_dest}.gz" || return 1
+		try_mv "${mv_src}.gz" "${mv_dest}.gz" || { restore_failed; return 1; }
 		if [ -z "${final_compress}" ]
 		then
-			try_gunzip "${mv_dest}.gz" || return 1
+			try_gunzip "${mv_dest}.gz" || { restore_failed; return 1; }
 		fi
 	elif [ -f "${mv_src}" ]
 	then
-		try_mv "${mv_src}" "${mv_dest}" || return 1
+		try_mv "${mv_src}" "${mv_dest}" || { restore_failed; return 1; }
 		if [ -n "${final_compress}" ]
 		then
-			try_gzip -f "${mv_dest}" ||return 1
+			try_gzip -f "${mv_dest}" || { restore_failed; return 1; }
 		fi
 	else
 		reg_failure "No previous blocklist file found."
+		restore_failed
 		return 1
 	fi
-	import_blocklist_file || { reg_failure "Failed to import the blocklist file."; return 1; }
+	import_blocklist_file || { reg_failure "Failed to import the blocklist file."; restore_failed; return 1; }
+
+	restart_dnsmasq || { restore_failed; return 1; }
+
 	:
 }
 
@@ -1614,7 +1627,7 @@ start()
 	if ! gen_list_parts
 	then
 		reg_failure "Failed to generate preprocessed blocklist file with at least one entry."
-		restore_saved_blocklist
+		restore_saved_blocklist || stop 1
 		exit 1
 	fi
 
@@ -1624,16 +1637,14 @@ start()
 	if ! generate_and_process_blocklist_file
 	then
 		reg_failure "New blocklist file check failed."
-		restore_saved_blocklist
+		restore_saved_blocklist || stop 1
 		exit 1
 	fi
-
-	log_msg -green "New blocklist file check passed."
 
 	if ! import_blocklist_file
 	then
 		reg_failure "Failed to import new blocklist file."
-		restore_saved_blocklist
+		restore_saved_blocklist || stop 1
 		exit 1
 	fi
 
@@ -1652,22 +1663,9 @@ start()
 	then
 		reg_failure "Active blocklist check failed with new blocklist file."
 
-		if ! restore_saved_blocklist
-		then
-			reg_failure "Failed to restore saved blocklist."
-			stop 1
-		fi
+		restore_saved_blocklist || stop 1
 
-		if ! restart_dnsmasq
-		then
-			stop 1
-		fi
-
-		if ! check_active_blocklist
-		then
-			reg_failure "Active blocklist check failed with previous blocklist file."
-			stop 1
-		fi
+		check_active_blocklist || { reg_failure "Active blocklist check failed with previous blocklist file."; stop 1; }
 
 		log_msg -green "Previous blocklist restored and dnsmasq check passed."
 		exit 1
@@ -1825,8 +1823,8 @@ resume()
 	esac
 
 	reg_action -purple "Resuming adblock-lean." || exit 1
-	restore_saved_blocklist || { reg_failure "Failed to restore saved blocklist."; stop 1; }
-	restart_dnsmasq || exit 1
+	restore_saved_blocklist || stop 1
+	restart_dnsmasq || stop 1
 	log_msg -purple "adblock-lean is now resumed."
 	exit 0
 }
