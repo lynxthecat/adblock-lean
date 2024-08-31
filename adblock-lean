@@ -134,30 +134,39 @@ get_elapsed_time_str()
 	printf '%dm:%ds' $((elapsed_time_s/60)) $((elapsed_time_s%60))
 }
 
+# prints each argument into a separate line
 print_msg()
 {
-	printf '%s\n' "${1}" > "$msgs_dest"
+	local m
+	for m in "${@}"
+	do
+		printf '%s\n' "${m}" > "$msgs_dest"
+	done
 }
 
+# logs each message argument separately and prints to a separate line
+# optional arguments: '-err', '-warn', '-[color]'
 log_msg()
 {
-	local msg='' msg_prefix='' _arg err_l=info color=
+	local m msgs='' msgs_prefix='' _arg err_l=info color=
 
 	for _arg in "$@"
 	do
 		case "${_arg}" in
-			"-err") err_l=err color="${red}" msg_prefix="Error: " ;;
-			"-warn") err_l=warn color="${yellow}" msg_prefix="Warning: " ;;
+			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
+			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) eval "color=\"\${${_arg#-}}\"" ;;
-			'') ;;
-			*) msg="${msg}${msg_prefix}${_arg} "
+			*) msgs="${msgs}${msgs_prefix}${_arg}${nl}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
 		esac
 	done
-	msg="${msg% }"
+	msgs="${msgs%${nl}}"
 
-	print_msg "${color}${msg}${n_c}"
-	logger -t adblock-lean -p user."${err_l}" "${msg}"
-	write_log_file "${msg}" "${err_l}"
+	local IFS="${nl}"
+	for m in ${msgs}
+	do
+		print_msg "${color}${m}${n_c}"
+		[ -n "${m}" ] && { logger -t adblock-lean -p user."${err_l}" "${m}"; write_log_file "${m}" "${err_l}"; }
+	done
 }
 
 # 1 - msg
@@ -445,8 +454,7 @@ parse_config()
 	if [ -n "${unexp_entries}" ]
 	then
 		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
-		print_msg "Corresponding config entries:"
-		print_msg "${unexp_entries%$'\n'}"
+		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
 		luci_unexp_keys=${unexp_keys% }
 		luci_unexp_entries=${unexp_entries%$'\n'}
@@ -458,8 +466,7 @@ parse_config()
 		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
 		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
 		reg_failure "Missing keys in config: '${missing_keys% }'."
-		print_msg "Corresponding default config entries:"
-		print_msg "${missing_entries}"
+		print_msg "Corresponding default config entries:" "${missing_entries}"
 		add_conf_fix "Re-add missing config entries with default values"
 		luci_missing_keys=${missing_keys% }
 		luci_missing_entries=${missing_entries}
@@ -468,8 +475,7 @@ parse_config()
 	if [ -n "${legacy_entries}" ]
 	then
 		reg_failure "Detected config entries in legacy format (missing double-quotes)."
-		print_msg "The following config entries must be converted to the new config format:"
-		print_msg "${legacy_entries%$'\n'}"
+		print_msg "The following config entries must be converted to the new config format:" "${legacy_entries%$'\n'}"
 		add_conf_fix "Convert legacy config entries to the new format"
 		luci_legacy_entries=${legacy_entries%$'\n'}
 	fi
@@ -479,11 +485,7 @@ parse_config()
 		corrected_entries="$(printf %s "${def_config}" | grep -E "^(${bad_value_keys%|})=")"
 		bad_value_keys="$(printf %s "${bad_value_keys}" | tr '|' ' ')"
 		reg_failure "Detected config entries with unexpected values."
-		print_msg "The following config entries have unexpected values:"
-		print_msg "${bad_value_entries%$'\n'}"
-		echo
-		print_msg "Corresponding default config entries:"
-		print_msg "${corrected_entries}"
+		print_msg "The following config entries have unexpected values:" "${bad_value_entries%$'\n'}" "" "Corresponding default config entries:" "${corrected_entries}"
 		add_conf_fix "Replace unexpected values with defaults"
 		luci_bad_value_entries=${bad_value_entries%$'\n'}
 		luci_corrected_entries=${corrected_entries%$'\n'}
@@ -692,10 +694,9 @@ check_blocklist_compression_support()
 {
 	if ! dnsmasq --help | grep -qe "--conf-script"
 	then
-		echo
-		log_msg "Note: The version of dnsmasq installed on this system does not support blocklist compression."
-		log_msg "Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\""
-		log_msg "To use dnsmasq compression (which saves memory), upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression."
+		log_msg "" "Note: The version of dnsmasq installed on this system does not support blocklist compression." \
+			"Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\"" \
+			"To use dnsmasq compression (which saves memory), upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression."
 		return 1
 	fi
 
@@ -707,10 +708,10 @@ check_blocklist_compression_support()
 	done
 
 	reg_failure "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
-	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist."
-	log_msg "Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
-	log_msg "Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit"
-	log_msg "Either edit /etc/config/dhcp as described above or disable blocklist compression in config."
+	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist." \
+		"Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section." \
+		"Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit" \
+		"Either edit /etc/config/dhcp as described above or disable blocklist compression in config."
 	return 1
 }
 
@@ -804,8 +805,8 @@ process_list_part()
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
 		reg_failure "${list_origin} ${list_type} part size reached the maximum value set in config (${max_file_part_size_KB} KB)."
-		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
-		log_msg "Skipping ${list_type} part and continuing."
+		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config." \
+			"Skipping ${list_type} part and continuing."
 		rm -f "${dest_file}"
 		return 2
 	fi
@@ -1114,8 +1115,7 @@ generate_and_process_blocklist_file()
 		local dnsmasq_err="$(head -n10 "${abl_dir}/dnsmasq_err" | sed '/^$/d')"
 		rm -f "${out_f}" "${abl_dir}/dnsmasq_err"
 		reg_failure "The dnsmasq test on the final blocklist failed."
-		log_msg "dnsmasq --test errors:"
-		log_msg "${dnsmasq_err:-"No specifics: probably killed because of OOM."}"
+		log_msg "dnsmasq --test errors:" "${dnsmasq_err:-"No specifics: probably killed because of OOM."}"
 		return 2
 	fi
 
@@ -1400,7 +1400,7 @@ mk_lock()
 			1) return 1 ;;
 			2)
 				report_pid_action
-				log_msg "Refusing to open another instance."
+				log_msg -yellow "Refusing to open another instance."
 				return 254
 		esac
 	else
