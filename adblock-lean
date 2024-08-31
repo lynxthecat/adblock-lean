@@ -246,15 +246,6 @@ print_def_config()
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1" @ boolean
 
-	# Whether to pack multiple entries into 1 line (produces smaller files, saves memory and may improve performance)
-	pack_entries="1" @ boolean
-
-	# When pack_entries is enabled and gawk is installed, this option has no effect
-	# When pack_entries is enabled and gawk is not installed, this controls whether to optimize entries packing for memory or for conversion speed
-	# 'memory' will use the slow Busybox awk but produce smallest output files, saving memory
-	# 'speed' will use much faster sed conversion but produce larger output files, still saving memory but not as much as awk
-	packing_policy="speed" @ speed|memory
-
 	# Mininum number of lines of any individual downloaded part
 	min_blocklist_part_line_count="1" @ integer
 	min_blocklist_ipv4_part_line_count="1" @ integer
@@ -353,17 +344,17 @@ parse_config()
 		esac
 
 		case "${val}" in
-			*\"*\"*\"*) echo "1" >&2; inval_e; return 1 ;; # do not allow more than 2 double-quote marks
+			*\"*\"*\"*) inval_e; return 1 ;; # do not allow more than 2 double-quote marks
 			\"*\"*)
 				local tmp_val="${val##*\"}" # remove value enclosed in double-quotes
 				case "${tmp_val%%\#*}" in # do not allow characters between 2nd double-quote and in-line comment
 					'') ;;
-					*[!\ ${tab}]*) echo "2, tmp_val: '$tmp_val'" >&2; inval_e; return 1
+					*[!\ ${tab}]*) inval_e; return 1
 				esac
 				;;
-			*\"*\"*) echo "3" >&2; inval_e; return 1 ;; # double quote mark must be the first character
-			*\"*) echo "4" >&2; inval_e; return 1 ;; # do not allow 1 double-quote mark
-			*"#"*) echo "5" >&2; inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
+			*\"*\"*) inval_e; return 1 ;; # double quote mark must be the first character
+			*\"*) inval_e; return 1 ;; # do not allow 1 double-quote mark
+			*"#"*) inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
 			*) legacy_entries="${legacy_entries}${entry}"$'\n'
 		esac
 		val=${val#\"}
@@ -452,7 +443,6 @@ parse_config()
 
 	if [ -n "${unexp_entries}" ]
 	then
-		echo
 		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
 		print_msg "Corresponding config entries:"
 		print_msg "${unexp_entries%$'\n'}"
@@ -466,7 +456,6 @@ parse_config()
 	then
 		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
 		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
-		echo
 		reg_failure "Missing keys in config: '${missing_keys% }'."
 		print_msg "Corresponding default config entries:"
 		print_msg "${missing_entries}"
@@ -477,7 +466,6 @@ parse_config()
 
 	if [ -n "${legacy_entries}" ]
 	then
-		echo
 		reg_failure "Detected config entries in legacy format (missing double-quotes)."
 		print_msg "The following config entries must be converted to the new config format:"
 		print_msg "${legacy_entries%$'\n'}"
@@ -489,7 +477,6 @@ parse_config()
 	then
 		corrected_entries="$(printf %s "${def_config}" | grep -E "^(${bad_value_keys%|})=")"
 		bad_value_keys="$(printf %s "${bad_value_keys}" | tr '|' ' ')"
-		echo
 		reg_failure "Detected config entries with unexpected values."
 		print_msg "The following config entries have unexpected values:"
 		print_msg "${bad_value_entries%$'\n'}"
@@ -671,6 +658,7 @@ cleanup_and_exit()
 
 reg_failure()
 {
+	echo
 	log_msg -err "${1}"
 	failure_msg="${failure_msg}${1}"$'\n'
 	luci_errors="${failure_msg}"
@@ -885,7 +873,6 @@ gen_list_parts()
 			then
 				log_msg -warn "Local ${list_type} file is empty."
 			else
-				echo
 				log_msg -blue "Found local ${list_type}. Sanitizing${and_compressing}."
 				reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
 				process_list_part "${list_id}" "${list_type}" "local" "${local_list_path}"
@@ -904,7 +891,6 @@ gen_list_parts()
 		then
 			[ "${list_type}" = blocklist ] && log_msg -yellow "NOTE: No URLs specified for blocklist download. Skipping download."
 		else
-			echo
 			reg_action -blue "Starting ${list_type} part(s) download." || return 1
 		fi
 
@@ -978,30 +964,12 @@ generate_and_process_blocklist_file()
 {
 	convert_entries()
 	{
-		case "${pack_entries}" in
-			0) convert_entries_sed "$@" ;;
-			1)
-				if [ "${awk_cmd}" = gawk ] || [ "${packing_policy}" = memory ]
-				then
-					pack_entries_awk "$@"
-				else
-					pack_entries_sed "$@"
-				fi
-		esac
-	}
-
-	# convert to dnsmasq format line by line
-	# intput from STDIN, output to STDIN
-	# 1 - blocklist|allowlist
-	convert_entries_sed()
-	{
-		local entry_type sed_conv_expr nl='@'
-		case "$1" in
-			blocklist) entry_type=local allow_char= ;;
-			allowlist) entry_type=server allow_char="#" ;;
-			''|*) return 1
-		esac
-		sed "/^$/d;s~^.*$~${entry_type}=/&/${allow_char}~"
+		if [ "${awk_cmd}" = gawk ]
+		then
+			pack_entries_awk "$@"
+		else
+			pack_entries_sed "$@"
+		fi
 	}
 
 	# convert to dnsmasq format and pack 4 input lines into 1 output line
@@ -1009,19 +977,18 @@ generate_and_process_blocklist_file()
 	# 1 - blocklist|allowlist
 	pack_entries_sed()
 	{
-		local entry_type sed_conv_expr dummy_nl='@' nl='
+		local entry_type nl='
 			'
 		nl="${nl%%	}"
 		case "$1" in
 			blocklist)
-				sed "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${nl}};\$!{n;a /${nl}};\$!{n; a /${nl}};a ${dummy_nl}" ;;
+				# packs 4 domains in one 'local=/.../' line
+				sed "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${nl}};\$!{n;a /${nl}};\$!{n; a /${nl}};a @" ;;
 			allowlist)
-				entry_type=server allow_char="#"
-				# expression combining 4 domains in one 'local=/.../' and 'server=/.../#'' line
-				sed_conv_expr='/^$/d;$!N;$!N;$!N;s~\n~/~g;'"s~^~${entry_type}=/~;s~/*$~/${allow_char}${dummy_nl}~"
-				{ cat; printf '\n'; } | sed "${sed_conv_expr};" ;;
+				# packs 4 domains in one 'server=/.../#'' line
+				{ cat; printf '\n'; } | sed '/^$/d;$!N;$!N;$!N;s~\n~/~g;s~^~server=/~;s~/*$~/#@~' ;;
 			*) printf ''; return 1
-		esac | tr -d '\n' | tr "${dummy_nl}" '\n'
+		esac | tr -d '\n' | tr "@" '\n'
 	}
 
 	# convert to dnsmasq format and pack input lines into 1024 characters-long lines
@@ -1076,7 +1043,6 @@ generate_and_process_blocklist_file()
 		fi
 	}
 
-	echo
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
 	local list_type out_f="${abl_dir}/blocklist"
@@ -1130,7 +1096,6 @@ generate_and_process_blocklist_file()
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
 
-	echo
 	reg_action -blue "Stopping dnsmasq." || return 1
 	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
 
@@ -1207,7 +1172,6 @@ check_dnsmasq_instance()
 # 4 - dnsmasq is running, but the blocklist test domain failed to resolve (blocklist not loaded)
 check_active_blocklist()
 {
-	echo
 	reg_action -blue "Checking active blocklist." || return 1
 
 	check_dnsmasq_instance || { [ ${?} = 1 ] && reg_failure "No running instance of dnsmasq detected."; return 1; }
@@ -1229,7 +1193,6 @@ check_active_blocklist()
 
 restart_dnsmasq()
 {
-	[ "$action" = "start" ] && echo
 	reg_action -blue "Restarting dnsmasq." || return 1
 
 	/etc/init.d/dnsmasq restart &> /dev/null || { reg_failure "Failed to restart dnsmasq."; stop 1; }
@@ -1260,7 +1223,6 @@ export_existing_blocklist()
 	}
 
 	local src src_d="${dnsmasq_tmp_d}" dest="${abl_dir}/prev_blocklist"
-	echo
 	if [ -f "${src_d}/.blocklist.gz" ]
 	then
 		case ${use_compression} in
@@ -1285,6 +1247,7 @@ export_existing_blocklist()
 			src="${src_d}/blocklist"
 		fi
 	else
+		echo
 		log_msg "No existing compressed or uncompressed blocklist identified."
 		return 2
 	fi
@@ -1300,7 +1263,6 @@ restore_saved_blocklist()
 	}
 
 	local mv_src="${abl_dir}/prev_blocklist" mv_dest="${abl_dir}/blocklist"
-	echo
 	reg_action -blue "Restoring saved blocklist file." || { restore_failed; return 1; }
 	if [ -f "${mv_src}.gz" ]
 	then
@@ -1369,7 +1331,7 @@ import_blocklist_file()
 # 2 - update check failed
 check_for_updates()
 {
-	echo
+	reg_action -blue "Checking for adblock-lean updates."
 	rm -f "${abl_dir}/uclient-fetch_err"
 	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed -E 's/[ \t]+.*$//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
@@ -1528,7 +1490,7 @@ reg_action()
 		esac
 	done
 
-	[ -z "${nolog}" ] && log_msg "${color}" "${msg% }"
+	[ -z "${nolog}" ] && { echo; log_msg "${color}" "${msg% }"; }
 	if [ -n "${lock_req}" ]
 	then
 		update_pid_action "${msg% }" || return 1
@@ -1649,7 +1611,6 @@ print_log()
 # 1 - (optional) '-noexit' to return to the calling function
 gen_stats()
 {
-	echo
 	reg_action -blue "Generating dnsmasq stats." || exit 1
 	local dnsmasq_pid
 	dnsmasq_pid="$(pidof /usr/sbin/dnsmasq)" || { reg_failure "Failed to detect dnsmasq PID or dnsmasq is not running."; exit 1; }
@@ -1692,7 +1653,7 @@ start()
 		log_msg "gawk detected so using gawk for fast (sub)domain match removal."
 		awk_cmd="gawk"
 	else
-		log_msg -yellow "gawk not detected so using awk for the (sub)domain match removal."
+		log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow."
 		log_msg "Consider installing the gawk package 'opkg install gawk' for faster (sub)domain match removal."
 		awk_cmd="awk"
 	fi
@@ -1798,7 +1759,9 @@ stop()
 	reg_action "Removing any adblock-lean blocklist files in ${dnsmasq_tmp_d}/ and restarting dnsmasq." || exit 1
 	clean_dnsmasq_dir
 	restart_dnsmasq || stop_rc=1
+	echo
 	log_msg -purple "Stopped adblock-lean."
+	echo
 	[ -n "$noexit" ] && return "${stop_rc}"
 	exit "${stop_rc}"
 }
