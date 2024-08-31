@@ -218,6 +218,9 @@ pick_opt()
 
 print_def_config()
 {
+	# follow each default option with '@' and a pre-defined type: boolean, string, integer
+	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
+
 	cat <<-EOT
 	# adblock-lean configuration options
 	# config_format=v2
@@ -226,71 +229,71 @@ print_def_config()
 	# comments must start at newline or inline after the closing double-quote
 
 	# One or more raw domain blocklist urls separated by spaces
-	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
+	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt" @ string
 
 	# One or more raw ipv4 blocklist urls
-	blocklist_ipv4_urls=""
+	blocklist_ipv4_urls="" @ string
 
 	# One or more allowlist urls separated by spaces
-	allowlist_urls=""
+	allowlist_urls="" @ string
 
 	# Path to optional local allowlist/blocklist files in the form:
 	# site1.com
 	# site2.com
-	local_allowlist_path="${PREFIX}/allowlist"
-	local_blocklist_path="${PREFIX}/blocklist"
+	local_allowlist_path="${PREFIX}/allowlist" @ string
+	local_blocklist_path="${PREFIX}/blocklist" @ string
 
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
-	deduplication="1"
+	deduplication="1" @ boolean
 
 	# Whether to pack multiple entries into 1 line (produces smaller files, saves memory and may improve performance)
-	pack_entries="1"
+	pack_entries="1" @ boolean
 
 	# When pack_entries is enabled and gawk is installed, this option has no effect
 	# When pack_entries is enabled and gawk is not installed, this controls whether to optimize entries packing for memory or for conversion speed
 	# 'memory' will use the slow Busybox awk but produce smallest output files, saving memory
 	# 'speed' will use much faster sed conversion but produce larger output files, still saving memory but not as much as awk
-	packing_policy="speed"
+	packing_policy="speed" @ speed|memory
 
 	# Mininum number of lines of any individual downloaded part
-	min_blocklist_part_line_count="1"
-	min_blocklist_ipv4_part_line_count="1"
-	min_allowlist_part_line_count="1"
+	min_blocklist_part_line_count="1" @ integer
+	min_blocklist_ipv4_part_line_count="1" @ integer
+	min_allowlist_part_line_count="1" @ integer
 
 	# Maximum size of any individual downloaded blocklist part
-	max_file_part_size_KB="20000"
+	max_file_part_size_KB="20000" @ integer
 
 	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB="30000"
+	max_blocklist_file_size_KB="30000" @ integer
 
 	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="100000"
+	min_good_line_count="100000" @ integer
 
 	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
-	use_compression="1"
+	use_compression="1" @ boolean
 
 	# restart dnsmasq if previous blocklist was extracted and before generation of
 	# new blocklist thereby to free up memory during generaiton of new blocklist - enable (1) or disable (0)
-	initial_dnsmasq_restart="0"
+	initial_dnsmasq_restart="0" @ boolean
 
 	# Maximum number of download retries
-	max_download_retries="3"
+	max_download_retries="3" @ integer
 
 	# List part failed action:
 	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
 	# SKIP - skip failed blocklist file part and continue blocklist generation
 	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
-	list_part_failed_action="SKIP"
+	list_part_failed_action="SKIP" @ SKIP|STOP
 
 	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
 	# with the success or failure message passed in first argument
 	# report_success() is only executed upon completion of the 'start' command
 	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
-	custom_script=""
+	custom_script="" @ string
 
 	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s="120"
+	boot_start_delay_s="120" @ integer
 
 	EOT
 }
@@ -317,9 +320,10 @@ get_config_format()
 # 1 - Error
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
 #
-# sets ${missing_keys}, ${conf_fixes}
+# sets ${missing_keys}, ${conf_fixes}, ${bad_value_keys}
 # and variables for luci:
-# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries *_legacy_entries *_bad_conf_format *_conf_fixes
+# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
+# *_legacy_entries *_bad_conf_format *_conf_fixes *_bad_value_keys
 parse_config()
 {
 	inval_e()
@@ -333,7 +337,7 @@ parse_config()
 		conf_fixes="${conf_fixes}${1}"$'\n'
 	}
 
-	# Following 2 functions are needed to minimize ugly hacks and tinkering inside eval
+	# Following 3 functions are needed to minimize ugly hacks and tinkering inside eval
 	# shellcheck disable=SC2317
 	parse_entry()
 	{
@@ -349,22 +353,23 @@ parse_config()
 		esac
 
 		case "${val}" in
-			*\"*\"*\"*) inval_e; return 1 ;; # do not allow more than 2 double-quote marks
+			*\"*\"*\"*) echo "1" >&2; inval_e; return 1 ;; # do not allow more than 2 double-quote marks
 			\"*\"*)
 				local tmp_val="${val##*\"}" # remove value enclosed in double-quotes
 				case "${tmp_val%%\#*}" in # do not allow characters between 2nd double-quote and in-line comment
 					'') ;;
-					*[!\ ${tab}]*) inval_e; return 1
+					*[!\ ${tab}]*) echo "2, tmp_val: '$tmp_val'" >&2; inval_e; return 1
 				esac
 				;;
-			*\"*\"*) inval_e; return 1 ;; # double quote mark must be the first character
-			*\"*) inval_e; return 1 ;; # do not allow 1 double-quote mark
-			*"#"*) inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
+			*\"*\"*) echo "3" >&2; inval_e; return 1 ;; # double quote mark must be the first character
+			*\"*) echo "4" >&2; inval_e; return 1 ;; # do not allow 1 double-quote mark
+			*"#"*) echo "5" >&2; inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
 			*) legacy_entries="${legacy_entries}${entry}"$'\n'
 		esac
 		val=${val#\"}
 		val=${val%\"*} # throw away everything after the 2nd double-quote mark
 		test_keys="${test_keys%%"${key}|"*}${test_keys#*"${key}|"}" # remove current key from test_keys
+		# check for valid value
 	}
 
 	add_unexp_entry()
@@ -373,10 +378,25 @@ parse_config()
 		unexp_entries="${unexp_entries}${entry}"$'\n'
 	}
 
-	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
-		test_keys entry key val tab="$(printf '\t')" sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
+	check_value()
+	{
+		local val_ok=
+		eval "case \"\${val}\" in
+			${valid_values}) val_ok=1
+		esac"
+		[ -n "${val_ok}" ] && return 0
+		bad_value_entries="${bad_value_entries}${entry} (should be $(print_def_config | \
+			sed -n "/^[ \t]*${key}[ \t]*=/{s/^.*@[ \t]*//;s/boolean/0|1/;p;q;}"))"$'\n'
+		bad_value_keys="${bad_value_keys}${key}|"
+		return 1
+	}
 
-	unset curr_config_format def_config_format luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
+	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
+		test_keys entry key val bad_value_entries='' corrected_entries='' \
+		tab="$(printf '\t')" sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
+
+	unset curr_config_format def_config_format bad_value_keys \
+		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_legacy_entries luci_bad_conf_format luci_conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
@@ -386,9 +406,17 @@ parse_config()
 	# extract entries from default config
 	def_config="$(print_def_config | sed "${sed_conf_san_exp}")"
 
+	# extract valid values from default config
+	local sed_valid_vals_expr="/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; /\"/d; s/^/val_/; s/=string/=*/; s/=boolean/=0|1/; s/=integer/=*[!0-9]*|'') ;; */; s/=/=\"/; s/$/\"/"
+	local valid_values="$(printf %s "${def_config}" | sed "${sed_valid_vals_expr}")"
+	eval "${valid_values}" || exit 1
+
+	# remove valid values suffix
+	def_config="$(printf %s "${def_config}" | sed 's/[ \t]*@.*//')"
+
 	# extract keys from default config, convert to '|' separated list
 	# 'dummy|' is needed to avoid errors in eval
-	test_keys="dummy|$(print_def_config | sed "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
+	test_keys="dummy|$(printf '%s\n' "${def_config}" | sed 's/=.*//' | tr '\n' '|')"
 
 	# read and sanitize current config
 	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
@@ -409,22 +437,18 @@ parse_config()
 		key="${entry%%=*}"
 		case "${key}" in *[!A-Za-z0-9_]*) inval_e; return 1; esac
 		# check if the key is in the default keys list, assign value to var if so
+
 		eval "case \"${key}\" in
 				${test_keys%|})
 					parse_entry || return 1
-					${key}"='${val}'" ;;
+					valid_values=\"\${val_${key}}\"
+					[ -z \"\${valid_values}\" ] && { reg_failure \"Config key '${key}' has no assigned valid values.\"; exit 1; }
+					check_value && ${key}"='${val}'" ;;
 				*) add_unexp_entry
 			esac"
 	done
 
 	IFS="${default_IFS}"
-
-	test_keys=${test_keys#dummy|}
-	if [ -n "${test_keys}" ]
-	then
-		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
-		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
-	fi
 
 	if [ -n "${unexp_entries}" ]
 	then
@@ -437,8 +461,11 @@ parse_config()
 		luci_unexp_entries=${unexp_entries%$'\n'}
 	fi
 
-	if [ -n "${missing_keys% }" ]
+	test_keys=${test_keys#dummy|}
+	if [ -n "${test_keys}" ]
 	then
+		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
+		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
 		echo
 		reg_failure "Missing keys in config: '${missing_keys% }'."
 		print_msg "Corresponding default config entries:"
@@ -456,6 +483,22 @@ parse_config()
 		print_msg "${legacy_entries%$'\n'}"
 		add_conf_fix "Convert legacy config entries to the new format"
 		luci_legacy_entries=${legacy_entries%$'\n'}
+	fi
+
+	if [ -n "${bad_value_keys}" ]
+	then
+		corrected_entries="$(printf %s "${def_config}" | grep -E "^(${bad_value_keys%|})=")"
+		bad_value_keys="$(printf %s "${bad_value_keys}" | tr '|' ' ')"
+		echo
+		reg_failure "Detected config entries with unexpected values."
+		print_msg "The following config entries have unexpected values:"
+		print_msg "${bad_value_entries%$'\n'}"
+		echo
+		print_msg "Corresponding default config entries:"
+		print_msg "${corrected_entries}"
+		add_conf_fix "Replace unexpected values with defaults"
+		luci_bad_value_entries=${bad_value_entries%$'\n'}
+		luci_corrected_entries=${corrected_entries%$'\n'}
 	fi
 
 	case "${curr_config_format}" in *[!0-9]*|'')
@@ -484,7 +527,7 @@ parse_config()
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local conf_fixes='' fixed_config='' missing_keys='' key val line fix cnt \
+	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt \
 		tip_msg="Fix your config file '${config_file}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
@@ -517,7 +560,7 @@ load_config()
 		[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 	fi
 
-	fix_config "${missing_keys}" || { report_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 
 	:
 }
@@ -530,7 +573,7 @@ fix_config()
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
 		IFS=$'\n'
-		print_def_config | while read -r line
+		print_def_config | sed 's/[ \t]*@.*//' | while read -r line
 		do
 			case ${line} in
 				\#*|'') printf '%s\n' "${line}"; continue ;;
@@ -971,14 +1014,13 @@ generate_and_process_blocklist_file()
 		nl="${nl%%	}"
 		case "$1" in
 			blocklist)
-				entry_type=local
 				sed "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${nl}};\$!{n;a /${nl}};\$!{n; a /${nl}};a ${dummy_nl}" ;;
 			allowlist)
 				entry_type=server allow_char="#"
 				# expression combining 4 domains in one 'local=/.../' and 'server=/.../#'' line
 				sed_conv_expr='/^$/d;$!N;$!N;$!N;s~\n~/~g;'"s~^~${entry_type}=/~;s~/*$~/${allow_char}${dummy_nl}~"
 				{ cat; printf '\n'; } | sed "${sed_conv_expr};" ;;
-			''|*) printf ''; return 1
+			*) printf ''; return 1
 		esac | tr -d '\n' | tr "${dummy_nl}" '\n'
 	}
 
@@ -1626,7 +1668,7 @@ gen_config()
 		pick_opt "y|n" || exit 1
 		[ "${REPLY}" = n ] && exit 1
 	fi
-	write_config "$(print_def_config)" || exit 1
+	write_config "$(print_def_config | sed 's/[ \t]*@.*//')" || exit 1
 	check_blocklist_compression_support
 	:
 }
@@ -1650,7 +1692,7 @@ start()
 		log_msg "gawk detected so using gawk for fast (sub)domain match removal."
 		awk_cmd="gawk"
 	else
-		log_msg "gawk not detected so using awk for the (sub)domain match removal."
+		log_msg -yellow "gawk not detected so using awk for the (sub)domain match removal."
 		log_msg "Consider installing the gawk package 'opkg install gawk' for faster (sub)domain match removal."
 		awk_cmd="awk"
 	fi
@@ -1659,7 +1701,7 @@ start()
 	then
 		log_msg "coreutils-sort detected so sort will be fast."
 	else
-		log_msg "coreutils-sort not detected so sort will be a little slower."
+		log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
 		log_msg "Consider installing the coreutils-sort package (opkg install coreutils-sort) for faster sort."
 	fi
 
@@ -1926,7 +1968,7 @@ update()
 			:
 		) 1>/dev/null ||
 		{
-			report_failure "Failed to source the downloaded file. Canceling the update."
+			reg_failure "Failed to source the downloaded file. Canceling the update."
 			rm -f "${abl_dir}/adblock-lean.latest"
 			exit 1
 		}
