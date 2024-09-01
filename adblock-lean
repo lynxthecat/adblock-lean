@@ -168,8 +168,11 @@ log_msg()
 	for m in ${msgs}
 	do
 		case "${m}" in
-			dummy) print_msg "" ;;
-			*) print_msg "${color}${m}${n_c}"; logger -t adblock-lean -p user."${err_l}" "${m}"; write_log_file "${m}" "${err_l}"
+			dummy) echo ;;
+			*)
+				print_msg "${color}${m}${n_c}"
+				logger -t adblock-lean -p user."${err_l}" "${m}"
+				write_log_file "${m}" "${err_l}"
 		esac
 	done
 }
@@ -537,8 +540,7 @@ load_config()
 
 	if [ "${msgs_dest}" = "/dev/tty" ] && [ "${1}" != '-f' ]
 	then
-		echo
-		print_msg "${blue}Perform following automatic changes?${n_c}"
+		print_msg "" "${blue}Perform following automatic changes?${n_c}"
 		cnt=0
 		local IFS=$'\n'
 		for fix in ${conf_fixes}
@@ -612,8 +614,7 @@ write_config()
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
-	echo
-	log_msg "Saving new config file to '${config_file}'."
+	log_msg "" "Saving new config file to '${config_file}'."
 	try_mkdir -p "${PREFIX}" || return 1
 	try_mv "${tmp_config}" "${config_file}" && return 0
 	rm -f "${tmp_config}"
@@ -663,8 +664,7 @@ cleanup_and_exit()
 
 reg_failure()
 {
-	echo
-	log_msg -err "${1}"
+	log_msg -err "" "${1}"
 	failure_msg="${failure_msg}${1}"$'\n'
 	luci_errors="${failure_msg}"
 }
@@ -1589,8 +1589,8 @@ init_command()
 			if [ -n "${custom_script}" ]
 			then
 				custom_scr_sourced=
-				[ -f "${custom_script}" ] && . "${custom_script}" && custom_scr_sourced=1
-				[ -z "${custom_scr_sourced}" ] && reg_failure "Custom script '${custom_script}' doesn't exist or it returned error."
+				[ -f "${custom_script}" ] && . "${custom_script}" && custom_scr_sourced=1 ||
+					reg_failure "Custom script '${custom_script}' doesn't exist or it returned an error."
 			fi
 	esac
 
@@ -1691,8 +1691,7 @@ start()
 		exit 1
 	fi
 
-	echo
-	log_msg -green "Successfully generated preprocessed blocklist file with $(int2human ${preprocessed_list_line_cnt}) entries."
+	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human ${preprocessed_list_line_cnt}) entries."
 
 	if ! generate_and_process_blocklist_file
 	then
@@ -1710,14 +1709,12 @@ start()
 
 	compressed=
 	[ -n "${final_compress}" ] && compressed=" compressed"
-	echo
-	log_msg "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_final_list_size_human}."
+	log_msg "" "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_final_list_size_human}."
 
 	restart_dnsmasq || exit 1
 
 	elapsed_time_str=$(get_elapsed_time_str)
-	echo
-	log_msg "Processing time for blocklist generation and import: ${elapsed_time_str}."
+	log_msg "" "Processing time for blocklist generation and import: ${elapsed_time_str}."
 
 	if ! check_active_blocklist
 	then
