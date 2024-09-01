@@ -21,6 +21,8 @@
 LC_ALL=C
 IFS='	 
 '
+nl='
+'
 default_IFS="${IFS}"
 
 if [ -t 0 ]
@@ -156,16 +158,19 @@ log_msg()
 			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
 			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) eval "color=\"\${${_arg#-}}\"" ;;
+			'') msgs="${msgs}dummy${nl}" ;;
 			*) msgs="${msgs}${msgs_prefix}${_arg}${nl}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
 		esac
 	done
 	msgs="${msgs%${nl}}"
-
 	local IFS="${nl}"
+
 	for m in ${msgs}
 	do
-		print_msg "${color}${m}${n_c}"
-		[ -n "${m}" ] && { logger -t adblock-lean -p user."${err_l}" "${m}"; write_log_file "${m}" "${err_l}"; }
+		case "${m}" in
+			dummy) print_msg "" ;;
+			*) print_msg "${color}${m}${n_c}"; logger -t adblock-lean -p user."${err_l}" "${m}"; write_log_file "${m}" "${err_l}"
+		esac
 	done
 }
 
@@ -225,12 +230,14 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
+# 1 - (optional) -d to print with allowed value types (otherwise print without)
 print_def_config()
 {
 	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
 
-	cat <<-EOT
+	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
+
 	# adblock-lean configuration options
 	# config_format=v2
 	#
@@ -369,7 +376,6 @@ parse_config()
 		val=${val#\"}
 		val=${val%\"*} # throw away everything after the 2nd double-quote mark
 		test_keys="${test_keys%%"${key}|"*}${test_keys#*"${key}|"}" # remove current key from test_keys
-		# check for valid value
 	}
 
 	add_unexp_entry()
@@ -378,21 +384,20 @@ parse_config()
 		unexp_entries="${unexp_entries}${entry}"$'\n'
 	}
 
-	check_value()
+	check_val()
 	{
-		local val_ok=
-		eval "case \"\${val}\" in
-			${valid_values}) val_ok=1
-		esac"
-		[ -n "${val_ok}" ] && return 0
-		bad_value_entries="${bad_value_entries}${entry} (should be $(print_def_config | \
+		eval "case \"${val}\" in
+			${valid_values}) return 0
+			esac"
+
+		bad_val_entries="${bad_val_entries}${entry} (should be $(print_def_config -d | \
 			sed -n "/^[ \t]*${key}[ \t]*=/{s/^.*@[ \t]*//;s/[ \t]//g;s/|/ or /g;s/''/empty string/;s/integer/non-negative integer/;p;q;}"))"$'\n'
 		bad_value_keys="${bad_value_keys}${key}|"
 		return 1
 	}
 
-	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
-		test_keys entry key val bad_value_entries='' corrected_entries='' \
+	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
+		test_keys entry key val bad_val_entries='' corrected_entries='' \
 		tab="$(printf '\t')" sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
 
 	unset curr_config_format def_config_format bad_value_keys \
@@ -404,20 +409,18 @@ parse_config()
 	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
 
 	# extract entries from default config
-	def_config="$(print_def_config | sed "${sed_conf_san_exp}")"
+	def_config="$(print_def_config)"
 
 	# extract valid values from default config
 	local sed_valid_vals_expr="/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; /\"/d; s/[ \t]//g; s/^/val_/; s/=string/=*/; \
 		s/=integer/=*[!0-9]*|'') ;; */; s/=/=\"/; s/$/\"/"
-	local valid_values="$(printf %s "${def_config}" | sed "${sed_valid_vals_expr}")"
-	eval "${valid_values}" || exit 1
-
-	# remove valid values suffix
-	def_config="$(printf %s "${def_config}" | sed 's/[ \t]*@.*//')"
+	local all_valid_values="$(print_def_config -d | sed "${sed_conf_san_exp};${sed_valid_vals_expr}")"
+	# assign 'val_*' variables
+	eval "${all_valid_values}" || exit 1
 
 	# extract keys from default config, convert to '|' separated list
 	# 'dummy|' is needed to avoid errors in eval
-	test_keys="dummy|$(printf '%s\n' "${def_config}" | sed 's/=.*//' | tr '\n' '|')"
+	test_keys="dummy|$(printf '%s\n' "${def_config}" | sed "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
 
 	# read and sanitize current config
 	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
@@ -425,7 +428,7 @@ parse_config()
 	# get config versions
 	curr_config_format="$(get_config_format "${1}")"
 	luci_curr_config_format=${curr_config_format}
-	def_config_format="$(print_def_config | get_config_format)"
+	def_config_format="$(printf %s "${def_config}" | get_config_format)"
 	luci_def_config_format=${def_config_format}
 
 	local IFS=$'\n'
@@ -438,13 +441,12 @@ parse_config()
 		key="${entry%%=*}"
 		case "${key}" in *[!A-Za-z0-9_]*) inval_e; return 1; esac
 		# check if the key is in the default keys list, assign value to var if so
-
 		eval "case \"${key}\" in
 				${test_keys%|})
 					parse_entry || return 1
 					valid_values=\"\${val_${key}}\"
 					[ -z \"\${valid_values}\" ] && { reg_failure \"Config key '${key}' has no assigned valid values.\"; exit 1; }
-					check_value && ${key}"='${val}'" ;;
+					check_val && ${key}"='${val}'" ;;
 				*) add_unexp_entry
 			esac"
 	done
@@ -485,26 +487,26 @@ parse_config()
 		corrected_entries="$(printf %s "${def_config}" | grep -E "^(${bad_value_keys%|})=")"
 		bad_value_keys="$(printf %s "${bad_value_keys}" | tr '|' ' ')"
 		reg_failure "Detected config entries with unexpected values."
-		print_msg "The following config entries have unexpected values:" "${bad_value_entries%$'\n'}" "" "Corresponding default config entries:" "${corrected_entries}"
+		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
+			"Corresponding default config entries:" "${corrected_entries}"
 		add_conf_fix "Replace unexpected values with defaults"
-		luci_bad_value_entries=${bad_value_entries%$'\n'}
+		luci_bad_val_entries=${bad_val_entries%$'\n'}
 		luci_corrected_entries=${corrected_entries%$'\n'}
 	fi
 
-	case "${curr_config_format}" in *[!0-9]*|'')
-		echo
-		log_msg -warn "Config format version is unknown or invalid."
-		conf_format_old=1
-		add_conf_fix "Update config format version"
+	case "${curr_config_format}" in
+		*[!0-9]*|'')
+			log_msg -warn "" "Config format version is unknown or invalid."
+			add_conf_fix "Update config format version" ;;
+		*)
+			if [ "${curr_config_format}" -lt "${def_config_format}" ]
+			then
+				log_msg -warn "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+				add_conf_fix "Update config format version"
+				luci_bad_conf_format=1
+			fi
 	esac
 
-	if [ -z "${conf_format_old}" ] && [ "${curr_config_format}" -lt "${def_config_format}" ]
-	then
-		echo
-		log_msg -warn "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
-		add_conf_fix "Update config format version"
-		luci_bad_conf_format=1
-	fi
 
 	conf_fixes="${conf_fixes%$'\n'}"
 	luci_conf_fixes="${conf_fixes}"
@@ -563,7 +565,7 @@ fix_config()
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
 		IFS=$'\n'
-		print_def_config | sed 's/[ \t]*@.*//' | while read -r line
+		print_def_config | while read -r line
 		do
 			case ${line} in
 				\#*|'') printf '%s\n' "${line}"; continue ;;
@@ -952,8 +954,7 @@ gen_list_parts()
 
 		if [ "${list_type}" = allowlist ]
 		then
-			echo
-			log_msg -green "Successfully generated allowlist with $(int2human ${list_line_cnt}) entries."
+			log_msg -green "" "Successfully generated allowlist with $(int2human ${list_line_cnt}) entries."
 			log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 			use_allowlist=1
 		fi
@@ -979,9 +980,7 @@ generate_and_process_blocklist_file()
 	# 1 - blocklist|allowlist
 	pack_entries_sed()
 	{
-		local entry_type nl='
-			'
-		nl="${nl%%	}"
+		local entry_type
 		case "$1" in
 			blocklist)
 				# packs 4 domains in one 'local=/.../' line
@@ -1102,7 +1101,7 @@ generate_and_process_blocklist_file()
 	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
 
 	# check the final blocklist with dnsmasq --test
-	reg_action "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
+	reg_action -blue "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
 	if  [ -n "${final_compress}" ]
 	then
 		gunzip -fc "${out_f}"
@@ -1198,7 +1197,7 @@ restart_dnsmasq()
 
 	/etc/init.d/dnsmasq restart &> /dev/null || { reg_failure "Failed to restart dnsmasq."; stop 1; }
 	
-	reg_action "Waiting for dnsmasq initialization." || return 1
+	reg_action -blue "Waiting for dnsmasq initialization." || return 1
 	local dnsmasq_ok=
 	for i in $(seq 1 60)
 	do
@@ -1248,8 +1247,7 @@ export_existing_blocklist()
 			src="${src_d}/blocklist"
 		fi
 	else
-		echo
-		log_msg "No existing compressed or uncompressed blocklist identified."
+		log_msg "" "No existing compressed or uncompressed blocklist identified."
 		return 2
 	fi
 	try_mv "${src}" "${dest}" || return 1
@@ -1337,7 +1335,7 @@ check_for_updates()
 	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed -E 's/[ \t]+.*$//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
 		2> "${abl_dir}/uclient-fetch_err" |
-		tee >(cat > "${abl_dir}/remote_abl"; . "${abl_dir}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config |
+		tee >(cat > "${abl_dir}/remote_abl"; . "${abl_dir}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config -d |
 			get_config_format > "${abl_dir}/upd_config_format") |
 		sha256sum | sed -E 's/[ \t]+.*$//')
 
@@ -1491,7 +1489,7 @@ reg_action()
 		esac
 	done
 
-	[ -z "${nolog}" ] && { echo; log_msg "${color}" "${msg% }"; }
+	[ -z "${nolog}" ] && log_msg "" ${color} "${msg% }"
 	if [ -n "${lock_req}" ]
 	then
 		update_pid_action "${msg% }" || return 1
@@ -1630,7 +1628,7 @@ gen_config()
 		pick_opt "y|n" || exit 1
 		[ "${REPLY}" = n ] && exit 1
 	fi
-	write_config "$(print_def_config | sed 's/[ \t]*@.*//')" || exit 1
+	write_config "$(print_def_config )" || exit 1
 	check_blocklist_compression_support
 	:
 }
@@ -1646,8 +1644,7 @@ boot()
 start()
 {
 	init_command start || exit 1
-	log_msg -purple "Started adblock-lean."
-	echo
+	log_msg -purple "Started adblock-lean." ""
 
 	if type gawk &> /dev/null
 	then
@@ -1757,12 +1754,10 @@ stop()
 	msg="${msg% }"
 
 	init_command stop || exit 1
-	reg_action "Removing any adblock-lean blocklist files in ${dnsmasq_tmp_d}/ and restarting dnsmasq." || exit 1
+	log_msg "Removing any adblock-lean blocklist files in ${dnsmasq_tmp_d}." || exit 1
 	clean_dnsmasq_dir
 	restart_dnsmasq || stop_rc=1
-	echo
-	log_msg -purple "Stopped adblock-lean."
-	echo
+	log_msg -purple "" "Stopped adblock-lean." ""
 	[ -n "$noexit" ] && return "${stop_rc}"
 	exit "${stop_rc}"
 }
