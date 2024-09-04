@@ -32,10 +32,12 @@ else
 	msgs_dest="/dev/null"
 fi
 
+config_dir="/etc/adblock-lean"
 PREFIX=/root/adblock-lean
 abl_dir=/var/run/adblock-lean
 abl_pid_dir=/tmp/adblock-lean
-config_file="${PREFIX}/config"
+config_file="${config_dir}/config"
+root_config_file="${PREFIX}/config"
 update_log_file="/var/log/abl_update.log"
 session_log_file="/var/log/abl_session.log"
 
@@ -238,17 +240,19 @@ print_def_config()
 {
 	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
+	local hagezi_dl_url="raw.githubusercontent.com/hagezi/dns-blocklists/main"
+	[ ! -f "/root/adblock-lean/allowlist" ] && [ ! -f "/root/adblock-lean/blocklist" ] && local PREFIX="${config_dir}"
 
 	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
 
 	# adblock-lean configuration options
-	# config_format=v2
+	# config_format=v3
 	#
 	# values must be enclosed in double-quotes
 	# comments must start at newline or inline after the closing double-quote
 
 	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
-	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt" @ string
+	blocklist_urls="https://${hagezi_dl_url}/wildcard/pro-onlydomains.txt https://${hagezi_dl_url}/wildcard/tif.mini-onlydomains.txt" @ string
 	blocklist_ipv4_urls="" @ string
 	allowlist_urls="" @ string
 
@@ -320,6 +324,86 @@ get_config_format()
 	else
 		sed -n "${conf_form_sed_expr}"
 	fi
+}
+
+# @url_conversion_logic
+# URL conversion logic can be removed in a few months from now (Sep 2024) - most bits to remove marked as @url_conversion_logic
+# convert known dnsmasq-formatted URLs to wildcard domain URLs
+# assign converted URLs to ${conv_*} or ${conv_dnsmasq_*}
+# assign old urls to ${orig_*}
+# assign URLs not requiring conversion to ${correct_*}
+gen_conv_urls()
+{
+	# 1 - old url
+	# 2 - converted url
+	# 3 - entry name
+	add_conv_url()
+	{
+		eval "orig_${3}_urls=\"\${orig_${3}_urls}${1} \" conv_${3}_urls=\"\${conv_${3}_urls}${2} \""
+	}
+
+	local entry urls e
+	local IFS="${default_IFS}"
+	for entry in blocklist blocklist_ipv4 allowlist
+	do
+		eval "urls=\"\${dnsmasq_${entry}_urls}\""
+		eval "unconv_${entry}_urls=\"\${unconv_$entry_urls}${url}\" "
+	done
+
+	for entry in blocklist blocklist_ipv4 allowlist
+	do
+		eval "urls=\"\${${entry}_urls}\""
+		curr_url_entries="${curr_url_entries}${blue}${entry}_urls${n_c}=\"${urls}\""$'\n'
+		eval "dnsmasq_urls=\"\${dnsmasq_${entry}_urls}\""
+		curr_dnsmasq_url_entries="${curr_dnsmasq_url_entries}${blue}dnsmasq_${entry}_urls${n_c}=\"${dnsmasq_urls}\""$'\n'
+		[ -z "${urls}" ] && continue
+		for url in ${urls}
+		do
+			e=
+			local hagezi_dl_url="raw.githubusercontent.com/hagezi/dns-blocklists/main"
+			case "${url}" in
+				*"${hagezi_dl_url}/wildcard/"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=2 ;;
+				*"${hagezi_dl_url}/dnsmasq/"*)
+					case "${url%.txt}" in
+						*tif-ips)
+							add_conv_url "${url}" "$(printf %s "${url}" | sed 's~/dnsmasq/~/ips/~; s/tif-ips.txt/tif.txt/')" blocklist_ipv4; e=1 ;;
+						*/pro*|*/tif|*/tif.|*anti.piracy|*doh-vpn-proxy-bypass|*dyndns|*fake|*gambling*|*hoster|*light|*multi|*native*|\
+							*nosafesearch|*popupads|*ultimate*)
+							add_conv_url "${url}" "$(printf %s "${url}" | sed 's~/dnsmasq/~/wildcard/~; s/\.txt/-onlydomains.txt/')" "${entry}"; e=1 ;;
+					esac ;;
+				*"${hagezi_dl_url}/domains/whitelist-referral"*) eval "correct_allowlist_urls=\"\${correct_allowlist_urls}${url} \""; e=2 ;;
+				*"${hagezi_dl_url}/ips/"*) eval "correct_blocklist_ipv4_urls=\"\${correct_blocklist_ipv4_urls}${url} \""; e=2 ;;
+				*"oisd.nl/domainswild2"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=2 ;;
+				*"oisd.nl/dnsmasq"*) add_conv_url "${url}" "$(printf %s "${url}" | sed 's~/dnsmasq.*~/domainswild2~')" "${entry}"; e=1
+			esac
+			[ -z "${e}" ] && eval "unconv_${entry}_urls=\"\${unconv_${entry}_urls}${url} \""
+		done
+	done
+}
+
+# @url_conversion_logic
+# assemble new config settings out of ${conv_*}, ${conv_dnsmasq_*}, ${correct_*} and assign to variables
+convert_urls()
+{
+	local entry entry_type urls
+	for entry_type in "" dnsmasq_
+	do
+		for entry in blocklist blocklist_ipv4 allowlist
+		do
+			entry_id="${entry_type}${entry}_urls"
+			if [ -z "${entry_type}" ]
+			then
+				eval "${entry_id}=\"\${correct_${entry_id}} \""
+			else
+				eval "${entry_id}=\"\${unconv_${entry}_urls}\${${entry_id}} \""
+			fi
+
+			[ "${1}" = y ] && [ -z "${entry_type}" ] && eval "${entry_id}=\"\${${entry_id}}\${conv_${entry_id}} \""
+			[ "${1}" = n ] && [ "${entry_type}" = dnsmasq_ ] && eval "${entry_id}=\"\${${entry_id}}\${orig_${entry}_urls}} \""
+			eval "${entry_id}=\"\$(printf '%s\n' \${${entry_id}} | tr ' ' '\n' | sort -u | tr '\n' ' ')\""
+			eval "${entry_id}=\"\${${entry_id}% }\""
+		done
+	done
 }
 
 # validate config and assign to variables
@@ -466,6 +550,16 @@ parse_config()
 		luci_unexp_entries=${unexp_entries%$'\n'}
 	fi
 
+	# @url_conversion_logic
+	# check if urls need conversion, generate converted urls if so
+	if [ -z "${urls_converted}" ] && [ ! -f "${config_dir}/.new_urls_format" ]
+	then
+		gen_conv_urls
+		url_conv_req=1
+		luci_url_conv_req=1
+		test_keys="$(printf %s "${test_keys}" | sed -E 's~dnsmasq_(block|allow)list(_ipv4)*_urls[|]~~g')"
+	fi
+
 	test_keys=${test_keys#dummy|}
 	if [ -n "${test_keys}" ]
 	then
@@ -505,16 +599,26 @@ parse_config()
 		*)
 			if [ "${curr_config_format}" -lt "${def_config_format}" ]
 			then
-				log_msg -warn "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+				log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
 				add_conf_fix "Update config format version"
 				luci_bad_conf_format=1
 			fi
 	esac
 
+	# @config_migration_logic
+	# config file path change code can be removed a few months from now (Sep 2024)
+	if [ "${actual_config_file}" = "${root_config_file}" ]
+	then
+		log_msg -yellow "" "Note: config file path has changed to ${config_file}." "Your config file ${actual_config_file} will need to be moved."
+		add_conf_fix "Move the config file to ${config_file}"
+		luci_config_path_changed=1
+	fi
 
 	conf_fixes="${conf_fixes%$'\n'}"
 	luci_conf_fixes="${conf_fixes}"
 
+	# @url_conversion_logic
+	{ [ -n "${url_conv_req}" ] && [ -z "${urls_converted}" ]; } ||
 	[ -n "${conf_fixes}" ] && return 2
 	:
 }
@@ -523,40 +627,97 @@ parse_config()
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt \
-		tip_msg="Fix your config file '${config_file}' or generate default config using 'service adblock-lean gen_config'."
+	local actual_config_file conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt parse_res url_conv_req
+
+	# @config_migration_logic
+	if [ -f "${config_file}" ]
+	then
+		actual_config_file="${config_file}"
+	elif [ -f "${root_config_file}" ]
+	then
+		actual_config_file="${root_config_file}"
+	else
+		reg_failure "Config file is missing."
+		log_msg "Generate default config using 'service adblock-lean gen_config"
+		return 1
+	fi
+
+	local tip_msg="Fix your config file '${actual_config_file}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
-	parse_config "${config_file}"
+	parse_config "${actual_config_file}"
+	parse_res=${?}
+	[ ${parse_res} = 1 ] && { log_msg "${tip_msg}"; return 1; }
 
-	case ${?} in
-		0) return 0 ;;
-		1) log_msg "${tip_msg}"; return 1 ;;
-		2)
-	esac
+	[ ${parse_res} = 0 ] && [ -z "${url_conv_req}" ] && return 0
 
+	# if not in interactive console, return error
 	[ "${msgs_dest}" != "/dev/tty" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
 
-	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
+	# sanity check
+	[ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ] && { reg_failure "Failed to parse config."; return 1; }
 
 	if [ "${msgs_dest}" = "/dev/tty" ] && [ "${1}" != '-f' ]
 	then
-		print_msg "" "${blue}Perform following automatic changes?${n_c}"
-		cnt=0
-		local IFS=$'\n'
-		for fix in ${conf_fixes}
-		do
-			[ -z "${fix}" ] && continue
-			cnt=$((cnt+1))
-			print_msg "${cnt}. ${fix}"
-		done
-		IFS="${default_IFS}"
-		pick_opt "y|n" || return 1
-		[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+		if [ -n "${conf_fixes}" ]
+		then
+			print_msg "" "${blue}Perform following automatic changes?${n_c}"
+			cnt=0
+			local IFS=$'\n'
+			for fix in ${conf_fixes}
+			do
+				[ -z "${fix}" ] && continue
+				cnt=$((cnt+1))
+				print_msg "${cnt}. ${fix}"
+			done
+			IFS="${default_IFS}"
+			pick_opt "y|n" || return 1
+			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+		fi
+
+		# @url_conversion_logic
+		if [ -n "${url_conv_req}" ]
+		then
+			print_msg "" "${purple}NOTE: adblock-lean now supports both dnsmasq-formatted lists and \"raw domain\" lists.${n_c}" \
+				"The \"raw domain\" lists are functionally identical but their filesize is smaller and they are faster to process." \
+				"Hagezi and OISD dnsmasq-formatted list URLs can be automatically converted to \"raw domain\" list URLs." \
+				"If you are using other dnsmasq-formatted lists, they will continue to work, but you may want to look for their raw domain equivalents" \
+				"(sometimes called \"wildcard domains\")." "New config entries will be created for dnsmasq-formatted lists." \
+				"" "${purple}Current \"raw domains\" URL config entries:" "${curr_url_entries}${n_c}"
+				if [ ! -z ${dnsmasq_blocklist_urls+x} ]
+					then
+					print_msg "" "${purple}Current \"dnsmasq\" URL config entries:" "${curr_dnsmasq_url_entries}${n_c}"
+				fi
+				print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
+						"(you will be asked to confirm before writing the config)"
+				pick_opt "y|n" || return 1
+
+			convert_urls "${REPLY}"
+			urls_converted=1
+
+			for list_format in "\"raw domain\"" dnsmasq
+			do
+				print_msg "" "${purple}Updated ${list_format} URL config entries:${n_c}"
+				if [ "${list_format}" = "\"raw domain\"" ]
+				then
+					list_format=
+				else
+					list_format=dnsmasq_
+				fi
+				for url_entry in "${list_format}blocklist" "${list_format}blocklist_ipv4" "${list_format}allowlist"
+				do
+					eval "urls=\"\${${url_entry}_urls}\""
+					print_msg "${blue}${url_entry}_urls${n_c}=\"${urls}\""
+				done
+			done
+			print_msg "" "Confirm URLs update in config?"
+			pick_opt "y|n" || return 1
+			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+		fi
 	fi
 
 	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
-
+	touch "${config_dir}/.new_urls_format"
 	:
 }
 
@@ -586,7 +747,7 @@ fix_config()
 	)"
 
 	local old_config_f="/tmp/adblock-lean_config.old"
-	if ! cp "${config_file}" "${old_config_f}"
+	if ! cp "${actual_config_file}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
 		[ "${msgs_dest}" != "/dev/tty" ] && return 1
@@ -594,7 +755,7 @@ fix_config()
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" = n ] && return 1
 	else
-		log_msg "Old config file was saved as ${old_config_f}."
+		log_msg "" "Old config file was saved as ${old_config_f}."
 	fi
 
 	write_config "${fixed_config}" || return 1
@@ -612,12 +773,16 @@ write_config()
 
 	try_mkdir -p "${abl_dir}" || return 1
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
+	local actual_config_file="${config_file}"
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
 	log_msg "" "Saving new config file to '${config_file}'."
-	try_mkdir -p "${PREFIX}" || return 1
-	try_mv "${tmp_config}" "${config_file}" && return 0
+	try_mkdir -p "${config_dir}" || return 1
+	try_mv "${tmp_config}" "${config_file}" &&
+	# @config_migration_logic
+	{ rm -f "${root_config_file}"; return 0; }
+
 	rm -f "${tmp_config}"
 	return 1
 }
@@ -747,7 +912,7 @@ process_list_part()
 	case "${list_type}" in
 		allowlist|blocklist) val_entry_regex='^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
 		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
-		*) reg_failre "${me}: Invalid list type '${list_type}'"; return 1
+		*) reg_failure "${me}: Invalid list type '${list_type}'"; return 1
 	esac
 
 	case ${list_type} in
@@ -776,13 +941,13 @@ process_list_part()
 	# Convert dnsmasq format to raw format
 	if [ "${list_format}" = dnsmasq ]
 	then
-		local magic_w='' rm_suffix=''
+		local rm_prefix_expr="s~^[ \t]*(local|server)=/~~" rm_suffix_expr=''
 		case "${list_type}" in
-			blocklist) magic_w="local|server" rm_suffix='/' ;;
-			blocklist_ipv4) magic_w="bogus-nxdomain" rm_suffix='/' ;;
-			allowlist) magic_w="local|server" rm_suffix="/#"
+			blocklist) rm_suffix_expr='s~/$~~' ;;
+			blocklist_ipv4) rm_prefix_expr="s~^[ \t]*bogus-nxdomain=~~" ;;
+			allowlist) rm_suffix_expr='s~/#$~~'
 		esac
-		sed -E "s~^[ \t]*(${magic_w})=/~~;s~${rm_suffix}\$~~" | tr '/' '\n'
+		sed -E "${rm_prefix_expr};${rm_suffix_expr}" | tr '/' '\n'
 	else
 		cat
 	fi |
