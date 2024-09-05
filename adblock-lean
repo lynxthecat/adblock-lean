@@ -334,21 +334,35 @@ get_config_format()
 # assign URLs not requiring conversion to ${correct_*}
 gen_conv_urls()
 {
-	# 1 - old url
-	# 2 - converted url
-	# 3 - entry name
+	# 1 - old var name
+	# 2 - replacement pattern
+	# 3 - replacement string
+	replace_str()
+	{
+		do_replace() { new_str="${new_str%%${pattern}*}${repl_str}${new_str#*${pattern}}"; }
+
+		local var_name="${1}" pattern="${2}" repl_str="${3}"
+		eval "new_str=\"\${${var_name}}\""
+		eval "case \"${new_str}\" in *${pattern}*) do_replace; esac"
+		eval "${var_name}=\"${new_str}\""
+	}
+
+	# 1 - old url var name
+	# 2 - replacement pattern
+	# 3 - replacement string
+	# 4 - entry name
 	add_conv_url()
 	{
-		eval "orig_${3}_urls=\"\${orig_${3}_urls}${1} \" conv_${3}_urls=\"\${conv_${3}_urls}${2} \""
+		local var_name="${1}" pattern="${2}" repl_str="${3}" entry_name="${4}"
+		eval "orig_str=\"\${${var_name}}\""
+		eval "orig_${entry_name}_urls=\"\${orig_${entry_name}_urls}${orig_str} \"" 
+		new_str="${orig_str}"
+		replace_str new_str "${pattern}" "${repl_str}"
+		eval "conv_${entry_name}_urls=\"\${conv_${entry_name}_urls}${new_str} \""
 	}
 
 	local entry urls e
 	local IFS="${default_IFS}"
-	for entry in blocklist blocklist_ipv4 allowlist
-	do
-		eval "urls=\"\${dnsmasq_${entry}_urls}\""
-		eval "unconv_${entry}_urls=\"\${unconv_$entry_urls}${url}\" "
-	done
 
 	for entry in blocklist blocklist_ipv4 allowlist
 	do
@@ -365,16 +379,15 @@ gen_conv_urls()
 				*"${hagezi_dl_url}/wildcard/"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=2 ;;
 				*"${hagezi_dl_url}/dnsmasq/"*)
 					case "${url%.txt}" in
-						*tif-ips)
-							add_conv_url "${url}" "$(printf %s "${url}" | sed 's~/dnsmasq/~/ips/~; s/tif-ips.txt/tif.txt/')" blocklist_ipv4; e=1 ;;
-						*/pro*|*/tif|*/tif.|*anti.piracy|*doh-vpn-proxy-bypass|*dyndns|*fake|*gambling*|*hoster|*light|*multi|*native*|\
+						*tif-ips) add_conv_url url "/dnsmasq/tif-ips.txt" "/ips/tif.txt" blocklist_ipv4; e=1 ;;
+						*/pro*|*/tif|*/tif.*|*anti.piracy|*doh|*doh-vpn-proxy-bypass|*dyndns|*fake|*gambling|*hoster|*light|*multi|*native*|\
 							*nosafesearch|*popupads|*ultimate*)
-							add_conv_url "${url}" "$(printf %s "${url}" | sed 's~/dnsmasq/~/wildcard/~; s/\.txt/-onlydomains.txt/')" "${entry}"; e=1 ;;
+								replace_str url dnsmasq wildcard; add_conv_url url ".txt" "-onlydomains.txt" "${entry}"; e=1
 					esac ;;
 				*"${hagezi_dl_url}/domains/whitelist-referral"*) eval "correct_allowlist_urls=\"\${correct_allowlist_urls}${url} \""; e=2 ;;
 				*"${hagezi_dl_url}/ips/"*) eval "correct_blocklist_ipv4_urls=\"\${correct_blocklist_ipv4_urls}${url} \""; e=2 ;;
 				*"oisd.nl/domainswild2"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=2 ;;
-				*"oisd.nl/dnsmasq"*) add_conv_url "${url}" "$(printf %s "${url}" | sed 's~/dnsmasq.*~/domainswild2~')" "${entry}"; e=1
+				*"oisd.nl/dnsmasq"*) add_conv_url url "/dnsmasq" "/domainswild2" "${entry}"; e=1
 			esac
 			[ -z "${e}" ] && eval "unconv_${entry}_urls=\"\${unconv_${entry}_urls}${url} \""
 		done
@@ -399,7 +412,7 @@ convert_urls()
 			fi
 
 			[ "${1}" = y ] && [ -z "${entry_type}" ] && eval "${entry_id}=\"\${${entry_id}}\${conv_${entry_id}} \""
-			[ "${1}" = n ] && [ "${entry_type}" = dnsmasq_ ] && eval "${entry_id}=\"\${${entry_id}}\${orig_${entry}_urls}} \""
+			[ "${1}" = n ] && [ "${entry_type}" = dnsmasq_ ] && eval "${entry_id}=\"\${${entry_id}}\${orig_${entry}_urls} \""
 			eval "${entry_id}=\"\$(printf '%s\n' \${${entry_id}} | tr ' ' '\n' | sort -u | tr '\n' ' ')\""
 			eval "${entry_id}=\"\${${entry_id}% }\""
 		done
@@ -691,7 +704,6 @@ load_config()
 				print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
 						"(you will be asked to confirm before writing the config)"
 				pick_opt "y|n" || return 1
-
 			convert_urls "${REPLY}"
 			urls_converted=1
 
