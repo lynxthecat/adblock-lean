@@ -37,7 +37,7 @@ PREFIX=/root/adblock-lean
 abl_dir=/var/run/adblock-lean
 abl_pid_dir=/tmp/adblock-lean
 config_file="${config_dir}/config"
-root_config_file="${PREFIX}/config"
+root_config_file="${PREFIX}/config" # @config_migration_logic
 update_log_file="/var/log/abl_update.log"
 session_log_file="/var/log/abl_session.log"
 
@@ -332,20 +332,25 @@ get_config_format()
 # assign converted URLs to ${conv_*} or ${conv_dnsmasq_*}
 # assign old urls to ${orig_*}
 # assign URLs not requiring conversion to ${correct_*}
-gen_conv_urls()
+mk_conv_urls()
 {
 	# 1 - old var name
 	# 2 - replacement pattern
 	# 3 - replacement string
 	replace_str()
 	{
-		do_replace() { new_str="${new_str%%${pattern}*}${repl_str}${new_str#*${pattern}}"; }
+		# this function simplifies the code inside eval
+		do_replace() { new_str_l="${new_str_l%%${pattern_l}*}${repl_str_l}${new_str_l#*${pattern_l}}"; }
 
-		local var_name="${1}" pattern="${2}" repl_str="${3}"
-		eval "new_str=\"\${${var_name}}\""
-		eval "case \"${new_str}\" in *${pattern}*) do_replace; esac"
-		eval "${var_name}=\"${new_str}\""
+		local var_name_l="${1}" pattern_l="${2}" repl_str_l="${3}" new_str_l=
+		eval "new_str_l=\"\${${var_name_l}}\"
+			case \"\${new_str_l}\" in *${pattern_l}*) do_replace; esac
+			${var_name_l}=\"\${new_str_l}\""
 	}
+
+	# 1 - url
+	# 2 - entry name
+	add_orig_url() { eval "orig_${2}_urls=\"\${orig_${2}_urls}${1} \""; }
 
 	# 1 - old url var name
 	# 2 - replacement pattern
@@ -353,41 +358,52 @@ gen_conv_urls()
 	# 4 - entry name
 	add_conv_url()
 	{
-		local var_name="${1}" pattern="${2}" repl_str="${3}" entry_name="${4}"
+		local var_name="${1}" pattern="${2}" repl_str="${3}" entry_name="${4}" orig_str new_str
 		eval "orig_str=\"\${${var_name}}\""
-		eval "orig_${entry_name}_urls=\"\${orig_${entry_name}_urls}${orig_str} \"" 
 		new_str="${orig_str}"
 		replace_str new_str "${pattern}" "${repl_str}"
 		eval "conv_${entry_name}_urls=\"\${conv_${entry_name}_urls}${new_str} \""
 	}
 
-	local entry urls e
-	local IFS="${default_IFS}"
+	local entry urls dnsmasq_urls e IFS="${default_IFS}"
 
 	for entry in blocklist blocklist_ipv4 allowlist
 	do
-		eval "urls=\"\${${entry}_urls}\""
+		unset urls dnsmasq_urls
+
+		eval "[ -n \"\${${entry}_urls+set}\" ] && urls=\"\${${entry}_urls}\"" &&
 		curr_url_entries="${curr_url_entries}${blue}${entry}_urls${n_c}=\"${urls}\""$'\n'
-		eval "dnsmasq_urls=\"\${dnsmasq_${entry}_urls}\""
+
+		eval "[ -n \"\${dnsmasq_${entry}_urls+set}\" ] && dnsmasq_urls=\"\${dnsmasq_${entry}_urls}\"" &&
 		curr_dnsmasq_url_entries="${curr_dnsmasq_url_entries}${blue}dnsmasq_${entry}_urls${n_c}=\"${dnsmasq_urls}\""$'\n'
+
 		[ -z "${urls}" ] && continue
 		for url in ${urls}
 		do
 			e=
 			local hagezi_dl_url="raw.githubusercontent.com/hagezi/dns-blocklists/main"
 			case "${url}" in
-				*"${hagezi_dl_url}/wildcard/"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=2 ;;
+				*"${hagezi_dl_url}/wildcard/"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \""; e=1 ;;
 				*"${hagezi_dl_url}/dnsmasq/"*)
 					case "${url%.txt}" in
-						*tif-ips) add_conv_url url "/dnsmasq/tif-ips.txt" "/ips/tif.txt" blocklist_ipv4; e=1 ;;
+						*tif-ips)
+							add_orig_url "${url}" blocklist_ipv4
+							add_conv_url url "/dnsmasq/tif-ips.txt" "/ips/tif.txt" blocklist_ipv4
+							e=1 ;;
 						*/pro*|*/tif|*/tif.*|*anti.piracy|*doh|*doh-vpn-proxy-bypass|*dyndns|*fake|*gambling|*hoster|*light|*multi|*native*|\
 							*nosafesearch|*popupads|*ultimate*)
-								replace_str url dnsmasq wildcard; add_conv_url url ".txt" "-onlydomains.txt" "${entry}"; e=1
+								add_orig_url "${url}" "${entry}"
+								replace_str url dnsmasq wildcard
+								add_conv_url url ".txt" "-onlydomains.txt" "${entry}"
+								e=1
 					esac ;;
-				*"${hagezi_dl_url}/domains/whitelist-referral"*) eval "correct_allowlist_urls=\"\${correct_allowlist_urls}${url} \""; e=2 ;;
-				*"${hagezi_dl_url}/ips/"*) eval "correct_blocklist_ipv4_urls=\"\${correct_blocklist_ipv4_urls}${url} \""; e=2 ;;
-				*"oisd.nl/domainswild2"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=2 ;;
-				*"oisd.nl/dnsmasq"*) add_conv_url url "/dnsmasq" "/domainswild2" "${entry}"; e=1
+				*"${hagezi_dl_url}/domains/whitelist-referral"*) eval "correct_allowlist_urls=\"\${correct_allowlist_urls}${url} \""; e=1 ;;
+				*"${hagezi_dl_url}/ips/"*) eval "correct_blocklist_ipv4_urls=\"\${correct_blocklist_ipv4_urls}${url} \""; e=1 ;;
+				*"oisd.nl/domainswild2"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=1 ;;
+				*"oisd.nl/dnsmasq"*)
+					add_orig_url "${url}" "${entry}"
+					add_conv_url url "/dnsmasq" "/domainswild2" "${entry}"
+					e=1
 			esac
 			[ -z "${e}" ] && eval "unconv_${entry}_urls=\"\${unconv_${entry}_urls}${url} \""
 		done
@@ -395,26 +411,28 @@ gen_conv_urls()
 }
 
 # @url_conversion_logic
-# assemble new config settings out of ${conv_*}, ${conv_dnsmasq_*}, ${correct_*} and assign to variables
+# assemble new config settings out of ${conv_*_urls}, ${unconv_*_urls}, ${correct_*_urls} and assign to variables
 convert_urls()
 {
-	local entry entry_type urls
-	for entry_type in "" dnsmasq_
+	local entry format urls
+	for format in "" dnsmasq_
 	do
-		for entry in blocklist blocklist_ipv4 allowlist
+		for entry_type in blocklist blocklist_ipv4 allowlist
 		do
-			entry_id="${entry_type}${entry}_urls"
-			if [ -z "${entry_type}" ]
-			then
-				eval "${entry_id}=\"\${correct_${entry_id}} \""
-			else
-				eval "${entry_id}=\"\${unconv_${entry}_urls}\${${entry_id}} \""
-			fi
+			entry_id="${format}${entry_type}_urls"
 
-			[ "${1}" = y ] && [ -z "${entry_type}" ] && eval "${entry_id}=\"\${${entry_id}}\${conv_${entry_id}} \""
-			[ "${1}" = n ] && [ "${entry_type}" = dnsmasq_ ] && eval "${entry_id}=\"\${${entry_id}}\${orig_${entry}_urls} \""
-			eval "${entry_id}=\"\$(printf '%s\n' \${${entry_id}} | tr ' ' '\n' | sort -u | tr '\n' ' ')\""
-			eval "${entry_id}=\"\${${entry_id}% }\""
+			case "${format}" in
+				'') eval "${entry_id}=\"\${correct_${entry_type}_urls}\"" ;;
+				dnsmasq_) eval "${entry_id}=\"\${unconv_${entry_type}_urls}\""
+			esac
+
+			case "${1}" in
+				y) [ -z "${format}" ] && eval "${entry_id}=\"\${${entry_id}}\${conv_${entry_type}_urls} \"" ;;
+				n) [ -n "${format}" ] && eval "${entry_id}=\"\${${entry_id}}\${orig_${entry_type}_urls} \""
+			esac
+
+			eval "${entry_id}=\"\$(printf '%s\n' \${${entry_id}} | tr ' ' '\n' | sort -u | tr '\n' ' ')\"
+				${entry_id}=\"\${${entry_id}% }\""
 		done
 	done
 }
@@ -440,10 +458,7 @@ parse_config()
 		reg_failure "Invalid entry '$entry' in config."
 	}
 
-	add_conf_fix()
-	{
-		conf_fixes="${conf_fixes}${1}"$'\n'
-	}
+	add_conf_fix() { conf_fixes="${conf_fixes}${1}"$'\n'; }
 
 	# Following 3 functions are needed to minimize ugly hacks and tinkering inside eval
 	# shellcheck disable=SC2317
@@ -567,10 +582,10 @@ parse_config()
 	# check if urls need conversion, generate converted urls if so
 	if [ -z "${urls_converted}" ] && [ ! -f "${config_dir}/.new_urls_format" ]
 	then
-		gen_conv_urls
+		mk_conv_urls
 		url_conv_req=1
 		luci_url_conv_req=1
-		test_keys="$(printf %s "${test_keys}" | sed -E 's~dnsmasq_(block|allow)list(_ipv4)*_urls[|]~~g')"
+		test_keys="$(printf %s "${test_keys}" | sed -E 's~(dnsmasq_){0,1}(block|allow)list(_ipv4){0,1}_urls[|]~~g')"
 	fi
 
 	test_keys=${test_keys#dummy|}
@@ -694,10 +709,10 @@ load_config()
 			print_msg "" "${purple}NOTE: adblock-lean now supports both dnsmasq-formatted lists and \"raw domain\" lists.${n_c}" \
 				"The \"raw domain\" lists are functionally identical but their filesize is smaller and they are faster to process." \
 				"Hagezi and OISD dnsmasq-formatted list URLs can be automatically converted to \"raw domain\" list URLs." \
-				"If you are using other dnsmasq-formatted lists, they will continue to work, but you may want to look for their raw domain equivalents" \
-				"(sometimes called \"wildcard domains\")." "New config entries will be created for dnsmasq-formatted lists." \
+				"If you are using other dnsmasq-formatted lists, they will be moved into separate config options and continue to work," \
+				"but you may want to look for their raw domain equivalents (sometimes called \"wildcard domains\")." \
 				"" "${purple}Current \"raw domains\" URL config entries:" "${curr_url_entries}${n_c}"
-				if [ ! -z ${dnsmasq_blocklist_urls+x} ]
+				if [ -n "${dnsmasq_blocklist_urls+x}" ]
 					then
 					print_msg "" "${purple}Current \"dnsmasq\" URL config entries:" "${curr_dnsmasq_url_entries}${n_c}"
 				fi
@@ -792,7 +807,7 @@ write_config()
 	log_msg "" "Saving new config file to '${config_file}'."
 	try_mkdir -p "${config_dir}" || return 1
 	try_mv "${tmp_config}" "${config_file}" &&
-	# @config_migration_logic
+	# @config_migration_logic, also the '&&' above
 	{ rm -f "${root_config_file}"; return 0; }
 
 	rm -f "${tmp_config}"
@@ -1109,7 +1124,7 @@ gen_list_parts()
 				do
 					retry=$((retry + 1))
 					list_part_line_count=0
-					reg_action "Downloading, checking and sanitizing ${list_format}-formatted ${list_type} part from: ${list_url}." || return 1
+					reg_action "Downloading, checking and sanitizing ${list_format} ${list_type} part from: ${list_url}." || return 1
 					process_list_part "${list_id}" "${list_type}" "downloaded" "${list_format}" "${list_url}"
 					case ${?} in
 						0)
