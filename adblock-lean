@@ -352,6 +352,10 @@ mk_conv_urls()
 	# 2 - entry name
 	add_orig_url() { eval "orig_${2}_urls=\"\${orig_${2}_urls}${1} \""; }
 
+	# 1 - url
+	# 2 - entry name
+	add_corr_url() { eval "correct_${2}_urls=\"\${correct_${2}_urls}${1} \""; }
+
 	# 1 - old url var name
 	# 2 - replacement pattern
 	# 3 - replacement string
@@ -371,10 +375,10 @@ mk_conv_urls()
 	do
 		unset urls dnsmasq_urls
 
-		eval "[ -n \"\${${entry}_urls+set}\" ] && urls=\"\${${entry}_urls}\"" &&
+		eval "[ -n \"\${${entry}_urls+x}\" ] && urls=\"\${${entry}_urls}\"" &&
 		curr_url_entries="${curr_url_entries}${blue}${entry}_urls${n_c}=\"${urls}\""$'\n'
 
-		eval "[ -n \"\${dnsmasq_${entry}_urls+set}\" ] && dnsmasq_urls=\"\${dnsmasq_${entry}_urls}\"" &&
+		eval "[ -n \"\${dnsmasq_${entry}_urls+x}\" ] && dnsmasq_urls=\"\${dnsmasq_${entry}_urls}\"" &&
 		curr_dnsmasq_url_entries="${curr_dnsmasq_url_entries}${blue}dnsmasq_${entry}_urls${n_c}=\"${dnsmasq_urls}\""$'\n'
 
 		[ -z "${urls}" ] && continue
@@ -383,7 +387,7 @@ mk_conv_urls()
 			e=
 			local hagezi_dl_url="raw.githubusercontent.com/hagezi/dns-blocklists/main"
 			case "${url}" in
-				*"${hagezi_dl_url}/wildcard/"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \""; e=1 ;;
+				*"${hagezi_dl_url}/wildcard/"*) add_corr_url "${url}" "${entry}"; e=1 ;;
 				*"${hagezi_dl_url}/dnsmasq/"*)
 					case "${url%.txt}" in
 						*tif-ips)
@@ -397,9 +401,9 @@ mk_conv_urls()
 								add_conv_url url ".txt" "-onlydomains.txt" "${entry}"
 								e=1
 					esac ;;
-				*"${hagezi_dl_url}/domains/whitelist-referral"*) eval "correct_allowlist_urls=\"\${correct_allowlist_urls}${url} \""; e=1 ;;
-				*"${hagezi_dl_url}/ips/"*) eval "correct_blocklist_ipv4_urls=\"\${correct_blocklist_ipv4_urls}${url} \""; e=1 ;;
-				*"oisd.nl/domainswild2"*) eval "correct_${entry}_urls=\"\${correct_${entry}_urls}${url} \"" e=1 ;;
+				*"${hagezi_dl_url}/domains/whitelist-referral"*) add_corr_url "${url}" allowlist; e=1 ;;
+				*"${hagezi_dl_url}/ips/"*) add_corr_url "${url}" blocklist_ipv4; e=1 ;;
+				*"oisd.nl/domainswild2"*) add_corr_url "${url}" "${entry}"; e=1 ;;
 				*"oisd.nl/dnsmasq"*)
 					add_orig_url "${url}" "${entry}"
 					add_conv_url url "/dnsmasq" "/domainswild2" "${entry}"
@@ -423,7 +427,7 @@ convert_urls()
 
 			case "${format}" in
 				'') eval "${entry_id}=\"\${correct_${entry_type}_urls}\"" ;;
-				dnsmasq_) eval "${entry_id}=\"\${unconv_${entry_type}_urls}\""
+				dnsmasq_) eval "${entry_id}=\"\${${entry_id}}\${unconv_${entry_type}_urls} \""
 			esac
 
 			case "${1}" in
@@ -580,7 +584,7 @@ parse_config()
 
 	# @url_conversion_logic
 	# check if urls need conversion, generate converted urls if so
-	if [ -z "${urls_converted}" ] && [ ! -f "${config_dir}/.new_urls_format" ]
+	if [ "${action}" != gen_config ] && [ -z "${urls_converted}" ] && [ ! -f "${config_dir}/.new_urls_format" ]
 	then
 		mk_conv_urls
 		url_conv_req=1
@@ -712,13 +716,13 @@ load_config()
 				"If you are using other dnsmasq-formatted lists, they will be moved into separate config options and continue to work," \
 				"but you may want to look for their raw domain equivalents (sometimes called \"wildcard domains\")." \
 				"" "${purple}Current \"raw domains\" URL config entries:" "${curr_url_entries}${n_c}"
-				if [ -n "${dnsmasq_blocklist_urls+x}" ]
-					then
-					print_msg "" "${purple}Current \"dnsmasq\" URL config entries:" "${curr_dnsmasq_url_entries}${n_c}"
-				fi
-				print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
-						"(you will be asked to confirm before writing the config)"
-				pick_opt "y|n" || return 1
+			if [ -n "${dnsmasq_blocklist_urls+x}" ]
+				then
+				print_msg "" "${purple}Current \"dnsmasq\" URL config entries:" "${curr_dnsmasq_url_entries}${n_c}"
+			fi
+			print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
+					"(you will be asked to confirm before writing the config)"
+			pick_opt "y|n" || return 1
 			convert_urls "${REPLY}"
 			urls_converted=1
 
@@ -1847,7 +1851,8 @@ gen_config()
 		pick_opt "y|n" || exit 1
 		[ "${REPLY}" = n ] && exit 1
 	fi
-	write_config "$(print_def_config )" || exit 1
+	write_config "$(print_def_config)" || exit 1
+	touch "${config_dir}/.new_urls_format"
 	check_blocklist_compression_support
 	:
 }
