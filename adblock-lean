@@ -367,6 +367,7 @@ mk_conv_urls()
 		new_str="${orig_str}"
 		replace_str new_str "${pattern}" "${repl_str}"
 		eval "conv_${entry_name}_urls=\"\${conv_${entry_name}_urls}${new_str} \""
+		url_conv_req=1
 	}
 
 	local entry urls dnsmasq_urls e IFS="${default_IFS}"
@@ -413,13 +414,13 @@ mk_conv_urls()
 					add_conv_url url "${p}" "/domainswild2" "${entry}"
 					e=1
 			esac
-			[ -z "${e}" ] && eval "unconv_${entry}_urls=\"\${unconv_${entry}_urls}${url} \""
+			[ -z "${e}" ] && { eval "unrec_${entry}_urls=\"\${unrec_${entry}_urls}${url} \""; url_conv_req=1; }
 		done
 	done
 }
 
 # @url_conversion_logic
-# assemble new config settings out of ${conv_*_urls}, ${unconv_*_urls}, ${correct_*_urls} and assign to variables
+# assemble new config settings out of ${conv_*_urls}, ${unrec_*_urls}, ${correct_*_urls} and assign to variables
 convert_urls()
 {
 	local entry format urls
@@ -431,7 +432,9 @@ convert_urls()
 
 			case "${format}" in
 				'') eval "${entry_id}=\"\${correct_${entry_type}_urls}\"" ;;
-				dnsmasq_) eval "${entry_id}=\"\${${entry_id}}\${unconv_${entry_type}_urls} \""
+				dnsmasq_)
+					eval "case \"\${${entry_id}}\" in ''|*\" \") ;; *) ${entry_id}=\"\${${entry_id}} \"; esac"
+					eval "${entry_id}=\"\${${entry_id}}\${unrec_${entry_type}_urls} \""
 			esac
 
 			case "${1}" in
@@ -591,9 +594,13 @@ parse_config()
 	if [ "${action}" != gen_config ] && [ -z "${urls_converted}" ] && [ ! -f "${config_dir}/.new_urls_format" ]
 	then
 		mk_conv_urls
-		url_conv_req=1
-		luci_url_conv_req=1
-		test_keys="$(printf %s "${test_keys}" | sed -E 's~(dnsmasq_){0,1}(block|allow)list(_ipv4){0,1}_urls[|]~~g')"
+		if [ -n "${url_conv_req}" ]
+		then
+			luci_url_conv_req=1
+			test_keys="$(printf %s "${test_keys}" | sed -E 's~(dnsmasq_){0,1}(block|allow)list(_ipv4){0,1}_urls[|]~~g')"
+		else
+			mk_new_urls_format_flag || return 1
+		fi
 	fi
 
 	test_keys=${test_keys#dummy|}
@@ -628,18 +635,20 @@ parse_config()
 		luci_corrected_entries=${corrected_entries%$'\n'}
 	fi
 
-	case "${curr_config_format}" in
-		*[!0-9]*|'')
-			log_msg -warn "" "Config format version is unknown or invalid."
-			add_conf_fix "Update config format version" ;;
-		*)
-			if [ "${curr_config_format}" -lt "${def_config_format}" ]
-			then
-				log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
-				add_conf_fix "Update config format version"
-				luci_bad_conf_format=1
-			fi
-	esac
+	if [ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ]
+	then
+		case "${curr_config_format}" in
+			*[!0-9]*|'')
+				log_msg -warn "" "Config format version is unknown or invalid."
+				add_conf_fix "Update config format version" ;;
+			*)
+				if [ "${curr_config_format}" -lt "${def_config_format}" ]
+				then
+					log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+					add_conf_fix "Update config format version"
+				fi
+		esac
+	fi
 
 	# @config_migration_logic
 	# config file path change code can be removed a few months from now (Sep 2024)
@@ -653,9 +662,17 @@ parse_config()
 	conf_fixes="${conf_fixes%$'\n'}"
 	luci_conf_fixes="${conf_fixes}"
 
-	# @url_conversion_logic
-	{ [ -n "${url_conv_req}" ] && [ -z "${urls_converted}" ]; } ||
+	{ [ -n "${url_conv_req}" ] && [ -z "${urls_converted}" ]; } || # @url_conversion_logic
 	[ -n "${conf_fixes}" ] && return 2
+	:
+}
+
+# @url_conversion_logic
+mk_new_urls_format_flag()
+{
+	try_mkdir -p "${config_dir}" || return 1
+	[ -f "${config_dir}/.new_urls_format" ] && return 0
+	touch "${config_dir}/.new_urls_format" || { reg_failure "Failed to create file '${config_dir}/.new_urls_format'."; return 1; }
 	:
 }
 
@@ -674,7 +691,7 @@ load_config()
 		actual_config_file="${root_config_file}"
 	else
 		reg_failure "Config file is missing."
-		log_msg "Generate default config using 'service adblock-lean gen_config"
+		log_msg "Generate default config using 'service adblock-lean gen_config'."
 		return 1
 	fi
 
@@ -719,14 +736,17 @@ load_config()
 				"Hagezi and OISD dnsmasq-formatted list URLs can be automatically converted to \"raw domain\" list URLs." \
 				"If you are using other dnsmasq-formatted lists, they will be moved into separate config options and continue to work," \
 				"but you may want to look for their raw domain equivalents (sometimes called \"wildcard domains\")." \
-				"" "${purple}Current \"raw domains\" URL config entries:" "${curr_url_entries}${n_c}"
-			if [ -n "${dnsmasq_blocklist_urls+x}" ]
-				then
-				print_msg "" "${purple}Current \"dnsmasq\" URL config entries:" "${curr_dnsmasq_url_entries}${n_c}"
+				"" "${purple}Current \"raw domains\" URL config entries:${n_c}" "${curr_url_entries%"${nl}"}"
+			[ -n "${curr_dnsmasq_url_entries%"${nl}"}" ] &&
+				print_msg "" "${purple}Current \"dnsmasq\" URL config entries:${n_c}" "${curr_dnsmasq_url_entries%"${nl}"}"
+			if [ -n "${conv_blocklist_urls}${conv_blocklist_ipv4_urls}${conv_allowlist_urls}" ]
+			then
+				print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
+						"(you will be asked to confirm before writing the config)"
+				pick_opt "y|n" || return 1
+			else
+				REPLY=y
 			fi
-			print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
-					"(you will be asked to confirm before writing the config)"
-			pick_opt "y|n" || return 1
 			convert_urls "${REPLY}"
 			urls_converted=1
 
@@ -752,7 +772,7 @@ load_config()
 	fi
 
 	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
-	touch "${config_dir}/.new_urls_format"
+	mk_new_urls_format_flag || return 1 # @url_conversion_logic
 	:
 }
 
@@ -1635,7 +1655,7 @@ mk_lock()
 	[ -z "${1%.}" ] && { reg_failure "${me}: pid action is unspecified."; return 1; }
 	[ -z "${pid_file}" ] && { reg_failure "${me}: \${pid_file} variable is unset."; return 1; }
 
-	try_mkdir "${abl_pid_dir}" || return 1
+	try_mkdir -p "${abl_pid_dir}" || return 1
 	printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "${me}: Failed to write to pid file '${pid_file}'."; return 1; }
 	:
 }
@@ -1856,7 +1876,7 @@ gen_config()
 		[ "${REPLY}" = n ] && exit 1
 	fi
 	write_config "$(print_def_config)" || exit 1
-	touch "${config_dir}/.new_urls_format"
+	mk_new_urls_format_flag || exit 1 # @url_conversion_logic
 	check_blocklist_compression_support
 	:
 }
