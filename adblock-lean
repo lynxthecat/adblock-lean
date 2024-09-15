@@ -406,7 +406,11 @@ mk_conv_urls()
 				*"oisd.nl/domainswild2"*) add_corr_url "${url}" "${entry}"; e=1 ;;
 				*"oisd.nl/dnsmasq"*)
 					add_orig_url "${url}" "${entry}"
-					add_conv_url url "/dnsmasq" "/domainswild2" "${entry}"
+					case "${url}" in
+						*dnsmasq2*) p="/dnsmasq2" ;;
+						*dnsmasq*) p="/dnsmasq"
+					esac
+					add_conv_url url "${p}" "/domainswild2" "${entry}"
 					e=1
 			esac
 			[ -z "${e}" ] && eval "unconv_${entry}_urls=\"\${unconv_${entry}_urls}${url} \""
