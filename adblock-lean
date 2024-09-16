@@ -240,8 +240,7 @@ print_def_config()
 {
 	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
-	local hagezi_dl_url="raw.githubusercontent.com/hagezi/dns-blocklists/main"
-	[ ! -f "/root/adblock-lean/allowlist" ] && [ ! -f "/root/adblock-lean/blocklist" ] && local PREFIX="${config_dir}"
+	local hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
 
 	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
 
@@ -252,7 +251,7 @@ print_def_config()
 	# comments must start at newline or inline after the closing double-quote
 
 	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
-	blocklist_urls="https://${hagezi_dl_url}/wildcard/pro-onlydomains.txt https://${hagezi_dl_url}/wildcard/tif.mini-onlydomains.txt" @ string
+	blocklist_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" @ string
 	blocklist_ipv4_urls="" @ string
 	allowlist_urls="" @ string
 
@@ -264,8 +263,8 @@ print_def_config()
 	# Path to optional local raw allowlist/blocklist domain files in the form:
 	# site1.com
 	# site2.com
-	local_allowlist_path="${PREFIX}/allowlist" @ string
-	local_blocklist_path="${PREFIX}/blocklist" @ string
+	local_allowlist_path="${config_dir}/allowlist" @ string
+	local_blocklist_path="${config_dir}/blocklist" @ string
 
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1" @ 0|1
@@ -996,7 +995,7 @@ process_list_part()
 	# Convert dnsmasq format to raw format
 	if [ "${list_format}" = dnsmasq ]
 	then
-		local rm_prefix_expr="s~^[ \t]*(local|server)=/~~" rm_suffix_expr=''
+		local rm_prefix_expr="s~^[ \t]*(local|server|address)=/~~" rm_suffix_expr=''
 		case "${list_type}" in
 			blocklist) rm_suffix_expr='s~/$~~' ;;
 			blocklist_ipv4) rm_prefix_expr="s~^[ \t]*bogus-nxdomain=~~" ;;
@@ -2051,8 +2050,7 @@ get_active_entries_cnt()
 	else
 		printf ''
 	fi |
-	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "[/${allow_opt}]" '\n' |
-	wc -w > "/tmp/abl_entries_cnt"
+	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "[/${allow_opt}]" '\n' | wc -w > "/tmp/abl_entries_cnt"
 
 	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
 	case ${cnt} in
