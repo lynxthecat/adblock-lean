@@ -1896,12 +1896,20 @@ start()
 
 	if type gawk &> /dev/null
 	then
-		log_msg "gawk detected so using gawk for fast (sub)domain match removal."
+		log_msg "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
 		awk_cmd="gawk"
 	else
-		log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow."
-		log_msg "Consider installing the gawk package 'opkg install gawk' for faster (sub)domain match removal."
+		log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
+		log_msg "Consider installing the gawk package 'opkg install gawk' for faster processing and (sub)domain match removal."
 		awk_cmd="awk"
+	fi
+
+	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
+	then
+		log_msg "GNU sed detected so list processing will be fast."
+	else
+		log_msg -yellow "GNU sed not detected so list processing will be a little slower."
+		log_msg "Consider installing the GNU sed package (opkg install sed) for faster processing."
 	fi
 
 	if sort --version 2>/dev/null | grep -qe coreutils
