@@ -21,6 +21,8 @@
 LC_ALL=C
 IFS='	 
 '
+nl='
+'
 default_IFS="${IFS}"
 
 if [ -t 0 ]
@@ -30,10 +32,12 @@ else
 	msgs_dest="/dev/null"
 fi
 
+config_dir="/etc/adblock-lean"
 PREFIX=/root/adblock-lean
 abl_dir=/var/run/adblock-lean
 abl_pid_dir=/tmp/adblock-lean
-config_file="${PREFIX}/config"
+config_file="${config_dir}/config"
+root_config_file="${PREFIX}/config" # @config_migration_logic
 update_log_file="/var/log/abl_update.log"
 session_log_file="/var/log/abl_session.log"
 
@@ -46,7 +50,7 @@ STOP=4
 EXTRA_COMMANDS="status pause resume gen_stats gen_config print_log update"
 EXTRA_HELP="	
 adblock-lean custom commands:
-	status		check dnsmasq and good line count of existing blocklist
+	status		check dnsmasq and entries count of existing blocklist
 	pause		pause adblock-lean
 	resume		resume adblock-lean
 	gen_stats	generate dnsmasq stats for system log
@@ -134,30 +138,45 @@ get_elapsed_time_str()
 	printf '%dm:%ds' $((elapsed_time_s/60)) $((elapsed_time_s%60))
 }
 
+# prints each argument into a separate line
 print_msg()
 {
-	printf '%s\n' "${1}" > "$msgs_dest"
+	local m
+	for m in "${@}"
+	do
+		printf '%s\n' "${m}" > "$msgs_dest"
+	done
 }
 
+# logs each message argument separately and prints to a separate line
+# optional arguments: '-err', '-warn', '-[color]'
 log_msg()
 {
-	local msg='' msg_prefix='' _arg err_l=info color=
+	local m msgs='' msgs_prefix='' _arg err_l=info color=
 
 	for _arg in "$@"
 	do
 		case "${_arg}" in
-			"-err") err_l=err color="${red}" msg_prefix="Error: " ;;
-			"-warn") err_l=warn color="${yellow}" msg_prefix="Warning: " ;;
+			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
+			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) eval "color=\"\${${_arg#-}}\"" ;;
-			'') ;;
-			*) msg="${msg}${msg_prefix}${_arg} "
+			'') msgs="${msgs}dummy${nl}" ;;
+			*) msgs="${msgs}${msgs_prefix}${_arg}${nl}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
 		esac
 	done
-	msg="${msg% }"
+	msgs="${msgs%${nl}}"
+	local IFS="${nl}"
 
-	print_msg "${color}${msg}${n_c}"
-	logger -t adblock-lean -p user."${err_l}" "${msg}"
-	write_log_file "${msg}" "${err_l}"
+	for m in ${msgs}
+	do
+		case "${m}" in
+			dummy) echo ;;
+			*)
+				print_msg "${color}${m}${n_c}"
+				logger -t adblock-lean -p user."${err_l}" "${m}"
+				write_log_file "${m}" "${err_l}"
+		esac
+	done
 }
 
 # 1 - msg
@@ -216,62 +235,79 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
+# 1 - (optional) -d to print with allowed value types (otherwise print without)
 print_def_config()
 {
-	cat <<-EOT
+	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
+	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
+	local hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
+
+	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
+
 	# adblock-lean configuration options
-	# config_format=v2
+	# config_format=v3
 	#
 	# values must be enclosed in double-quotes
 	# comments must start at newline or inline after the closing double-quote
 
-	# One or more dnsmasq blocklist urls separated by spaces
-	blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/pro.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/tif.mini.txt"
+	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
+	blocklist_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" @ string
+	blocklist_ipv4_urls="" @ string
+	allowlist_urls="" @ string
 
-	# One or more allowlist urls separated by spaces
-	allowlist_urls=""
+	# One or more *dnsmasq format* domain blocklist/ipv4 blocklist/allowlist urls separated by spaces
+	dnsmasq_blocklist_urls="" @ string
+	dnsmasq_blocklist_ipv4_urls="" @ string
+	dnsmasq_allowlist_urls="" @ string
 
-	# Path to optional local allowlist/blocklist files in the form:
+	# Path to optional local raw allowlist/blocklist domain files in the form:
 	# site1.com
 	# site2.com
-	local_allowlist_path="${PREFIX}/allowlist"
-	local_blocklist_path="${PREFIX}/blocklist"
+	local_allowlist_path="${config_dir}/allowlist" @ string
+	local_blocklist_path="${config_dir}/blocklist" @ string
+
+	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
+	deduplication="1" @ 0|1
 
 	# Mininum number of lines of any individual downloaded part
-	min_blocklist_part_line_count="1"
-	min_allowlist_part_line_count="1"
+	min_blocklist_part_line_count="1" @ integer
+	min_blocklist_ipv4_part_line_count="1" @ integer
+	min_allowlist_part_line_count="1" @ integer
+
 	# Maximum size of any individual downloaded blocklist part
-	max_file_part_size_KB="20000"
+	max_file_part_size_KB="20000" @ integer
+
 	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB="30000"
+	max_blocklist_file_size_KB="30000" @ integer
+
 	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="100000"
+	min_good_line_count="100000" @ integer
 
 	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
-	use_compression="1"
+	use_compression="1" @ 0|1
 
 	# restart dnsmasq if previous blocklist was extracted and before generation of
 	# new blocklist thereby to free up memory during generaiton of new blocklist - enable (1) or disable (0)
-	initial_dnsmasq_restart="0"
+	initial_dnsmasq_restart="0" @ 0|1
 
 	# Maximum number of download retries
-	max_download_retries="3"
+	max_download_retries="3" @ integer
 
 	# List part failed action:
 	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
 	# SKIP - skip failed blocklist file part and continue blocklist generation
 	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
-	list_part_failed_action="SKIP"
+	list_part_failed_action="SKIP" @ SKIP|STOP
 
 	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
 	# with the success or failure message passed in first argument
 	# report_success() is only executed upon completion of the 'start' command
 	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
-	custom_script=""
+	custom_script="" @ string
 
 	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s="120"
+	boot_start_delay_s="120" @ integer
 
 	EOT
 }
@@ -289,6 +325,128 @@ get_config_format()
 	fi
 }
 
+# @url_conversion_logic
+# URL conversion logic can be removed in a few months from now (Sep 2024) - most bits to remove marked as @url_conversion_logic
+# convert known dnsmasq-formatted URLs to wildcard domain URLs
+# assign converted URLs to ${conv_*} or ${conv_dnsmasq_*}
+# assign old urls to ${orig_*}
+# assign URLs not requiring conversion to ${correct_*}
+mk_conv_urls()
+{
+	# 1 - old var name
+	# 2 - replacement pattern
+	# 3 - replacement string
+	replace_str()
+	{
+		# this function simplifies the code inside eval
+		do_replace() { new_str_l="${new_str_l%%${pattern_l}*}${repl_str_l}${new_str_l#*${pattern_l}}"; }
+
+		local var_name_l="${1}" pattern_l="${2}" repl_str_l="${3}" new_str_l=
+		eval "new_str_l=\"\${${var_name_l}}\"
+			case \"\${new_str_l}\" in *${pattern_l}*) do_replace; esac
+			${var_name_l}=\"\${new_str_l}\""
+	}
+
+	# 1 - url
+	# 2 - entry name
+	add_orig_url() { eval "orig_${2}_urls=\"\${orig_${2}_urls}${1} \""; }
+
+	# 1 - url
+	# 2 - entry name
+	add_corr_url() { eval "correct_${2}_urls=\"\${correct_${2}_urls}${1} \""; }
+
+	# 1 - old url var name
+	# 2 - replacement pattern
+	# 3 - replacement string
+	# 4 - entry name
+	add_conv_url()
+	{
+		local var_name="${1}" pattern="${2}" repl_str="${3}" entry_name="${4}" orig_str new_str
+		eval "orig_str=\"\${${var_name}}\""
+		new_str="${orig_str}"
+		replace_str new_str "${pattern}" "${repl_str}"
+		eval "conv_${entry_name}_urls=\"\${conv_${entry_name}_urls}${new_str} \""
+		url_conv_req=1
+	}
+
+	local entry urls dnsmasq_urls e IFS="${default_IFS}"
+
+	for entry in blocklist blocklist_ipv4 allowlist
+	do
+		unset urls dnsmasq_urls
+
+		eval "[ -n \"\${${entry}_urls+x}\" ] && urls=\"\${${entry}_urls}\"" &&
+		curr_url_entries="${curr_url_entries}${blue}${entry}_urls${n_c}=\"${urls}\""$'\n'
+
+		eval "[ -n \"\${dnsmasq_${entry}_urls+x}\" ] && dnsmasq_urls=\"\${dnsmasq_${entry}_urls}\"" &&
+		curr_dnsmasq_url_entries="${curr_dnsmasq_url_entries}${blue}dnsmasq_${entry}_urls${n_c}=\"${dnsmasq_urls}\""$'\n'
+
+		[ -z "${urls}" ] && continue
+		for url in ${urls}
+		do
+			e=
+			local hagezi_dl_url="raw.githubusercontent.com/hagezi/dns-blocklists/main"
+			case "${url}" in
+				*"${hagezi_dl_url}/wildcard/"*) add_corr_url "${url}" "${entry}"; e=1 ;;
+				*"${hagezi_dl_url}/dnsmasq/"*)
+					case "${url%.txt}" in
+						*tif-ips)
+							add_orig_url "${url}" blocklist_ipv4
+							add_conv_url url "/dnsmasq/tif-ips.txt" "/ips/tif.txt" blocklist_ipv4
+							e=1 ;;
+						*/pro*|*/tif|*/tif.*|*anti.piracy|*doh|*doh-vpn-proxy-bypass|*dyndns|*fake|*gambling|*hoster|*light|*multi|*native*|\
+							*nosafesearch|*popupads|*ultimate*)
+								add_orig_url "${url}" "${entry}"
+								replace_str url dnsmasq wildcard
+								add_conv_url url ".txt" "-onlydomains.txt" "${entry}"
+								e=1
+					esac ;;
+				*"${hagezi_dl_url}/domains/whitelist-referral"*) add_corr_url "${url}" allowlist; e=1 ;;
+				*"${hagezi_dl_url}/ips/"*) add_corr_url "${url}" blocklist_ipv4; e=1 ;;
+				*"oisd.nl/domainswild2"*) add_corr_url "${url}" "${entry}"; e=1 ;;
+				*"oisd.nl/dnsmasq"*)
+					add_orig_url "${url}" "${entry}"
+					case "${url}" in
+						*dnsmasq2*) p="/dnsmasq2" ;;
+						*dnsmasq*) p="/dnsmasq"
+					esac
+					add_conv_url url "${p}" "/domainswild2" "${entry}"
+					e=1
+			esac
+			[ -z "${e}" ] && { eval "unrec_${entry}_urls=\"\${unrec_${entry}_urls}${url} \""; url_conv_req=1; }
+		done
+	done
+}
+
+# @url_conversion_logic
+# assemble new config settings out of ${conv_*_urls}, ${unrec_*_urls}, ${correct_*_urls} and assign to variables
+convert_urls()
+{
+	local entry format urls
+	for format in "" dnsmasq_
+	do
+		for entry_type in blocklist blocklist_ipv4 allowlist
+		do
+			entry_id="${format}${entry_type}_urls"
+
+			case "${format}" in
+				'') eval "${entry_id}=\"\${correct_${entry_type}_urls}\"" ;;
+				dnsmasq_)
+					eval "case \"\${${entry_id}}\" in ''|*\" \") ;; *) ${entry_id}=\"\${${entry_id}} \"; esac"
+					eval "${entry_id}=\"\${${entry_id}}\${unrec_${entry_type}_urls} \""
+			esac
+
+			case "${1}" in
+				y) [ -z "${format}" ] && eval "${entry_id}=\"\${${entry_id}}\${conv_${entry_type}_urls} \"" ;;
+				n) [ -n "${format}" ] && eval "${entry_id}=\"\${${entry_id}}\${orig_${entry_type}_urls} \""
+			esac
+
+			eval "${entry_id}=\"\$(printf '%s\n' \${${entry_id}} | tr ' ' '\n' | sort -u | tr '\n' ' ')\"
+				${entry_id}=\"\${${entry_id}% }\""
+		done
+	done
+}
+
 # validate config and assign to variables
 #
 # 1 - path to file
@@ -298,9 +456,10 @@ get_config_format()
 # 1 - Error
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
 #
-# sets ${missing_keys}, ${conf_fixes}
+# sets ${missing_keys}, ${conf_fixes}, ${bad_value_keys}
 # and variables for luci:
-# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries *_legacy_entries *_bad_conf_format *_conf_fixes
+# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
+# *_legacy_entries *_bad_conf_format *_conf_fixes *_bad_value_keys
 parse_config()
 {
 	inval_e()
@@ -309,12 +468,9 @@ parse_config()
 		reg_failure "Invalid entry '$entry' in config."
 	}
 
-	add_conf_fix()
-	{
-		conf_fixes="${conf_fixes}${1}"$'\n'
-	}
+	add_conf_fix() { conf_fixes="${conf_fixes}${1}"$'\n'; }
 
-	# Following 2 functions are needed to minimize ugly hacks and tinkering inside eval
+	# Following 3 functions are needed to minimize ugly hacks and tinkering inside eval
 	# shellcheck disable=SC2317
 	parse_entry()
 	{
@@ -354,10 +510,24 @@ parse_config()
 		unexp_entries="${unexp_entries}${entry}"$'\n'
 	}
 
-	local def_config='' conf_format_old='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
-		test_keys entry key val tab="$(printf '\t')"
+	check_val()
+	{
+		eval "case \"${val}\" in
+			${valid_values}) return 0
+			esac"
 
-	unset curr_config_format def_config_format luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
+		bad_val_entries="${bad_val_entries}${entry} (should be $(print_def_config -d | \
+			sed -n "/^[ \t]*${key}[ \t]*=/{s/^.*@[ \t]*//;s/[ \t]//g;s/|/ or /g;s/''/empty string/;s/integer/non-negative integer/;p;q;}"))"$'\n'
+		bad_value_keys="${bad_value_keys}${key}|"
+		return 1
+	}
+
+	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
+		test_keys entry key val bad_val_entries='' corrected_entries='' \
+		tab="$(printf '\t')" sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
+
+	unset curr_config_format def_config_format bad_value_keys \
+		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_legacy_entries luci_bad_conf_format luci_conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
@@ -365,11 +535,18 @@ parse_config()
 	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
 
 	# extract entries from default config
-	def_config="$(print_def_config | sed "${sed_conf_san_exp}")"
+	def_config="$(print_def_config)"
+
+	# extract valid values from default config
+	local sed_valid_vals_expr="/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; /\"/d; s/[ \t]//g; s/^/val_/; s/=string/=*/; \
+		s/=integer/=*[!0-9]*|'') ;; */; s/=/=\"/; s/$/\"/"
+	local all_valid_values="$(print_def_config -d | sed "${sed_conf_san_exp};${sed_valid_vals_expr}")"
+	# assign 'val_*' variables
+	eval "${all_valid_values}" || exit 1
 
 	# extract keys from default config, convert to '|' separated list
 	# 'dummy|' is needed to avoid errors in eval
-	test_keys="dummy|$(print_def_config | sed "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
+	test_keys="dummy|$(printf '%s\n' "${def_config}" | sed "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
 
 	# read and sanitize current config
 	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
@@ -377,7 +554,7 @@ parse_config()
 	# get config versions
 	curr_config_format="$(get_config_format "${1}")"
 	luci_curr_config_format=${curr_config_format}
-	def_config_format="$(print_def_config | get_config_format)"
+	def_config_format="$(printf %s "${def_config}" | get_config_format)"
 	luci_def_config_format=${def_config_format}
 
 	local IFS=$'\n'
@@ -393,37 +570,45 @@ parse_config()
 		eval "case \"${key}\" in
 				${test_keys%|})
 					parse_entry || return 1
-					${key}"='${val}'" ;;
+					valid_values=\"\${val_${key}}\"
+					[ -z \"\${valid_values}\" ] && { reg_failure \"Config key '${key}' has no assigned valid values.\"; exit 1; }
+					check_val && ${key}"='${val}'" ;;
 				*) add_unexp_entry
 			esac"
 	done
 
 	IFS="${default_IFS}"
 
-	test_keys=${test_keys#dummy|}
-	if [ -n "${test_keys}" ]
-	then
-		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
-		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
-	fi
-
 	if [ -n "${unexp_entries}" ]
 	then
-		echo
 		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
-		print_msg "Corresponding config entries:"
-		print_msg "${unexp_entries%$'\n'}"
+		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
 		luci_unexp_keys=${unexp_keys% }
 		luci_unexp_entries=${unexp_entries%$'\n'}
 	fi
 
-	if [ -n "${missing_keys% }" ]
+	# @url_conversion_logic
+	# check if urls need conversion, generate converted urls if so
+	if [ "${action}" != gen_config ] && [ -z "${urls_converted}" ] && [ ! -f "${config_dir}/.new_urls_format" ]
 	then
-		echo
+		mk_conv_urls
+		if [ -n "${url_conv_req}" ]
+		then
+			luci_url_conv_req=1
+			test_keys="$(printf %s "${test_keys}" | sed -E 's~(dnsmasq_){0,1}(block|allow)list(_ipv4){0,1}_urls[|]~~g')"
+		else
+			mk_new_urls_format_flag || return 1
+		fi
+	fi
+
+	test_keys=${test_keys#dummy|}
+	if [ -n "${test_keys}" ]
+	then
+		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
+		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
 		reg_failure "Missing keys in config: '${missing_keys% }'."
-		print_msg "Corresponding default config entries:"
-		print_msg "${missing_entries}"
+		print_msg "Corresponding default config entries:" "${missing_entries}"
 		add_conf_fix "Re-add missing config entries with default values"
 		luci_missing_keys=${missing_keys% }
 		luci_missing_entries=${missing_entries}
@@ -431,33 +616,62 @@ parse_config()
 
 	if [ -n "${legacy_entries}" ]
 	then
-		echo
 		reg_failure "Detected config entries in legacy format (missing double-quotes)."
-		print_msg "The following config entries must be converted to the new config format:"
-		print_msg "${legacy_entries%$'\n'}"
+		print_msg "The following config entries must be converted to the new config format:" "${legacy_entries%$'\n'}"
 		add_conf_fix "Convert legacy config entries to the new format"
 		luci_legacy_entries=${legacy_entries%$'\n'}
 	fi
 
-	case "${curr_config_format}" in *[!0-9]*|'')
-		echo
-		log_msg -warn "Config format version is unknown or invalid."
-		conf_format_old=1
-		add_conf_fix "Update config format version"
-	esac
-
-	if [ -z "${conf_format_old}" ] && [ "${curr_config_format}" -lt "${def_config_format}" ]
+	if [ -n "${bad_value_keys}" ]
 	then
-		echo
-		log_msg -warn "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
-		add_conf_fix "Update config format version"
-		luci_bad_conf_format=1
+		corrected_entries="$(printf %s "${def_config}" | grep -E "^(${bad_value_keys%|})=")"
+		bad_value_keys="$(printf %s "${bad_value_keys}" | tr '|' ' ')"
+		reg_failure "Detected config entries with unexpected values."
+		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
+			"Corresponding default config entries:" "${corrected_entries}"
+		add_conf_fix "Replace unexpected values with defaults"
+		luci_bad_val_entries=${bad_val_entries%$'\n'}
+		luci_corrected_entries=${corrected_entries%$'\n'}
+	fi
+
+	if [ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ]
+	then
+		case "${curr_config_format}" in
+			*[!0-9]*|'')
+				log_msg -warn "" "Config format version is unknown or invalid."
+				add_conf_fix "Update config format version" ;;
+			*)
+				if [ "${curr_config_format}" -lt "${def_config_format}" ]
+				then
+					log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+					add_conf_fix "Update config format version"
+				fi
+		esac
+	fi
+
+	# @config_migration_logic
+	# config file path change code can be removed a few months from now (Sep 2024)
+	if [ "${actual_config_file}" = "${root_config_file}" ]
+	then
+		log_msg -yellow "" "Note: config file path has changed to ${config_file}." "Your config file ${actual_config_file} will need to be moved."
+		add_conf_fix "Move the config file to ${config_file}"
+		luci_config_path_changed=1
 	fi
 
 	conf_fixes="${conf_fixes%$'\n'}"
 	luci_conf_fixes="${conf_fixes}"
 
+	{ [ -n "${url_conv_req}" ] && [ -z "${urls_converted}" ]; } || # @url_conversion_logic
 	[ -n "${conf_fixes}" ] && return 2
+	:
+}
+
+# @url_conversion_logic
+mk_new_urls_format_flag()
+{
+	try_mkdir -p "${config_dir}" || return 1
+	[ -f "${config_dir}/.new_urls_format" ] && return 0
+	touch "${config_dir}/.new_urls_format" || { reg_failure "Failed to create file '${config_dir}/.new_urls_format'."; return 1; }
 	:
 }
 
@@ -465,41 +679,99 @@ parse_config()
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local conf_fixes='' fixed_config='' missing_keys='' key val line fix cnt \
-		tip_msg="Fix your config file '${config_file}' or generate default config using 'service adblock-lean gen_config'."
+	local actual_config_file conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt parse_res url_conv_req
+
+	# @config_migration_logic
+	if [ -f "${config_file}" ]
+	then
+		actual_config_file="${config_file}"
+	elif [ -f "${root_config_file}" ]
+	then
+		actual_config_file="${root_config_file}"
+	else
+		reg_failure "Config file is missing."
+		log_msg "Generate default config using 'service adblock-lean gen_config'."
+		return 1
+	fi
+
+	local tip_msg="Fix your config file '${actual_config_file}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
-	parse_config "${config_file}"
+	parse_config "${actual_config_file}"
+	parse_res=${?}
+	[ ${parse_res} = 1 ] && { log_msg "${tip_msg}"; return 1; }
 
-	case ${?} in
-		0) return 0 ;;
-		1) log_msg "${tip_msg}"; return 1 ;;
-		2)
-	esac
+	[ ${parse_res} = 0 ] && [ -z "${url_conv_req}" ] && return 0
 
+	# if not in interactive console, return error
 	[ "${msgs_dest}" != "/dev/tty" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
 
-	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
+	# sanity check
+	[ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ] && { reg_failure "Failed to parse config."; return 1; }
 
 	if [ "${msgs_dest}" = "/dev/tty" ] && [ "${1}" != '-f' ]
 	then
-		echo
-		print_msg "${blue}Perform following automatic changes?${n_c}"
-		cnt=0
-		local IFS=$'\n'
-		for fix in ${conf_fixes}
-		do
-			[ -z "${fix}" ] && continue
-			cnt=$((cnt+1))
-			print_msg "${cnt}. ${fix}"
-		done
-		IFS="${default_IFS}"
-		pick_opt "y|n" || return 1
-		[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+		if [ -n "${conf_fixes}" ]
+		then
+			print_msg "" "${blue}Perform following automatic changes?${n_c}"
+			cnt=0
+			local IFS=$'\n'
+			for fix in ${conf_fixes}
+			do
+				[ -z "${fix}" ] && continue
+				cnt=$((cnt+1))
+				print_msg "${cnt}. ${fix}"
+			done
+			IFS="${default_IFS}"
+			pick_opt "y|n" || return 1
+			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+		fi
+
+		# @url_conversion_logic
+		if [ -n "${url_conv_req}" ]
+		then
+			print_msg "" "${purple}NOTE: adblock-lean now supports both dnsmasq-formatted lists and \"raw domain\" lists.${n_c}" \
+				"The \"raw domain\" lists are functionally identical but their filesize is smaller and they are faster to process." \
+				"Hagezi and OISD dnsmasq-formatted list URLs can be automatically converted to \"raw domain\" list URLs." \
+				"If you are using other dnsmasq-formatted lists, they will be moved into separate config options and continue to work," \
+				"but you may want to look for their raw domain equivalents (sometimes called \"wildcard domains\")." \
+				"" "${purple}Current \"raw domains\" URL config entries:${n_c}" "${curr_url_entries%"${nl}"}"
+			[ -n "${curr_dnsmasq_url_entries%"${nl}"}" ] &&
+				print_msg "" "${purple}Current \"dnsmasq\" URL config entries:${n_c}" "${curr_dnsmasq_url_entries%"${nl}"}"
+			if [ -n "${conv_blocklist_urls}${conv_blocklist_ipv4_urls}${conv_allowlist_urls}" ]
+			then
+				print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
+						"(you will be asked to confirm before writing the config)"
+				pick_opt "y|n" || return 1
+			else
+				REPLY=y
+			fi
+			convert_urls "${REPLY}"
+			urls_converted=1
+
+			for list_format in "\"raw domain\"" dnsmasq
+			do
+				print_msg "" "${purple}Updated ${list_format} URL config entries:${n_c}"
+				if [ "${list_format}" = "\"raw domain\"" ]
+				then
+					list_format=
+				else
+					list_format=dnsmasq_
+				fi
+				for url_entry in "${list_format}blocklist" "${list_format}blocklist_ipv4" "${list_format}allowlist"
+				do
+					eval "urls=\"\${${url_entry}_urls}\""
+					print_msg "${blue}${url_entry}_urls${n_c}=\"${urls}\""
+				done
+			done
+			print_msg "" "Confirm URLs update in config?"
+			pick_opt "y|n" || return 1
+			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
+		fi
 	fi
 
-	fix_config "${missing_keys}" || { report_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
-
+	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+	mk_new_urls_format_flag || return 1 # @url_conversion_logic
 	:
 }
 
@@ -529,7 +801,7 @@ fix_config()
 	)"
 
 	local old_config_f="/tmp/adblock-lean_config.old"
-	if ! cp "${config_file}" "${old_config_f}"
+	if ! cp "${actual_config_file}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
 		[ "${msgs_dest}" != "/dev/tty" ] && return 1
@@ -537,7 +809,7 @@ fix_config()
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" = n ] && return 1
 	else
-		log_msg "Old config file was saved as ${old_config_f}."
+		log_msg "" "Old config file was saved as ${old_config_f}."
 	fi
 
 	write_config "${fixed_config}" || return 1
@@ -555,13 +827,16 @@ write_config()
 
 	try_mkdir -p "${abl_dir}" || return 1
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
+	local actual_config_file="${config_file}"
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
-	echo
-	log_msg "Saving new config file to '${config_file}'."
-	try_mkdir -p "${PREFIX}" || return 1
-	try_mv "${tmp_config}" "${config_file}" && return 0
+	log_msg "" "Saving new config file to '${config_file}'."
+	try_mkdir -p "${config_dir}" || return 1
+	try_mv "${tmp_config}" "${config_file}" &&
+	# @config_migration_logic, also the '&&' above
+	{ rm -f "${root_config_file}"; return 0; }
+
 	rm -f "${tmp_config}"
 	return 1
 }
@@ -609,7 +884,7 @@ cleanup_and_exit()
 
 reg_failure()
 {
-	log_msg -err "${1}"
+	log_msg -err "" "${1}"
 	failure_msg="${failure_msg}${1}"$'\n'
 	luci_errors="${failure_msg}"
 }
@@ -641,10 +916,9 @@ check_blocklist_compression_support()
 {
 	if ! dnsmasq --help | grep -qe "--conf-script"
 	then
-		echo
-		log_msg "Note: The version of dnsmasq installed on this system does not support blocklist compression."
-		log_msg "Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\""
-		log_msg "To use dnsmasq compression (which saves memory), upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression."
+		log_msg "" "Note: The version of dnsmasq installed on this system does not support blocklist compression." \
+			"Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\"" \
+			"To use dnsmasq compression (which saves memory), upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression."
 		return 1
 	fi
 
@@ -656,22 +930,23 @@ check_blocklist_compression_support()
 	done
 
 	reg_failure "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
-	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist."
-	log_msg "Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section."
-	log_msg "Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit"
-	log_msg "Either edit /etc/config/dhcp as described above or disable blocklist compression in config."
+	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist." \
+		"Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section." \
+		"Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit" \
+		"Either edit /etc/config/dhcp as described above or disable blocklist compression in config."
 	return 1
 }
 
 cleanup_dl_status_files()
 {
-	rm -f "${abl_dir}/rogue_element" "${abl_dir}/dnsmasq_err" "${abl_dir}/uclient-fetch_err"
+	rm -f "${abl_dir}/rogue_element" "${abl_dir}/uclient-fetch_err"
 }
 
 # 1 - list id
-# 2 - list type (allowlist or blocklist)
+# 2 - list type (allowlist|blocklist|blocklist_ipv4)
 # 3 - list origin (local or downloaded)
-# 4 - local list path (for local lists) or URL (for downloaded lists)
+# 4 - list format (dnsmasq or raw)
+# 5 - local list path (for local lists) or URL (for downloaded lists)
 #
 # return codes:
 # 0 - Success
@@ -680,25 +955,23 @@ cleanup_dl_status_files()
 # 3 - Download Failure (retry makes sense)
 process_list_part()
 {
-	local list_id="${1}" list_type="${2}" list_origin="${3}" list_path="${4}" me="process_list_part"
+	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part"
 	local dest_file="${abl_dir}/${list_type}.${list_id}" compress_part='' \
-		min_list_part_line_count='' list_part_size_B='' list_part_size_KB=''
-	local sed_rogue_expr='(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+' sed_conv_expr=''
+		min_list_part_line_count='' list_part_size_B='' list_part_size_KB='' val_entry_regex
 
-	[ -z "${list_id}" ] || [ -z "${list_origin}" ] || [ -z "${list_path}" ] && { reg_failure "${me}: Missing arguments."; return 1; }
+	for v in 1 2 3 4 5; do
+		eval "[ -z \"\${${v}}\" ]" && { reg_failure "${me}: Missing arguments."; return 1; }
+	done
+
+	case "${list_type}" in
+		allowlist|blocklist) val_entry_regex='^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
+		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
+		*) reg_failure "${me}: Invalid list type '${list_type}'"; return 1
+	esac
+
 	case ${list_type} in
-		allowlist)
-			sed_rogue_expr="^(server=/${sed_rogue_expr}/#$|$)"
-			sed_conv_expr='s~.*~server=/&/#~'
-			[ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
-		blocklist)
-			sed_rogue_expr="^(local=/${sed_rogue_expr}/$|bogus-nxdomain=[0-9]+([.][0-9]+)+$|$)"
-			case ${list_origin} in
-				local) sed_conv_expr="s~.*~local=/&/~" ;;
-				downloaded) sed_conv_expr="s/^address=/local=/"
-			esac
-			[ "$use_compression" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
-		*) reg_failure "${me}: Missing or invalid list type '${list_type}'"; return 1
+		allowlist) [ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
+		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
 	esac
 
 	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
@@ -710,43 +983,59 @@ process_list_part()
 		downloaded) uclient-fetch "${list_path}" -O- --timeout=3 2> "${abl_dir}/uclient-fetch_err";;
 		local) cat "${list_path}"
 	esac |
+	# limit size
 	{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
 
 	# Count bytes
 	tee >(wc -c > "${abl_dir}/list_part_size_B") |
 
-	# 1 Convert to lowercase; 2 Remove comment lines and trailing comments, remove whitespaces
-	# 3 Convert blocklist to 'local=/[domain]/', allowlist to 'server=/[domain]/#'
-	tr 'A-Z' 'a-z' | sed "${sed_san_expr}; ${sed_conv_expr}" |
+	# Remove comment lines and trailing comments, remove whitespaces
+	sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
+
+	# Convert dnsmasq format to raw format
+	if [ "${list_format}" = dnsmasq ]
+	then
+		local rm_prefix_expr="s~^[ \t]*(local|server|address)=/~~" rm_suffix_expr=''
+		case "${list_type}" in
+			blocklist) rm_suffix_expr='s~/$~~' ;;
+			blocklist_ipv4) rm_prefix_expr="s~^[ \t]*bogus-nxdomain=~~" ;;
+			allowlist) rm_suffix_expr='s~/#$~~'
+		esac
+		sed -E "${rm_prefix_expr};${rm_suffix_expr}" | tr '/' '\n'
+	else
+		cat
+	fi |
+
+	# Count entries
+	tee >(wc -w > "${abl_dir}/list_part_line_count") |
+
+	# Convert to lowercase
+	case "${list_type}" in allowlist|blocklist) tr 'A-Z' 'a-z' ;; *) cat; esac |
 
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
 		# remove allowlist domains from blocklist
-		${awk_cmd} -F'/' 'NR==FNR { sub(/^server=\//,""); sub(/\/#$/,""); allow[$0]; next } { n=split($2,arr,"."); addr = arr[n]; \
-								for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
+		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n];
+			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
 	else
 		cat
 	fi |
-	tee >(wc -w > "${abl_dir}/list_part_line_count") |
 
 	# check downloaded lists for rogue elements
 	if [ "${list_origin}" = downloaded ]
 	then
-		tee >(sed -nE "\~${sed_rogue_expr}~d;p;:1 n;b1" > "${abl_dir}/rogue_element")
+		tee >(sed -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${abl_dir}/rogue_element")
 	else
 		cat
 	fi |
 
-	# compress blocklist parts
+	# compress parts
 	if [ -n "${compress_part}" ]
 	then
-		tee >(gzip > "${dest_file}")
+		gzip
 	else
-		tee "${dest_file}"
-	fi |
-
-	# check parts with dnsmasq --test
-	{ dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err" && rm -f "${abl_dir}/dnsmasq_err"; cat 1>/dev/null; }
+		cat
+	fi > "${dest_file}"
 
 	read -r list_part_size_B _ < "${abl_dir}/list_part_size_B" 2>/dev/null
 	list_part_size_KB=$(( (list_part_size_B + 0) / 1024 ))
@@ -759,8 +1048,8 @@ process_list_part()
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
 		reg_failure "${list_origin} ${list_type} part size reached the maximum value set in config (${max_file_part_size_KB} KB)."
-		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
-		log_msg "Skipping ${list_type} part and continuing."
+		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config." \
+			"Skipping ${list_type} part and continuing."
 		rm -f "${dest_file}"
 		return 2
 	fi
@@ -780,17 +1069,6 @@ process_list_part()
 	fi
 	rm -f "${abl_dir}/rogue_element"
 
-	if [ -f "${abl_dir}/dnsmasq_err" ]
-	then
-		rm -f "${dest_file}"
-		reg_failure "The dnsmasq --test on the ${list_type} part failed."
-		log_msg "dnsmasq --test errors:"
-		log_msg "$(head -n10 "${abl_dir}/dnsmasq_err")"
-		rm -f "${abl_dir}/dnsmasq_err"
-		return 2
-	fi
-	rm -f "${abl_dir}/dnsmasq_err"
-
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
 		rm -f "${dest_file}"
@@ -809,7 +1087,7 @@ gen_list_parts()
 	{
 		local part=
 		[ "${1}" = downloaded ] && part=" part"
-		log_msg "Successfully processed ${1} ${list_type}${part} (source file size: ${list_part_size_human}, sanitized line count: $(int2human ${list_part_line_count}))."
+		log_msg "Successfully processed ${list_type}${part} (source file size: ${list_part_size_human}, sanitized line count: $(int2human ${list_part_line_count}))."
 	}
 
 	handle_process_failure()
@@ -819,158 +1097,302 @@ gen_list_parts()
 		:
 	}
 
-	local list_type='' list_id list_line_count list_part_line_count and_compressing='' list_urls list_url local_list_path
+	local list_type='' list_format='' list_id list_line_cnt list_part_line_count and_compressing='' list_urls list_url local_list_path
 
-	for list_type in allowlist blocklist
+	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "NOTE: No URLs specified for blocklist download."
+
+	for list_type in allowlist blocklist blocklist_ipv4
 	do
 		rm -f "${abl_dir}/${list_type}"*
-		list_id=0 list_line_count=0 list_part_line_count=0
+		list_id=0 list_line_cnt=0 list_part_line_count=0
 		and_compressing=
-		[ ${list_type} = blocklist ] && [ "${use_compression}" = 1 ] && and_compressing=" and compressing"
+		case ${list_type} in blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && and_compressing=" and compressing"; esac
 
 		# Local list
-		echo
-		eval "local_list_path=\"\${local_${list_type}_path}\""
-		if [ ! -f "${local_list_path}" ]
+		if [ "${list_type}" != blocklist_ipv4 ]
 		then
-			log_msg -blue "No local ${list_type} identified."
-		elif [ ! -s "${local_list_path}" ]
-		then
-			log_msg -warn "Local ${list_type} file is empty."
-		else
-			echo
-			log_msg -blue "Found local ${list_type}. Sanitizing${and_compressing}."
-			reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
-			process_list_part "${list_id}" "${list_type}" "local" "${local_list_path}"
-			case ${?} in
-				0)
-					log_process_success "local"
-					list_line_count=$(( list_line_count + list_part_line_count )) ;;
-				*)
-					handle_process_failure || return 1
-			esac
+			eval "local_list_path=\"\${local_${list_type}_path}\""
+			if [ ! -f "${local_list_path}" ]
+			then
+				log_msg -blue "No local ${list_type} identified."
+			elif [ ! -s "${local_list_path}" ]
+			then
+				log_msg -warn "Local ${list_type} file is empty."
+			else
+				log_msg -blue "" "Found local ${list_type}. Sanitizing${and_compressing}."
+				reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
+				process_list_part "${list_id}" "${list_type}" "local" "raw" "${local_list_path}"
+				case ${?} in
+					0)
+						log_process_success "local"
+						list_line_cnt=$(( list_line_cnt + list_part_line_count )) ;;
+					*) handle_process_failure || return 1
+				esac
+			fi
 		fi
 
 		# List parts download
-		eval "list_urls=\"\${${list_type}_urls}\""
-		if [ -z "${list_urls}" ]
-		then
-			[ "${list_type}" = blocklist ] && log_msg -yellow "NOTE: No URLs specified for blocklist download. Skipping download."
-		else
-			echo
-			reg_action -blue "Starting ${list_type} part(s) download." || return 1
-		fi
 
-		for list_url in ${list_urls}
+		for list_format in raw dnsmasq
 		do
-			reg_action "Downloading, checking and sanitizing ${list_type} part from: ${list_url}." || return 1
-			list_id=$((list_id+1))
-			retry=0
-			while :
+			local d=
+			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
+			eval "list_urls=\"\${${d}${list_type}_urls}\""
+			if [ -n "${list_urls}" ]
+			then
+				reg_action -blue "Starting ${list_format} ${list_type} part(s) download." || return 1
+			fi
+
+			for list_url in ${list_urls}
 			do
-				retry=$((retry + 1))
-				list_part_line_count=0
-				process_list_part "${list_id}" "${list_type}" "downloaded" "${list_url}"
-				case ${?} in
-					0)
-						if [ "${list_type}" = allowlist ]
-						then
-							cat "${abl_dir}/${list_type}.${list_id}" >> "${abl_dir}/allowlist" ||
-								{ reg_failure "Failed to merge allowlist part."; return 1; }
-							rm -f "${abl_dir}/${list_type}.${list_id}"
-						fi
-						log_process_success "downloaded"
-						list_line_count=$(( list_line_count + list_part_line_count ))
-						continue 2 ;;
-					1) return 1 ;;
-					2)
+				list_id=$((list_id+1))
+				retry=0
+				while :
+				do
+					retry=$((retry + 1))
+					list_part_line_count=0
+					reg_action "Downloading, checking and sanitizing ${list_format} ${list_type} part from: ${list_url}." || return 1
+					process_list_part "${list_id}" "${list_type}" "downloaded" "${list_format}" "${list_url}"
+					case ${?} in
+						0)
+							if [ "${list_type}" = allowlist ]
+							then
+								cat "${abl_dir}/${list_type}.${list_id}" >> "${abl_dir}/allowlist" ||
+									{ reg_failure "Failed to merge allowlist part."; return 1; }
+								rm -f "${abl_dir}/${list_type}.${list_id}"
+							fi
+							log_process_success "downloaded ${list_format}"
+							[ "${list_type}" = blocklist_ipv4 ] && use_blocklist_ipv4=1
+							list_line_cnt=$(( list_line_cnt + list_part_line_count ))
+							continue 2 ;;
+						1) return 1 ;;
+						2)
+							handle_process_failure || return 1
+							continue 2 ;;
+						3) ;;
+					esac
+
+					if [ "${retry}" -ge "${max_download_retries}" ]
+					then
+						reg_failure "Three download attempts failed for URL ${list_url}."
 						handle_process_failure || return 1
-						continue 2 ;;
-					3) ;;
-				esac
+						continue 2
+					fi
 
-				if [ "${retry}" -ge "${max_download_retries}" ]
-				then
-					reg_failure "Three download attempts failed."
-					handle_process_failure || return 1
-					continue 2
-				fi
-
-				reg_action -blue "Sleeping for 5 seconds after failed download attempt." || return 1
-				sleep 5
-				continue
+					reg_action -blue "Sleeping for 5 seconds after failed download attempt." || return 1
+					sleep 5
+					continue
+				done
 			done
 		done
 
-		if [ "${list_line_count}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${abl_dir}/allowlist" ]; }
+		if [ "${list_line_cnt}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${abl_dir}/allowlist" ]; }
 		then
 			case ${list_type} in
 				blocklist) return 1 ;;
 				allowlist)
 					log_msg "Not using any allowlist for blocklist processing."
 					use_allowlist=0
-					continue
+					continue ;;
+				blocklist_ipv4) use_blocklist_ipv4=0
 			esac
 		fi
 
 		if [ "${list_type}" = allowlist ]
 		then
-			echo
-			log_msg -green "Successfully generated allowlist with $(int2human ${list_line_count}) lines."
+			log_msg -green "" "Successfully generated allowlist with $(int2human ${list_line_cnt}) entries."
 			log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 			use_allowlist=1
-		else
-			preprocessed_blocklist_line_count="${list_line_count}"
 		fi
+		preprocessed_list_line_cnt="$((preprocessed_list_line_cnt+list_line_cnt))"
 	done
 	:
 }
 
 generate_and_process_blocklist_file()
 {
-	echo
+	convert_entries()
+	{
+		if [ "${awk_cmd}" = gawk ]
+		then
+			pack_entries_awk "$@"
+		else
+			pack_entries_sed "$@"
+		fi
+	}
+
+	# convert to dnsmasq format and pack 4 input lines into 1 output line
+	# intput from STDIN, output to STDIN
+	# 1 - blocklist|allowlist
+	pack_entries_sed()
+	{
+		local entry_type
+		case "$1" in
+			blocklist)
+				# packs 4 domains in one 'local=/.../' line
+				sed "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${nl}};\$!{n;a /${nl}};\$!{n; a /${nl}};a @" ;;
+			allowlist)
+				# packs 4 domains in one 'server=/.../#'' line
+				{ cat; printf '\n'; } | sed '/^$/d;$!N;$!N;$!N;s~\n~/~g;s~^~server=/~;s~/*$~/#@~' ;;
+			*) printf ''; return 1
+		esac | tr -d '\n' | tr "@" '\n'
+	}
+
+	# convert to dnsmasq format and pack input lines into 1024 characters-long lines
+	# intput from STDIN, output to STDOUT
+	# 1 - blocklist|allowlist
+	pack_entries_awk()
+	{
+		local entry_type len_lim=1024 allow_char=''
+		case "$1" in
+			blocklist) entry_type=local ;;
+			allowlist) entry_type=server allow_char="#" ;;
+		esac
+
+		len_lim=$((len_lim-${#entry_type}-${#allow_char}-2))
+		# shellcheck disable=SC2016
+		$awk_cmd -v ORS="" -v m=${len_lim} -v a="${allow_char}" -v t=${entry_type} '
+			BEGIN {al=0; r=0; s=""}
+			NF {
+				r=r+1
+				if (r==1) {print t "=/"}
+				l=length($0)
+				n=al+1+l
+				if (n<=m) {al=n; print $0 "/"; next}
+				else {print a "\n" t "=/" $0 "/"; al=l+1}
+			}
+			END {print a "\n"}'
+	}
+
+	# 1 - list type (blocklist|blocklist_ipv4)
+	print_list_parts()
+	{
+		local find_name="${1}.[0-9]*" find_cmd="cat"
+		[ "${use_compression}" = 1 ] && { find_name="${1}.*.gz" find_cmd="gunzip -c"; }
+		find "${abl_dir}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
+		printf ''
+	}
+
+	# 1 - list type (block|blocklist_ipv4|allowlist)
+	read_list_stats()
+	{
+		read -r ${1}_entries_cnt ${1}_size_B 2>/dev/null < "${abl_dir}/${1}_stats"
+		eval ": \"\${${1}_entries_cnt:=0}\" \"\${${1}_size_B:=0}\""
+	}
+
+	dedup()
+	{
+		if [ "${deduplication}" = 1 ]
+		then
+			sort -u -
+		else
+			cat
+		fi
+	}
+
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
-	local out_f="${abl_dir}/blocklist"
+	local list_type out_f="${abl_dir}/blocklist"
+
 	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
+
+	rm -f "${abl_dir}/dnsmasq_err"
+
 	{
-		[ "${use_allowlist}" = 1 ] && cat "${abl_dir}/allowlist"
-		rm -f "${abl_dir}/allowlist"
+		# print blocklist parts
+		print_list_parts blocklist |
+		# optional deduplication
+		dedup |
+		# count entries
+		tee >(wc -wc > "${abl_dir}/blocklist_stats") |
+		# pack entries in 1024 characters long lines
+		convert_entries blocklist
 
-		local find_name="blocklist.[0-9]*" find_cmd="cat"
-		[ "${use_compression}" = 1 ] && { find_name="blocklist.*.gz" find_cmd="gunzip -c"; }
-		find "${abl_dir}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
-	} | sort -u |
+		# print ipv4 blocklist parts
+		if [ "${use_blocklist_ipv4}" ]
+		then
+			print_list_parts blocklist_ipv4 |
+			# optional deduplication
+			dedup |
+			tee >(wc -wc > "${abl_dir}/blocklist_ipv4_stats") |
+			# add prefix
+			sed 's/^/bogus-nxdomain=/'
+		fi
+
+		# print allowlist parts
+		if [ "${use_allowlist}" = 1 ]
+		then
+			cat "${abl_dir}/allowlist" |
+			# optional deduplication
+			dedup |
+			tee >(wc -wc > "${abl_dir}/allowlist_stats") |
+			# pack entries in 1024 characters long lines
+			convert_entries allowlist
+			rm -f "${abl_dir}/allowlist"
+		fi
+		# add the blocklist test entry
+		printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"
+	} |
+
+	# limit size
 	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
-	{ tee >(wc -wc > "${abl_dir}/blocklist_stats"); printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"; } |
-
 	if  [ -n "${final_compress}" ]
 	then
 		gzip
 	else
 		cat
-	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; return 1; }
+	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
 
-	read -r good_line_count blocklist_file_size_B < "${abl_dir}/blocklist_stats" 2>/dev/null
-	: "${good_line_count:=0}"
+	reg_action -blue "Stopping dnsmasq." || return 1
+	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
 
-	blocklist_file_size_KB=$(( (blocklist_file_size_B + 0) / 1024 ))
-	blocklist_file_size_human="$(bytes2human "${blocklist_file_size_B}")"
+	# check the final blocklist with dnsmasq --test
+	reg_action -blue "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
+	if  [ -n "${final_compress}" ]
+	then
+		gunzip -fc "${out_f}"
+	else
+		cat "${out_f}"
+	fi |
+	dnsmasq --test -C - 2> "${abl_dir}/dnsmasq_err"
+	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${abl_dir}/dnsmasq_err"
+	then
+		local dnsmasq_err="$(head -n10 "${abl_dir}/dnsmasq_err" | sed '/^$/d')"
+		rm -f "${out_f}" "${abl_dir}/dnsmasq_err"
+		reg_failure "The dnsmasq test on the final blocklist failed."
+		log_msg "dnsmasq --test errors:" "${dnsmasq_err:-"No specifics: probably killed because of OOM."}"
+		return 2
+	fi
 
-	if [ "${blocklist_file_size_KB}" -ge "${max_blocklist_file_size_KB}" ]
+	rm -f "${abl_dir}/dnsmasq_err"
+
+	local blocklist_entries_cnt blocklist_size_B blocklist_ipv4_entries_cnt blocklist_ipv4_size_B allowlist_entries_cnt allowlist_size_B final_list_size_B
+
+	for list_type in blocklist blocklist_ipv4 allowlist
+	do
+		read_list_stats ${list_type}
+	done
+
+	final_entries_cnt=$(( blocklist_entries_cnt + blocklist_ipv4_entries_cnt + allowlist_entries_cnt ))
+
+	final_list_size_B=$(( blocklist_size_B + blocklist_ipv4_size_B + allowlist_size_B))
+	final_list_size_human="$(bytes2human "${final_list_size_B}")"
+
+	if [ $(( final_list_size_B / 1024 )) -ge "${max_blocklist_file_size_KB}" ]
 	then
 		reg_failure "Blocklist file size reached the maximum value set in config ($(int2human "${max_blocklist_file_size_KB}") KB)."
 		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
 		return 1
 	fi
 
-	if [ "${good_line_count}" -lt "${min_good_line_count}" ]
+	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
 	then
-		reg_failure "Good line count: $(int2human "${good_line_count}") below the minimum value set in config ($(int2human "${min_good_line_count}"))."
+		reg_failure "Entries count: $(int2human "${final_entries_cnt}") below the minimum value set in config ($(int2human "${min_good_line_count}"))."
 		return 1
 	fi
 
-	log_msg "Processed blocklist uncompressed file size: ${blocklist_file_size_human}."
+	log_msg -green "New blocklist file check passed."
+	log_msg "Final list uncompressed file size: ${final_list_size_human}."
 
 	:
 }
@@ -979,11 +1401,12 @@ generate_and_process_blocklist_file()
 # return codes:
 # 0 - dnsmasq running
 # 1 - dnsmasq not running or failed to detect dnsmasq directory
+# 2 - failed to detect dnsmasq directory
 check_dnsmasq_instance()
 {
-	! pgrep -x /usr/sbin/dnsmasq &>/dev/null && { reg_failure "No running instance of dnsmasq detected."; return 1; }
+	! pgrep -x /usr/sbin/dnsmasq &>/dev/null && return 1
 	[ ! -d "${dnsmasq_tmp_d}" ] &&
-		{ reg_failure "Directory '${dnsmasq_tmp_d}' does not exist. Failed to detect dnsmasq directory or dnsmasq is not running."; return 1; }
+		{ reg_failure "Directory '${dnsmasq_tmp_d}' does not exist. Failed to detect dnsmasq directory or dnsmasq is not running."; return 2; }
 	:
 }
 
@@ -995,10 +1418,9 @@ check_dnsmasq_instance()
 # 4 - dnsmasq is running, but the blocklist test domain failed to resolve (blocklist not loaded)
 check_active_blocklist()
 {
-	echo
 	reg_action -blue "Checking active blocklist." || return 1
 
-	check_dnsmasq_instance || return 1
+	check_dnsmasq_instance || { [ ${?} = 1 ] && reg_failure "No running instance of dnsmasq detected."; return 1; }
 
 	nslookup "adblocklean-test123.info" 127.0.0.1 1>/dev/null 2>/dev/null ||
 			{ reg_failure "Lookup of the blocklist test domain failed with new blocklist."; return 4; }
@@ -1017,13 +1439,11 @@ check_active_blocklist()
 
 restart_dnsmasq()
 {
-	[ "$action" = "start" ] && echo
 	reg_action -blue "Restarting dnsmasq." || return 1
 
-	/etc/init.d/dnsmasq restart &> /dev/null || 
-		{ reg_failure "Failed to restart dnsmasq."; return 1; }
+	/etc/init.d/dnsmasq restart &> /dev/null || { reg_failure "Failed to restart dnsmasq."; stop 1; }
 	
-	reg_action "Waiting for dnsmasq initialization." || return 1
+	reg_action -blue "Waiting for dnsmasq initialization." || return 1
 	local dnsmasq_ok=
 	for i in $(seq 1 60)
 	do
@@ -1031,7 +1451,7 @@ restart_dnsmasq()
 		sleep 1;
 	done
 
-	[ -z "$dnsmasq_ok" ] && { reg_failure "dnsmasq initialization failed."; return 1; }
+	[ -z "$dnsmasq_ok" ] && { reg_failure "dnsmasq initialization failed."; stop 1; }
 
 	log_msg -green "Restart of dnsmasq completed."
 	:
@@ -1049,7 +1469,6 @@ export_existing_blocklist()
 	}
 
 	local src src_d="${dnsmasq_tmp_d}" dest="${abl_dir}/prev_blocklist"
-	echo
 	if [ -f "${src_d}/.blocklist.gz" ]
 	then
 		case ${use_compression} in
@@ -1074,7 +1493,7 @@ export_existing_blocklist()
 			src="${src_d}/blocklist"
 		fi
 	else
-		log_msg "No existing compressed or uncompressed blocklist identified."
+		log_msg "" "No existing compressed or uncompressed blocklist identified."
 		return 2
 	fi
 	try_mv "${src}" "${dest}" || return 1
@@ -1083,28 +1502,36 @@ export_existing_blocklist()
 
 restore_saved_blocklist()
 {
+	restore_failed()
+	{
+		reg_failure "Failed to restore saved blocklist."
+	}
+
 	local mv_src="${abl_dir}/prev_blocklist" mv_dest="${abl_dir}/blocklist"
-	echo
-	reg_action -blue "Restoring saved blocklist file." || return 1
+	reg_action -blue "Restoring saved blocklist file." || { restore_failed; return 1; }
 	if [ -f "${mv_src}.gz" ]
 	then
-		try_mv "${mv_src}.gz" "${mv_dest}.gz" || return 1
+		try_mv "${mv_src}.gz" "${mv_dest}.gz" || { restore_failed; return 1; }
 		if [ -z "${final_compress}" ]
 		then
-			try_gunzip "${mv_dest}.gz" || return 1
+			try_gunzip "${mv_dest}.gz" || { restore_failed; return 1; }
 		fi
 	elif [ -f "${mv_src}" ]
 	then
-		try_mv "${mv_src}" "${mv_dest}" || return 1
+		try_mv "${mv_src}" "${mv_dest}" || { restore_failed; return 1; }
 		if [ -n "${final_compress}" ]
 		then
-			try_gzip -f "${mv_dest}" ||return 1
+			try_gzip -f "${mv_dest}" || { restore_failed; return 1; }
 		fi
 	else
 		reg_failure "No previous blocklist file found."
+		restore_failed
 		return 1
 	fi
-	import_blocklist_file || { reg_failure "Failed to import the blocklist file."; return 1; }
+	import_blocklist_file || { reg_failure "Failed to import the blocklist file."; restore_failed; return 1; }
+
+	restart_dnsmasq || { restore_failed; return 1; }
+
 	:
 }
 
@@ -1131,7 +1558,7 @@ import_blocklist_file()
 	fi
 
 	try_mv "${src_file}" "${dest_file}" || return 1
-	imported_blocklist_file_size_human=$(get_file_size_human "${dest_file}")
+	imported_final_list_size_human=$(get_file_size_human "${dest_file}")
 
 	if [ -n "${final_compress}" ]
 	then
@@ -1149,12 +1576,12 @@ import_blocklist_file()
 # 2 - update check failed
 check_for_updates()
 {
-	echo
+	reg_action -blue "Checking for adblock-lean updates."
 	rm -f "${abl_dir}/uclient-fetch_err"
 	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed -E 's/[ \t]+.*$//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
 		2> "${abl_dir}/uclient-fetch_err" |
-		tee >(cat > "${abl_dir}/remote_abl"; . "${abl_dir}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config |
+		tee >(cat > "${abl_dir}/remote_abl"; . "${abl_dir}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config -d |
 			get_config_format > "${abl_dir}/upd_config_format") |
 		sha256sum | sed -E 's/[ \t]+.*$//')
 
@@ -1217,7 +1644,7 @@ mk_lock()
 			1) return 1 ;;
 			2)
 				report_pid_action
-				log_msg "Refusing to open another instance."
+				log_msg -yellow "Refusing to open another instance."
 				return 254
 		esac
 	else
@@ -1227,7 +1654,7 @@ mk_lock()
 	[ -z "${1%.}" ] && { reg_failure "${me}: pid action is unspecified."; return 1; }
 	[ -z "${pid_file}" ] && { reg_failure "${me}: \${pid_file} variable is unset."; return 1; }
 
-	try_mkdir "${abl_pid_dir}" || return 1
+	try_mkdir -p "${abl_pid_dir}" || return 1
 	printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "${me}: Failed to write to pid file '${pid_file}'."; return 1; }
 	:
 }
@@ -1308,7 +1735,7 @@ reg_action()
 		esac
 	done
 
-	[ -z "${nolog}" ] && log_msg "${color}" "${msg% }"
+	[ -z "${nolog}" ] && log_msg "" ${color} "${msg% }"
 	if [ -n "${lock_req}" ]
 	then
 		update_pid_action "${msg% }" || return 1
@@ -1398,16 +1825,18 @@ init_command()
 
 	# create work dir, check dnsmasq, load config, source custom script
 	case ${action} in
-		status) try_mkdir -p "${abl_dir}" || exit 1 ;;
+		status)
+			try_mkdir -p "${abl_dir}" || exit 1
+			load_config || { reg_failure "Failed to load config."; exit 1; } ;;
 		start|boot|pause|resume|update)
-			check_dnsmasq_instance || exit 1
+			check_dnsmasq_instance || { [ ${?} = 1 ] && reg_failure "No running instance of dnsmasq detected."; exit 1; }
 			try_mkdir -p "${abl_dir}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; }
 			if [ -n "${custom_script}" ]
 			then
 				custom_scr_sourced=
-				[ -f "${custom_script}" ] && . "${custom_script}" && custom_scr_sourced=1
-				[ -z "${custom_scr_sourced}" ] && reg_failure "Custom script '${custom_script}' doesn't exist or it returned error."
+				[ -f "${custom_script}" ] && . "${custom_script}" && custom_scr_sourced=1 ||
+					reg_failure "Custom script '${custom_script}' doesn't exist or it returned an error."
 			fi
 	esac
 
@@ -1427,7 +1856,6 @@ print_log()
 # 1 - (optional) '-noexit' to return to the calling function
 gen_stats()
 {
-	echo
 	reg_action -blue "Generating dnsmasq stats." || exit 1
 	local dnsmasq_pid
 	dnsmasq_pid="$(pidof /usr/sbin/dnsmasq)" || { reg_failure "Failed to detect dnsmasq PID or dnsmasq is not running."; exit 1; }
@@ -1447,6 +1875,7 @@ gen_config()
 		[ "${REPLY}" = n ] && exit 1
 	fi
 	write_config "$(print_def_config)" || exit 1
+	mk_new_urls_format_flag || exit 1 # @url_conversion_logic
 	check_blocklist_compression_support
 	:
 }
@@ -1462,24 +1891,31 @@ boot()
 start()
 {
 	init_command start || exit 1
-	log_msg -purple "Started adblock-lean."
-	echo
+	log_msg -purple "Started adblock-lean." ""
 
 	if type gawk &> /dev/null
 	then
-		log_msg "gawk detected so using gawk for fast (sub)domain match removal."
+		log_msg "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
 		awk_cmd="gawk"
 	else
-		log_msg "gawk not detected so using awk for the (sub)domain match removal."
-		log_msg "Consider installing the gawk package 'opkg install gawk' for faster (sub)domain match removal."
+		log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
+		log_msg "Consider installing the gawk package 'opkg install gawk' for faster processing and (sub)domain match removal."
 		awk_cmd="awk"
+	fi
+
+	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
+	then
+		log_msg "GNU sed detected so list processing will be fast."
+	else
+		log_msg -yellow "GNU sed not detected so list processing will be a little slower."
+		log_msg "Consider installing the GNU sed package (opkg install sed) for faster processing."
 	fi
 
 	if sort --version 2>/dev/null | grep -qe coreutils
 	then
 		log_msg "coreutils-sort detected so sort will be fast."
 	else
-		log_msg "coreutils-sort not detected so sort will be a little slower."
+		log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
 		log_msg "Consider installing the coreutils-sort package (opkg install coreutils-sort) for faster sort."
 	fi
 
@@ -1505,68 +1941,49 @@ start()
 
 	if ! gen_list_parts
 	then
-		reg_failure "Failed to generate preprocessed blocklist file with at least one line."
-		restore_saved_blocklist
+		reg_failure "Failed to generate preprocessed blocklist file with at least one entry."
+		restore_saved_blocklist || stop 1
 		exit 1
 	fi
 
-	echo
-	log_msg -green "Successfully generated preprocessed blocklist file with $(int2human ${preprocessed_blocklist_line_count}) lines."
+	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human ${preprocessed_list_line_cnt}) entries."
 
 	if ! generate_and_process_blocklist_file
 	then
 		reg_failure "New blocklist file check failed."
-		restore_saved_blocklist
+		restore_saved_blocklist || stop 1
 		exit 1
 	fi
-
-	log_msg -green "New blocklist file check passed."
 
 	if ! import_blocklist_file
 	then
 		reg_failure "Failed to import new blocklist file."
-		restore_saved_blocklist
+		restore_saved_blocklist || stop 1
 		exit 1
 	fi
 
 	compressed=
 	[ -n "${final_compress}" ] && compressed=" compressed"
-	log_msg "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_blocklist_file_size_human}."
+	log_msg "" "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_final_list_size_human}."
 
 	restart_dnsmasq || exit 1
 
 	elapsed_time_str=$(get_elapsed_time_str)
-	echo
-	log_msg "Processing time for blocklist generation and import: ${elapsed_time_str}."
+	log_msg "" "Processing time for blocklist generation and import: ${elapsed_time_str}."
 
 	if ! check_active_blocklist
 	then
 		reg_failure "Active blocklist check failed with new blocklist file."
+		restore_saved_blocklist || stop 1
 
-		if ! restore_saved_blocklist
-		then
-			reg_failure "Failed to restore saved blocklist."
-			stop 1
-		fi
-
-		if ! restart_dnsmasq
-		then
-			log_msg "Stopping adblock-lean."
-			stop 1
-		fi
-
-		if ! check_active_blocklist
-		then
-			reg_failure "Active blocklist check failed with previous blocklist file."
-			stop 1
-		fi
+		check_active_blocklist || { reg_failure "Active blocklist check failed with previous blocklist file."; stop 1; }
 
 		log_msg -green "Previous blocklist restored and dnsmasq check passed."
 		exit 1
 	fi
 
-	log_msg -green "Active blocklist check passed with new blocklist file."
-	log_success "New blocklist installed with good line count: $(int2human "${good_line_count}")."
+	log_msg -green "Active blocklist check passed with the new blocklist file."
+	log_success "New blocklist installed with entries count: $(int2human "${final_entries_cnt}")."
 	rm -f "${abl_dir}/prev_blocklist.gz"
 
 	check_for_updates
@@ -1589,10 +2006,10 @@ stop()
 	msg="${msg% }"
 
 	init_command stop || exit 1
-	reg_action "Removing any adblock-lean blocklist files in ${dnsmasq_tmp_d}/ and restarting dnsmasq." || exit 1
+	log_msg "Removing any adblock-lean blocklist files in ${dnsmasq_tmp_d}." || exit 1
 	clean_dnsmasq_dir
-	/etc/init.d/dnsmasq restart &> /dev/null
-	log_msg -purple "Stopped adblock-lean."
+	restart_dnsmasq || stop_rc=1
+	log_msg -purple "" "Stopped adblock-lean." ""
 	[ -n "$noexit" ] && return "${stop_rc}"
 	exit "${stop_rc}"
 }
@@ -1607,6 +2024,40 @@ restart()
 reload()
 {
 	restart
+}
+
+get_active_entries_cnt()
+{
+	local cnt entry_type allow_opt='' list_prefix list_prefixes=
+
+	# 'blocklist_ipv4' prefix doesn't need to be added for counting
+	for entry_type in blocklist allowlist
+	do
+		eval "[ ! \"\${${entry_type}_urls}\" ] && [ ! -s \"\${local_${entry_type}_path}\" ]" && continue
+		case ${entry_type} in
+			blocklist) list_prefix=local ;;
+			allowlist) list_prefix=server allow_opt="|#"
+		esac
+		list_prefixes="${list_prefixes}${list_prefix}|"
+	done
+
+	if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
+	then
+		gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz
+	elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
+	then
+		cat "${dnsmasq_tmp_d}/blocklist"
+	else
+		printf ''
+	fi |
+	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "[/${allow_opt}]" '\n' | wc -w > "/tmp/abl_entries_cnt"
+
+	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
+	case ${cnt} in
+		[0-2]|'') printf 0; return 1 ;;
+		*) printf %s "$((cnt-3))" # to account for the blocklist test entry
+	esac
+	:
 }
 
 # return codes:
@@ -1625,29 +2076,23 @@ status()
 			report_pid_action
 			exit 2
 	esac
-
 	get_abl_run_state
 	case ${?} in
 		0) ;;
 		3) log_msg -purple "adblock-lean is currently paused."; exit 3 ;;
 		4) log_msg -purple "adblock-lean is stopped."; exit 4;
 	esac
-	check_active_blocklist
-	local dnsmasq_status=${?}
+	check_active_blocklist; local dnsmasq_status=${?}
 	luci_dnsmasq_status=${dnsmasq_status}
+
+	local active_entries_cnt=0
+
 	if [ ${dnsmasq_status} = 0 ]
 	then
-		if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
-		then
-			good_line_count=$(gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz | wc -w)
-		elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
-		then
-			good_line_count=$(wc -w < "${dnsmasq_tmp_d}/blocklist")
-		fi
-		: "${good_line_count:=0}"
-		[ ${good_line_count} -gt 0 ] && : $((good_line_count--)) # to account for added blocklist test entry
-		luci_good_line_count=${good_line_count}
-		log_msg "The dnsmasq check passed and the presently installed blocklist has good line count: $(int2human ${good_line_count})."
+		active_entries_cnt="$(get_active_entries_cnt)" || reg_failure "No entries found in the blocklist file."
+
+		luci_min_good_line_count=${active_entries_cnt}
+		log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human ${active_entries_cnt})."
 		log_msg -green "adblock-lean is active."
 		gen_stats -noexit
 	else
@@ -1657,7 +2102,7 @@ status()
 	check_for_updates
 	luci_update_status=${?}
 
-	[ ${dnsmasq_status} = 0 ] && exit 0
+	[ ${dnsmasq_status} = 0 ] && [ ${active_entries_cnt} != 0 ] && exit 0
 	exit 1
 }
 
@@ -1688,9 +2133,8 @@ resume()
 	esac
 
 	reg_action -purple "Resuming adblock-lean." || exit 1
-	restore_saved_blocklist || 
-		{ reg_failure "Failed to restore saved blocklist. Stopping adblock-lean."; stop 1; }
-	restart_dnsmasq || exit 1
+	restore_saved_blocklist || stop 1
+	restart_dnsmasq || stop 1
 	log_msg -purple "adblock-lean is now resumed."
 	exit 0
 }
@@ -1734,7 +2178,7 @@ update()
 			:
 		) 1>/dev/null ||
 		{
-			report_failure "Failed to source the downloaded file. Canceling the update."
+			reg_failure "Failed to source the downloaded file. Canceling the update."
 			rm -f "${abl_dir}/adblock-lean.latest"
 			exit 1
 		}
@@ -1750,7 +2194,5 @@ update()
 }
 
 set_colors
-sed_san_expr='s/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
-sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
 
 :
