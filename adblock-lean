@@ -716,12 +716,12 @@ load_config()
 	[ ${parse_res} = 0 ] && [ -z "${url_conv_req}" ] && return 0
 
 	# if not in interactive console, return error
-	[ "${msgs_dest}" != "/dev/tty" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
+	{ [ "${msgs_dest}" != "/dev/tty" ] || [ -n "${luci_skip_dialogs}" ]; } && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
 
 	# sanity check
 	[ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ] && { reg_failure "Failed to parse config."; return 1; }
 
-	if [ "${msgs_dest}" = "/dev/tty" ] && [ "${1}" != '-f' ]
+	if [ "${msgs_dest}" = "/dev/tty" ] && [ -z "${luci_skip_dialogs}" ] && [ "${1}" != '-f' ]
 	then
 		if [ -n "${conf_fixes}" ]
 		then
@@ -816,7 +816,7 @@ fix_config()
 	if ! cp "${actual_config_file}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
-		[ "${msgs_dest}" != "/dev/tty" ] && return 1
+		[ "${msgs_dest}" != "/dev/tty" ] || [ -n "${luci_skip_dialogs}" ] && return 1
 		log_msg "Proceed with suggested config changes?"
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" = n ] && return 1
@@ -1860,9 +1860,10 @@ init_command()
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
 gen_preset()
 {
-	local val field mem i=1
-	eval "mem=\"\${${1}_mem}\""
-	[ "${2}" = '-d' ] && print_msg "" "Preset \"${purple}${1}${n_c}\": recommended for devices with ${mem} MB of memory."
+	local val field mem cnt i=1
+	eval "mem=\"\${${1}_mem}\" cnt=\"\${${1}_cnt}\""
+	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
+	[ "${2}" != '-n' ] && print_msg "${blue}Elements count:${n_c} ~${cnt}k"
 	for field in blocklist_urls max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
 	do
 		eval "val=\"\${${1}_${i}}\""
@@ -1898,30 +1899,36 @@ gen_config()
 {
 	init_command gen_config || exit 1
 
-	# default presets: 1 - url, 2 - max part size, 3 - max blocklist size, 4 - min line count
-	local mini_1="${hagezi_dl_url}/pro.mini-onlydomains.txt" mini_2=4000 mini_3=4000 mini_4=40000 mini_mem=64
-	local small_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" small_2=7000 small_3=10000 small_4=100000 small_mem=128
+	# quasi-arrays for default presets: 1 - url, 2 - max part size, 3 - max blocklist size, 4 - min line count, cnt - elements count/1000, mem - memory in MB
+	local mini_1="${hagezi_dl_url}/pro.mini-onlydomains.txt" \
+		mini_2=4000 mini_3=4000 mini_4=40000 mini_cnt=85 mini_mem=64
+	local small_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" \
+		small_2=7000 small_3=10000 small_4=100000 small_cnt=250 small_mem=128
 	local medium_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt ${hagezi_dl_url}/popupads-onlydomains.txt" \
-		medium_2=10000 medium_3=20000 medium_4=200000 medium_mem=256
-	local large_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" large_2=30000 large_3=50000 large_4=200000 large_mem=512
-	local preset mem
+		medium_2=10000 medium_3=20000 medium_4=200000 medium_cnt=350 medium_mem=256
+	local large_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
+		large_2=30000 large_3=50000 large_4=200000 large_cnt=700 large_mem=512
 
+	local preset mem totalmem cnt
+
+	# determine recommended preset
 	read -r _ totalmem _ </proc/meminfo
 	for preset in large medium small mini
 	do
 		eval "mem=\"\${${preset}_mem}\""
-		[ "${totalmem}" -ge $((mem * 922)) ] && break
+		# multiplying by 900 rather than 1024 to account for some memory not available to the kernel
+		[ "${totalmem}" -ge $((mem * 900)) ] && break
 	done
 
-	if [ -z "${luci_sourced}" ] && [ -z "${luci_preset}" ]
+	if [ -z "${luci_skip_dialogs}" ] && [ -z "${luci_preset}" ]
 	then
-		print_msg "" "Based on the total memory of this device, the recommended preset is ${purple}${preset}${n_c}:"
+		print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is ${purple}${preset}${n_c}:"
 		gen_preset "${preset}"
 		print_msg "" "[C]onfirm this preset or [p]ick another preset?"
 		pick_opt "c|p"
 		if [ "${REPLY}" = p ]
 		then
-			print_msg "" "All available presets:"
+			print_msg "" "${purple}All available presets:${n_c}"
 			for preset in mini small medium large
 			do
 				gen_preset "${preset}" -d
@@ -1931,11 +1938,11 @@ gen_config()
 			preset="${REPLY}"
 		fi
 	else
-		preset="${luci_preset}"
+		[ "${luci_preset}" != auto ] && preset="${luci_preset}"
 	fi
 
 	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || exit 1
-	if [ "${msgs_dest}" = "/dev/tty" ] && [ -f "${config_file}" ]
+	if [ "${msgs_dest}" = "/dev/tty" ] && [ -z "${luci_skip_dialogs}" ] && [ -f "${config_file}" ]
 	then
 		print_msg "This will overwrite existing config with default one. Proceed?"
 		pick_opt "y|n" || exit 1
