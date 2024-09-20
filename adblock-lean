@@ -43,13 +43,15 @@ session_log_file="/var/log/abl_session.log"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
+hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
 
 START=99
 STOP=4
 
-EXTRA_COMMANDS="status pause resume gen_stats gen_config print_log update"
+EXTRA_COMMANDS="setup status pause resume gen_stats gen_config print_log update"
 EXTRA_HELP="	
 adblock-lean custom commands:
+	setup		run automated setup for adblock-lean
 	status		check dnsmasq and entries count of existing blocklist
 	pause		pause adblock-lean
 	resume		resume adblock-lean
@@ -235,12 +237,22 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
-# 1 - (optional) -d to print with allowed value types (otherwise print without)
+# (optional) -d to print with allowed value types (otherwise print without)
+# (optional) -p to print with values from preset
 print_def_config()
 {
 	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
-	local hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
+
+	local preset
+	if [ "${1}" = '-p' ]
+	then
+		preset="${2}"
+	else
+		preset=small
+	fi
+	case "${preset}" in mini|small|medium|large) ;; *) reg_failure "print_def_config: \$preset var has invalid value."; exit 1; esac
+	gen_preset "${preset}" -n
 
 	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
 
@@ -251,7 +263,7 @@ print_def_config()
 	# comments must start at newline or inline after the closing double-quote
 
 	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
-	blocklist_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" @ string
+	blocklist_urls="${blocklist_urls}" @ string
 	blocklist_ipv4_urls="" @ string
 	allowlist_urls="" @ string
 
@@ -275,13 +287,13 @@ print_def_config()
 	min_allowlist_part_line_count="1" @ integer
 
 	# Maximum size of any individual downloaded blocklist part
-	max_file_part_size_KB="20000" @ integer
+	max_file_part_size_KB="${max_file_part_size_KB}" @ integer
 
 	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB="30000" @ integer
+	max_blocklist_file_size_KB="${max_blocklist_file_size_KB}" @ integer
 
 	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="100000" @ integer
+	min_good_line_count="${min_good_line_count}" @ integer
 
 	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
 	use_compression="1" @ 0|1
@@ -1843,6 +1855,24 @@ init_command()
 	:
 }
 
+# 1 - mini|small|medium|large
+# 2 - (optional) '-d' to print the description
+# 2 - (optional) '-n' to print nothing (only assign values to vars)
+gen_preset()
+{
+	local val field mem i=1
+	eval "mem=\"\${${1}_mem}\""
+	[ "${2}" = '-d' ] && print_msg "" "Preset \"${purple}${1}${n_c}\": recommended for devices with ${mem} MB of memory."
+	for field in blocklist_urls max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
+	do
+		eval "val=\"\${${1}_${i}}\""
+		eval "${field}=\"${val}\""
+		[ "${2}" != '-n' ] && print_msg "${blue}${field}${n_c}=\"${val}\""
+		i=$((i+1))
+	done
+}
+
+
 ### MAIN COMMAND FUNCTIONS
 
 print_log()
@@ -1867,14 +1897,46 @@ gen_stats()
 gen_config()
 {
 	init_command gen_config || exit 1
-	reg_action -purple "Generating new default config for adblock-lean." || exit 1
+
+	# default presets: 1 - url, 2 - max part size, 3 - max blocklist size, 4 - min line count
+	local mini_1="${hagezi_dl_url}/pro.mini-onlydomains.txt" mini_2=4000 mini_3=4000 mini_4=40000 mini_mem=64
+	local small_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" small_2=7000 small_3=10000 small_4=100000 small_mem=128
+	local medium_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt ${hagezi_dl_url}/popupads-onlydomains.txt" \
+		medium_2=10000 medium_3=20000 medium_4=200000 medium_mem=256
+	local large_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" large_2=30000 large_3=50000 large_4=200000 large_mem=512
+	local preset mem
+
+	read -r _ totalmem _ </proc/meminfo
+	for preset in large medium small mini
+	do
+		eval "mem=\"\${${preset}_mem}\""
+		[ "${totalmem}" -ge $((mem * 922)) ] && break
+	done
+
+	print_msg "" "Based on the total memory of this device, the recommended preset is ${purple}${preset}${n_c}:"
+	gen_preset "${preset}"
+	print_msg "" "[C]onfirm this preset or [p]ick another preset?"
+	pick_opt "c|p"
+	if [ "${REPLY}" = p ]
+	then
+		print_msg "" "All available presets:"
+		for preset in mini small medium large
+		do
+			gen_preset "${preset}" -d
+		done
+		print_msg "" "Pick preset:"
+		pick_opt "mini|small|medium|large"
+		preset="${REPLY}"
+	fi
+
+	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || exit 1
 	if [ "${msgs_dest}" = "/dev/tty" ] && [ -f "${config_file}" ]
 	then
 		print_msg "This will overwrite existing config with default one. Proceed?"
 		pick_opt "y|n" || exit 1
 		[ "${REPLY}" = n ] && exit 1
 	fi
-	write_config "$(print_def_config)" || exit 1
+	write_config "$(print_def_config -p "${preset}")" || exit 1
 	mk_new_urls_format_flag || exit 1 # @url_conversion_logic
 	check_blocklist_compression_support
 	:
