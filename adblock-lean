@@ -1913,20 +1913,25 @@ gen_config()
 		[ "${totalmem}" -ge $((mem * 922)) ] && break
 	done
 
-	print_msg "" "Based on the total memory of this device, the recommended preset is ${purple}${preset}${n_c}:"
-	gen_preset "${preset}"
-	print_msg "" "[C]onfirm this preset or [p]ick another preset?"
-	pick_opt "c|p"
-	if [ "${REPLY}" = p ]
+	if [ -z "${luci_sourced}" ] && [ -z "${luci_preset}" ]
 	then
-		print_msg "" "All available presets:"
-		for preset in mini small medium large
-		do
-			gen_preset "${preset}" -d
-		done
-		print_msg "" "Pick preset:"
-		pick_opt "mini|small|medium|large"
-		preset="${REPLY}"
+		print_msg "" "Based on the total memory of this device, the recommended preset is ${purple}${preset}${n_c}:"
+		gen_preset "${preset}"
+		print_msg "" "[C]onfirm this preset or [p]ick another preset?"
+		pick_opt "c|p"
+		if [ "${REPLY}" = p ]
+		then
+			print_msg "" "All available presets:"
+			for preset in mini small medium large
+			do
+				gen_preset "${preset}" -d
+			done
+			print_msg "" "Pick preset:"
+			pick_opt "mini|small|medium|large"
+			preset="${REPLY}"
+		fi
+	else
+		preset="${luci_preset}"
 	fi
 
 	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || exit 1
