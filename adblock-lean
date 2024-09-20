@@ -2165,7 +2165,7 @@ status()
 	then
 		active_entries_cnt="$(get_active_entries_cnt)" || reg_failure "No entries found in the blocklist file."
 
-		luci_min_good_line_count=${active_entries_cnt}
+		luci_good_line_count=${active_entries_cnt}
 		log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human ${active_entries_cnt})."
 		log_msg -green "adblock-lean is active."
 		gen_stats -noexit
