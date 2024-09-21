@@ -27,19 +27,19 @@ default_IFS="${IFS}"
 
 if [ -t 0 ]
 then
-	msgs_dest="/dev/tty"
+	msgs_dest=/dev/tty
 else
-	msgs_dest="/dev/null"
+	msgs_dest=/dev/null
 fi
 
-config_dir="/etc/adblock-lean"
-PREFIX=/root/adblock-lean
+abl_service_path=/etc/init.d/adblock-lean
+config_dir=/etc/adblock-lean
+config_file=${config_dir}/config
+root_config_file=/root/adblock-lean/config # @config_migration_logic
 abl_dir=/var/run/adblock-lean
 abl_pid_dir=/tmp/adblock-lean
-config_file="${config_dir}/config"
-root_config_file="${PREFIX}/config" # @config_migration_logic
-update_log_file="/var/log/abl_update.log"
-session_log_file="/var/log/abl_session.log"
+update_log_file=/var/log/abl_update.log
+session_log_file=/var/log/abl_session.log
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -716,12 +716,12 @@ load_config()
 	[ ${parse_res} = 0 ] && [ -z "${url_conv_req}" ] && return 0
 
 	# if not in interactive console, return error
-	{ [ "${msgs_dest}" != "/dev/tty" ] || [ -n "${luci_skip_dialogs}" ]; } && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
+	[ -z "${do_dialogs}" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
 
 	# sanity check
 	[ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ] && { reg_failure "Failed to parse config."; return 1; }
 
-	if [ "${msgs_dest}" = "/dev/tty" ] && [ -z "${luci_skip_dialogs}" ] && [ "${1}" != '-f' ]
+	if [ -n "${do_dialogs}" ] && [ "${1}" != '-f' ]
 	then
 		if [ -n "${conf_fixes}" ]
 		then
@@ -816,7 +816,7 @@ fix_config()
 	if ! cp "${actual_config_file}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
-		[ "${msgs_dest}" != "/dev/tty" ] || [ -n "${luci_skip_dialogs}" ] && return 1
+		[ -z "${do_dialogs}" ] && return 1
 		log_msg "Proceed with suggested config changes?"
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" = n ] && return 1
@@ -924,6 +924,20 @@ try_export_existing_blocklist()
 	:	
 }
 
+# return codes:
+# 0 - addnmount entry exists
+# 1 - addnmount entry doesn't exist
+# 2 - uci command not found
+check_addnmount()
+{
+	hash uci 1>/dev/null || { reg_failure "uci command was not found."; return 2; }
+	uci -q get dhcp.@dnsmasq[0].addnmount | grep -qE "(^|[ \t])/bin(/\*|/busybox)*($|[ \t])"
+}
+
+# return codes:
+# 0 - addnmount entry exists
+# 1 - addnmount entry doesn't exist
+# 2 - uci command not found
 check_blocklist_compression_support()
 {
 	if ! dnsmasq --help | grep -qe "--conf-script"
@@ -934,13 +948,8 @@ check_blocklist_compression_support()
 		return 1
 	fi
 
-	addnmount_str=$(uci get dhcp.@dnsmasq[0].addnmount 2> /dev/null)
-
-	for addnmount_path in ${addnmount_str}
-	do
-		printf "%s" "$addnmount_path" | grep -qE "^/bin(/*|/busybox)?$" && return 0
-	done
-
+	check_addnmount && return 0
+	[ ${?} = 2 ] && return 2
 	reg_failure "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
 	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist." \
 		"Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section." \
@@ -1590,7 +1599,7 @@ check_for_updates()
 {
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -f "${abl_dir}/uclient-fetch_err"
-	sha256sum_adblock_lean_local=$(sha256sum /etc/init.d/adblock-lean | sed -E 's/[ \t]+.*$//')
+	sha256sum_adblock_lean_local=$(sha256sum "${abl_service_path}" | sed -E 's/[ \t]+.*$//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
 		2> "${abl_dir}/uclient-fetch_err" |
 		tee >(cat > "${abl_dir}/remote_abl"; . "${abl_dir}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config -d |
@@ -1775,13 +1784,16 @@ init_command()
 	luci_sourced=
 	command -v "abl_luci_exit" 1>/dev/null && luci_sourced=1
 
+	do_dialogs=
+	[ -z "${luci_skip_dialogs}" ] && [ "${msgs_dest}" = "/dev/tty" ] && do_dialogs=1
+
 	trap 'cleanup_and_exit 1' INT TERM
 	trap 'cleanup_and_exit ${?}' EXIT
 
 	# set requirements
 	case ${action} in
 		help|status|gen_stats|print_log|enabled|enable|disable|'') ;;
-		gen_config|pause) lock_req=1 ;;
+		setup|gen_config|pause) lock_req=1 ;;
 		boot|start|update|resume) cleanup_req=1 lock_req=1 ;;
 		stop)
 			init_action_msg="Stopping adblock-lean."
@@ -1825,7 +1837,7 @@ init_command()
 	log_file=
 	case ${init_lock_status} in 0|3)
 		case ${action} in
-			start|boot|stop|restart|reload|pause|resume) log_file="${session_log_file}" ;;
+			start|boot|stop|restart|reload|pause|resume|setup) log_file="${session_log_file}" ;;
 			update) log_file="${update_log_file}"
 		esac
 	esac
@@ -1876,6 +1888,139 @@ gen_preset()
 
 ### MAIN COMMAND FUNCTIONS
 
+setup()
+{
+	setup_failed()
+	{
+		[ -n "${1}" ] && reg_failure "${1}"
+		exit 1
+	}
+
+	init_command setup
+	[ -z "${abl_service_path}" ] && setup_failed "\${abl_service_path} variable is unset."
+	[ ! -f "${abl_service_path}" ] && setup_failed "adblock-lean service file doesn't exist at ${abl_service_path}."
+
+	# make the script executable
+	if [ ! -x "${abl_service_path}" ]
+	then
+		print_msg "" "${purple}Making ${abl_service_path} executable.${n_c}"
+		chmod +x "${abl_service_path}" || setup_failed "Failed to make '${abl_service_path}' executable."
+	else
+		print_msg "" "${green}${abl_service_path} is already executable.${n_c}"
+	fi
+
+	# make addnmount entry - enables blocklist compression to reduce RAM usage
+	check_addnmount
+	case ${?} in
+		0) print_msg "" "${green}Found existing dnsmasq addnmount UCI entry.${n_c}" ;;
+		2) exit 1 ;;
+		1)
+			print_msg "" "${purple}Creating dnsmasq addnmount UCI entry.${n_c}"
+			uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit || setup_failed "Failed to create addnmount entry."
+	esac
+
+	# generate config
+	gen_config
+
+	# enable the service
+	if ! service adblock-lean enabled
+	then
+		print_msg "" "${purple}Enabling the adblock-lean service.${n_c}"
+		service adblock-lean enable || setup_failed "Failed to enable the adblock-lean service."
+	else
+		print_msg "" "${green}adblock-lean service is already enabled.${n_c}"
+	fi
+
+	# install utils
+	local util package installed_utils="$(opkg list_installed | grep -E '^[ \t]*(sed|gawk|coreutils-sort)([ \t]|$)')" \
+		awk_size=460 sort_size=120 sed_size=150 util_size missing_utils='' pkgs2install='' utils_size_KB=0
+	
+	echo
+	for util in sed sort awk
+	do
+		case "${installed_utils}" in
+			*"${util}"*) print_msg "${green}GNU ${util} is already installed.${n_c}" ;;
+			*) missing_utils="${missing_utils}${util} " missing_utils_print="${missing_utils_print}${blue}GNU ${util}${n_c}, "
+		esac
+	done
+
+	if [ -n "${missing_utils}" ]
+	then
+		if [ -n "${do_dialogs}" ] 
+		then
+			print_msg "" "For improved performance while processing the lists, it is recommended to install ${blue}GNU awk${n_c}, ${blue}GNU sed${n_c} and ${blue}GNU sort${n_c}." \
+				"Corresponding opkg packages are ${blue}gawk${n_c}, ${blue}sed${n_c}, ${blue}coreutils-sort${n_c}." "" \
+				"Following utilities are currently not installed: ${missing_utils_print%, }."
+		fi
+
+		for util in ${missing_utils}
+		do
+			REPLY=n
+			if [ -n "${do_dialogs}" ]
+			then
+				eval "util_size=\"\${${util}_size}\""
+				print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}${util_size} KiB${n_c}."
+				pick_opt "y|n" || exit 1
+			elif [ -n "${luci_install_packages}" ]
+			then
+				REPLY=y
+			fi
+
+			if [ "${REPLY}" = y ]
+			then
+				case "${util}" in
+					awk) package="gawk" ;;
+					sed) package="sed" ;;
+					sort) package="coreutils-sort"
+				esac
+				pkgs2install="${pkgs2install}${package} "
+				utils_size_KB=$((utils_size_KB+util_size))
+			fi
+		done
+	fi
+
+	if [ -n "${pkgs2install}" ]
+	then
+		local free_space_B='' free_space_KB="$(df -k /usr/ | tail -n1 | sed -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')" \
+			utils_size_B="$((utils_size_KB*1024))" mount_point="$(df -k /usr/ | tail -n1 | sed -E 's/.*[ \t]+//')"
+		case "${free_space_KB}" in
+			''|*[!0-9]*) reg_failure "Failed to check available free space." ;;
+			*) free_space_B=$((free_space_KB*1024))
+		esac
+		REPLY=n
+		if [ -n "${do_dialogs}" ]
+		then
+			print_msg "" "Selected packages: ${blue}${pkgs2install% }${n_c}" "Total installed size: ${yellow}$(bytes2human ${utils_size_B})${n_c}."
+			[ -n "${free_space_B}" ] && print_msg "Available free space on mount point '${mount_point}': ${yellow}$(bytes2human ${free_space_B})${n_c}."
+			print_msg "Proceed with packages installation?"
+			pick_opt "y|n"
+		elif [ -n "${luci_install_packages}" ]
+		then
+			REPLY=y
+		fi
+		if [ "${REPLY}" = y ]
+		then
+			if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ ${free_space_B} -gt ${utils_size_B} ]
+			then
+				echo
+				opkg update && opkg install ${pkgs2install% } ||
+					reg_failure "Failed to automatically install packages. You can install them manually later."
+			else
+				reg_failure "Not enough space on mount point '${mount_point}'. Free up some space, then you can manually install the packages later."
+			fi
+		fi
+	fi
+
+	if [ -n "${do_dialogs}" ]
+	then
+		print_msg "" "${green}Setup is complete.${n_c}" "" "Start adblock-lean now?"
+		pick_opt "y|n" || exit 1
+		[ "${REPLY}" != y ] && return 0
+		start
+	fi
+	:
+}
+
 print_log()
 {
 	[ ! -s "${session_log_file}" ] && { log_msg -err "Session log file '${session_log_file}' doesn't exist or is empty."; exit 1; }
@@ -1920,7 +2065,7 @@ gen_config()
 		[ "${totalmem}" -ge $((mem * 900)) ] && break
 	done
 
-	if [ -z "${luci_skip_dialogs}" ] && [ -z "${luci_preset}" ]
+	if [ -n "${do_dialogs}" ] && [ -z "${luci_preset}" ]
 	then
 		print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is ${purple}${preset}${n_c}:"
 		gen_preset "${preset}"
@@ -1942,7 +2087,7 @@ gen_config()
 	fi
 
 	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || exit 1
-	if [ "${msgs_dest}" = "/dev/tty" ] && [ -z "${luci_skip_dialogs}" ] && [ -f "${config_file}" ]
+	if [ -n "${do_dialogs}" ] && [ -f "${config_file}" ]
 	then
 		print_msg "This will overwrite existing config with default one. Proceed?"
 		pick_opt "y|n" || exit 1
@@ -1994,7 +2139,14 @@ start()
 	fi
 
 	final_compress=
-	[ "${use_compression}" = 1 ] && check_blocklist_compression_support && final_compress=1
+	if [ "${use_compression}" = 1 ]
+	then
+		check_blocklist_compression_support
+		case ${?} in
+			0) final_compress=1 ;;
+			2) exit 1
+		esac
+	fi
 
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
@@ -2258,9 +2410,9 @@ update()
 		}
 	fi
 
-	try_mv "${abl_dir}/adblock-lean.latest" /etc/init.d/adblock-lean || exit 1
-	chmod +x /etc/init.d/adblock-lean
-	/etc/init.d/adblock-lean enable
+	try_mv "${abl_dir}/adblock-lean.latest" "${abl_service_path}" || exit 1
+	chmod +x "${abl_service_path}"
+	${abl_service_path} enable
 	log_msg -green "adblock-lean has been updated to the latest version."
 
 	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
@@ -2269,4 +2421,5 @@ update()
 
 set_colors
 
+[ "${1}" = setup ] && setup
 :
