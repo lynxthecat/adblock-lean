@@ -1991,7 +1991,7 @@ setup()
 		if [ -n "${do_dialogs}" ]
 		then
 			print_msg "" "Selected packages: ${blue}${pkgs2install% }${n_c}" "Total installed size: ${yellow}$(bytes2human ${utils_size_B})${n_c}."
-			[ -n "${free_space_B}" ] && print_msg "Available free space on mount point '${mount_point}': ${yellow}$(bytes2human ${free_space_B})${n_c}."
+			[ -n "${free_space_B}" ] && print_msg "Available free space at mount point '${mount_point}': ${yellow}$(bytes2human ${free_space_B})${n_c}."
 			print_msg "Proceed with packages installation?"
 			pick_opt "y|n"
 		elif [ -n "${luci_install_packages}" ]
@@ -2006,7 +2006,7 @@ setup()
 				opkg update && opkg install ${pkgs2install% } ||
 					reg_failure "Failed to automatically install packages. You can install them manually later."
 			else
-				reg_failure "Not enough space on mount point '${mount_point}'. Free up some space, then you can manually install the packages later."
+				reg_failure "Not enough free space at mount point '${mount_point}'. Free up some space, then you can manually install the packages later."
 			fi
 		fi
 	fi
@@ -2044,7 +2044,8 @@ gen_config()
 {
 	init_command gen_config || exit 1
 
-	# quasi-arrays for default presets: 1 - url, 2 - max part size, 3 - max blocklist size, 4 - min line count, cnt - elements count/1000, mem - memory in MB
+	# quasi-arrays for default presets: 1 - url, 2 - max part size, 3 - max blocklist size, 4 - min line count,
+	# cnt - elements count/1000, mem - memory in MB
 	local mini_1="${hagezi_dl_url}/pro.mini-onlydomains.txt" \
 		mini_2=4000 mini_3=4000 mini_4=40000 mini_cnt=85 mini_mem=64
 	local small_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" \
@@ -2054,23 +2055,35 @@ gen_config()
 	local large_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
 		large_2=30000 large_3=50000 large_4=200000 large_cnt=700 large_mem=512
 
-	local preset mem totalmem cnt
+	local preset='' mem totalmem cnt
 
 	# determine recommended preset
 	read -r _ totalmem _ </proc/meminfo
-	for preset in large medium small mini
-	do
-		eval "mem=\"\${${preset}_mem}\""
-		# multiplying by 900 rather than 1024 to account for some memory not available to the kernel
-		[ "${totalmem}" -ge $((mem * 900)) ] && break
-	done
+	case "${totalmem}" in
+		''|*[!0-9]*)
+			reg_failure "Failed to determine system memory capacity."
+			print_msg "Skipping automatic preset recommendation." ;;
+		*)
+			for preset in large medium small mini
+			do
+				eval "mem=\"\${${preset}_mem}\""
+				# multiplying by 900 rather than 1024 to account for some memory not available to the kernel
+				[ "${totalmem}" -ge $((mem * 900)) ] && break
+			done
+	esac
 
 	if [ -n "${do_dialogs}" ] && [ -z "${luci_preset}" ]
 	then
-		print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is ${purple}${preset}${n_c}:"
-		gen_preset "${preset}"
-		print_msg "" "[C]onfirm this preset or [p]ick another preset?"
-		pick_opt "c|p"
+		if [ -n "${preset}" ]
+		then
+			print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is ${purple}${preset}${n_c}:"
+			gen_preset "${preset}"
+			print_msg "" "[C]onfirm this preset or [p]ick another preset?"
+			pick_opt "c|p"
+		else
+			REPLY=p
+		fi
+
 		if [ "${REPLY}" = p ]
 		then
 			print_msg "" "${purple}All available presets:${n_c}"
@@ -2085,6 +2098,8 @@ gen_config()
 	else
 		[ "${luci_preset}" != auto ] && preset="${luci_preset}"
 	fi
+
+	[ -z "${preset}" ] && { reg_failure "No config preset was selected."; exit 1; }
 
 	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || exit 1
 	if [ -n "${do_dialogs}" ] && [ -f "${config_file}" ]
