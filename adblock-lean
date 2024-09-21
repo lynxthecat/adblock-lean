@@ -1932,10 +1932,10 @@ setup()
 	gen_config
 
 	# enable the service
-	if ! service adblock-lean enabled
+	if ! /sbin/service adblock-lean enabled
 	then
 		print_msg "" "${purple}Enabling the adblock-lean service.${n_c}"
-		service adblock-lean enable || setup_failed "Failed to enable the adblock-lean service."
+		/sbin/service adblock-lean enable || setup_failed "Failed to enable the adblock-lean service."
 	else
 		print_msg "" "${green}adblock-lean service is already enabled.${n_c}"
 	fi
