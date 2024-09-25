@@ -2631,6 +2631,7 @@ case "${action}" in
 			fi
 			load_config
 			rm_cron_job
+			stop
 			disabling=
 		fi
 esac
