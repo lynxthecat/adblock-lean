@@ -17,6 +17,8 @@
 
 # expects that the RPC script for luci UI is named specifically 'luci.adblock-lean'
 
+# get return value of built-in actions
+action_rv="${?}"
 
 LC_ALL=C
 IFS='	 
@@ -49,18 +51,19 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="setup status pause resume gen_stats gen_config update_cron_job print_log update"
+EXTRA_COMMANDS="setup status pause resume gen_stats gen_config upd_cron_job print_log update"
 EXTRA_HELP="
 adblock-lean custom commands:
-	setup			run automated setup for adblock-lean
-	status			check dnsmasq and entries count of existing blocklist
-	pause			pause adblock-lean
-	resume			resume adblock-lean
-	gen_stats		generate dnsmasq stats for system log
-	gen_config		generate default config and enable the adblock-lean service
-	update_cron_job	create cron job for adblock-lean with schedule set in the config option 'cron_schedule'. if set to 'disable', remove existing cron job if any
-	print_log		print most recent session log
-	update			update adblock-lean to the latest version"
+	setup           run automated setup for adblock-lean
+	status          check dnsmasq and entries count of existing blocklist
+	pause           pause adblock-lean
+	resume          resume adblock-lean
+	gen_stats       generate dnsmasq stats for system log
+	gen_config      generate default config and enable the adblock-lean service
+	upd_cron_job    create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+	                if config option set to 'disable', remove existing cron job if any
+	print_log       print most recent session log
+	update          update adblock-lean to the latest version"
 
 
 ### UTILITY FUNCTIONS
@@ -1908,7 +1911,7 @@ init_command()
 
 	# set requirements
 	case ${action} in
-		help|status|gen_stats|print_log|enabled|enable|disable|update_cron_job|'') ;;
+		help|status|gen_stats|print_log|enabled|enable|disable|upd_cron_job|'') ;;
 		setup|gen_config|pause) lock_req=1 ;;
 		boot|start|update|resume) cleanup_req=1 lock_req=1 ;;
 		stop)
@@ -1965,10 +1968,10 @@ init_command()
 
 	# create work dir, check dnsmasq, load config, source custom script
 	case ${action} in
-		status)
+		status|boot)
 			try_mkdir -p "${abl_dir}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; } ;;
-		start|boot|pause|resume|update)
+		start|pause|resume|update)
 			check_dnsmasq_instance || { [ ${?} = 1 ] && reg_failure "No running instance of dnsmasq detected."; exit 1; }
 			try_mkdir -p "${abl_dir}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; }
@@ -1986,13 +1989,13 @@ init_command()
 
 ### MAIN COMMAND FUNCTIONS
 
-update_cron_job()
+upd_cron_job()
 {
-	local me="update_cron_job" curr_cron cron_line
+	local me="upd_cron_job" curr_cron cron_line
 
 	log_msg -purple "" "Updating cron job for adblock-lean."
 
-	if [ "${action}" = update_cron_job ]
+	if [ "${action}" = upd_cron_job ]
 	then
 		load_config || return 1
 	fi
@@ -2163,6 +2166,7 @@ setup()
 		print_msg "" "${green}Setup is complete.${n_c}" "" "Start adblock-lean now?"
 		pick_opt "y|n" || exit 1
 		[ "${REPLY}" != y ] && return 0
+		echo
 		start
 	fi
 	:
@@ -2237,15 +2241,15 @@ gen_config()
 			"The default schedule is '${blue}${def_schedule}${n_c}': ${def_schedule_desc}" \
 			"The cron job will run with an added random number of minutes." \
 			"" "Create cron job with default schedule for automatic list updates?" \
-			"If you enter 'n', you can later create a cron job with a custom schedule as described in:" \
+			"'n' will set the 'cron_schedule' setting to 'disable'. You can later create a cron job with a custom schedule as described in:" \
 			"https://github.com/lynxthecat/adblock-lean/blob/master/README.md"
 		pick_opt "y|n" || return 1
 		cron_schedule="${def_schedule}"
-	elif [ -n "${luci_update_cron_job}" ] && [ -n "${luci_cron_schedule}" ]
+	elif [ -n "${luci_upd_cron_job}" ] && [ -n "${luci_cron_schedule}" ]
 	then
 		REPLY=y
 		cron_schedule="${luci_cron_schedule}"
-	elif  [ -n "${luci_update_cron_job}" ]
+	elif  [ -n "${luci_upd_cron_job}" ]
 	then
 		reg_failure "Can not create cron job for luci because the \${luci_cron_schedule} var is empty."
 	fi
@@ -2260,17 +2264,13 @@ gen_config()
 	fi
 	write_config "$(print_def_config -p "${preset}")" || return 1
 
+	mk_new_urls_format_flag || return 1 # @url_conversion_logic
+
 	# enable the service
-	if ! /sbin/service adblock-lean enabled
-	then
-		print_msg "" "${purple}Enabling the adblock-lean service.${n_c}"
-		/sbin/service adblock-lean enable || { reg_failure "Failed to enable the adblock-lean service."; return 1; }
-	else
-		print_msg "" "The ${green}adblock-lean service is already enabled.${n_c}"
-	fi
+	echo
+	/sbin/service adblock-lean enable || { reg_failure "Failed to enable the adblock-lean service."; return 1; }
 	luci_service_enable_failed=
 
-	mk_new_urls_format_flag || return 1 # @url_conversion_logic
 	check_blocklist_compression_support
 	:
 }
@@ -2278,7 +2278,7 @@ gen_config()
 boot()
 {
 	init_command boot || exit 1
-	reg_action -purple "Sleeping for ${boot_start_delay_s} seconds." || exit 1
+	log_msg -purple "Sleeping for ${boot_start_delay_s} seconds." || exit 1
 	sleep "${boot_start_delay_s}"
 	start "$@"
 }
@@ -2599,15 +2599,40 @@ set_colors
 
 [ "${1}" = setup ] && { setup; exit 0; }
 
+# handle enable/disable actions
 case "${action}" in
 	enable)
-		log_msg -purple "Enabling adblock-lean."
-		load_config
-		update_cron_job ;;
+		if ! [ "${enabling}" ]
+		then
+			export enabling=1
+			log_msg -purple "Enabling adblock-lean."
+			if ! /sbin/service adblock-lean enabled
+			then
+				/sbin/service adblock-lean enable && /sbin/service adblock-lean enabled ||
+					{ reg_failure "Failed to enable the adblock-lean service"; return 1; }
+			else
+				log_msg "The adblock-lean service is already enabled."
+			fi
+			load_config
+			upd_cron_job
+			enabling=
+		fi ;;
 	disable)
-		log_msg -purple "Disabling adblock-lean."
-		load_config
-		rm_cron_job
+		if ! [ "${disabling}" ]
+		then
+			export disabling=1
+			log_msg -purple "Disabling adblock-lean."
+			if /sbin/service adblock-lean enabled
+			then
+				/sbin/service adblock-lean disable && ! /sbin/service adblock-lean enabled ||
+					{ reg_failure "Failed to disable the adblock-lean service"; return 1; }
+			else
+				log_msg "The adblock-lean service is already disabled."
+			fi
+			load_config
+			rm_cron_job
+			disabling=
+		fi
 esac
 
 :
