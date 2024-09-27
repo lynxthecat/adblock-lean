@@ -1840,13 +1840,13 @@ report_pid_action()
 rm_cron_job()
 {
 	local curr_cron
-	log_msg -yellow "Removing cron job for adblock-lean."
-	curr_cron="$(crontab -u root -l 2>/dev/null)" || return 1
-	case "${curr_cron}" in
-		*"adblock-lean start"*) ;;
-		*) log_msg "Cron job for adblock-lean is not present."; return 0
+	curr_cron="$(get_curr_crontab)"
+	case ${?} in
+		1) return 1 ;;
+		3) return 0
 	esac
 
+	log_msg -purple "" "Removing cron job for adblock-lean."
 	printf '%s\n' "${curr_cron}" | sed '/adblock-lean start/d;/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	:
@@ -1989,6 +1989,26 @@ init_command()
 
 ### MAIN COMMAND FUNCTIONS
 
+# args: 1 - (optional) schedule
+# return codes:
+# 0 - cron job with same schedule exists
+# 1 - error
+# 2 - cron job with a different schedule exists
+# 3 - cron job doesn't exist
+get_curr_crontab()
+{
+	local curr_cron
+	curr_cron="$(crontab -u root -l 2>/dev/null)" || { reg_failure "${me}: Failed to read crontab."; return 1; }
+	printf '%s\n' "${curr_cron}"
+
+	# check if adblock-lean cron job with same schedule exists
+	case "${curr_cron}" in
+		*"${cron_schedule}"*"${abl_cron_cmd}"*) return 0 ;;
+		*"${abl_cron_cmd}"*) return 2 ;;
+		*) return 3 ;;
+	esac
+}
+
 upd_cron_job()
 {
 	local me="upd_cron_job" curr_cron cron_line
@@ -2001,20 +2021,21 @@ upd_cron_job()
 	fi
 
 	[ -z "${cron_schedule}" ] && { reg_failure "${me}: the \$cron_schedule variable is unset."; return 1; }
-	case "${cron_schedule}" in disable) log_msg -yellow "cron_schedule is set to 'disable' in config."; rm_cron_job; return 0; esac
+
+	if [ "${cron_schedule}" = disable ]
+	then
+		log_msg -yellow "cron_schedule is set to 'disable' in config."
+		rm_cron_job
+		return 0
+	fi
 
 	enable_cron_service || return 1
-
-	curr_cron="$(crontab -u root -l 2>/dev/null)" || { reg_failure "${me}: Failed to read crontab."; return 1; }
-
-	# check if adblock-lean cron job with same schedule exists
-	case "${curr_cron}" in
-		*"${cron_schedule}"*"${abl_cron_cmd}"*)
-			print_msg "${green}Cron job for adblock-lean with schedule '${cron_schedule}' aldready exists.${n_c}"; return 0 ;;
-		*"${abl_cron_cmd}"*)
-			# remove existing cron job with a different schedule from $curr_cron
-			curr_cron="$(printf %s "${curr_cron}" | sed "s~^.*${abl_cron_cmd}.*\$~~")" ;;
-		*) ;; # no adblock-lean cron job exists
+	curr_cron="$(get_curr_crontab)"
+	case ${?} in
+		0) print_msg "${green}Cron job for adblock-lean with schedule '${cron_schedule}' aldready exists.${n_c}"; return 0 ;;
+		1) return 1 ;;
+		2) curr_cron="$(printf %s "${curr_cron}" | sed "s~^.*${abl_cron_cmd}.*\$~~")" ;; # remove cron job with a different schedule
+		3) ;; # no adblock-lean cron job exists
 	esac
 
 	cron_line="${cron_schedule} RANDOM_DELAY=1 ${abl_cron_cmd} 1>/dev/null"
