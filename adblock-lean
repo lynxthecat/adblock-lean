@@ -608,7 +608,7 @@ parse_config()
 	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
 
 	# extract entries from default config
-	def_config="$(print_def_config)"
+	def_config="$(print_def_config)" || return 1
 
 	# extract valid values from default config
 	local sed_valid_vals_expr="/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; /\"/d; s/[ \t]//g; s/^/val_/; s/=string/=*/; \
