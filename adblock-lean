@@ -257,7 +257,7 @@ print_def_config()
 	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
 
 	# adblock-lean configuration options
-	# config_format=v3
+	# config_format=v4
 	#
 	# values must be enclosed in double-quotes
 	# comments must start at newline or inline after the closing double-quote
