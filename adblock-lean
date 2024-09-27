@@ -2661,12 +2661,11 @@ case "${action}" in
 			then
 				/sbin/service adblock-lean disable && ! /sbin/service adblock-lean enabled ||
 					{ reg_failure "Failed to disable the adblock-lean service"; exit 1; }
+				stop
+				load_config && rm_cron_job
 			else
 				log_msg "The adblock-lean service is already disabled."
 			fi
-			load_config
-			rm_cron_job
-			stop
 			disabling=
 		fi
 esac
