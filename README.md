@@ -17,52 +17,31 @@ The default Hagezi dnsmasq format lists [hagezi](https://github.com/hagezi/dns-b
 
 ## Installation on OpenWrt
 
-adblock-lean is written as a service script and is designed to run on a base OpenWrt installation without any dependencies.
+adblock-lean is written as a service script and can be installed via terminal.
 
+To download it, use the following command:
 ```bash
 uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
+```
+
+adblock-lean includes automated interactive setup which makes it easy to get going. If you prefer manual setup, skip the following section.
+
+### Automated interactive setup
+
+```bash
+sh /etc/init.d/adblock-lean setup
+```
+
+This will ask you several questions and make all important changes automatically, based on your replies.
+
+### Manual setup
+```bash
 chmod +x /etc/init.d/adblock-lean
-service adblock-lean gen_config   # generates default config in /root/adblock-lean/config
-uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit   # Optional/recommended.  Enables blocklist compression to reduce RAM usage
+service adblock-lean gen_config   # generates default config in /root/adblock-lean/config and sets up blocklist updates
+uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit   # Optional/recommended. Enables blocklist compression to reduce RAM usage
 service adblock-lean enable   # this will allow the script to automatically run on boot
-```
-
-A text editor like nano or vi can be used to modify the config file as needed:
-```bash
-opkg update
-opkg install nano
-nano /root/adblock-lean/config
-```
-
-Whilst adblock-lean does not require any dependencies to run, its performance can be improved by installing `GNU awk`, `GNU sed` and `GNU sort`:
-```bash
-opkg update
-opkg install gawk sed coreutils-sort
-```
-
-adblock-lean automatically checks for any version updates both at the end of the `start` and `status` routines.
-adblock-lean can be updated to the latest version by simply running: 
-```bash
-service adblock-lean update
-```
-
-## Automatically update blocklist at 5am following delay by random number of minutes
-
-Set up the following [Scheduled Task](https://openwrt.org/docs/guide-user/base-system/cron):
-```bash
-0 5 * * * /etc/init.d/adblock-lean enabled && export RANDOM_DELAY="1" && /etc/init.d/adblock-lean start
-```
-This tests whether the adblock-lean service is enabled and if so launches the start function, which updates to the new blocklist list. 
-
-The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on the blocklist server; and from a selfish perspective, increase the prospect that the server is not loaded during the download. 
-
-## Config Updates
-
-During certain updates, adblock-lean will require a configuration update.  adblock-lean will detect any out-of-date configurations and prompt you to automatically update the config, using your existing settings where possible.
-
-A new compatible config can be generated, which will overwrite the previous config fie:
-```bash
-service adblock-lean gen_config
+opkg install update
+opkg install gawk sed coreutils-sort # Optional/recommended. Makes list processing significantly faster (doesn't affect DNS resolution speed). gawk including dependencies may consume around 1MB. If flash space is an issue, consider skipping gawk installation.
 ```
 
 ## Features
@@ -87,10 +66,51 @@ adblock-lean includes, inter alia, the following features:
 - implements optional calls to user-configurable script on success or failure (for example to send an email report)
 - automatically check for application updates and self update functionality
 - config keys and values validation and optional automatic config repair when problems are detected
+- automated interactive setup
+
+## Basic configuration
+The config file for adblock-lean is located in `/etc/adblock-lean/config`.
+
+A new compatible config can be generated automatically, which will overwrite the previous config fie:
+```bash
+service adblock-lean gen_config
+```
+
+The `setup` command is available after installation as well:
+```bash
+service adblock-lean setup # runs the interactive setup routine
+```
+
+For manual configuration, a text editor like nano or vi can be used to modify the config file:
+```bash
+opkg update
+opkg install nano
+nano /etc/adblock-lean/config
+```
+
+### Automatic blocklist updates
+Automatic blocklist updates can be enabled via a cron job. When enabled, adblock-lean will run according to schedule specified in the config file, with a delay of random number of minutes (0-60).
+
+The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on the blocklist server; and from a selfish perspective, increase the prospect that the server is not loaded during the download. 
+
+To enable automatic blocklist updates or to change the update schedule, look for the option `cron_schedule=` in the config file and define your preferred cron schedule:
+```
+cron_schedule="<your_cron_schedule>"
+```
+Example: `cron_schedule="0 5 * * *"` for daily updates at 5 am
+
+Currently adblock-lean does not validate the schedule you set in config, so make sure that your custom schedule complies to the crontab syntax.
+
+To disable automatic blocklist updates, change the value for the `cron_schedule` option to `disable`:
+```
+cron_schedule="disable"
+```
+
+**Important:** After changing the schedule in the config, run the following command to have adblock-lean create/update/remove the cron job:
+`service adblock-lean upd_cron_job`
 
 
-
-## Config
+## Advanced configuration
 
 adblock-lean reads in a config file from `/etc/adblock-lean/config`
 
@@ -109,18 +129,19 @@ Each configuration option is internally documented with comments in `/etc/adbloc
 |               `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                     |
 |               `local_blocklist_path` | Path to local blocklist (domain will be blocked)                         |
 |                      `deduplication` | Whether to perform sorting and deduplication of entries                  |
-| `min_blocklist_file_part_line_count` | Minimum number of lines of individual downloaded blocklist part          |
+|      `min_blocklist_part_line_count` | Minimum number of lines of individual downloaded blocklist part          |
 | `min_blocklist_ipv4_part_line_count` | Minimum number of lines of individual downloaded ipv4 blocklist part     |
-|       min_allowlist_part_line_count` | Minimum number of lines of individual downloaded blocklist part          |
-|    `max_blocklist_file_part_size_KB` | Maximum size of any individual downloaded blocklist part                 |
+|      `min_allowlist_part_line_count` | Minimum number of lines of individual downloaded blocklist part          |
+|              `max_file_part_size_KB` | Maximum size of any individual downloaded blocklist part                 |
 |         `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                            |
 |                `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist            |
 |                    `use_compression` | Compress while processing, and final blocklists.  Reduces memory useage  |
 |            `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory      |
 |               `max_download_retries` | Maximum number of download retries for allowlist/blocklist parts         |
-|            `list_part_failed_action` | Governs failed lists handling: 'SKIP_PARTIAL' or 'STOP'                  |
+|            `list_part_failed_action` | Governs failed lists handling: 'SKIP' or 'STOP'                          |
 |                      `custom_script` | Path to custom user scripts to execute on success on failure             |
 |                 `boot_start_delay_s` | Start delay in seconds when service is started from system boot          |
+|                      `cron_schedule` | Crontab schedule for automatic blocklist updates or `disable`            |
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
@@ -132,40 +153,42 @@ The parameters described in the config section above relating to the intermediat
 
 https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076.
 
-Here are some example configuration settings:
+adblock-lean includes 4 pre-defined presets (mini, small, medium, large), each one intended for devices with a certain total memory capacity. When running `adblock-lean setup` or `adblock-lean gen_config`, you can select one of these presets and have the corresponding config options automatically set.
 
-- Mini 64mb routers. Aim for <100k entries. Example below: circa 85k entries
+The pre-defined presets are:
+
+- **Mini**: for devices with 64MB of RAM. Aim for <100k entries. Example below: circa 85k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.mini-onlydomains.txt"
-min_blocklist_file_part_line_count=1
-max_blocklist_file_part_size_KB=4000
+min_blocklist_part_line_count=1
+max_file_part_size_KB=4000
 max_blocklist_file_size_KB=4000
 min_good_line_count=40000
 ```
 
-- Small 128mb routers. Aim for <300k entries. Example below: circa 250k entries
+- **Small**: for devices with 128MB of RAM. Aim for <300k entries. Example below: circa 250k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
-min_blocklist_file_part_line_count=1
-max_blocklist_file_part_size_KB=7000
+min_blocklist_part_line_count=1
+max_file_part_size_KB=7000
 max_blocklist_file_size_KB=10000
 min_good_line_count=100000
 ```
 
-- Medium 256mb routers. Aim for <600k entries. Example below: circa 350k entries
+- **Medium**: for devices with 256MB of RAM. Aim for <600k entries. Example below: circa 350k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt"
-min_blocklist_file_part_line_count=1
-max_blocklist_file_part_size_KB=10000
+min_blocklist_part_line_count=1
+max_file_part_size_KB=10000
 max_blocklist_file_size_KB=20000
 min_good_line_count=200000
 ```
 
-- Large =>512mb routers. Example below: circa 700k entries
+- **Large**: for devices with 512MB of RAM or more. Example below: circa 700k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
-min_blocklist_file_part_line_count=1
-max_blocklist_file_part_size_KB=30000
+min_blocklist_part_line_count=1
+max_file_part_size_KB=30000
 max_blocklist_file_size_KB=50000
 min_good_line_count=200000
 ```
@@ -245,6 +268,32 @@ Just add the files:
 to the list of files to backup in the Configuration tab in LuCi here:
 
 http://openwrt.lan/cgi-bin/luci/admin/system/flash
+
+After completing sysupgrade, run the interactive setup again to re-enable adblock-lean:
+`sh /etc/init.d/adblock-lean setup`. To preserve your old config, answer `e` when asked this question:
+`Generate [n]ew config or use [e]xisting config?`
+
+
+## adblock-lean version updates
+
+adblock-lean automatically checks for version updates at the end of the `start` and `status` routines and prints a message if an update is available.
+
+adblock-lean can be updated to the latest version by simply running:
+```bash
+service adblock-lean update
+```
+
+During certain updates, adblock-lean will require a configuration update. adblock-lean will detect any out-of-date configurations and prompt you to automatically update the config, using your existing settings where possible.
+
+If automatic config update fails for any reason, a new compatible config can be generated, which will overwrite the previous config fie:
+```bash
+service adblock-lean gen_config
+```
+
+After updating adblock-lean, run the command:
+```bash
+service adblock-lean start
+```
 
 ## :stars: Stargazers <a name="stargazers"></a>
 
