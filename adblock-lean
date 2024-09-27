@@ -2646,7 +2646,7 @@ case "${action}" in
 				/sbin/service adblock-lean enable && /sbin/service adblock-lean enabled ||
 					{ reg_failure "Failed to enable the adblock-lean service"; exit 1; }
 			else
-				log_msg -green "" "The adblock-lean service is already enabled."
+				log_msg -green "The adblock-lean service is already enabled."
 			fi
 			load_config
 			upd_cron_job && luci_cron_job_creation_failed=
