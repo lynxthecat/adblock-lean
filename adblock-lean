@@ -2126,7 +2126,7 @@ setup()
 	luci_addnmount_failed=
 
 	REPLY=n
-	if [ -n "${do_dialogs}" ] && [ -s "${config_file}" ]
+	if [ -n "${do_dialogs}" ] && { [ -s "${config_file}" ] || [ -s "${root_config_file}" ]; }
 	then
 		print_msg "" "Existing config file found." "Generate [n]ew config or use [e]xisting config?"
 		pick_opt 'n|e' || exit 1
@@ -2137,12 +2137,15 @@ setup()
 
 	if [ "${REPLY}" = n ]
 	then
-		# generate config and enable the service
+		# generate config
 		gen_config || exit 1
 	else
 		load_config || exit 1
-		upd_cron_job
 	fi
+
+	# enable the service, update the cron job
+	/sbin/service adblock-lean enable || setup_failed
+	luci_service_enable_failed=
 
 	# determine if there are missing GNU utils
 	local pkgs2install='' missing_packages='' missing_utils='' missing_utils_print='' util package \
@@ -2234,7 +2237,7 @@ setup()
 
 	if [ -n "${do_dialogs}" ]
 	then
-		print_msg "" "${green}Setup is complete.${n_c}" "" "Start adblock-lean now?"
+		print_msg "" "${purple}Setup is complete.${n_c}" "" "Start adblock-lean now?"
 		pick_opt "y|n" || exit 1
 		[ "${REPLY}" != y ] && return 0
 		echo
@@ -2336,11 +2339,6 @@ gen_config()
 	write_config "$(print_def_config -p "${preset}")" || return 1
 
 	mk_new_urls_format_flag || return 1 # @url_conversion_logic
-
-	# enable the service
-	echo
-	/sbin/service adblock-lean enable || { reg_failure "Failed to enable the adblock-lean service."; return 1; }
-	luci_service_enable_failed=
 
 	check_blocklist_compression_support
 	:
@@ -2642,16 +2640,16 @@ case "${action}" in
 		if ! [ "${enabling}" ]
 		then
 			export enabling=1
-			log_msg -purple "Enabling adblock-lean."
+			log_msg -purple "" "Enabling the adblock-lean service."
 			if ! /sbin/service adblock-lean enabled
 			then
 				/sbin/service adblock-lean enable && /sbin/service adblock-lean enabled ||
-					{ reg_failure "Failed to enable the adblock-lean service"; return 1; }
+					{ reg_failure "Failed to enable the adblock-lean service"; exit 1; }
 			else
-				log_msg "The adblock-lean service is already enabled."
+				log_msg -green "" "The adblock-lean service is already enabled."
 			fi
 			load_config
-			upd_cron_job
+			upd_cron_job && luci_cron_job_creation_failed=
 			enabling=
 		fi ;;
 	disable)
@@ -2662,7 +2660,7 @@ case "${action}" in
 			if /sbin/service adblock-lean enabled
 			then
 				/sbin/service adblock-lean disable && ! /sbin/service adblock-lean enabled ||
-					{ reg_failure "Failed to disable the adblock-lean service"; return 1; }
+					{ reg_failure "Failed to disable the adblock-lean service"; exit 1; }
 			else
 				log_msg "The adblock-lean service is already disabled."
 			fi
