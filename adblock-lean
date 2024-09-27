@@ -249,15 +249,8 @@ print_def_config()
 	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
 
-	local preset
 	mk_preset_arrays
-	if [ "${1}" = '-p' ]
-	then
-		preset="${2}"
-	else
-		mk_def_preset || { print_msg "Falling back to preset 'small'."; preset=small; }
-	fi
-
+	: "${preset:=small}"
 	case "${preset}" in mini|small|medium|large) ;; *) reg_failure "print_def_config: \$preset var has invalid value."; exit 1; esac
 	gen_preset "${preset}" -n
 
@@ -602,11 +595,17 @@ parse_config()
 
 	unset curr_config_format def_config_format bad_value_keys \
 		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
-		luci_legacy_entries luci_bad_conf_format luci_conf_fixes
+		luci_legacy_entries luci_bad_conf_format luci_conf_fixes preset
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
 
 	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
+
+	# determine recommended preset
+	case "${luci_preset}" in
+		''|auto) mk_def_preset || { print_msg "Falling back to preset 'small'."; preset=small; } ;;
+		*) preset="${luci_preset}"
+	esac
 
 	# extract entries from default config
 	def_config="$(print_def_config)" || return 1
@@ -2197,7 +2196,7 @@ gen_config()
 {
 	init_command gen_config || return 1
 
-	local preset cnt
+	local cnt
 
 	if [ -n "${do_dialogs}" ] && [ -z "${luci_preset}" ]
 	then
