@@ -372,8 +372,8 @@ mk_def_preset()
 			for preset in large medium small mini
 			do
 				eval "mem=\"\${${preset}_mem}\""
-				# multiplying by 900 rather than 1024 to account for some memory not available to the kernel
-				[ "${totalmem}" -ge $((mem * 900)) ] && break
+				# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
+				[ "${totalmem}" -ge $((mem * 800)) ] && break
 			done
 	esac
 	:
