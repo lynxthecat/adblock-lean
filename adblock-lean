@@ -366,12 +366,13 @@ mk_preset_arrays()
 		large_2=30000 large_3=50000 large_4=200000 large_cnt=700 large_mem=512
 }
 
-# determine recommended preset and set quasi-array variables
+# determine recommended preset
 mk_def_preset()
 {
 	unset preset totalmem
 	local mem cnt
-	read -r _ totalmem _ </proc/meminfo
+	local IFS="${default_IFS}"
+	read -r _ totalmem _ < /proc/meminfo
 	case "${totalmem}" in
 		''|*[!0-9]*) reg_failure "\$totalmem has invalid value '${totalmem}'. Failed to determine system memory capacity."; return 1 ;;
 		*)
