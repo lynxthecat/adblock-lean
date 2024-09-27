@@ -2125,8 +2125,24 @@ setup()
 	esac
 	luci_addnmount_failed=
 
-	# generate config and enable the service
-	gen_config || exit 1
+	REPLY=n
+	if [ -n "${do_dialogs}" ] && [ -s "${config_file}" ]
+	then
+		print_msg "" "Existing config file found." "Generate [n]ew config or use [e]xisting config?"
+		pick_opt 'n|e' || exit 1
+	elif [ -n "${luci_use_old_config}" ]
+	then
+		REPLY=e
+	fi
+
+	if [ "${REPLY}" = n ]
+	then
+		# generate config and enable the service
+		gen_config || exit 1
+	else
+		load_config || exit 1
+		upd_cron_job
+	fi
 
 	# determine if there are missing GNU utils
 	local pkgs2install='' missing_packages='' missing_utils='' missing_utils_print='' util package \
