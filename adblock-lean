@@ -366,7 +366,7 @@ mk_preset_arrays()
 		large_2=30000 large_3=50000 large_4=200000 large_cnt=700 large_mem=512
 }
 
-# determine recommended preset
+# sets ${preset} to recommended preset, depending on system memory capacity
 mk_def_preset()
 {
 	unset preset totalmem
