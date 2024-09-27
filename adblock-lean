@@ -1835,7 +1835,61 @@ report_pid_action()
 	:
 }
 
+get_active_entries_cnt()
+{
+	local cnt entry_type allow_opt='' list_prefix list_prefixes=
+
+	# 'blocklist_ipv4' prefix doesn't need to be added for counting
+	for entry_type in blocklist allowlist
+	do
+		eval "[ ! \"\${${entry_type}_urls}\" ] && [ ! -s \"\${local_${entry_type}_path}\" ]" && continue
+		case ${entry_type} in
+			blocklist) list_prefix=local ;;
+			allowlist) list_prefix=server allow_opt="|#"
+		esac
+		list_prefixes="${list_prefixes}${list_prefix}|"
+	done
+
+	if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
+	then
+		gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz
+	elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
+	then
+		cat "${dnsmasq_tmp_d}/blocklist"
+	else
+		printf ''
+	fi |
+	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "[/${allow_opt}]" '\n' | wc -w > "/tmp/abl_entries_cnt"
+
+	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
+	case ${cnt} in
+		[0-2]|'') printf 0; return 1 ;;
+		*) printf %s "$((cnt-3))" # to account for the blocklist test entry
+	esac
+	:
+}
+
 ### Cron-related functions
+
+# args: 1 - (optional) schedule
+# return codes:
+# 0 - cron job with same schedule exists
+# 1 - error
+# 2 - cron job with a different schedule exists
+# 3 - cron job doesn't exist
+get_curr_crontab()
+{
+	local curr_cron
+	curr_cron="$(crontab -u root -l 2>/dev/null)" || { reg_failure "${me}: Failed to read crontab."; return 1; }
+	printf '%s\n' "${curr_cron}"
+
+	# check if adblock-lean cron job with same schedule exists
+	case "${curr_cron}" in
+		*"${cron_schedule}"*"${abl_cron_cmd}"*) return 0 ;;
+		*"${abl_cron_cmd}"*) return 2 ;;
+		*) return 3 ;;
+	esac
+}
 
 rm_cron_job()
 {
@@ -1988,26 +2042,6 @@ init_command()
 
 
 ### MAIN COMMAND FUNCTIONS
-
-# args: 1 - (optional) schedule
-# return codes:
-# 0 - cron job with same schedule exists
-# 1 - error
-# 2 - cron job with a different schedule exists
-# 3 - cron job doesn't exist
-get_curr_crontab()
-{
-	local curr_cron
-	curr_cron="$(crontab -u root -l 2>/dev/null)" || { reg_failure "${me}: Failed to read crontab."; return 1; }
-	printf '%s\n' "${curr_cron}"
-
-	# check if adblock-lean cron job with same schedule exists
-	case "${curr_cron}" in
-		*"${cron_schedule}"*"${abl_cron_cmd}"*) return 0 ;;
-		*"${abl_cron_cmd}"*) return 2 ;;
-		*) return 3 ;;
-	esac
-}
 
 upd_cron_job()
 {
@@ -2447,40 +2481,6 @@ restart()
 reload()
 {
 	restart
-}
-
-get_active_entries_cnt()
-{
-	local cnt entry_type allow_opt='' list_prefix list_prefixes=
-
-	# 'blocklist_ipv4' prefix doesn't need to be added for counting
-	for entry_type in blocklist allowlist
-	do
-		eval "[ ! \"\${${entry_type}_urls}\" ] && [ ! -s \"\${local_${entry_type}_path}\" ]" && continue
-		case ${entry_type} in
-			blocklist) list_prefix=local ;;
-			allowlist) list_prefix=server allow_opt="|#"
-		esac
-		list_prefixes="${list_prefixes}${list_prefix}|"
-	done
-
-	if [ -f "${dnsmasq_tmp_d}"/.blocklist.gz ]
-	then
-		gunzip -c "${dnsmasq_tmp_d}"/.blocklist.gz
-	elif [ -f "${dnsmasq_tmp_d}"/blocklist ]
-	then
-		cat "${dnsmasq_tmp_d}/blocklist"
-	else
-		printf ''
-	fi |
-	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "[/${allow_opt}]" '\n' | wc -w > "/tmp/abl_entries_cnt"
-
-	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
-	case ${cnt} in
-		[0-2]|'') printf 0; return 1 ;;
-		*) printf %s "$((cnt-3))" # to account for the blocklist test entry
-	esac
-	:
 }
 
 # return codes:
