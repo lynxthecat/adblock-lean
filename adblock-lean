@@ -373,7 +373,7 @@ mk_def_preset()
 	local mem cnt
 	read -r _ totalmem _ </proc/meminfo
 	case "${totalmem}" in
-		''|*[!0-9]*) reg_failure "Failed to determine system memory capacity." ;;
+		''|*[!0-9]*) reg_failure "Failed to determine system memory capacity."; return 1 ;;
 		*)
 			for preset in large medium small mini
 			do
