@@ -177,7 +177,7 @@ min_good_line_count=100000
 
 - **Medium**: for devices with 256MB of RAM. Aim for <600k entries. Example below: circa 350k entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt"
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"
 min_blocklist_part_line_count=1
 max_file_part_size_KB=10000
 max_blocklist_file_size_KB=20000
