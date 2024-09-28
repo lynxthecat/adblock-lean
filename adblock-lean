@@ -1218,11 +1218,26 @@ gen_list_parts()
 		for list_format in raw dnsmasq
 		do
 			local d=
+			local invalid_urls='' bad_hagezi_urls=''
 			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
+
 			eval "list_urls=\"\${${d}${list_type}_urls}\""
-			if [ -n "${list_urls}" ]
+			[ -z "${list_urls}" ] && continue
+
+			reg_action -blue "Starting ${list_format} ${list_type} part(s) download." || return 1
+
+			invalid_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
+				log_msg -warn "" "Invalid URLs detected:" "${invalid_urls}"
+
+			if [ "${list_format}" = raw ]
 			then
-				reg_action -blue "Starting ${list_format} ${list_type} part(s) download." || return 1
+				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | sed -n '/\/hagezi\/.*\/dnsmasq\//p')"
+				[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
+					"Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
+					"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
+				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | sed -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
+				[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
+					"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
 			fi
 
 			for list_url in ${list_urls}
