@@ -353,7 +353,7 @@ mk_preset_arrays()
 		mini_2=4000 mini_3=4000 mini_4=40000 mini_cnt=85 mini_mem=64
 	small_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" \
 		small_2=7000 small_3=10000 small_4=100000 small_cnt=250 small_mem=128
-	medium_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt ${hagezi_dl_url}/popupads-onlydomains.txt" \
+	medium_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt" \
 		medium_2=10000 medium_3=20000 medium_4=200000 medium_cnt=350 medium_mem=256
 	large_1="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
 		large_2=30000 large_3=50000 large_4=200000 large_cnt=700 large_mem=512
@@ -753,6 +753,10 @@ mk_new_urls_format_flag()
 load_config()
 {
 	local actual_config_file conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt parse_res url_conv_req
+
+	# Need to set do_dialogs here for compatibility when updating from earlier versions
+	local do_dialogs=
+	[ -z "${luci_skip_dialogs}" ] && [ "${msgs_dest}" = "/dev/tty" ] && do_dialogs=1
 
 	# @config_migration_logic
 	if [ -f "${config_file}" ]
@@ -1231,13 +1235,14 @@ gen_list_parts()
 
 			if [ "${list_format}" = raw ]
 			then
-				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | sed -n '/\/hagezi\/.*\/dnsmasq\//p')"
-				[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
-					"Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
+				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
+				log_msg -warn "" "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
 					"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
-				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | sed -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
-				[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
-					"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
+				case "${list_type}" in blocklist|allowlist)
+					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | sed -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
+					[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
+						"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
+				esac
 			fi
 
 			for list_url in ${list_urls}
@@ -2664,7 +2669,10 @@ case "${action}" in
 				log_msg -green "The adblock-lean service is already enabled."
 			fi
 			load_config
-			upd_cron_job && luci_cron_job_creation_failed=
+			if [ -n "${cron_job}" ]
+			then
+				upd_cron_job && luci_cron_job_creation_failed=
+			fi
 			enabling=
 		fi ;;
 	disable)
