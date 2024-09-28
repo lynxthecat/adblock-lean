@@ -2597,6 +2597,7 @@ resume()
 }
 
 # 1 - (optional) '-no-check-config' to skip checking config compatibility with the newer version
+# 1 - (optional) '--simulation <path>' to simulate update (intended for testing: service adblock-lean update --simulation <path_to_new_ver>)
 update()
 {
 	failsafe_log()
@@ -2607,13 +2608,21 @@ update()
 
 	init_command update || exit 1
 	reg_action -purple "Obtaining latest version of adblock-lean." || exit 1
-	uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean \
-		-O "${abl_dir}/adblock-lean.latest" 1> /dev/null 2> "${abl_dir}/uclient-fetch_err"
-	if ! grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
-	then
-		reg_failure "Unable to download latest version of adblock-lean."
-		rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
-		exit 1
+
+	if [ "${1}" != "--simulation" ]
+		then
+		uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean \
+			-O "${abl_dir}/adblock-lean.latest" 1> /dev/null 2> "${abl_dir}/uclient-fetch_err"
+		if ! grep -q "Download completed" "${abl_dir}/uclient-fetch_err"
+		then
+			reg_failure "Unable to download latest version of adblock-lean."
+			rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
+			exit 1
+		fi
+	else
+		print_msg "${yellow}Running in simulation mode.${n_c}"
+		[ -z "${2}" ] && { print_msg "${red}Provide path to the new version.${n_c}"; exit 1; }
+		cp "${2}" "${abl_dir}/adblock-lean.latest"
 	fi
 
 	if [ "${1}" != '-no-check-config' ]
@@ -2641,9 +2650,12 @@ update()
 		}
 	fi
 
-	try_mv "${abl_dir}/adblock-lean.latest" "${abl_service_path}" || exit 1
-	chmod +x "${abl_service_path}"
-	${abl_service_path} enable
+	if [ "${1}" != "--simulation" ]
+	then
+		try_mv "${abl_dir}/adblock-lean.latest" "${abl_service_path}" || exit 1
+		chmod +x "${abl_service_path}"
+		${abl_service_path} enable
+	fi
 	log_msg -green "adblock-lean has been updated to the latest version."
 
 	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
