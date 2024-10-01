@@ -257,10 +257,13 @@ print_def_config()
 	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
 
 	# adblock-lean configuration options
-	# config_format=v4
+	# config_format=v5
 	#
 	# values must be enclosed in double-quotes
-	# comments must start at newline or inline after the closing double-quote
+	# custom comments are not preserved after automatic config update
+
+	# Allowlist-only mode: only domains (and their subdomains) included in the allowlist(s) are allowed, all other domains are blocked
+	allowlist_only_mode="0" @ 0|1
 
 	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
 	blocklist_urls="${blocklist_urls}" @ string
@@ -272,14 +275,23 @@ print_def_config()
 	dnsmasq_blocklist_ipv4_urls="" @ string
 	dnsmasq_allowlist_urls="" @ string
 
-	# Path to optional local raw allowlist/blocklist domain files in the form:
+	# Path to optional local *raw domain* allowlist/blocklist files in the form:
 	# site1.com
 	# site2.com
 	local_allowlist_path="${config_dir}/allowlist" @ string
 	local_blocklist_path="${config_dir}/blocklist" @ string
 
-	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
-	deduplication="1" @ 0|1
+	# List part failed action:
+	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
+	# SKIP - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
+	list_part_failed_action="SKIP" @ SKIP|STOP
+
+	# Maximum number of download retries
+	max_download_retries="3" @ integer
+
+	# Minimum number of good lines in final postprocessed blocklist
+	min_good_line_count="${min_good_line_count}" @ integer
 
 	# Mininum number of lines of any individual downloaded part
 	min_blocklist_part_line_count="1" @ integer
@@ -292,8 +304,8 @@ print_def_config()
 	# Maximum total size of combined, processed blocklist
 	max_blocklist_file_size_KB="${max_blocklist_file_size_KB}" @ integer
 
-	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="${min_good_line_count}" @ integer
+	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
+	deduplication="1" @ 0|1
 
 	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
 	use_compression="1" @ 0|1
@@ -302,14 +314,8 @@ print_def_config()
 	# new blocklist thereby to free up memory during generaiton of new blocklist - enable (1) or disable (0)
 	initial_dnsmasq_restart="0" @ 0|1
 
-	# Maximum number of download retries
-	max_download_retries="3" @ integer
-
-	# List part failed action:
-	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
-	# SKIP - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
-	list_part_failed_action="SKIP" @ SKIP|STOP
+	# Start delay in seconds when service is started from system boot
+	boot_start_delay_s="120" @ integer
 
 	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
@@ -317,9 +323,6 @@ print_def_config()
 	# report_success() is only executed upon completion of the 'start' command
 	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
 	custom_script="" @ string
-
-	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s="120" @ integer
 
 	# Crontab schedule expression for periodic list updates
 	cron_schedule="${cron_schedule:-"0 5 * * *"}" @ string
@@ -1039,6 +1042,7 @@ cleanup_dl_status_files()
 # 1 - General error (stop processing)
 # 2 - Bad List (retry doesn't make sense)
 # 3 - Download Failure (retry makes sense)
+# 4 - Blocklist part ignored because allowlist_only_mode is on
 process_list_part()
 {
 	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part" \
@@ -1057,8 +1061,10 @@ process_list_part()
 
 	case ${list_type} in
 		allowlist) [ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
-		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
+		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
 	esac
+
+	[ "${list_type}" = blocklist ] && [ "${allowlist_only_mode}" = 1 ] && return 4
 
 	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
 
@@ -1107,13 +1113,8 @@ process_list_part()
 		cat
 	fi |
 
-	# check downloaded lists for rogue elements
-	if [ "${list_origin}" = downloaded ]
-	then
-		tee >(sed -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${abl_dir}/rogue_element")
-	else
-		cat
-	fi |
+	# check lists for rogue elements
+	tee >(sed -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${abl_dir}/rogue_element") |
 
 	# compress parts
 	if [ -n "${compress_part}" ]
@@ -1212,6 +1213,7 @@ gen_list_parts()
 					0)
 						log_process_success "local"
 						list_line_cnt=$(( list_line_cnt + list_part_line_count )) ;;
+					4) log_msg -warn "Allowlist-only mode is set to '1' in config. Ignoring blocklist part: ${local_list_path}." ;;
 					*) handle_process_failure || return 1
 				esac
 			fi
@@ -1272,6 +1274,9 @@ gen_list_parts()
 							handle_process_failure || return 1
 							continue 2 ;;
 						3) ;;
+						4)
+							log_msg -warn "Allowlist-only mode is set to '1' in config. Ignoring blocklist part from ${list_url}."
+							continue 2 ;;
 					esac
 
 					if [ "${retry}" -ge "${max_download_retries}" ]
@@ -1291,7 +1296,9 @@ gen_list_parts()
 		if [ "${list_line_cnt}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${abl_dir}/allowlist" ]; }
 		then
 			case ${list_type} in
-				blocklist) return 1 ;;
+				blocklist)
+					[ "${allowlist_only_mode}" = 0 ] && return 1
+					log_msg -yellow "Allowlist-only mode is on - accepting empty blocklist." ;;
 				allowlist)
 					log_msg "Not using any allowlist for blocklist processing."
 					use_allowlist=0
@@ -1431,6 +1438,12 @@ generate_and_process_blocklist_file()
 			# pack entries in 1024 characters long lines
 			convert_entries allowlist
 			rm -f "${abl_dir}/allowlist"
+		fi
+		# add the optional allowlist-only entry
+		if [ "${allowlist_only_mode}" = 1 ]
+		then
+			printf '%s\n' "address=/#/#"
+			printf '%s\n' "server=/google.com/microsoft.com/amazon.com/#"
 		fi
 		# add the blocklist test entry
 		printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"
