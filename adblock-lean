@@ -51,7 +51,7 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="setup status pause resume gen_stats gen_config upd_cron_job print_log update"
+EXTRA_COMMANDS="setup status pause resume gen_stats gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
 adblock-lean custom commands:
 	setup           run automated setup for adblock-lean
@@ -63,7 +63,8 @@ adblock-lean custom commands:
 	upd_cron_job    create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
 	                if config option set to 'disable', remove existing cron job if any
 	print_log       print most recent session log
-	update          update adblock-lean to the latest version"
+	update          update adblock-lean to the latest version
+	uninstall       uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 
 ### UTILITY FUNCTIONS
@@ -999,7 +1000,13 @@ try_export_existing_blocklist()
 check_addnmount()
 {
 	hash uci 1>/dev/null || { reg_failure "uci command was not found."; return 2; }
-	uci -q get dhcp.@dnsmasq[0].addnmount | grep -qE "(^|[ \t])/bin(/\*|/busybox)*($|[ \t])"
+	local i=0
+	while uci -q get dhcp.@dnsmasq[${i}] >/dev/null && [ ${i} -lt 128 ]
+	do
+		uci -q get dhcp.@dnsmasq[${i}].addnmount
+		i=$((i+1))
+	done | grep -qE "(^|[ \t])/bin(/\*|/busybox)*($|[ \t])" && return 0
+	return 1
 }
 
 # return codes:
@@ -1018,11 +1025,11 @@ check_blocklist_compression_support()
 
 	check_addnmount && return 0
 	[ ${?} = 2 ] && return 2
-	reg_failure "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
-	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist." \
-		"Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section." \
-		"Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit" \
-		"Either edit /etc/config/dhcp as described above or disable blocklist compression in config."
+	log_msg -warn "" "No appropriate 'addnmount' entry in /etc/config/dhcp was identified." \
+		"Final blocklist compression will be disabled."
+	log_msg "addnmount entry is required to give dnsmasq access to busybox gunzip in order to extract compressed blocklist." \
+		"Run 'service adblock-lean setup' to have the entry created automatically, or follow the steps in the README." \
+		"Alternatively, change the 'use_compression' option in adblock-lean config to '0'."
 	return 1
 }
 
@@ -2154,7 +2161,9 @@ setup()
 		2) exit 1 ;;
 		1)
 			print_msg "" "${purple}Creating dnsmasq addnmount UCI entry.${n_c}"
-			uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit || setup_failed "Failed to create addnmount entry."
+			uci set dhcp.adblock_lean=dnsmasq &&
+			uci add_list dhcp.adblock_lean.addnmount='/bin/busybox' &&
+			uci commit || setup_failed "Failed to create addnmount entry."
 	esac
 	luci_addnmount_failed=
 
@@ -2675,9 +2684,51 @@ update()
 	exit 0
 }
 
+uninstall()
+{
+	log_msg -purple "" "Uninstalling adblock-lean."
+	stop -noexit
+	if /sbin/service adblock-lean enabled &>/dev/null
+		then
+		log_msg -purple "" "Disabling adblock-lean."
+		disabling=1 /sbin/service adblock-lean disable && ! /sbin/service adblock-lean enabled ||
+			{ reg_failure "Failed to disable adblock-lean. Disable manually and then run this command again."; exit 1; }
+	fi
+
+	if [ -n "${do_dialogs}" ]
+	then
+		print_msg "" "Delete the config directory ${config_dir}?"
+		pick_opt "y|n"
+	else
+		REPLY="${luci_uninstall_rm_config}"
+	fi
+
+	if [ "${REPLY}" = y ]
+	then
+		log_msg -purple "" "Deleting the config directory."
+		rm -rf "${config_dir}" || reg_failure "Failed to delete the config directory '${config_dir}'."
+	fi
+
+	if uci -q get dhcp.adblock_lean 1>/dev/null
+	then
+		log_msg -purple "" "Deleting the custom addnmount entry from /etc/config/dhcp."
+		uci -q delete dhcp.adblock_lean && uci commit || reg_failure "Failed to delete the custom addnmount entry from /etc/config/dhcp."
+	fi
+
+	log_msg -purple "" "Deleting the script from ${abl_service_path}."
+	rm -f "${abl_service_path}" ||
+		{ reg_failure "Failed to delete the script from '${abl_service_path}'. Please delete manually."; exit 1; }
+
+	log_msg -purple "" "Uninstall complete."
+	exit 0
+}
+
 set_colors
 
-[ "${1}" = setup ] && { setup; exit 0; }
+case "${1}" in
+	setup) setup; exit 0 ;;
+	uninstall) uninstall; exit 0
+esac
 
 # handle enable/disable actions
 case "${action}" in
@@ -2685,9 +2736,9 @@ case "${action}" in
 		if ! [ "${enabling}" ]
 		then
 			export enabling=1
-			log_msg -purple "" "Enabling the adblock-lean service."
 			if ! /sbin/service adblock-lean enabled
 			then
+				log_msg -purple "" "Enabling the adblock-lean service."
 				/sbin/service adblock-lean enable && /sbin/service adblock-lean enabled ||
 					{ reg_failure "Failed to enable the adblock-lean service"; exit 1; }
 			else
@@ -2698,24 +2749,22 @@ case "${action}" in
 			then
 				upd_cron_job && luci_cron_job_creation_failed=
 			fi
-			enabling=
 		fi ;;
 	disable)
-		if ! [ "${disabling}" ]
+		if [ -z "${disabling}" ]
 		then
 			export disabling=1
-			log_msg -purple "Disabling adblock-lean."
-			if /sbin/service adblock-lean enabled
+			if enabled
 			then
-				/sbin/service adblock-lean disable && ! /sbin/service adblock-lean enabled ||
+				log_msg -purple "Disabling adblock-lean."
+				disable && ! enabled ||
 					{ reg_failure "Failed to disable the adblock-lean service"; exit 1; }
-				stop
+				stop -noexit
 				load_config && rm_cron_job
 			else
 				log_msg "The adblock-lean service is already disabled."
 			fi
-			disabling=
+			exit 0
 		fi
 esac
-
 :
