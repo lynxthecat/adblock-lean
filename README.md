@@ -36,12 +36,18 @@ This will ask you several questions and make all important changes automatically
 
 ### Manual setup
 ```bash
-chmod +x /etc/init.d/adblock-lean
-service adblock-lean gen_config   # generates default config in /root/adblock-lean/config and sets up blocklist updates
-uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit   # Optional/recommended. Enables blocklist compression to reduce RAM usage
-service adblock-lean enable   # this will allow the script to automatically run on boot
-opkg install update
-opkg install gawk sed coreutils-sort # Optional/recommended. Makes list processing significantly faster (doesn't affect DNS resolution speed). gawk including dependencies may consume around 1MB. If flash space is an issue, consider skipping gawk installation.
+chmod +x /etc/init.d/adblock-lean # Makes the script executable
+service adblock-lean gen_config   # Generates default config in /root/adblock-lean/config and sets up blocklist updates
+
+# Optional/recommended. Enables blocklist compression to reduce RAM usage
+uci set dhcp.adblock_lean=dnsmasq && uci add_list dhcp.adblock_lean.addnmount='/bin/busybox' && uci commit
+
+# This will allow adblock-lean to automatically run on boot
+service adblock-lean enable
+
+# Optional/recommended. Makes list processing significantly faster (doesn't affect DNS resolution speed). gawk including dependencies may consume around 1MB. If flash space is an issue, consider skipping gawk installation.
+opkg update
+opkg install gawk sed coreutils-sort
 ```
 
 ## Features
@@ -298,6 +304,13 @@ After updating adblock-lean, run the command:
 ```bash
 service adblock-lean start
 ```
+
+## Uninstalling
+
+To uninstall adblock-lean, run:
+`service adblock-lean uninstall`
+or
+`sh /etc/init.d/adblock-lean uninstall`
 
 ## :stars: Stargazers <a name="stargazers"></a>
 
