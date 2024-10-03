@@ -1326,7 +1326,7 @@ gen_list_parts()
 			case ${list_type} in
 				blocklist)
 					[ "${whitelist_mode}" = 0 ] && return 1
-					log_msg -yellow "Allowlist-only mode is on - accepting empty blocklist." ;;
+					log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
 				allowlist)
 					log_msg "Not using any allowlist for blocklist processing."
 					use_allowlist=0
@@ -1467,7 +1467,7 @@ generate_and_process_blocklist_file()
 			convert_entries allowlist
 			rm -f "${abl_dir}/allowlist"
 		fi
-		# add the optional allowlist-only entry
+		# add the optional whitelist entry
 		if [ "${whitelist_mode}" = 1 ]
 		then
 			# add block-everything entry: local=/*a/*b/*c/.../*z/
