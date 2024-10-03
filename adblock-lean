@@ -263,8 +263,10 @@ print_def_config()
 	# values must be enclosed in double-quotes
 	# custom comments are not preserved after automatic config update
 
-	# Allowlist-only mode: only domains (and their subdomains) included in the allowlist(s) are allowed, all other domains are blocked
-	allowlist_only_mode="0" @ 0|1
+	# Whitelist mode: only domains (and their subdomains) included in the allowlist(s) are allowed, all other domains are blocked
+	# In this mode, if blocklists are used in addition to allowlists, subdomains included in the blocklists will be blocked,
+	# including subdomains of allowed domains
+	whitelist_mode="0" @ 0|1
 
 	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
 	blocklist_urls="${blocklist_urls}" @ string
@@ -281,6 +283,13 @@ print_def_config()
 	# site2.com
 	local_allowlist_path="${config_dir}/allowlist" @ string
 	local_blocklist_path="${config_dir}/blocklist" @ string
+
+	# Test domains are automatically querried after loading the blocklist into dnsmasq,
+	# in order to verify that the blocklist didn't break DNS resolution
+	# If query for any of the test domains fails, previous blocklist is restored from backup
+	# If backup doesn't exist, the blocklist is removed and adblock-lean is stopped
+	# Leaving this empty will disable verification
+	test_domains="google.com microsoft.com amazon.com" @ string
 
 	# List part failed action:
 	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
@@ -1049,7 +1058,6 @@ cleanup_dl_status_files()
 # 1 - General error (stop processing)
 # 2 - Bad List (retry doesn't make sense)
 # 3 - Download Failure (retry makes sense)
-# 4 - Blocklist part ignored because allowlist_only_mode is on
 process_list_part()
 {
 	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part" \
@@ -1070,8 +1078,6 @@ process_list_part()
 		allowlist) [ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
 	esac
-
-	[ "${list_type}" = blocklist ] && [ "${allowlist_only_mode}" = 1 ] && return 4
 
 	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
 
@@ -1113,9 +1119,16 @@ process_list_part()
 
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
-		# remove allowlist domains from blocklist
-		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n];
-			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
+		case "${whitelist_mode}" in
+		0)
+			# remove allowlist domains from blocklist
+			${awk_cmd} 'NR==FNR { allow[$0]; next } { n=split($1,arr,"."); addr = arr[n];
+				for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" - ;;
+		1)
+			# only print subdomains of allowlist domains
+			${awk_cmd} 'NR==FNR { allow[$0]; next } { n=split($1,arr,"."); addr = arr[n];
+				for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${abl_dir}/allowlist" -
+		esac
 	else
 		cat
 	fi |
@@ -1142,8 +1155,7 @@ process_list_part()
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
 		reg_failure "${list_origin} ${list_type} part size reached the maximum value set in config (${max_file_part_size_KB} KB)."
-		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config." \
-			"Skipping ${list_type} part and continuing."
+		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
 		rm -f "${dest_file}"
 		return 2
 	fi
@@ -1187,7 +1199,7 @@ gen_list_parts()
 	handle_process_failure()
 	{
 		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-		log_msg "Skipping file part and continuing."
+		log_msg "Skipping file and continuing."
 		:
 	}
 
@@ -1220,7 +1232,6 @@ gen_list_parts()
 					0)
 						log_process_success "local"
 						list_line_cnt=$(( list_line_cnt + list_part_line_count )) ;;
-					4) log_msg -warn "Allowlist-only mode is set to '1' in config. Ignoring blocklist part: ${local_list_path}." ;;
 					*) handle_process_failure || return 1
 				esac
 			fi
@@ -1280,10 +1291,7 @@ gen_list_parts()
 						2)
 							handle_process_failure || return 1
 							continue 2 ;;
-						3) ;;
-						4)
-							log_msg -warn "Allowlist-only mode is set to '1' in config. Ignoring blocklist part from ${list_url}."
-							continue 2 ;;
+						3)
 					esac
 
 					if [ "${retry}" -ge "${max_download_retries}" ]
@@ -1304,7 +1312,7 @@ gen_list_parts()
 		then
 			case ${list_type} in
 				blocklist)
-					[ "${allowlist_only_mode}" = 0 ] && return 1
+					[ "${whitelist_mode}" = 0 ] && return 1
 					log_msg -yellow "Allowlist-only mode is on - accepting empty blocklist." ;;
 				allowlist)
 					log_msg "Not using any allowlist for blocklist processing."
@@ -1447,13 +1455,14 @@ generate_and_process_blocklist_file()
 			rm -f "${abl_dir}/allowlist"
 		fi
 		# add the optional allowlist-only entry
-		if [ "${allowlist_only_mode}" = 1 ]
+		if [ "${whitelist_mode}" = 1 ]
 		then
 			printf '%s\n' "address=/#/#"
-			printf '%s\n' "server=/google.com/microsoft.com/amazon.com/#"
+			local allow_test_domains="$(printf %s "${test_domains}" | sed -E 's~[ \t]+$~~;s~^[ \t]+~~;s~[ \t]+~\n~g')"
+			[ -n "${allow_test_domains}" ] && printf %s "${allow_test_domains}" | convert_entries allowlist
 		fi
 		# add the blocklist test entry
-		printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"
+		printf '%s\n' "address=/adblocklean-test123.info/#"
 	} |
 
 	# limit size
@@ -1509,7 +1518,7 @@ generate_and_process_blocklist_file()
 
 	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
 	then
-		reg_failure "Entries count: $(int2human "${final_entries_cnt}") below the minimum value set in config ($(int2human "${min_good_line_count}"))."
+		reg_failure "Entries count ($(int2human "${final_entries_cnt}")) is below the minimum value set in config ($(int2human "${min_good_line_count}"))."
 		return 1
 	fi
 
@@ -1547,7 +1556,7 @@ check_active_blocklist()
 	nslookup "adblocklean-test123.info" 127.0.0.1 1>/dev/null 2>/dev/null ||
 			{ reg_failure "Lookup of the blocklist test domain failed with new blocklist."; return 4; }
 
-	for domain in google.com amazon.com microsoft.com
+	for domain in ${test_domains}
 	do
 		ns_res="$(nslookup "${domain}" 127.0.0.1 2>/dev/null)" ||
 			{ reg_failure "Lookup of '${domain}' failed with new blocklist."; return 2; }
@@ -1742,7 +1751,7 @@ update_pid_action() {
 		3) ;;
 		1) return 1 ;;
 		2) reg_failure "update_pid_action(): pid file '${pid_file}' has unexpected pid '${_pid}'."; return 1 ;;
-		0) reg_failure "update_pid_action(): pid file '${pid_file}' not found."; return 1
+		0) return 0
 	esac
 	mk_lock -f "${1}"
 	return ${?}
@@ -1885,7 +1894,7 @@ get_active_entries_cnt()
 		eval "[ ! \"\${${entry_type}_urls}\" ] && [ ! -s \"\${local_${entry_type}_path}\" ]" && continue
 		case ${entry_type} in
 			blocklist) list_prefix=local ;;
-			allowlist) list_prefix=server allow_opt="|#"
+			allowlist) list_prefix=server allow_opt="#"
 		esac
 		list_prefixes="${list_prefixes}${list_prefix}|"
 	done
@@ -1899,13 +1908,22 @@ get_active_entries_cnt()
 	else
 		printf ''
 	fi |
-	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "[/${allow_opt}]" '\n' | wc -w > "/tmp/abl_entries_cnt"
+	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
 
 	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
-	case ${cnt} in
-		[0-2]|'') printf 0; return 1 ;;
-		*) printf %s "$((cnt-3))" # to account for the blocklist test entry
-	esac
+	rm -f "/tmp/abl_entries_cnt"
+	case "${cnt}" in *[!0-9]*|'') printf 0; return 1; esac
+	local d i=0 IFS="${default_IFS}"
+	if [ "${whitelist_mode}" = 1 ]
+	then
+		i=1
+		for d in ${test_domains}
+		do
+			i=$((i+1))
+		done
+	fi
+	[ "${cnt}" -lt $((2+i)) ] && { printf 0; return 1; }
+	printf %s "$((cnt-2-i))"
 	:
 }
 
