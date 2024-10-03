@@ -127,7 +127,7 @@ Each configuration option is internally documented with comments in `/etc/adbloc
 
 | Variable                             |                         Setting                                                |
 | -----------------------------------: | :----------------------------------------------------------------------------- |
-|                `allowlist_only_mode` | Block all domains except domains in the allowlist(s). Enable (1) or disable(0) |
+|                     `whitelist_mode` | Block all domains except domains in the allowlist(s). Enable (1) or disable(0) |
 |                     `blocklist_urls` | One or more raw blocklist URLs to download and process                         |
 |                `blocklist_ipv4_urls` | One or more raw ipv4 blocklist URLs to download and process                    |
 |                     `allowlist_urls` | One or more raw allowlist URLs to download and process                         |
@@ -204,8 +204,10 @@ An excellent breakdown of highly suitable lists and their merits is provided at:
 
 https://github.com/hagezi/dns-blocklists
 
-## Allowlist-only mode
-This mode can be enabled by setting the config option `allowlist_only_mode` to `1`. In this mode all domain names resolution will return nx-domain, except for domains (and their subdomains) included in local and/or downloaded allowlists. Local blocklist and any blocklist download URLs are ignored in this mode, except ipv4 blocklist download URLs which will still be processed. This mode can be used to implement parental control or similar functionality.
+## Whitelist mode
+This mode can be used to implement parental control or similar functionality while also adblocking inside the allowed domains. It can be enabled by setting the config option `whitelist_mode` to `1`. In this mode all domain names will be resolved to 127.0.0.1, except for domains (and their subdomains) included in local and/or downloaded allowlists. In this mode, if blocklists are used in addition to allowlists, subdomains which are included in the blocklists and which are subdomains of allowed domains - will be blocked (with the 'nx domain' response).
+
+For example, if the an allowlist has this entry: `google.com` and a blocklist has this entry: `ads.google.com`, and `whitelist_mode` is set to `1`, then `ads.google.com` will be blocked, while `google.com` and `mail.google.com` (and any other subdomain of `google.com` which is not included in the blocklist) will work.
 
 ## User-configurable calls on success or failure
 
