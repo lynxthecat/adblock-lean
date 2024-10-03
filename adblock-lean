@@ -1075,7 +1075,7 @@ process_list_part()
 	esac
 
 	case ${list_type} in
-		allowlist) [ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
+		allowlist) dest_file="${abl_dir}/allowlist.0" ;;
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
 	esac
 
@@ -1182,6 +1182,13 @@ process_list_part()
 		return 3
 	fi
 
+	# keep the allowlist consolidated in one file
+	if [ "${list_type}" = allowlist ]
+	then
+		cat "${dest_file}" >> "${abl_dir}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
+		rm -f "${dest_file}"
+	fi
+
 	cleanup_dl_status_files
 	:
 }
@@ -1207,9 +1214,21 @@ gen_list_parts()
 
 	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "NOTE: No URLs specified for blocklist download."
 
+	rm -f "${abl_dir}/allowlist"
+
+	if [ "${whitelist_mode}" = 1 ]
+	then
+		# allow test domains
+		for d in ${test_domains}
+		do
+			printf '%s\n' "${d}" >> "${abl_dir}/allowlist"
+		done
+		use_allowlist=1
+	fi
+
 	for list_type in allowlist blocklist blocklist_ipv4
 	do
-		rm -f "${abl_dir}/${list_type}"*
+		rm -f "${abl_dir}/${list_type}".*
 		list_id=0 list_line_cnt=0 list_part_line_count=0
 		and_compressing=
 		case ${list_type} in blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && and_compressing=" and compressing"; esac
@@ -1277,12 +1296,6 @@ gen_list_parts()
 					process_list_part "${list_id}" "${list_type}" "downloaded" "${list_format}" "${list_url}"
 					case ${?} in
 						0)
-							if [ "${list_type}" = allowlist ]
-							then
-								cat "${abl_dir}/${list_type}.${list_id}" >> "${abl_dir}/allowlist" ||
-									{ reg_failure "Failed to merge allowlist part."; return 1; }
-								rm -f "${abl_dir}/${list_type}.${list_id}"
-							fi
 							log_process_success "downloaded ${list_format}"
 							[ "${list_type}" = blocklist_ipv4 ] && use_blocklist_ipv4=1
 							list_line_cnt=$(( list_line_cnt + list_part_line_count ))
@@ -1457,9 +1470,10 @@ generate_and_process_blocklist_file()
 		# add the optional allowlist-only entry
 		if [ "${whitelist_mode}" = 1 ]
 		then
-			printf '%s\n' "address=/#/#"
-			local allow_test_domains="$(printf %s "${test_domains}" | sed -E 's~[ \t]+$~~;s~^[ \t]+~~;s~[ \t]+~\n~g')"
-			[ -n "${allow_test_domains}" ] && printf %s "${allow_test_domains}" | convert_entries allowlist
+			# add block-everything entry: local=/*a/*b/*c/.../*z/
+			printf 'local=/'
+			awk 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
+			printf '\n'
 		fi
 		# add the blocklist test entry
 		printf '%s\n' "address=/adblocklean-test123.info/#"
