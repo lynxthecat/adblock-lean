@@ -136,6 +136,7 @@ Each configuration option is internally documented with comments in `/etc/adbloc
 |             `dnsmasq_allowlist_urls` | One or more dnsmasq format allowlist URLs to download and process              |
 |               `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                           |
 |               `local_blocklist_path` | Path to local blocklist (domain will be blocked)                               |
+|                       `test_domains` | Domains used to test DNS resolution after loading the final blocklist          |
 |            `list_part_failed_action` | Governs failed lists handling: 'SKIP' or 'STOP'                                |
 |               `max_download_retries` | Maximum number of download retries for allowlist/blocklist parts               |
 |                `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist                  |
@@ -208,6 +209,10 @@ https://github.com/hagezi/dns-blocklists
 This mode can be used to implement parental control or similar functionality while also adblocking inside the allowed domains. It can be enabled by setting the config option `whitelist_mode` to `1`. In this mode all domain names will be resolved to 127.0.0.1, except for domains (and their subdomains) included in local and/or downloaded allowlists. In this mode, if blocklists are used in addition to allowlists, subdomains which are included in the blocklists and which are subdomains of allowed domains - will be blocked (with the 'nx domain' response).
 
 For example, if the an allowlist has this entry: `google.com` and a blocklist has this entry: `ads.google.com`, and `whitelist_mode` is set to `1`, then `ads.google.com` will be blocked, while `google.com` and `mail.google.com` (and any other subdomain of `google.com` which is not included in the blocklist) will work.
+
+Note that in this mode, the test domains (specified via the option `test_domains`) will be automatically added to the allowlist in order for the checks to pass. You can use empty string in that option - this will bypass that check and block the default domains (google.com, microsoft.com, amazon.com).
+
+Also note that in this mode by default the Github domains will be blocked, so the automatic update functionality will not work - unless you add github.com to the allowlist.
 
 ## User-configurable calls on success or failure
 
