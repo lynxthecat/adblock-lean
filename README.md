@@ -174,7 +174,7 @@ Each configuration option is internally documented with comments in `/etc/adbloc
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
-## Selection of blocklist(s) and download and processing parameters
+## Selection of blocklists and associated parameters
 
 An important factor in selecting blocklist(s) is how much free memory is available for blocklist use. It is the responsibility of the user to ensure that there is sufficient free memory to prevent an out of memory situation.
 
