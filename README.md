@@ -4,16 +4,30 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 
 adblock-lean is **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This facilitates the use of very large blocklists even for low spec, low performance devices.
 
-**USER NOTICE:**  Current versions September 19, 2024 and onwards switch to using raw formatted blocklists by default (the default lists are still Hagezi).  Dnsmasq formatted lists are still supported.  Raw lists have the benefit of smaller file size dowload, improvements in processing speed and reduced ram usage.  On the first run after updating, adblock-lean will prompt you (y/n) to automatically change URLs for Hagezi & OISD lists from dnsmasq format to raw format.  For other lists, you can choose to find a raw formatted list or continue using dnsmasq formatted lists.  You can always use ```service adblock-lean gen_config``` to generate a fresh configuration file if required.
+## Features
+adblock-lean is written as a service and 'service adblock-lean start' will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
 
-Hagezi raw lists can be found [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard). **NOTE** that the file names of correct lists have the `-onlydomains` suffix.
-Visual example of raw ```blocklist_urls``` [Hagezi light raw](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt).  
-Visual example of dnsmasq formmatted ```dnsmasq_blocklist_urls``` [Hagezi light dnsmasq](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt).
+adblock-lean includes the following features:
 
-oisd raw domains-formatted lists can be found [here](https://oisd.nl/setup). **NOTE** that the correct lists are **only** the ones named `domainswild2` (note the `2`).
-oisd dnsmasq-formatted lists can be found at the same URL, except you would be looking for lists named `dnsmasq2`.
-
-The default Hagezi dnsmasq format lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. Any other raw or dnsmasq format lists of your choice can also be configured and used.
+- support multiple blocklist files downloaded from user-specified urls
+- support local blocklist
+- same for downloaded and local allowlists
+- support whitelist mode
+- removal of domains found in the allowlist form the blocklist files
+- combining all downloaded and local lists into one final blocklist file
+- check that each individual blocklist and allowlist file does not exceed configurable maximum size
+- check that the total blocklist size does not exceeed configurable maximum file size
+- check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
+- check that line count in blocklist file does not exceed configurable minimum (default: 100,000)
+- save a compressed copy of the previous blocklist file, then load the new combined blocklist file into dnsmasq
+- supports blocklist compression by leveraging the new conf-script functionality of dnsmasq
+- perform checks on restarted dnsmasq with new blocklist file
+- revert to previous blocklist file if checks fail
+- if checks on previous blocklist file also fail then revert to not using any blocklist file
+- implements optional calls to user-configurable script on success or failure (for example to send an email report)
+- automatically check for application updates and self update functionality
+- config keys and values validation and optional automatic config repair when problems are detected
+- automated interactive setup
 
 ## Installation on OpenWrt
 
@@ -49,31 +63,6 @@ service adblock-lean enable
 opkg update
 opkg install gawk sed coreutils-sort
 ```
-
-## Features
-adblock-lean is written as a service and 'service adblock-lean start' will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
-
-adblock-lean includes the following features:
-
-- support multiple blocklist files downloaded from user-specified urls
-- support local blocklist
-- same for downloaded and local allowlists
-- support whitelist mode
-- removal of domains found in the allowlist form the blocklist files
-- combining all downloaded and local lists into one final blocklist file
-- check that each individual blocklist and allowlist file does not exceed configurable maximum size
-- check that the total blocklist size does not exceeed configurable maximum file size
-- check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
-- check that line count in blocklist file does not exceed configurable minimum (default: 100,000)
-- save a compressed copy of the previous blocklist file, then load the new combined blocklist file into dnsmasq
-- supports blocklist compression by leveraging the new conf-script functionality of dnsmasq
-- perform checks on restarted dnsmasq with new blocklist file
-- revert to previous blocklist file if checks fail
-- if checks on previous blocklist file also fail then revert to not using any blocklist file
-- implements optional calls to user-configurable script on success or failure (for example to send an email report)
-- automatically check for application updates and self update functionality
-- config keys and values validation and optional automatic config repair when problems are detected
-- automated interactive setup
 
 ## Basic configuration
 The config file for adblock-lean is located in `/etc/adblock-lean/config`.
@@ -116,6 +105,18 @@ cron_schedule="disable"
 **Important:** After changing the schedule in the config, run the following command to have adblock-lean create/update/remove the cron job:
 `service adblock-lean upd_cron_job`
 
+## Supported formats
+
+**USER NOTICE:**  Current versions September 19, 2024 and onwards switch to using raw formatted blocklists by default (the default lists are still Hagezi).  Dnsmasq formatted lists are still supported.  Raw lists have the benefit of smaller file size dowload, improvements in processing speed and reduced ram usage.  On the first run after updating, adblock-lean will prompt you (y/n) to automatically change URLs for Hagezi & OISD lists from dnsmasq format to raw format.  For other lists, you can choose to find a raw formatted list or continue using dnsmasq formatted lists.  You can always use ```service adblock-lean gen_config``` to generate a fresh configuration file if required.
+
+Hagezi raw lists can be found [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard). **NOTE** that the file names of correct lists have the `-onlydomains` suffix.
+Visual example of raw ```blocklist_urls``` [Hagezi light raw](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt).  
+Visual example of dnsmasq formmatted ```dnsmasq_blocklist_urls``` [Hagezi light dnsmasq](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt).
+
+oisd raw domains-formatted lists can be found [here](https://oisd.nl/setup). **NOTE** that the correct lists are **only** the ones named `domainswild2` (note the `2`).
+oisd dnsmasq-formatted lists can be found at the same URL, except you would be looking for lists named `dnsmasq2`.
+
+The default Hagezi dnsmasq format lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. Any other raw or dnsmasq format lists of your choice can also be configured and used.
 
 ## Advanced configuration
 
@@ -166,7 +167,7 @@ adblock-lean includes 4 pre-defined presets (mini, small, medium, large), each o
 
 The pre-defined presets are:
 
-- **Mini**: for devices with 64MB of RAM. Aim for <100k entries. Example below: circa 85k entries
+- **Mini**: for devices with 64MB of RAM. Aim for <100k entries. This preset includes circa 85k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.mini-onlydomains.txt"
 min_blocklist_part_line_count=1
@@ -175,7 +176,7 @@ max_blocklist_file_size_KB=4000
 min_good_line_count=40000
 ```
 
-- **Small**: for devices with 128MB of RAM. Aim for <300k entries. Example below: circa 250k entries
+- **Small**: for devices with 128MB of RAM. Aim for <300k entries. This preset includes circa 250k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
 min_blocklist_part_line_count=1
@@ -184,7 +185,7 @@ max_blocklist_file_size_KB=10000
 min_good_line_count=100000
 ```
 
-- **Medium**: for devices with 256MB of RAM. Aim for <600k entries. Example below: circa 350k entries
+- **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 350k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"
 min_blocklist_part_line_count=1
@@ -193,7 +194,7 @@ max_blocklist_file_size_KB=20000
 min_good_line_count=200000
 ```
 
-- **Large**: for devices with 512MB of RAM or more. Example below: circa 700k entries
+- **Large**: for devices with 512MB of RAM or more. This preset includes circa 700k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
 min_blocklist_part_line_count=1
@@ -210,9 +211,11 @@ This mode can be used to implement parental control or similar functionality whi
 
 For example, if the an allowlist has this entry: `google.com` and a blocklist has this entry: `ads.google.com`, and `whitelist_mode` is set to `1`, then `ads.google.com` will be blocked, while `google.com` and `mail.google.com` (and any other subdomain of `google.com` which is not included in the blocklist) will work.
 
-Note that in this mode, the test domains (specified via the option `test_domains`) will be automatically added to the allowlist in order for the checks to pass. You can use empty string in that option - this will bypass that check and block the default domains (google.com, microsoft.com, amazon.com).
+Note that in this mode, the test domains (specified via the option `test_domains`) will be automatically added to the allowlist in order for the checks to pass. You can use empty string in that option - this will bypass that check and block the default domains (google.com, microsoft.com, amazon.com). Alternatively, you can specify preferred test domains instead of the default ones.
 
 Also note that in this mode by default the Github domains will be blocked, so the automatic update functionality will not work - unless you add github.com to the allowlist.
+
+The resulting blocklist generated in whitelist mode will be typically much smaller than otherwise, so you may need to reduce the value of the `min_good_line_count` option in order for the list to be accepted by adblock-lean.
 
 ## User-configurable calls on success or failure
 
