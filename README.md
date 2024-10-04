@@ -17,9 +17,9 @@ The default Hagezi dnsmasq format lists [hagezi](https://github.com/hagezi/dns-b
 
 ## Installation on OpenWrt
 
-adblock-lean is written as a service script and can be installed via terminal.
+Connect to your OpenWrt router [via SSH](https://openwrt.org/docs/guide-quick-start/sshadministration) and then follow the guide below.
 
-To download it, use the following command:
+To download adblock-lean, use the following command:
 ```bash
 uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
 ```
@@ -58,7 +58,7 @@ adblock-lean includes the following features:
 - support multiple blocklist files downloaded from user-specified urls
 - support local blocklist
 - same for downloaded and local allowlists
-- support allowlist-only mode
+- support whitelist mode
 - removal of domains found in the allowlist form the blocklist files
 - combining all downloaded and local lists into one final blocklist file
 - check that each individual blocklist and allowlist file does not exceed configurable maximum size
