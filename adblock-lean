@@ -59,7 +59,7 @@ adblock-lean custom commands:
 	pause           pause adblock-lean
 	resume          resume adblock-lean
 	gen_stats       generate dnsmasq stats for system log
-	gen_config      generate default config and enable the adblock-lean service
+	gen_config      generate default config based on one of the pre-defined presets
 	upd_cron_job    create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
 	                if config option set to 'disable', remove existing cron job if any
 	print_log       print most recent session log
@@ -2339,7 +2339,7 @@ gen_stats()
 	[ "${1}" != '-noexit' ] && exit 0
 }
 
-# generates config and enables the service
+# generates config
 gen_config()
 {
 	init_command gen_config || return 1
