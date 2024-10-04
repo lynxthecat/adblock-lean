@@ -143,34 +143,34 @@ adblock-lean reads in a config file from `/etc/adblock-lean/config`
 
 Default config can be generated using: `service adblock-lean gen_config`.
 
-Each configuration option is internally documented with comments in `/etc/adblock-lean/config`.
+Each configuration option is internally documented with comments in `/etc/adblock-lean/config`. Short version:
 
-| Variable                             |                         Setting                                                |
-| -----------------------------------: | :----------------------------------------------------------------------------- |
-|                     `whitelist_mode` | Block all domains except domains in the allowlist(s). Enable (1) or disable(0) |
-|                     `blocklist_urls` | One or more raw blocklist URLs to download and process                         |
-|                `blocklist_ipv4_urls` | One or more raw ipv4 blocklist URLs to download and process                    |
-|                     `allowlist_urls` | One or more raw allowlist URLs to download and process                         |
-|             `dnsmasq_blocklist_urls` | One or more dnsmasq format blocklist URLs to download and process              |
-|        `dnsmasq_blocklist_ipv4_urls` | One or more dnsmasq format ipv4 blocklist URLs to download and process         |
-|             `dnsmasq_allowlist_urls` | One or more dnsmasq format allowlist URLs to download and process              |
-|               `local_allowlist_path` | Path to local allowlist (domain will not be blocked)                           |
-|               `local_blocklist_path` | Path to local blocklist (domain will be blocked)                               |
-|                       `test_domains` | Domains used to test DNS resolution after loading the final blocklist          |
-|            `list_part_failed_action` | Governs failed lists handling: 'SKIP' or 'STOP'                                |
-|               `max_download_retries` | Maximum number of download retries for allowlist/blocklist parts               |
-|                `min_good_line_count` | Minimum number of good lines in final postprocessed blocklist                  |
-|      `min_blocklist_part_line_count` | Minimum number of lines of individual downloaded blocklist part                |
-| `min_blocklist_ipv4_part_line_count` | Minimum number of lines of individual downloaded ipv4 blocklist part           |
-|      `min_allowlist_part_line_count` | Minimum number of lines of individual downloaded blocklist part                |
-|              `max_file_part_size_KB` | Maximum size of any individual downloaded blocklist part                       |
-|         `max_blocklist_file_size_KB` | Maximim size of combined, processed blocklist                                  |
-|                      `deduplication` | Whether to perform sorting and deduplication of entries                        |
-|                    `use_compression` | Compress while processing, and final blocklists.  Reduces memory useage        |
-|            `initial_dnsmasq_restart` | Enable (1) or disable (0) initial dnsmasq restart to free up memory            |
-|                 `boot_start_delay_s` | Start delay in seconds when service is started from system boot                |
-|                      `custom_script` | Path to custom user scripts to execute on success on failure                   |
-|                      `cron_schedule` | Crontab schedule for automatic blocklist updates or `disable`                  |
+| Option                              | Description                                                                                   |
+| :-----------------------------------| :-------------------------------------------------------------------------------------------- |
+|`whitelist_mode`                     | Block all domains except domains in the allowlists and their subdomains. 1/0 to enable/disable|
+|`blocklist_urls`                     | One or more raw blocklist URLs to download and process                                        |
+|`blocklist_ipv4_urls`                | One or more raw ipv4 blocklist URLs to download and process                                   |
+|`allowlist_urls`                     | One or more raw allowlist URLs to download and process                                        |
+|`dnsmasq_blocklist_urls`             | One or more dnsmasq format blocklist URLs to download and process                             |
+|`dnsmasq_blocklist_ipv4_urls`        | One or more dnsmasq format ipv4 blocklist URLs to download and process                        |
+|`dnsmasq_allowlist_urls`             | One or more dnsmasq format allowlist URLs to download and process                             |
+|`local_allowlist_path`               | Path to local allowlist (domain will not be blocked)                                          |
+|`local_blocklist_path`               | Path to local blocklist (domain will be blocked)                                              |
+|`test_domains`                       | Domains used to test DNS resolution after loading the final blocklist                         |
+|`list_part_failed_action`            | Governs failed lists handling: 'SKIP' or 'STOP'                                               |
+|`max_download_retries`               | Maximum number of download retries for allowlist/blocklist parts                              |
+|`min_good_line_count`                | Minimum number of good lines in final postprocessed blocklist                                 |
+|`min_blocklist_part_line_count`      | Minimum number of lines of individual downloaded blocklist part                               |
+|`min_blocklist_ipv4_part_line_count` | Minimum number of lines of individual downloaded ipv4 blocklist part                          |
+|`min_allowlist_part_line_count`      | Minimum number of lines of individual downloaded blocklist part                               |
+|`max_file_part_size_KB`              | Maximum size in KB of any individual downloaded blocklist part                                |
+|`max_blocklist_file_size_KB`         | Maximim size in KB of combined, processed blocklist                                           |
+|`deduplication`                      | Whether to perform sorting and deduplication of entries                                       |
+|`use_compression`                    | Compress while processing, and final blocklists. Reduces memory usage. 1/0 to enable/disable  |
+|`initial_dnsmasq_restart`            | Enable (1) or disable (0) initial dnsmasq restart to free up memory                           |
+|`boot_start_delay_s`                 | Start delay in seconds when service is started from system boot                               |
+|`custom_script`                      | Path to custom user scripts to execute on success on failure                                  |
+|`cron_schedule`                      | Crontab schedule for automatic blocklist updates or `disable`                                 |
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
