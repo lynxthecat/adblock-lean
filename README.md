@@ -5,7 +5,6 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 adblock-lean is **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This facilitates the use of very large blocklists even for low spec, low performance devices.
 
 ## Features
-adblock-lean is written as a service and 'service adblock-lean start' will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
 
 adblock-lean includes the following features:
 
@@ -63,6 +62,26 @@ service adblock-lean enable
 opkg update
 opkg install gawk sed coreutils-sort
 ```
+
+## Usage
+
+adblock-lean is written as a service and `service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
+
+Additional available commands:
+- `stop`: stops any running adblock-lean instances, unloads the blocklist and removes it from memory
+- `restart`: runs the `stop`, then `start` commands
+- `pause`: unloads the blocklist and creates a compressed copy of it
+- `resume`: decompresses the blocklist and loads it into dnsmasq
+- `update`: pulls an update for adblock-lean from Github (if available) and installs the updated version
+- `uninstall`: removes the adblock-lean service and optionally adblock-lean settings, and undoes any other changes adblock-lean made to the system
+- `gen_config`: generate default config based on one of the pre-defined presets
+- `setup`: run automated setup for adblock-lean
+- `status`: check dnsmasq and entries count of the active blocklist.
+            If adblock-lean is doing something in the background, `status` will print which operation is currently performed.
+- `gen_stats`: generate dnsmasq stats (prints to system log)
+- `print_log`: print most recent session log
+- `upd_cron_job`: create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+	              if config option set to 'disable', remove existing cron job if any
 
 ## Basic configuration
 The config file for adblock-lean is located in `/etc/adblock-lean/config`.
