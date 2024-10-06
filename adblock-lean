@@ -44,6 +44,7 @@ update_log_file=/var/log/abl_update.log
 session_log_file=/var/log/abl_session.log
 hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
 abl_cron_cmd="/etc/init.d/adblock-lean start"
+cron_service_path="/etc/init.d/cron"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -1966,6 +1967,7 @@ get_curr_crontab()
 rm_cron_job()
 {
 	local curr_cron
+	check_cron_service || return 0
 	curr_cron="$(get_curr_crontab)"
 	case ${?} in
 		1) return 1 ;;
@@ -1978,25 +1980,25 @@ rm_cron_job()
 	:
 }
 
+# returns 0 if crontab is readable and the crond process is running, 1 otherwise
+# sets $cron_reboot if above conditions are satisfied and cron is not implemented via the busybox binary
+check_cron_service()
+{
+	# check if service is enabled
+	${cron_service_path} enabled || return 1
+	# check reading crontab
+	crontab -u root -l &>/dev/null || return 1
+	# check for crond in running processes
+	pidof crond 1>/dev/null || return 1
+	:
+}
+
 # checks if the cron service is enabled and running
 # if not enabled or not running or if crontab doesn't exist, implements automatic correction
 # return codes: 0 - success, 1 - failure
 enable_cron_service()
 {
-	# returns 0 if crontab is readable and the crond process is running, 1 otherwise
-	# sets $cron_reboot if above conditions are satisfied and cron is not implemented via the busybox binary
-	check_cron_service()
-	{
-		# check if service is enabled
-		${cron_service_path} enabled || return 1
-		# check reading crontab
-		crontab -u root -l &>/dev/null || return 1
-		# check for crond in running processes
-		pidof crond 1>/dev/null || return 1
-		:
-	}
-
-	local cron_service_path="/etc/init.d/cron" enable_failed="Failed to enable and start the cron service"
+	local enable_failed="Failed to enable and start the cron service"
 
 	hash crontab || { reg_failure "${enable_failed}: 'crontab' utility is inaccessible."; return 1; }
 	[ -f "${cron_service_path}" ] || { reg_failure "${enable_failed}: the cron service was not found at path '${cron_service_path}'."; return 1; }
@@ -2775,11 +2777,14 @@ case "${action}" in
 					{ reg_failure "Failed to enable the adblock-lean service"; exit 1; }
 			else
 				log_msg -green "The adblock-lean service is already enabled."
+				exit 0
 			fi
 			load_config
-			if [ -n "${cron_job}" ]
+			if [ -n "${cron_schedule}" ] && [ "${cron_schedule}" != disable ]
 			then
 				upd_cron_job && luci_cron_job_creation_failed=
+			else
+				luci_cron_job_creation_failed=
 			fi
 		fi ;;
 	disable)
@@ -2789,10 +2794,10 @@ case "${action}" in
 			if enabled
 			then
 				log_msg -purple "Disabling adblock-lean."
+				load_config && rm_cron_job
 				disable && ! enabled ||
 					{ reg_failure "Failed to disable the adblock-lean service"; exit 1; }
 				stop -noexit
-				load_config && rm_cron_job
 			else
 				log_msg "The adblock-lean service is already disabled."
 			fi
