@@ -1194,6 +1194,26 @@ process_list_part()
 	:
 }
 
+test_url_domains()
+{
+	local urls list_type list_format d domains dom IFS="${default_IFS}"
+	for list_type in allowlist blocklist blocklist_ipv4
+	do
+		for list_format in raw dnsmasq
+		do
+			d=
+			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
+			eval "urls=\"\${${d}${list_type}_urls}\""
+			domains="$(printf %s "${urls}" | tr ' \t' '\n' | sed -E 's~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;' | sort -u)"
+			[ -z "${domains}" ] && continue
+			for dom in $domains
+			do
+				try_lookup_domain "${dom}" || return 1
+			done
+		done
+	done
+}
+
 gen_list_parts()
 {
 	# 1 - list origin (local or downloaded)
@@ -1213,7 +1233,7 @@ gen_list_parts()
 
 	local list_type='' list_format='' list_id list_line_cnt list_part_line_count and_compressing='' list_urls list_url local_list_path
 
-	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "NOTE: No URLs specified for blocklist download."
+	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
 	rm -f "${abl_dir}/allowlist"
 
@@ -1556,6 +1576,17 @@ check_dnsmasq_instance()
 	:
 }
 
+try_lookup_domain()
+{
+	local ns_res
+	ns_res="$(nslookup "${1}" 127.0.0.1 2>/dev/null)" ||
+		{ reg_failure "Lookup of '${1}' failed."; return 2; }
+
+	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^(Address: *0\.0\.0\.0|Address: *127\.0\.0\.1)$' &&
+		{ reg_failure "Lookup of '${1}' resulted in 0.0.0.0 or 127.0.0.1."; return 3; }
+	:
+}
+
 # return values:
 # 0 - dnsmasq is running, and all checks passed
 # 1 - dnsmasq is not running
@@ -1573,11 +1604,7 @@ check_active_blocklist()
 
 	for domain in ${test_domains}
 	do
-		ns_res="$(nslookup "${domain}" 127.0.0.1 2>/dev/null)" ||
-			{ reg_failure "Lookup of '${domain}' failed with new blocklist."; return 2; }
-
-		printf %s "${ns_res}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' &&
-			{ reg_failure "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."; return 3; }
+		try_lookup_domain "${domain}" || return ${?}
 	done
 
 	:
@@ -2478,6 +2505,12 @@ start()
 
 	try_export_existing_blocklist
 	[ ${?} = 1 ] && exit 1
+
+	if [ "${initial_dnsmasq_restart}" != 1 ]
+	then
+		reg_action -blue "Testing connectivity." || exit 1
+		test_url_domains || initial_dnsmasq_restart=1
+	fi
 
 	if [ "${initial_dnsmasq_restart}" = 1 ]
 	then
