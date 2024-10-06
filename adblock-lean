@@ -1212,6 +1212,7 @@ test_url_domains()
 			done
 		done
 	done
+	:
 }
 
 gen_list_parts()
