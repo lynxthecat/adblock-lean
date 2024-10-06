@@ -1196,7 +1196,7 @@ process_list_part()
 
 test_url_domains()
 {
-	local urls list_type list_format d domains dom IFS="${default_IFS}"
+	local urls list_type list_format d domains='' dom IFS="${default_IFS}"
 	for list_type in allowlist blocklist blocklist_ipv4
 	do
 		for list_format in raw dnsmasq
@@ -1204,13 +1204,15 @@ test_url_domains()
 			d=
 			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
 			eval "urls=\"\${${d}${list_type}_urls}\""
-			domains="$(printf %s "${urls}" | tr ' \t' '\n' | sed -E 's~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;' | sort -u)"
-			[ -z "${domains}" ] && continue
-			for dom in $domains
-			do
-				try_lookup_domain "${dom}" || return 1
-			done
+			[ -z "${urls}" ] && continue
+			domains="${domains}$(printf %s "${urls}" | tr ' \t' '\n' | sed -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}')${nl}"
 		done
+	done
+	[ -z "${domains}" ] && return 0
+
+	for dom in $(printf %s "${domains}" | sort -u)
+	do
+		try_lookup_domain "${dom}" || return 1
 	done
 	:
 }
