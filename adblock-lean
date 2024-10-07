@@ -1015,7 +1015,7 @@ check_addnmount()
 	do
 		uci -q get dhcp.@dnsmasq[${i}].addnmount
 		i=$((i+1))
-	done | grep -qE "(^|[ \t])/bin(/\*|/busybox)*($|[ \t])" && return 0
+	done | grep -qE "('|^|[ \t])/bin(/\*|/busybox)*([ \t]|'|$)" && return 0
 	return 1
 }
 
@@ -2225,9 +2225,8 @@ setup()
 		2) exit 1 ;;
 		1)
 			print_msg "" "${purple}Creating dnsmasq addnmount UCI entry.${n_c}"
-			uci set dhcp.adblock_lean=dnsmasq &&
-			uci add_list dhcp.adblock_lean.addnmount='/bin/busybox' &&
-			uci commit || setup_failed "Failed to create addnmount entry."
+			uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox # adblock-lean' && uci commit ||
+				setup_failed "Failed to create addnmount entry."
 	esac
 	luci_addnmount_failed=
 
@@ -2780,11 +2779,17 @@ uninstall()
 		rm -rf "${config_dir}" || reg_failure "Failed to delete the config directory '${config_dir}'."
 	fi
 
-	if uci -q get dhcp.adblock_lean 1>/dev/null
-	then
+	local i="-1" entry
+	while uci -q get dhcp.@dnsmasq[${i}] >/dev/null && [ ${i} -lt 128 ]
+	do
+		i=$((i+1))
+		entry="$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" || continue
+		case "${entry}" in *adblock-lean*) ;; *) continue; esac
 		log_msg -purple "" "Deleting the custom addnmount entry from /etc/config/dhcp."
-		uci -q delete dhcp.adblock_lean && uci commit || reg_failure "Failed to delete the custom addnmount entry from /etc/config/dhcp."
-	fi
+		uci -q del_list dhcp.@dnsmasq[${i}].addnmount='/bin/busybox # adblock-lean' && uci commit ||
+			reg_failure "Failed to delete the custom addnmount entry from /etc/config/dhcp. Please delete manually."
+		break
+	done
 
 	log_msg -purple "" "Deleting the script from ${abl_service_path}."
 	rm -f "${abl_service_path}" ||
