@@ -2517,6 +2517,7 @@ start()
 
 	if [ "${initial_dnsmasq_restart}" = 1 ]
 	then
+		clean_dnsmasq_dir
 		restart_dnsmasq || exit 1
 	fi
 
