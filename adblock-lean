@@ -164,6 +164,7 @@ log_msg()
 {
 	local m msgs='' msgs_prefix='' _arg err_l=info color=
 
+	local IFS="${default_IFS}"
 	for _arg in "$@"
 	do
 		case "${_arg}" in
@@ -175,7 +176,7 @@ log_msg()
 		esac
 	done
 	msgs="${msgs%"${delim}"}"
-	local IFS="${delim}"
+	IFS="${delim}"
 
 	for m in ${msgs}
 	do
