@@ -2791,8 +2791,8 @@ uninstall()
 		then
 			case "$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" in */bin/busybox*) break; esac
 			addnmount_deleted=1
-			log_msg "Note: adblock-lean developers are not aware of any other software which may require the specific addnmount entry created by adblock-lean," \
-				"but if by any chance you have such software then it may stop working after removal and you may need to re-add the addnmount entry."
+			log_msg "Note: the adblock-lean developers are not aware of any other software that requires the specific addnmount entry created by adblock-lean." \
+				"Should the addnmount entry be required for any reason then you will need to manually re-add it."
 		fi
 		break
 	done
