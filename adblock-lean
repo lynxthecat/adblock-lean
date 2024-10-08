@@ -25,6 +25,7 @@ IFS='
 '
 nl='
 '
+delim="$(printf '\35')"
 default_IFS="${IFS}"
 
 if [ -t 0 ]
@@ -169,12 +170,12 @@ log_msg()
 			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
 			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) eval "color=\"\${${_arg#-}}\"" ;;
-			'') msgs="${msgs}dummy${nl}" ;;
-			*) msgs="${msgs}${msgs_prefix}${_arg}${nl}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
+			'') msgs="${msgs}dummy${delim}" ;;
+			*) msgs="${msgs}${msgs_prefix}${_arg}${delim}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
 		esac
 	done
-	msgs="${msgs%${nl}}"
-	local IFS="${nl}"
+	msgs="${msgs%"${delim}"}"
+	local IFS="${delim}"
 
 	for m in ${msgs}
 	do
