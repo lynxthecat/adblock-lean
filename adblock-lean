@@ -1168,7 +1168,7 @@ process_list_part()
 		return 3
 	fi
 
-	if [ "${list_origin}" = downloaded ] && read -r rogue_element < "${abl_dir}/rogue_element"
+	if read -r rogue_element < "${abl_dir}/rogue_element"
 	then
 		rm -f "${dest_file}"
 		log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file part from: ${list_path}."
