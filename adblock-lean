@@ -26,6 +26,7 @@ IFS='
 nl='
 '
 delim="$(printf '\35')"
+CR_LF="$(printf '\r\n')"
 default_IFS="${IFS}"
 
 if [ -t 0 ]
@@ -650,6 +651,9 @@ parse_config()
 	for entry in ${curr_config}
 	do
 		case ${entry} in
+			*"${CR_LF}"*)
+				reg_failure "Config file contains Windows-format (CR LF) newlines. Convert the config file to Unix-format (LF) newlines."
+				return 1 ;;
 			*?=*) ;;
 			*) { inval_e; return 1; } ;;
 		esac
@@ -1173,7 +1177,12 @@ process_list_part()
 	if read -r rogue_element < "${abl_dir}/rogue_element"
 	then
 		rm -f "${dest_file}"
-		log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file part from: ${list_path}."
+		case "${rogue_element}" in
+			*"${CR_LF}"*)
+				log_msg -warn "${list_type} file from ${list_path} contains Windows-format (CR LF) newlines." \
+					"This file needs to be converted to Unix newline format (LF)." ;;
+			*) log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file from: ${list_path}."
+		esac
 		return 2
 	fi
 	rm -f "${abl_dir}/rogue_element"
