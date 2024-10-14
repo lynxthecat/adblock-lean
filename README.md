@@ -1,8 +1,8 @@
 # ⚔ adblock-lean
 
-If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
+adblock-lean provides powerful and ultra-efficient adblocking on OpenWrt. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This facilitates the use of very large blocklists even for low spec, low performance devices.
 
-adblock-lean is **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This facilitates the use of very large blocklists even for low spec, low performance devices.
+If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
 ## Features
 
@@ -12,7 +12,7 @@ adblock-lean includes the following features:
 - support local blocklist
 - same for downloaded and local allowlists
 - support whitelist mode
-- removal of domains found in the allowlist form the blocklist files
+- removal of domains found in the allowlist from the blocklist files
 - combining all downloaded and local lists into one final blocklist file
 - check that each individual blocklist and allowlist file does not exceed configurable maximum size
 - check that the total blocklist size does not exceeed configurable maximum file size
@@ -154,22 +154,22 @@ Each configuration option is internally documented with comments in `/etc/adbloc
 |`dnsmasq_blocklist_urls`             | One or more dnsmasq format blocklist URLs to download and process                             |
 |`dnsmasq_blocklist_ipv4_urls`        | One or more dnsmasq format ipv4 blocklist URLs to download and process                        |
 |`dnsmasq_allowlist_urls`             | One or more dnsmasq format allowlist URLs to download and process                             |
-|`local_allowlist_path`               | Path to local allowlist (domain will not be blocked)                                          |
-|`local_blocklist_path`               | Path to local blocklist (domain will be blocked)                                              |
+|`local_allowlist_path`               | Path to local allowlist (included domains will not be blocked)                                |
+|`local_blocklist_path`               | Path to local blocklist (included domains will be blocked)                                    |
 |`test_domains`                       | Domains used to test DNS resolution after loading the final blocklist                         |
 |`list_part_failed_action`            | Governs failed lists handling: 'SKIP' or 'STOP'                                               |
 |`max_download_retries`               | Maximum number of download retries for allowlist/blocklist parts                              |
 |`min_good_line_count`                | Minimum number of good lines in final postprocessed blocklist                                 |
 |`min_blocklist_part_line_count`      | Minimum number of lines of individual downloaded blocklist part                               |
 |`min_blocklist_ipv4_part_line_count` | Minimum number of lines of individual downloaded ipv4 blocklist part                          |
-|`min_allowlist_part_line_count`      | Minimum number of lines of individual downloaded blocklist part                               |
+|`min_allowlist_part_line_count`      | Minimum number of lines of individual downloaded allowlist part                               |
 |`max_file_part_size_KB`              | Maximum size in KB of any individual downloaded blocklist part                                |
 |`max_blocklist_file_size_KB`         | Maximim size in KB of combined, processed blocklist                                           |
 |`deduplication`                      | Whether to perform sorting and deduplication of entries                                       |
 |`use_compression`                    | Compress while processing, and final blocklists. Reduces memory usage. 1/0 to enable/disable  |
-|`initial_dnsmasq_restart`            | Enable (1) or disable (0) initial dnsmasq restart to free up memory                           |
+|`initial_dnsmasq_restart`            | Initial dnsmasq restart to free up memory. 1/0 to enable/disable                              |
 |`boot_start_delay_s`                 | Start delay in seconds when service is started from system boot                               |
-|`custom_script`                      | Path to custom user scripts to execute on success on failure                                  |
+|`custom_script`                      | Path to custom user script to execute on success on failure                                   |
 |`cron_schedule`                      | Crontab schedule for automatic blocklist updates or `disable`                                 |
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
@@ -232,7 +232,7 @@ For example, if the an allowlist has this entry: `google.com` and a blocklist ha
 
 Note that in this mode, the test domains (specified via the option `test_domains`) will be automatically added to the allowlist in order for the checks to pass. You can use empty string in that option - this will bypass that check and block the default domains (google.com, microsoft.com, amazon.com). Alternatively, you can specify preferred test domains instead of the default ones.
 
-Also note that in this mode by default the Github domains will be blocked, so the automatic update functionality will not work - unless you add github.com to the allowlist.
+Also note that in this mode by default the Github domains will be blocked, so the automatic adblock-lean version update functionality will not work - unless you add github.com to the allowlist.
 
 The resulting blocklist generated in whitelist mode will be typically much smaller than otherwise, so you may need to reduce the value of the `min_good_line_count` option in order for the list to be accepted by adblock-lean.
 
