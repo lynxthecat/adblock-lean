@@ -2754,12 +2754,9 @@ update()
 		}
 	fi
 
-	if [ "${1}" != "--simulation" ]
-	then
-		try_mv "${abl_dir}/adblock-lean.latest" "${abl_service_path}" || exit 1
-		chmod +x "${abl_service_path}"
-		${abl_service_path} enable
-	fi
+	try_mv "${abl_dir}/adblock-lean.latest" "${abl_service_path}" || exit 1
+	chmod +x "${abl_service_path}"
+	${abl_service_path} enable
 	log_msg -green "adblock-lean has been updated to the latest version."
 
 	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
