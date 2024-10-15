@@ -2765,6 +2765,17 @@ update()
 	log_msg -green "adblock-lean has been updated to the latest version."
 
 	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
+	if [ -n "${do_dialogs}" ]
+	then
+		print_msg "" "Start adblock-lean now? (y|n)"
+		pick_opt "y|n"
+		if [ "$REPLY" = y ]
+		then
+			. "${abl_service_path}" || exit 1
+			start
+			exit $?
+		fi
+	fi
 	exit 0
 }
 
