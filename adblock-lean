@@ -2261,7 +2261,12 @@ setup()
 	fi
 
 	# enable the service, update the cron job
-	/sbin/service adblock-lean enable || exit 1
+	if /sbin/service adblock-lean enabled
+	then
+		upd_cron_job && luci_cron_job_creation_failed=
+	else
+		/sbin/service adblock-lean enable || exit 1
+	fi
 	luci_service_enable_failed=
 
 	# determine if there are missing GNU utils
