@@ -2844,12 +2844,7 @@ case "${action}" in
 				exit 0
 			fi
 			load_config
-			if [ -n "${cron_schedule}" ] && [ "${cron_schedule}" != disable ]
-			then
-				upd_cron_job && luci_cron_job_creation_failed=
-			else
-				luci_cron_job_creation_failed=
-			fi
+			[ -n "${cron_schedule}" ] && upd_cron_job && luci_cron_job_creation_failed=
 		fi ;;
 	disable)
 		if [ -z "${disabling}" ]
