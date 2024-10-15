@@ -2834,6 +2834,16 @@ uninstall()
 
 set_colors
 
+# test process substitution support
+printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
+if ! /bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null
+then
+	rm -f /tmp/abl-test
+	reg_failure "This shell does not support process substitution. To use adblock-lean, please update OpenWrt to 22.03 or later version."
+	exit 1
+fi
+rm -f /tmp/abl-test
+
 case "${1}" in
 	setup) setup; exit 0 ;;
 	uninstall) uninstall; exit 0
