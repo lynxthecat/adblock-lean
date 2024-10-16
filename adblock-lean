@@ -1,7 +1,7 @@
 #!/bin/sh /etc/rc.common
 # shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090,SC3045
 
-# adblock-lean - super simple and lightweight adblocking for OpenWrt
+# adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
 
 # Project homepage: https://github.com/lynxthecat/adblock-lean
 
@@ -25,6 +25,8 @@ IFS='
 '
 nl='
 '
+delim="$(printf '\35')"
+CR_LF="$(printf '\r\n')"
 default_IFS="${IFS}"
 
 if [ -t 0 ]
@@ -44,6 +46,7 @@ update_log_file=/var/log/abl_update.log
 session_log_file=/var/log/abl_session.log
 hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
 abl_cron_cmd="/etc/init.d/adblock-lean start"
+cron_service_path="/etc/init.d/cron"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -51,7 +54,7 @@ export HOME=/root
 START=99
 STOP=4
 
-EXTRA_COMMANDS="setup status pause resume gen_stats gen_config upd_cron_job print_log update"
+EXTRA_COMMANDS="setup status pause resume gen_stats gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
 adblock-lean custom commands:
 	setup           run automated setup for adblock-lean
@@ -59,11 +62,12 @@ adblock-lean custom commands:
 	pause           pause adblock-lean
 	resume          resume adblock-lean
 	gen_stats       generate dnsmasq stats for system log
-	gen_config      generate default config and enable the adblock-lean service
+	gen_config      generate default config based on one of the pre-defined presets
 	upd_cron_job    create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
 	                if config option set to 'disable', remove existing cron job if any
 	print_log       print most recent session log
-	update          update adblock-lean to the latest version"
+	update          update adblock-lean to the latest version
+	uninstall       uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 
 ### UTILITY FUNCTIONS
@@ -161,18 +165,19 @@ log_msg()
 {
 	local m msgs='' msgs_prefix='' _arg err_l=info color=
 
+	local IFS="${default_IFS}"
 	for _arg in "$@"
 	do
 		case "${_arg}" in
 			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
 			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) eval "color=\"\${${_arg#-}}\"" ;;
-			'') msgs="${msgs}dummy${nl}" ;;
-			*) msgs="${msgs}${msgs_prefix}${_arg}${nl}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
+			'') msgs="${msgs}dummy${delim}" ;;
+			*) msgs="${msgs}${msgs_prefix}${_arg}${delim}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
 		esac
 	done
-	msgs="${msgs%${nl}}"
-	local IFS="${nl}"
+	msgs="${msgs%"${delim}"}"
+	IFS="${delim}"
 
 	for m in ${msgs}
 	do
@@ -257,10 +262,15 @@ print_def_config()
 	cat <<-EOT | if [ "${1}" = '-d' ]; then cat; else sed 's/[ \t]*@.*//'; fi
 
 	# adblock-lean configuration options
-	# config_format=v4
+	# config_format=v5
 	#
 	# values must be enclosed in double-quotes
-	# comments must start at newline or inline after the closing double-quote
+	# custom comments are not preserved after automatic config update
+
+	# Whitelist mode: only domains (and their subdomains) included in the allowlist(s) are allowed, all other domains are blocked
+	# In this mode, if blocklists are used in addition to allowlists, subdomains included in the blocklists will be blocked,
+	# including subdomains of allowed domains
+	whitelist_mode="0" @ 0|1
 
 	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
 	blocklist_urls="${blocklist_urls}" @ string
@@ -272,14 +282,30 @@ print_def_config()
 	dnsmasq_blocklist_ipv4_urls="" @ string
 	dnsmasq_allowlist_urls="" @ string
 
-	# Path to optional local raw allowlist/blocklist domain files in the form:
+	# Path to optional local *raw domain* allowlist/blocklist files in the form:
 	# site1.com
 	# site2.com
 	local_allowlist_path="${config_dir}/allowlist" @ string
 	local_blocklist_path="${config_dir}/blocklist" @ string
 
-	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
-	deduplication="1" @ 0|1
+	# Test domains are automatically querried after loading the blocklist into dnsmasq,
+	# in order to verify that the blocklist didn't break DNS resolution
+	# If query for any of the test domains fails, previous blocklist is restored from backup
+	# If backup doesn't exist, the blocklist is removed and adblock-lean is stopped
+	# Leaving this empty will disable verification
+	test_domains="google.com microsoft.com amazon.com" @ string
+
+	# List part failed action:
+	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
+	# SKIP - skip failed blocklist file part and continue blocklist generation
+	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
+	list_part_failed_action="SKIP" @ SKIP|STOP
+
+	# Maximum number of download retries
+	max_download_retries="3" @ integer
+
+	# Minimum number of good lines in final postprocessed blocklist
+	min_good_line_count="${min_good_line_count}" @ integer
 
 	# Mininum number of lines of any individual downloaded part
 	min_blocklist_part_line_count="1" @ integer
@@ -292,8 +318,8 @@ print_def_config()
 	# Maximum total size of combined, processed blocklist
 	max_blocklist_file_size_KB="${max_blocklist_file_size_KB}" @ integer
 
-	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="${min_good_line_count}" @ integer
+	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
+	deduplication="1" @ 0|1
 
 	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
 	use_compression="1" @ 0|1
@@ -302,14 +328,8 @@ print_def_config()
 	# new blocklist thereby to free up memory during generaiton of new blocklist - enable (1) or disable (0)
 	initial_dnsmasq_restart="0" @ 0|1
 
-	# Maximum number of download retries
-	max_download_retries="3" @ integer
-
-	# List part failed action:
-	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
-	# SKIP - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
-	list_part_failed_action="SKIP" @ SKIP|STOP
+	# Start delay in seconds when service is started from system boot
+	boot_start_delay_s="120" @ integer
 
 	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
@@ -317,9 +337,6 @@ print_def_config()
 	# report_success() is only executed upon completion of the 'start' command
 	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
 	custom_script="" @ string
-
-	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s="120" @ integer
 
 	# Crontab schedule expression for periodic list updates
 	cron_schedule="${cron_schedule:-"0 5 * * *"}" @ string
@@ -634,6 +651,9 @@ parse_config()
 	for entry in ${curr_config}
 	do
 		case ${entry} in
+			*"${CR_LF}"*)
+				reg_failure "Config file contains Windows-format (CR LF) newlines. Convert the config file to Unix-format (LF) newlines."
+				return 1 ;;
 			*?=*) ;;
 			*) { inval_e; return 1; } ;;
 		esac
@@ -996,7 +1016,13 @@ try_export_existing_blocklist()
 check_addnmount()
 {
 	hash uci 1>/dev/null || { reg_failure "uci command was not found."; return 2; }
-	uci -q get dhcp.@dnsmasq[0].addnmount | grep -qE "(^|[ \t])/bin(/\*|/busybox)*($|[ \t])"
+	local i=0
+	while uci -q get dhcp.@dnsmasq[${i}] >/dev/null && [ ${i} -lt 128 ]
+	do
+		uci -q get dhcp.@dnsmasq[${i}].addnmount
+		i=$((i+1))
+	done | grep -qE "('|^|[ \t])/bin(/\*|/busybox)*([ \t]|'|$)" && return 0
+	return 1
 }
 
 # return codes:
@@ -1015,11 +1041,11 @@ check_blocklist_compression_support()
 
 	check_addnmount && return 0
 	[ ${?} = 2 ] && return 2
-	reg_failure "No appropriate 'addnmount' entry in /etc/config/dhcp was identified."
-	log_msg "This is leveraged to give dnsmasq access to busybox gunzip to extract compressed blocklist." \
-		"Add: \"list addnmount '/bin/busybox'\" to /etc/config/dhcp at the end of the dnsmasq section." \
-		"Or simply run this command: uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit" \
-		"Either edit /etc/config/dhcp as described above or disable blocklist compression in config."
+	log_msg -warn "" "No appropriate 'addnmount' entry in /etc/config/dhcp was identified." \
+		"Final blocklist compression will be disabled."
+	log_msg "addnmount entry is required to give dnsmasq access to busybox gunzip in order to extract compressed blocklist." \
+		"Run 'service adblock-lean setup' to have the entry created automatically, or follow the steps in the README." \
+		"Alternatively, change the 'use_compression' option in adblock-lean config to '0'."
 	return 1
 }
 
@@ -1056,8 +1082,8 @@ process_list_part()
 	esac
 
 	case ${list_type} in
-		allowlist) [ "${list_origin}" = local ] && dest_file="${abl_dir}/allowlist" ;;
-		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; } ;;
+		allowlist) dest_file="${abl_dir}/allowlist.0" ;;
+		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
 	esac
 
 	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
@@ -1100,20 +1126,23 @@ process_list_part()
 
 	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 	then
-		# remove allowlist domains from blocklist
-		${awk_cmd} -F'/' 'NR==FNR { allow[$0]; next } { n=split($2,arr,"."); addr = arr[n];
-			for ( i=n-1; i>=1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) next } } 1' "${abl_dir}/allowlist" -
+		case "${whitelist_mode}" in
+		0)
+			# remove allowlist domains from blocklist
+			${awk_cmd} 'NR==FNR { if ($0 ~ /^\*\./) { allow_wild[substr($0,3)]; next }; allow[$0]; next }
+				{ n=split($1,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- )
+				{ addr = arr[i] "." addr; if ( (i>1 && addr in allow_wild) || addr in allow ) next } } 1' "${abl_dir}/allowlist" - ;;
+		1)
+			# only print subdomains of allowlist domains
+			${awk_cmd} 'NR==FNR { { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
+				for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${abl_dir}/allowlist" -
+		esac
 	else
 		cat
 	fi |
 
-	# check downloaded lists for rogue elements
-	if [ "${list_origin}" = downloaded ]
-	then
-		tee >(sed -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${abl_dir}/rogue_element")
-	else
-		cat
-	fi |
+	# check lists for rogue elements
+	tee >(sed -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${abl_dir}/rogue_element") |
 
 	# compress parts
 	if [ -n "${compress_part}" ]
@@ -1134,8 +1163,7 @@ process_list_part()
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
 		reg_failure "${list_origin} ${list_type} part size reached the maximum value set in config (${max_file_part_size_KB} KB)."
-		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config." \
-			"Skipping ${list_type} part and continuing."
+		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
 		rm -f "${dest_file}"
 		return 2
 	fi
@@ -1147,10 +1175,15 @@ process_list_part()
 		return 3
 	fi
 
-	if [ "${list_origin}" = downloaded ] && read -r rogue_element < "${abl_dir}/rogue_element"
+	if read -r rogue_element < "${abl_dir}/rogue_element"
 	then
 		rm -f "${dest_file}"
-		log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file part from: ${list_path}."
+		case "${rogue_element}" in
+			*"${CR_LF}"*)
+				log_msg -warn "${list_type} file from ${list_path} contains Windows-format (CR LF) newlines." \
+					"This file needs to be converted to Unix newline format (LF)." ;;
+			*) log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file from: ${list_path}."
+		esac
 		return 2
 	fi
 	rm -f "${abl_dir}/rogue_element"
@@ -1162,7 +1195,37 @@ process_list_part()
 		return 3
 	fi
 
+	# keep the allowlist consolidated in one file
+	if [ "${list_type}" = allowlist ]
+	then
+		cat "${dest_file}" >> "${abl_dir}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
+		rm -f "${dest_file}"
+	fi
+
 	cleanup_dl_status_files
+	:
+}
+
+test_url_domains()
+{
+	local urls list_type list_format d domains='' dom IFS="${default_IFS}"
+	for list_type in allowlist blocklist blocklist_ipv4
+	do
+		for list_format in raw dnsmasq
+		do
+			d=
+			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
+			eval "urls=\"\${${d}${list_type}_urls}\""
+			[ -z "${urls}" ] && continue
+			domains="${domains}$(printf %s "${urls}" | tr ' \t' '\n' | sed -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}')${nl}"
+		done
+	done
+	[ -z "${domains}" ] && return 0
+
+	for dom in $(printf %s "${domains}" | sort -u)
+	do
+		try_lookup_domain "${dom}" || return 1
+	done
 	:
 }
 
@@ -1179,17 +1242,29 @@ gen_list_parts()
 	handle_process_failure()
 	{
 		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-		log_msg "Skipping file part and continuing."
+		log_msg "Skipping file and continuing."
 		:
 	}
 
 	local list_type='' list_format='' list_id list_line_cnt list_part_line_count and_compressing='' list_urls list_url local_list_path
 
-	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "NOTE: No URLs specified for blocklist download."
+	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
+
+	rm -f "${abl_dir}/allowlist"
+
+	if [ "${whitelist_mode}" = 1 ]
+	then
+		# allow test domains
+		for d in ${test_domains}
+		do
+			printf '%s\n' "${d}" >> "${abl_dir}/allowlist"
+		done
+		use_allowlist=1
+	fi
 
 	for list_type in allowlist blocklist blocklist_ipv4
 	do
-		rm -f "${abl_dir}/${list_type}"*
+		rm -f "${abl_dir}/${list_type}".*
 		list_id=0 list_line_cnt=0 list_part_line_count=0
 		and_compressing=
 		case ${list_type} in blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && and_compressing=" and compressing"; esac
@@ -1257,12 +1332,6 @@ gen_list_parts()
 					process_list_part "${list_id}" "${list_type}" "downloaded" "${list_format}" "${list_url}"
 					case ${?} in
 						0)
-							if [ "${list_type}" = allowlist ]
-							then
-								cat "${abl_dir}/${list_type}.${list_id}" >> "${abl_dir}/allowlist" ||
-									{ reg_failure "Failed to merge allowlist part."; return 1; }
-								rm -f "${abl_dir}/${list_type}.${list_id}"
-							fi
 							log_process_success "downloaded ${list_format}"
 							[ "${list_type}" = blocklist_ipv4 ] && use_blocklist_ipv4=1
 							list_line_cnt=$(( list_line_cnt + list_part_line_count ))
@@ -1271,7 +1340,7 @@ gen_list_parts()
 						2)
 							handle_process_failure || return 1
 							continue 2 ;;
-						3) ;;
+						3)
 					esac
 
 					if [ "${retry}" -ge "${max_download_retries}" ]
@@ -1291,7 +1360,9 @@ gen_list_parts()
 		if [ "${list_line_cnt}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${abl_dir}/allowlist" ]; }
 		then
 			case ${list_type} in
-				blocklist) return 1 ;;
+				blocklist)
+					[ "${whitelist_mode}" = 0 ] && return 1
+					log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
 				allowlist)
 					log_msg "Not using any allowlist for blocklist processing."
 					use_allowlist=0
@@ -1432,8 +1503,16 @@ generate_and_process_blocklist_file()
 			convert_entries allowlist
 			rm -f "${abl_dir}/allowlist"
 		fi
+		# add the optional whitelist entry
+		if [ "${whitelist_mode}" = 1 ]
+		then
+			# add block-everything entry: local=/*a/*b/*c/.../*z/
+			printf 'local=/'
+			awk 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
+			printf '\n'
+		fi
 		# add the blocklist test entry
-		printf '%s\n' "address=/adblocklean-test123.info/127.0.0.1"
+		printf '%s\n' "address=/adblocklean-test123.info/#"
 	} |
 
 	# limit size
@@ -1489,7 +1568,7 @@ generate_and_process_blocklist_file()
 
 	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
 	then
-		reg_failure "Entries count: $(int2human "${final_entries_cnt}") below the minimum value set in config ($(int2human "${min_good_line_count}"))."
+		reg_failure "Entries count ($(int2human "${final_entries_cnt}")) is below the minimum value set in config ($(int2human "${min_good_line_count}"))."
 		return 1
 	fi
 
@@ -1512,6 +1591,17 @@ check_dnsmasq_instance()
 	:
 }
 
+try_lookup_domain()
+{
+	local ns_res
+	ns_res="$(nslookup "${1}" 127.0.0.1 2>/dev/null)" ||
+		{ reg_failure "Lookup of '${1}' failed."; return 2; }
+
+	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^(Address: *0\.0\.0\.0|Address: *127\.0\.0\.1)$' &&
+		{ reg_failure "Lookup of '${1}' resulted in 0.0.0.0 or 127.0.0.1."; return 3; }
+	:
+}
+
 # return values:
 # 0 - dnsmasq is running, and all checks passed
 # 1 - dnsmasq is not running
@@ -1527,13 +1617,9 @@ check_active_blocklist()
 	nslookup "adblocklean-test123.info" 127.0.0.1 1>/dev/null 2>/dev/null ||
 			{ reg_failure "Lookup of the blocklist test domain failed with new blocklist."; return 4; }
 
-	for domain in google.com amazon.com microsoft.com
+	for domain in ${test_domains}
 	do
-		ns_res="$(nslookup "${domain}" 127.0.0.1 2>/dev/null)" ||
-			{ reg_failure "Lookup of '${domain}' failed with new blocklist."; return 2; }
-
-		printf %s "${ns_res}" | grep -A1 ^Name | grep -q '^Address: *0\.0\.0\.0$' &&
-			{ reg_failure "Lookup of '${domain}' resulted in 0.0.0.0 with new blocklist."; return 3; }
+		try_lookup_domain "${domain}" || return ${?}
 	done
 
 	:
@@ -1722,7 +1808,7 @@ update_pid_action() {
 		3) ;;
 		1) return 1 ;;
 		2) reg_failure "update_pid_action(): pid file '${pid_file}' has unexpected pid '${_pid}'."; return 1 ;;
-		0) reg_failure "update_pid_action(): pid file '${pid_file}' not found."; return 1
+		0) return 0
 	esac
 	mk_lock -f "${1}"
 	return ${?}
@@ -1865,7 +1951,7 @@ get_active_entries_cnt()
 		eval "[ ! \"\${${entry_type}_urls}\" ] && [ ! -s \"\${local_${entry_type}_path}\" ]" && continue
 		case ${entry_type} in
 			blocklist) list_prefix=local ;;
-			allowlist) list_prefix=server allow_opt="|#"
+			allowlist) list_prefix=server allow_opt="#"
 		esac
 		list_prefixes="${list_prefixes}${list_prefix}|"
 	done
@@ -1879,13 +1965,22 @@ get_active_entries_cnt()
 	else
 		printf ''
 	fi |
-	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "[/${allow_opt}]" '\n' | wc -w > "/tmp/abl_entries_cnt"
+	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
 
 	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
-	case ${cnt} in
-		[0-2]|'') printf 0; return 1 ;;
-		*) printf %s "$((cnt-3))" # to account for the blocklist test entry
-	esac
+	rm -f "/tmp/abl_entries_cnt"
+	case "${cnt}" in *[!0-9]*|'') printf 0; return 1; esac
+	local d i=0 IFS="${default_IFS}"
+	if [ "${whitelist_mode}" = 1 ]
+	then
+		i=1
+		for d in ${test_domains}
+		do
+			i=$((i+1))
+		done
+	fi
+	[ "${cnt}" -lt $((2+i)) ] && { printf 0; return 1; }
+	printf %s "$((cnt-2-i))"
 	:
 }
 
@@ -1914,6 +2009,7 @@ get_curr_crontab()
 rm_cron_job()
 {
 	local curr_cron
+	check_cron_service || return 0
 	curr_cron="$(get_curr_crontab)"
 	case ${?} in
 		1) return 1 ;;
@@ -1926,25 +2022,25 @@ rm_cron_job()
 	:
 }
 
+# returns 0 if crontab is readable and the crond process is running, 1 otherwise
+# sets $cron_reboot if above conditions are satisfied and cron is not implemented via the busybox binary
+check_cron_service()
+{
+	# check if service is enabled
+	${cron_service_path} enabled || return 1
+	# check reading crontab
+	crontab -u root -l &>/dev/null || return 1
+	# check for crond in running processes
+	pidof crond 1>/dev/null || return 1
+	:
+}
+
 # checks if the cron service is enabled and running
 # if not enabled or not running or if crontab doesn't exist, implements automatic correction
 # return codes: 0 - success, 1 - failure
 enable_cron_service()
 {
-	# returns 0 if crontab is readable and the crond process is running, 1 otherwise
-	# sets $cron_reboot if above conditions are satisfied and cron is not implemented via the busybox binary
-	check_cron_service()
-	{
-		# check if service is enabled
-		${cron_service_path} enabled || return 1
-		# check reading crontab
-		crontab -u root -l &>/dev/null || return 1
-		# check for crond in running processes
-		pidof crond 1>/dev/null || return 1
-		:
-	}
-
-	local cron_service_path="/etc/init.d/cron" enable_failed="Failed to enable and start the cron service"
+	local enable_failed="Failed to enable and start the cron service"
 
 	hash crontab || { reg_failure "${enable_failed}: 'crontab' utility is inaccessible."; return 1; }
 	[ -f "${cron_service_path}" ] || { reg_failure "${enable_failed}: the cron service was not found at path '${cron_service_path}'."; return 1; }
@@ -2141,7 +2237,8 @@ setup()
 		2) exit 1 ;;
 		1)
 			print_msg "" "${purple}Creating dnsmasq addnmount UCI entry.${n_c}"
-			uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit || setup_failed "Failed to create addnmount entry."
+			uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit ||
+				setup_failed "Failed to create addnmount entry."
 	esac
 	luci_addnmount_failed=
 
@@ -2164,7 +2261,12 @@ setup()
 	fi
 
 	# enable the service, update the cron job
-	/sbin/service adblock-lean enable || setup_failed
+	if /sbin/service adblock-lean enabled
+	then
+		upd_cron_job && luci_cron_job_creation_failed=
+	else
+		/sbin/service adblock-lean enable || exit 1
+	fi
 	luci_service_enable_failed=
 
 	# determine if there are missing GNU utils
@@ -2285,7 +2387,7 @@ gen_stats()
 	[ "${1}" != '-noexit' ] && exit 0
 }
 
-# generates config and enables the service
+# generates config
 gen_config()
 {
 	init_command gen_config || return 1
@@ -2423,8 +2525,15 @@ start()
 	try_export_existing_blocklist
 	[ ${?} = 1 ] && exit 1
 
+	if [ "${initial_dnsmasq_restart}" != 1 ]
+	then
+		reg_action -blue "Testing connectivity." || exit 1
+		test_url_domains || initial_dnsmasq_restart=1
+	fi
+
 	if [ "${initial_dnsmasq_restart}" = 1 ]
 	then
+		clean_dnsmasq_dir
 		restart_dnsmasq || exit 1
 	fi
 
@@ -2650,21 +2759,95 @@ update()
 		}
 	fi
 
-	if [ "${1}" != "--simulation" ]
-	then
-		try_mv "${abl_dir}/adblock-lean.latest" "${abl_service_path}" || exit 1
-		chmod +x "${abl_service_path}"
-		${abl_service_path} enable
-	fi
+	try_mv "${abl_dir}/adblock-lean.latest" "${abl_service_path}" || exit 1
+	chmod +x "${abl_service_path}"
+	${abl_service_path} enable
 	log_msg -green "adblock-lean has been updated to the latest version."
 
 	rm -f "${abl_dir}/adblock-lean.latest" "${abl_dir}/uclient-fetch_err"
+	if [ -n "${do_dialogs}" ]
+	then
+		print_msg "" "Start adblock-lean now? (y|n)"
+		pick_opt "y|n"
+		if [ "$REPLY" = y ]
+		then
+			. "${abl_service_path}" || exit 1
+			start
+			exit $?
+		fi
+	fi
+	exit 0
+}
+
+uninstall()
+{
+	log_msg -purple "" "Uninstalling adblock-lean."
+	stop -noexit
+	if /sbin/service adblock-lean enabled &>/dev/null
+		then
+		log_msg -purple "" "Disabling adblock-lean."
+		disabling=1 /sbin/service adblock-lean disable && ! /sbin/service adblock-lean enabled ||
+			{ reg_failure "Failed to disable adblock-lean. Disable manually and then run this command again."; exit 1; }
+	fi
+
+	if [ -n "${do_dialogs}" ]
+	then
+		print_msg "" "Delete the config directory ${config_dir}?"
+		pick_opt "y|n"
+	else
+		REPLY="${luci_uninstall_rm_config}"
+	fi
+
+	if [ "${REPLY}" = y ]
+	then
+		log_msg -purple "" "Deleting the config directory."
+		rm -rf "${config_dir}" || reg_failure "Failed to delete the config directory '${config_dir}'."
+	fi
+
+	local i="-1" addnmount_deleted=1
+	while [ ${i} -lt 128 ]
+	do
+		i=$((i+1))
+		uci -q get dhcp.@dnsmasq[${i}] >/dev/null || break
+		case "$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" in */bin/busybox*) ;; *) continue; esac
+		addnmount_deleted=
+		log_msg -purple "" "Deleting the custom addnmount entry from /etc/config/dhcp."
+		if uci -q del_list dhcp.@dnsmasq[${i}].addnmount='/bin/busybox' && uci commit
+		then
+			case "$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" in */bin/busybox*) break; esac
+			addnmount_deleted=1
+			log_msg "Note: the adblock-lean developers are not aware of any other software that requires the specific addnmount entry created by adblock-lean." \
+				"Should the addnmount entry be required for any reason then you will need to manually re-add it."
+		fi
+		break
+	done
+	[ -z "${addnmount_deleted}" ] &&
+		reg_failure "Failed to delete the custom addnmount entry from /etc/config/dhcp. Please delete manually."
+
+	log_msg -purple "" "Deleting the script from ${abl_service_path}."
+	rm -f "${abl_service_path}" ||
+		{ reg_failure "Failed to delete the script from '${abl_service_path}'. Please delete manually."; exit 1; }
+
+	log_msg -purple "" "Uninstall complete."
 	exit 0
 }
 
 set_colors
 
-[ "${1}" = setup ] && { setup; exit 0; }
+# test process substitution support
+printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
+if ! /bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null
+then
+	rm -f /tmp/abl-test
+	reg_failure "This shell does not support process substitution. To use adblock-lean, please update OpenWrt to 22.03 or later version."
+	exit 1
+fi
+rm -f /tmp/abl-test
+
+case "${1}" in
+	setup) setup; exit 0 ;;
+	uninstall) uninstall; exit 0
+esac
 
 # handle enable/disable actions
 case "${action}" in
@@ -2672,37 +2855,33 @@ case "${action}" in
 		if ! [ "${enabling}" ]
 		then
 			export enabling=1
-			log_msg -purple "" "Enabling the adblock-lean service."
 			if ! /sbin/service adblock-lean enabled
 			then
+				log_msg -purple "" "Enabling the adblock-lean service."
 				/sbin/service adblock-lean enable && /sbin/service adblock-lean enabled ||
 					{ reg_failure "Failed to enable the adblock-lean service"; exit 1; }
 			else
 				log_msg -green "The adblock-lean service is already enabled."
+				exit 0
 			fi
 			load_config
-			if [ -n "${cron_job}" ]
-			then
-				upd_cron_job && luci_cron_job_creation_failed=
-			fi
-			enabling=
+			[ -n "${cron_schedule}" ] && upd_cron_job && luci_cron_job_creation_failed=
 		fi ;;
 	disable)
-		if ! [ "${disabling}" ]
+		if [ -z "${disabling}" ]
 		then
 			export disabling=1
-			log_msg -purple "Disabling adblock-lean."
-			if /sbin/service adblock-lean enabled
+			if enabled
 			then
-				/sbin/service adblock-lean disable && ! /sbin/service adblock-lean enabled ||
-					{ reg_failure "Failed to disable the adblock-lean service"; exit 1; }
-				stop
+				log_msg -purple "Disabling adblock-lean."
 				load_config && rm_cron_job
+				disable && ! enabled ||
+					{ reg_failure "Failed to disable the adblock-lean service"; exit 1; }
+				stop -noexit
 			else
 				log_msg "The adblock-lean service is already disabled."
 			fi
-			disabling=
+			exit 0
 		fi
 esac
-
 :
