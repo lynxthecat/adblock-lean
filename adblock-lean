@@ -39,7 +39,6 @@ fi
 abl_service_path=/etc/init.d/adblock-lean
 config_dir=/etc/adblock-lean
 config_file=${config_dir}/config
-root_config_file=/root/adblock-lean/config # @config_migration_logic
 abl_dir=/var/run/adblock-lean
 abl_pid_dir=/tmp/adblock-lean
 update_log_file=/var/log/abl_update.log
@@ -742,15 +741,6 @@ parse_config()
 		esac
 	fi
 
-	# @config_migration_logic
-	# config file path change code can be removed a few months from now (Sep 2024)
-	if [ "${actual_config_file}" = "${root_config_file}" ]
-	then
-		log_msg -yellow "" "Note: config file path has changed to ${config_file}." "Your config file ${actual_config_file} will need to be moved."
-		add_conf_fix "Move the config file to ${config_file}"
-		luci_config_path_changed=1
-	fi
-
 	conf_fixes="${conf_fixes%$'\n'}"
 	luci_conf_fixes="${conf_fixes}"
 
@@ -772,29 +762,23 @@ mk_new_urls_format_flag()
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local actual_config_file conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt parse_res url_conv_req
+	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt parse_res url_conv_req
 
 	# Need to set do_dialogs here for compatibility when updating from earlier versions
 	local do_dialogs=
 	[ -z "${luci_skip_dialogs}" ] && [ "${msgs_dest}" = "/dev/tty" ] && do_dialogs=1
 
-	# @config_migration_logic
-	if [ -f "${config_file}" ]
+	if [ ! -f "${config_file}" ]
 	then
-		actual_config_file="${config_file}"
-	elif [ -f "${root_config_file}" ]
-	then
-		actual_config_file="${root_config_file}"
-	else
 		reg_failure "Config file is missing."
 		log_msg "Generate default config using 'service adblock-lean gen_config'."
 		return 1
 	fi
 
-	local tip_msg="Fix your config file '${actual_config_file}' or generate default config using 'service adblock-lean gen_config'."
+	local tip_msg="Fix your config file '${config_file}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
-	parse_config "${actual_config_file}"
+	parse_config "${config_file}"
 	parse_res=${?}
 	[ ${parse_res} = 1 ] && { log_msg "${tip_msg}"; return 1; }
 
@@ -898,7 +882,7 @@ fix_config()
 	)"
 
 	local old_config_f="/tmp/adblock-lean_config.old"
-	if ! cp "${actual_config_file}" "${old_config_f}"
+	if ! cp "${config_file}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
 		[ -z "${do_dialogs}" ] && return 1
@@ -924,15 +908,12 @@ write_config()
 
 	try_mkdir -p "${abl_dir}" || return 1
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
-	local actual_config_file="${config_file}"
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
 	log_msg "" "Saving new config file to '${config_file}'."
 	try_mkdir -p "${config_dir}" || return 1
-	try_mv "${tmp_config}" "${config_file}" &&
-	# @config_migration_logic, also the '&&' above
-	{ rm -f "${root_config_file}"; return 0; }
+	try_mv "${tmp_config}" "${config_file}" && return 0
 
 	rm -f "${tmp_config}"
 	return 1
