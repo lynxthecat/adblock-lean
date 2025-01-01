@@ -408,128 +408,6 @@ get_config_format()
 	fi
 }
 
-# @url_conversion_logic
-# URL conversion logic can be removed in a few months from now (Sep 2024) - most bits to remove marked as @url_conversion_logic
-# convert known dnsmasq-formatted URLs to wildcard domain URLs
-# assign converted URLs to ${conv_*} or ${conv_dnsmasq_*}
-# assign old urls to ${orig_*}
-# assign URLs not requiring conversion to ${correct_*}
-mk_conv_urls()
-{
-	# 1 - old var name
-	# 2 - replacement pattern
-	# 3 - replacement string
-	replace_str()
-	{
-		# this function simplifies the code inside eval
-		do_replace() { new_str_l="${new_str_l%%${pattern_l}*}${repl_str_l}${new_str_l#*${pattern_l}}"; }
-
-		local var_name_l="${1}" pattern_l="${2}" repl_str_l="${3}" new_str_l=
-		eval "new_str_l=\"\${${var_name_l}}\"
-			case \"\${new_str_l}\" in *${pattern_l}*) do_replace; esac
-			${var_name_l}=\"\${new_str_l}\""
-	}
-
-	# 1 - url
-	# 2 - entry name
-	add_orig_url() { eval "orig_${2}_urls=\"\${orig_${2}_urls}${1} \""; }
-
-	# 1 - url
-	# 2 - entry name
-	add_corr_url() { eval "correct_${2}_urls=\"\${correct_${2}_urls}${1} \""; }
-
-	# 1 - old url var name
-	# 2 - replacement pattern
-	# 3 - replacement string
-	# 4 - entry name
-	add_conv_url()
-	{
-		local var_name="${1}" pattern="${2}" repl_str="${3}" entry_name="${4}" orig_str new_str
-		eval "orig_str=\"\${${var_name}}\""
-		new_str="${orig_str}"
-		replace_str new_str "${pattern}" "${repl_str}"
-		eval "conv_${entry_name}_urls=\"\${conv_${entry_name}_urls}${new_str} \""
-		url_conv_req=1
-	}
-
-	local entry urls dnsmasq_urls e IFS="${default_IFS}"
-
-	for entry in blocklist blocklist_ipv4 allowlist
-	do
-		unset urls dnsmasq_urls
-
-		eval "[ -n \"\${${entry}_urls+x}\" ] && urls=\"\${${entry}_urls}\"" &&
-		curr_url_entries="${curr_url_entries}${blue}${entry}_urls${n_c}=\"${urls}\""$'\n'
-
-		eval "[ -n \"\${dnsmasq_${entry}_urls+x}\" ] && dnsmasq_urls=\"\${dnsmasq_${entry}_urls}\"" &&
-		curr_dnsmasq_url_entries="${curr_dnsmasq_url_entries}${blue}dnsmasq_${entry}_urls${n_c}=\"${dnsmasq_urls}\""$'\n'
-
-		[ -z "${urls}" ] && continue
-		for url in ${urls}
-		do
-			e=
-			local hagezi_dl_url="raw.githubusercontent.com/hagezi/dns-blocklists/main"
-			case "${url}" in
-				*"${hagezi_dl_url}/wildcard/"*) add_corr_url "${url}" "${entry}"; e=1 ;;
-				*"${hagezi_dl_url}/dnsmasq/"*)
-					case "${url%.txt}" in
-						*tif-ips)
-							add_orig_url "${url}" blocklist_ipv4
-							add_conv_url url "/dnsmasq/tif-ips.txt" "/ips/tif.txt" blocklist_ipv4
-							e=1 ;;
-						*/pro*|*/tif|*/tif.*|*anti.piracy|*doh|*doh-vpn-proxy-bypass|*dyndns|*fake|*gambling|*hoster|*light|*multi|*native*|\
-							*nosafesearch|*popupads|*ultimate*)
-								add_orig_url "${url}" "${entry}"
-								replace_str url dnsmasq wildcard
-								add_conv_url url ".txt" "-onlydomains.txt" "${entry}"
-								e=1
-					esac ;;
-				*"${hagezi_dl_url}/domains/whitelist-referral"*) add_corr_url "${url}" allowlist; e=1 ;;
-				*"${hagezi_dl_url}/ips/"*) add_corr_url "${url}" blocklist_ipv4; e=1 ;;
-				*"oisd.nl/domainswild2"*) add_corr_url "${url}" "${entry}"; e=1 ;;
-				*"oisd.nl/dnsmasq"*)
-					add_orig_url "${url}" "${entry}"
-					case "${url}" in
-						*dnsmasq2*) p="/dnsmasq2" ;;
-						*dnsmasq*) p="/dnsmasq"
-					esac
-					add_conv_url url "${p}" "/domainswild2" "${entry}"
-					e=1
-			esac
-			[ -z "${e}" ] && { eval "unrec_${entry}_urls=\"\${unrec_${entry}_urls}${url} \""; url_conv_req=1; }
-		done
-	done
-}
-
-# @url_conversion_logic
-# assemble new config settings out of ${conv_*_urls}, ${unrec_*_urls}, ${correct_*_urls} and assign to variables
-convert_urls()
-{
-	local entry format urls
-	for format in "" dnsmasq_
-	do
-		for entry_type in blocklist blocklist_ipv4 allowlist
-		do
-			entry_id="${format}${entry_type}_urls"
-
-			case "${format}" in
-				'') eval "${entry_id}=\"\${correct_${entry_type}_urls}\"" ;;
-				dnsmasq_)
-					eval "case \"\${${entry_id}}\" in ''|*\" \") ;; *) ${entry_id}=\"\${${entry_id}} \"; esac"
-					eval "${entry_id}=\"\${${entry_id}}\${unrec_${entry_type}_urls} \""
-			esac
-
-			case "${1}" in
-				y) [ -z "${format}" ] && eval "${entry_id}=\"\${${entry_id}}\${conv_${entry_type}_urls} \"" ;;
-				n) [ -n "${format}" ] && eval "${entry_id}=\"\${${entry_id}}\${orig_${entry_type}_urls} \""
-			esac
-
-			eval "${entry_id}=\"\$(printf '%s\n' \${${entry_id}} | tr ' ' '\n' | sort -u | tr '\n' ' ')\"
-				${entry_id}=\"\${${entry_id}% }\""
-		done
-	done
-}
-
 # validate config and assign to variables
 #
 # 1 - path to file
@@ -680,20 +558,6 @@ parse_config()
 		luci_unexp_entries=${unexp_entries%$'\n'}
 	fi
 
-	# @url_conversion_logic
-	# check if urls need conversion, generate converted urls if so
-	if [ "${action}" != gen_config ] && [ -z "${urls_converted}" ] && [ ! -f "${config_dir}/.new_urls_format" ]
-	then
-		mk_conv_urls
-		if [ -n "${url_conv_req}" ]
-		then
-			luci_url_conv_req=1
-			test_keys="$(printf %s "${test_keys}" | sed -E 's~(dnsmasq_){0,1}(block|allow)list(_ipv4){0,1}_urls[|]~~g')"
-		else
-			mk_new_urls_format_flag || return 1
-		fi
-	fi
-
 	test_keys=${test_keys#dummy|}
 	if [ -n "${test_keys}" ]
 	then
@@ -744,17 +608,7 @@ parse_config()
 	conf_fixes="${conf_fixes%$'\n'}"
 	luci_conf_fixes="${conf_fixes}"
 
-	{ [ -n "${url_conv_req}" ] && [ -z "${urls_converted}" ]; } || # @url_conversion_logic
 	[ -n "${conf_fixes}" ] && return 2
-	:
-}
-
-# @url_conversion_logic
-mk_new_urls_format_flag()
-{
-	try_mkdir -p "${config_dir}" || return 1
-	[ -f "${config_dir}/.new_urls_format" ] && return 0
-	touch "${config_dir}/.new_urls_format" || { reg_failure "Failed to create file '${config_dir}/.new_urls_format'."; return 1; }
 	:
 }
 
@@ -807,52 +661,9 @@ load_config()
 			pick_opt "y|n" || return 1
 			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 		fi
-
-		# @url_conversion_logic
-		if [ -n "${url_conv_req}" ]
-		then
-			print_msg "" "${purple}NOTE: adblock-lean now supports both dnsmasq-formatted lists and \"raw domain\" lists.${n_c}" \
-				"The \"raw domain\" lists are functionally identical but their filesize is smaller and they are faster to process." \
-				"Hagezi and OISD dnsmasq-formatted list URLs can be automatically converted to \"raw domain\" list URLs." \
-				"If you are using other dnsmasq-formatted lists, they will be moved into separate config options and continue to work," \
-				"but you may want to look for their raw domain equivalents (sometimes called \"wildcard domains\")." \
-				"" "${purple}Current \"raw domains\" URL config entries:${n_c}" "${curr_url_entries%"${nl}"}"
-			[ -n "${curr_dnsmasq_url_entries%"${nl}"}" ] &&
-				print_msg "" "${purple}Current \"dnsmasq\" URL config entries:${n_c}" "${curr_dnsmasq_url_entries%"${nl}"}"
-			if [ -n "${conv_blocklist_urls}${conv_blocklist_ipv4_urls}${conv_allowlist_urls}" ]
-			then
-				print_msg "" "${purple}Convert known dnsmasq-formatted list URLs which are currently configured as \"raw domains\" to \"raw domain\" list URLs?${n_c}" \
-						"(you will be asked to confirm before writing the config)"
-				pick_opt "y|n" || return 1
-			else
-				REPLY=y
-			fi
-			convert_urls "${REPLY}"
-			urls_converted=1
-
-			for list_format in "\"raw domain\"" dnsmasq
-			do
-				print_msg "" "${purple}Updated ${list_format} URL config entries:${n_c}"
-				if [ "${list_format}" = "\"raw domain\"" ]
-				then
-					list_format=
-				else
-					list_format=dnsmasq_
-				fi
-				for url_entry in "${list_format}blocklist" "${list_format}blocklist_ipv4" "${list_format}allowlist"
-				do
-					eval "urls=\"\${${url_entry}_urls}\""
-					print_msg "${blue}${url_entry}_urls${n_c}=\"${urls}\""
-				done
-			done
-			print_msg "" "Confirm URLs update in config?"
-			pick_opt "y|n" || return 1
-			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
-		fi
 	fi
 
 	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
-	mk_new_urls_format_flag || return 1 # @url_conversion_logic
 	:
 }
 
@@ -2439,8 +2250,6 @@ gen_config()
 		[ "${REPLY}" = n ] && return 1
 	fi
 	write_config "$(print_def_config -p "${preset}")" || return 1
-
-	mk_new_urls_format_flag || return 1 # @url_conversion_logic
 
 	check_blocklist_compression_support
 	:
