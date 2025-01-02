@@ -46,6 +46,8 @@ session_log_file=/var/log/abl_session.log
 hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
 abl_cron_cmd="/etc/init.d/adblock-lean start"
 cron_service_path="/etc/init.d/cron"
+RECOMMENDED_PKGS="gawk sed coreutils-sort"
+RECOMMENDED_UTILS="awk sed sort"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -1947,6 +1949,34 @@ init_command()
 	:
 }
 
+# Detect package manager (opkg or apk)
+# Sets global vars: $PKG_MANAGER $PKG_INSTALL_CMD
+detect_pkg_manager() {
+	local apk_present='' opkg_present=''
+	command -v apk >/dev/null && apk_present=1
+	command -v opkg >/dev/null && opkg_present=1
+	if [ -n "$apk_present" ] && [ -n "$opkg_present" ]
+	then
+		reg_failure "Both apk and opkg package managers present in the system. Can not automatically install packages."
+		return 1
+	fi
+
+	if [ -n "$apk_present" ]
+	then
+		PKG_MANAGER=apk
+		PKG_INSTALL_CMD="apk add"
+		echo apk
+	elif [ -n "$opkg_present" ]
+	then
+		PKG_MANAGER=opkg
+		PKG_INSTALL_CMD="opkg install"
+	else
+		reg_failure "Failed to detect package manager."
+		return 1
+	fi
+	:
+}
+
 
 ### MAIN COMMAND FUNCTIONS
 
@@ -1996,13 +2026,133 @@ setup()
 		exit 1
 	}
 
-	get_package_name()
+	get_pkg_name()
 	{
 		case "${1}" in
 			awk) printf gawk ;;
 			sed) printf sed ;;
 			sort) printf coreutils-sort
 		esac
+	}
+
+	# 1 - '|' - separated package names
+	get_installed_pkgs()
+	{
+		local all_installed_pkgs pkgs_list_cmd filter_cmd
+		case "${PKG_MANAGER}" in
+			apk)
+				pkgs_list_cmd="apk list -I"
+				filter_cmd="sed -En '/^[ \t]*($1)-[0-9]/{s/^[ \t]+//;s/[ \t].*//;p;}'"
+				;;
+			opkg)
+				pkgs_list_cmd="opkg list-installed"
+				filter_cmd="grep -E '^[ \t]*($1)([ \t]|$)'"
+				;;
+			*)
+				reg_failure "Unexpected package manager '${PKG_MANAGER}'."
+				return 1
+		esac
+
+		all_installed_pkgs="$(${pkgs_list_cmd})" && [ -n "${all_installed_pkgs}" ] || {
+			reg_failure "Failed to check installed packages with package manager '$PKG_MANAGER'."
+			return 1
+		}
+		printf '%s\n' "$all_installed_pkgs" | eval "${filter_cmd}"
+
+		:
+	}
+
+	install_packages()
+	{
+		# determine if there are missing GNU utils
+		local recomm_pkgs_regex="$(printf %s "$RECOMMENDED_PKGS" | tr ' ' '|')"
+		local pkgs2install='' missing_packages='' missing_utils='' missing_utils_print='' util package installed_pkgs='' \
+			util_size_B utils_size_B=0 awk_size_B=1048576 sort_size_B=122880 sed_size_B=153600
+
+		installed_pkgs="$(get_installed_pkgs "${recomm_pkgs_regex}")" || return 1
+
+		echo
+		for util in ${RECOMMENDED_UTILS}
+		do
+			case "${installed_pkgs}" in
+				*"${util}"*) print_msg "${green}GNU ${util} is already installed.${n_c}" ;;
+				*)
+					missing_utils="${missing_utils}${util} "
+					missing_utils_print="${missing_utils_print}${blue}GNU ${util}${n_c}, "
+					missing_packages="${missing_packages}${blue}$(get_pkg_name "${util}")${n_c}, "
+			esac
+		done
+
+		# make a list of GNU utils to install
+		if [ -n "${missing_utils}" ]
+		then
+			local free_space_B='' free_space_KB="$(df -k /usr/ | tail -n1 | sed -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')" \
+				mount_point="$(df -k /usr/ | tail -n1 | sed -E 's/.*[ \t]+//')"
+			case "${free_space_KB}" in
+				''|*[!0-9]*) reg_failure "Failed to check available free space." ;;
+				*) free_space_B=$((free_space_KB*1024))
+			esac
+
+			if [ -n "${do_dialogs}" ]
+			then
+				print_msg "" "For improved performance while processing the lists, it is recommended to install ${missing_utils_print%, }." \
+					"Corresponding packages are: ${missing_packages%, }."
+				[ -n "${free_space_B}" ] &&
+					print_msg "" "Available free space at mount point '${mount_point}': ${yellow}$(bytes2human "${free_space_B}")${n_c}." ""
+			fi
+
+			for util in ${missing_utils}
+			do
+				REPLY=n
+				if [ -n "${do_dialogs}" ]
+				then
+					eval "util_size_B=\"\${${util}_size_B}\""
+					print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}$(bytes2human "${util_size_B}")${n_c}."
+					pick_opt "y|n" || exit 1
+				elif [ -n "${luci_install_packages}" ]
+				then
+					REPLY=y
+				fi
+
+				if [ "${REPLY}" = y ]
+				then
+					pkgs2install="${pkgs2install}$(get_pkg_name "${util}") "
+					utils_size_B=$((utils_size_B+util_size_B))
+				fi
+			done
+		fi
+
+		# install GNU utils
+		if [ -n "${pkgs2install}" ]
+		then
+			REPLY=n
+			if [ -n "${do_dialogs}" ]
+			then
+				print_msg "" "Selected packages: ${blue}${pkgs2install% }${n_c}" \
+					"Total installed size: ${yellow}$(bytes2human ${utils_size_B})${n_c}." \
+					"Proceed with packages installation?"
+				pick_opt "y|n"
+			elif [ -n "${luci_install_packages}" ]
+			then
+				REPLY=y
+			fi
+
+			if [ "${REPLY}" = y ]
+			then
+				if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ ${free_space_B} -gt ${utils_size_B} ]
+				then
+					echo
+					$PKG_MANAGER update && $PKG_INSTALL_CMD ${pkgs2install% } && luci_pkgs_install_failed='' ||
+						reg_failure "Failed to automatically install packages. You can install them manually later."
+				else
+					reg_failure "Not enough free space at mount point '${mount_point}'."
+					print_msg "Free up some space, then you can manually install the packages later by issuing the command:" \
+						"$PKG_MANAGER update; $PKG_INSTALL_CMD ${pkgs2install% }"
+				fi
+			fi
+		else
+			luci_pkgs_install_failed=
+		fi
 	}
 
 	# set all luci feedback vars to failed, unset later upon success
@@ -2060,93 +2210,14 @@ setup()
 	fi
 	luci_service_enable_failed=
 
-	# determine if there are missing GNU utils
-	local pkgs2install='' missing_packages='' missing_utils='' missing_utils_print='' util package \
-		util_size_B utils_size_B=0 awk_size_B=1048576 sort_size_B=122880 sed_size_B=153600 \
-		installed_utils="$(opkg list_installed | grep -E '^[ \t]*(sed|gawk|coreutils-sort)([ \t]|$)')"
-
-	echo
-	for util in sed sort awk
-	do
-		case "${installed_utils}" in
-			*"${util}"*) print_msg "${green}GNU ${util} is already installed.${n_c}" ;;
-			*)
-				missing_utils="${missing_utils}${util} "
-				missing_utils_print="${missing_utils_print}${blue}GNU ${util}${n_c}, "
-				missing_packages="${missing_packages}${blue}$(get_package_name "${util}")${n_c}, "
-		esac
-	done
-
-	# make a list of GNU utils to install
-	if [ -n "${missing_utils}" ]
-	then
-		local free_space_B='' free_space_KB="$(df -k /usr/ | tail -n1 | sed -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')" \
-			mount_point="$(df -k /usr/ | tail -n1 | sed -E 's/.*[ \t]+//')"
-		case "${free_space_KB}" in
-			''|*[!0-9]*) reg_failure "Failed to check available free space." ;;
-			*) free_space_B=$((free_space_KB*1024))
-		esac
-
-		if [ -n "${do_dialogs}" ] 
-		then
-			print_msg "" "For improved performance while processing the lists, it is recommended to install ${missing_utils_print%, }." \
-				"Corresponding opkg packages are: ${missing_packages%, }."
-			[ -n "${free_space_B}" ] &&
-				print_msg "" "Available free space at mount point '${mount_point}': ${yellow}$(bytes2human "${free_space_B}")${n_c}." ""
-		fi
-
-		for util in ${missing_utils}
-		do
-			REPLY=n
-			if [ -n "${do_dialogs}" ]
-			then
-				eval "util_size_B=\"\${${util}_size_B}\""
-				print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}$(bytes2human "${util_size_B}")${n_c}."
-				pick_opt "y|n" || exit 1
-			elif [ -n "${luci_install_packages}" ]
-			then
-				REPLY=y
-			fi
-
-			if [ "${REPLY}" = y ]
-			then
-				pkgs2install="${pkgs2install}$(get_package_name "${util}") "
-				utils_size_B=$((utils_size_B+util_size_B))
-			fi
-		done
-	fi
-
-	# install GNU utils
-	if [ -n "${pkgs2install}" ]
-	then
-		REPLY=n
-		if [ -n "${do_dialogs}" ]
-		then
-			print_msg "" "Selected packages: ${blue}${pkgs2install% }${n_c}" \
-				"Total installed size: ${yellow}$(bytes2human ${utils_size_B})${n_c}." \
-				"Proceed with packages installation?"
-			pick_opt "y|n"
-		elif [ -n "${luci_install_packages}" ]
-		then
-			REPLY=y
-		fi
-
-		if [ "${REPLY}" = y ]
-		then
-			if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ ${free_space_B} -gt ${utils_size_B} ]
-			then
-				echo
-				opkg update && opkg install ${pkgs2install% } && luci_pkgs_install_failed='' ||
-					reg_failure "Failed to automatically install packages. You can install them manually later."
-			else
-				reg_failure "Not enough free space at mount point '${mount_point}'."
-				print_msg "Free up some space, then you can manually install the packages later by issuing the command:" \
-					"opkg update; opkg install ${pkgs2install% }"
-			fi
-		fi
-	else
-		luci_pkgs_install_failed=
-	fi
+	detect_pkg_manager
+	case "$PKG_MANAGER" in
+		apk|opkg)
+			install_packages ;;
+		*)
+			log_msg -yellow "" "Can not automatically check and install recommended packages ($RECOMMENDED_PKGS)." \
+				"Consider to check for their presence and install if needed."
+	esac
 
 	if [ -n "${do_dialogs}" ]
 	then
@@ -2268,13 +2339,24 @@ start()
 	init_command start || exit 1
 	log_msg -purple "Started adblock-lean." ""
 
+	detect_pkg_manager
+	for util in $RECOMMENDED_UTILS
+	do
+		case "$PKG_MANAGER" in
+			opkg|apk)
+				eval "local ${util}_inst_tip=\" ($PKG_MANAGER install $(get_pkg_name "${util}"))\"" ;;
+			*)
+				unset "${util}_inst_tip" ;;
+		esac
+	done
+
 	if type gawk &> /dev/null
 	then
 		log_msg "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
 		awk_cmd="gawk"
 	else
 		log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-		log_msg "Consider installing the gawk package 'opkg install gawk' for faster processing and (sub)domain match removal."
+		log_msg "Consider installing the gawk package${gawk_inst_tip} for faster processing and (sub)domain match removal."
 		awk_cmd="awk"
 	fi
 
@@ -2283,7 +2365,7 @@ start()
 		log_msg "GNU sed detected so list processing will be fast."
 	else
 		log_msg -yellow "GNU sed not detected so list processing will be a little slower."
-		log_msg "Consider installing the GNU sed package (opkg install sed) for faster processing."
+		log_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing."
 	fi
 
 	if sort --version 2>/dev/null | grep -qe coreutils
@@ -2291,7 +2373,7 @@ start()
 		log_msg "coreutils-sort detected so sort will be fast."
 	else
 		log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
-		log_msg "Consider installing the coreutils-sort package (opkg install coreutils-sort) for faster sort."
+		log_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort."
 	fi
 
 	final_compress=
