@@ -2637,7 +2637,7 @@ start()
 	else
 		log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
 		log_msg "Consider installing the gawk package${gawk_inst_tip} for faster processing and (sub)domain match removal."
-		awk_cmd="awk"
+		awk_cmd="busybox awk"
 	fi
 
 	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
