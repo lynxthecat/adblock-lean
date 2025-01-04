@@ -129,7 +129,7 @@ cnt_lines()
 
 get_file_size_human()
 {
-	bytes2human "$(du -b "$1" | ${awk_cmd} '{print $1}')"
+	bytes2human "$(du -b "$1" | ${AWK_CMD} '{print $1}')"
 }
 
 # converts unsigned integer to [xB|xKiB|xMiB|xGiB|xTiB]
@@ -304,6 +304,60 @@ get_pkg_name()
 	esac
 }
 
+# sets $AWK_CMD, $SED_CMD, $SORT_CMD
+# 1 - (optional) '-n' to not print tips
+detect_utils() {
+	log_util_tip()
+	{
+		[ -z "${no_utils_tip}" ] && log_msg "${@}"
+
+	}
+
+	local awk_inst_tip='' sed_inst_tip='' sort_inst_tip='' no_utils_tip="${1}"
+	detect_pkg_manager
+
+	for util in ${RECOMMENDED_UTILS}
+	do
+		case "${PKG_MANAGER}" in
+			opkg|apk)
+				eval "${util}_inst_tip=\" (${PKG_INSTALL_CMD} $(get_pkg_name "${util}"))\"" ;;
+			*)
+				unset "${util}_inst_tip" ;;
+		esac
+	done
+
+	if type gawk &> /dev/null
+	then
+		AWK_CMD="gawk"
+		log_util_tip "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
+	else
+		AWK_CMD="busybox awk"
+		log_util_tip -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
+		log_util_tip "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
+	fi
+
+	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
+	then
+		SED_CMD="sed"
+		log_util_tip "GNU sed detected so list processing will be fast."
+	else
+		SED_CMD="busybox sed"
+		log_util_tip -yellow "GNU sed not detected so list processing will be a little slower."
+		log_util_tip "Consider installing the GNU sed package${sed_inst_tip} for faster processing."
+	fi
+
+	if sort --version 2>/dev/null | grep -qe coreutils
+	then
+		SORT_CMD="sort"
+		log_util_tip "coreutils-sort detected so sort will be fast."
+	else
+		SORT_CMD="busybox sort"
+		log_util_tip -yellow "coreutils-sort not detected so sort will be a little slower."
+		log_util_tip "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort."
+	fi
+	:
+}
+
 # (optional) -d to print with allowed value types (otherwise print without)
 # (optional) -p to print with values from preset
 # (optional) -i to print with DNSMASQ_INSTANCE
@@ -332,7 +386,7 @@ print_def_config()
 	case "${preset}" in mini|small|medium|large) ;; *) reg_failure "print_def_config: \$preset var has invalid value."; exit 1; esac
 	gen_preset "${preset}" -n
 
-	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else sed 's/[ \t]*@.*//'; fi
+	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
 
 	# adblock-lean configuration options
 	# config_format=v5
@@ -482,9 +536,9 @@ get_config_format()
 	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
 	if [ -n "${1}" ]
 	then
-		sed -n "${conf_form_sed_expr}" "${1}"
+		$SED_CMD -n "${conf_form_sed_expr}" "${1}"
 	else
-		sed -n "${conf_form_sed_expr}"
+		$SED_CMD -n "${conf_form_sed_expr}"
 	fi
 }
 
@@ -558,7 +612,7 @@ parse_config()
 			esac"
 
 		bad_val_entries="${bad_val_entries}${entry} (should be $(print_def_config -d | \
-			sed -n "/^[ \t]*${key}[ \t]*=/{s/^.*@[ \t]*//;s/[ \t]//g;s/|/ or /g;s/''/empty string/;s/integer/non-negative integer/;p;q;}"))"$'\n'
+			$SED_CMD -n "/^[ \t]*${key}[ \t]*=/{s/^.*@[ \t]*//;s/[ \t]//g;s/|/ or /g;s/''/empty string/;s/integer/non-negative integer/;p;q;}"))"$'\n'
 		bad_value_keys="${bad_value_keys}${key}|"
 		return 1
 	}
@@ -587,16 +641,16 @@ parse_config()
 	# extract valid values from default config
 	local sed_valid_vals_expr="/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; /\"/d; s/[ \t]//g; s/^/val_/; s/=string/=*/; \
 		s/=integer/=*[!0-9]*|'') ;; */; s/=/=\"/; s/$/\"/"
-	local all_valid_values="$(print_def_config -d | sed "${sed_conf_san_exp};${sed_valid_vals_expr}")"
+	local all_valid_values="$(print_def_config -d | $SED_CMD "${sed_conf_san_exp};${sed_valid_vals_expr}")"
 	# assign 'val_*' variables
 	eval "${all_valid_values}" || exit 1
 
 	# extract keys from default config, convert to '|' separated list
 	# 'dummy|' is needed to avoid errors in eval
-	test_keys="dummy|$(printf '%s\n' "${def_config}" | sed "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
+	test_keys="dummy|$(printf '%s\n' "${def_config}" | $SED_CMD "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
 
 	# read and sanitize current config
-	curr_config="$(sed "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
+	curr_config="$($SED_CMD "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
 
 	# get config versions
 	curr_config_format="$(get_config_format "${1}")"
@@ -868,8 +922,8 @@ get_dnsmasq_instances() {
 		ifaces="$(
 			for f in ${l1_conf_files}
 			do
-				cat "${f}" | sed -nE '/^\s*(no-dhcp-){0,1}interface=/{s/.*=//;p;}'
-			done | sort -u | sed -z 's/\n/, /'
+				cat "${f}" | $SED_CMD -nE '/^\s*(no-dhcp-){0,1}interface=/{s/.*=//;p;}'
+			done | $SORT_CMD -u | $SED_CMD -z 's/\n/, /'
 		)"
 		eval "${instance}_IFACES=\"${ifaces%, }\""
 
@@ -877,8 +931,8 @@ get_dnsmasq_instances() {
 		conf_dirs="$(
 			for f in ${l1_conf_files}
 			do
-				cat "${f}" | sed -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}'
-			done | sort -u
+				cat "${f}" | $SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}'
+			done | $SORT_CMD -u
 		)"		
 		eval "${instance}_CONF_DIRS=\"${conf_dirs}\""
 		IFS="$IFS_OLD"
@@ -1058,7 +1112,7 @@ process_list_part()
 	tee >(wc -c > "${ABL_DIR}/list_part_size_B") |
 
 	# Remove comment lines and trailing comments, remove whitespaces
-	sed 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
+	$SED_CMD 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
 
 	# Convert dnsmasq format to raw format
 	if [ "${list_format}" = dnsmasq ]
@@ -1069,7 +1123,7 @@ process_list_part()
 			blocklist_ipv4) rm_prefix_expr="s~^[ \t]*bogus-nxdomain=~~" ;;
 			allowlist) rm_suffix_expr='s~/#$~~'
 		esac
-		sed -E "${rm_prefix_expr};${rm_suffix_expr}" | tr '/' '\n'
+		$SED_CMD -E "${rm_prefix_expr};${rm_suffix_expr}" | tr '/' '\n'
 	else
 		cat
 	fi |
@@ -1085,12 +1139,12 @@ process_list_part()
 		case "${whitelist_mode}" in
 		0)
 			# remove allowlist domains from blocklist
-			${awk_cmd} 'NR==FNR { if ($0 ~ /^\*\./) { allow_wild[substr($0,3)]; next }; allow[$0]; next }
+			${AWK_CMD} 'NR==FNR { if ($0 ~ /^\*\./) { allow_wild[substr($0,3)]; next }; allow[$0]; next }
 				{ n=split($1,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- )
 				{ addr = arr[i] "." addr; if ( (i>1 && addr in allow_wild) || addr in allow ) next } } 1' "${ABL_DIR}/allowlist" - ;;
 		1)
 			# only print subdomains of allowlist domains
-			${awk_cmd} 'NR==FNR { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
+			${AWK_CMD} 'NR==FNR { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
 				for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${ABL_DIR}/allowlist" -
 		esac
 	else
@@ -1098,7 +1152,7 @@ process_list_part()
 	fi |
 
 	# check lists for rogue elements
-	tee >(sed -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${ABL_DIR}/rogue_element") |
+	tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${ABL_DIR}/rogue_element") |
 
 	# compress parts
 	if [ -n "${compress_part}" ]
@@ -1173,12 +1227,12 @@ test_url_domains()
 			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
 			eval "urls=\"\${${d}${list_type}_urls}\""
 			[ -z "${urls}" ] && continue
-			domains="${domains}$(printf %s "${urls}" | tr ' \t' '\n' | sed -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}')${_NL_}"
+			domains="${domains}$(printf %s "${urls}" | tr ' \t' '\n' | $SED_CMD -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}')${_NL_}"
 		done
 	done
 	[ -z "${domains}" ] && return 0
 
-	for dom in $(printf %s "${domains}" | sort -u)
+	for dom in $(printf %s "${domains}" | $SORT_CMD -u)
 	do
 		try_lookup_domain "${dom}" || return 1
 	done
@@ -1270,7 +1324,7 @@ gen_list_parts()
 				log_msg -warn "" "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
 					"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
 				case "${list_type}" in blocklist|allowlist)
-					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | sed -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
+					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | $SED_CMD -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
 					[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
 						"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
 				esac
@@ -1342,7 +1396,7 @@ generate_and_process_blocklist_file()
 {
 	convert_entries()
 	{
-		if [ "${awk_cmd}" = gawk ]
+		if [ "${AWK_CMD}" = gawk ]
 		then
 			pack_entries_awk "$@"
 		else
@@ -1359,10 +1413,10 @@ generate_and_process_blocklist_file()
 		case "$1" in
 			blocklist)
 				# packs 4 domains in one 'local=/.../' line
-				sed "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${_NL_}};\$!{n;a /${_NL_}};\$!{n; a /${_NL_}};a @" ;;
+				$SED_CMD "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${_NL_}};\$!{n;a /${_NL_}};\$!{n; a /${_NL_}};a @" ;;
 			allowlist)
 				# packs 4 domains in one 'server=/.../#'' line
-				{ cat; printf '\n'; } | sed '/^$/d;$!N;$!N;$!N;s~\n~/~g;s~^~server=/~;s~/*$~/#@~' ;;
+				{ cat; printf '\n'; } | $SED_CMD '/^$/d;$!N;$!N;$!N;s~\n~/~g;s~^~server=/~;s~/*$~/#@~' ;;
 			*) printf ''; return 1
 		esac | tr -d '\n' | tr "@" '\n'
 	}
@@ -1380,7 +1434,7 @@ generate_and_process_blocklist_file()
 
 		len_lim=$((len_lim-${#entry_type}-${#allow_char}-2))
 		# shellcheck disable=SC2016
-		$awk_cmd -v ORS="" -v m=${len_lim} -v a="${allow_char}" -v t=${entry_type} '
+		$AWK_CMD -v ORS="" -v m=${len_lim} -v a="${allow_char}" -v t=${entry_type} '
 			BEGIN {al=0; r=0; s=""}
 			NF {
 				r=r+1
@@ -1413,7 +1467,7 @@ generate_and_process_blocklist_file()
 	{
 		if [ "${deduplication}" = 1 ]
 		then
-			sort -u -
+			$SORT_CMD -u -
 		else
 			cat
 		fi
@@ -1445,7 +1499,7 @@ generate_and_process_blocklist_file()
 			dedup |
 			tee >(wc -wc > "${ABL_DIR}/blocklist_ipv4_stats") |
 			# add prefix
-			sed 's/^/bogus-nxdomain=/'
+			$SED_CMD 's/^/bogus-nxdomain=/'
 		fi
 
 		# print allowlist parts
@@ -1464,7 +1518,7 @@ generate_and_process_blocklist_file()
 		then
 			# add block-everything entry: local=/*a/*b/*c/.../*z/
 			printf 'local=/'
-			${awk_cmd} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
+			${AWK_CMD} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
 			printf '\n'
 		fi
 		# add the blocklist test entry
@@ -1494,7 +1548,7 @@ generate_and_process_blocklist_file()
 	dnsmasq --test -C - 2> "${ABL_DIR}/dnsmasq_err"
 	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ABL_DIR}/dnsmasq_err"
 	then
-		local dnsmasq_err="$(head -n10 "${ABL_DIR}/dnsmasq_err" | sed '/^$/d')"
+		local dnsmasq_err="$(head -n10 "${ABL_DIR}/dnsmasq_err" | $SED_CMD '/^$/d')"
 		rm -f "${out_f}" "${ABL_DIR}/dnsmasq_err"
 		reg_failure "The dnsmasq test on the final blocklist failed."
 		log_msg "dnsmasq --test errors:" "${dnsmasq_err:-"No specifics: probably killed because of OOM."}"
@@ -1758,12 +1812,12 @@ check_for_updates()
 {
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -f "${ABL_DIR}/uclient-fetch_err"
-	sha256sum_adblock_lean_local=$(sha256sum "${ABL_SERVICE_PATH}" | sed -E 's/[ \t]+.*$//')
+	sha256sum_adblock_lean_local=$(sha256sum "${ABL_SERVICE_PATH}" | $SED_CMD -E 's/[ \t]+.*$//')
 	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
 		2> "${ABL_DIR}/uclient-fetch_err" |
 		tee >(cat > "${ABL_DIR}/remote_abl"; . "${ABL_DIR}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config -d |
 			get_config_format > "${ABL_DIR}/upd_config_format") |
-		sha256sum | sed -E 's/[ \t]+.*$//')
+		sha256sum | $SED_CMD -E 's/[ \t]+.*$//')
 
 	local bad_dl='' update_check_result=''
 	read -r luci_upd_config_format _ < "${ABL_DIR}/upd_config_format" 2>/dev/null
@@ -1957,7 +2011,7 @@ get_active_entries_cnt()
 	else
 		printf ''
 	fi |
-	sed -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
+	$SED_CMD -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
 
 	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
 	rm -f "/tmp/abl_entries_cnt"
@@ -2009,7 +2063,7 @@ rm_cron_job()
 	esac
 
 	log_msg -purple "" "Removing cron job for adblock-lean."
-	printf '%s\n' "${curr_cron}" | sed '/adblock-lean start/d;/^$/d' | crontab -u root - ||
+	printf '%s\n' "${curr_cron}" | $SED_CMD '/adblock-lean start/d;/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	:
 }
@@ -2058,7 +2112,7 @@ init_command()
 {
 	action="${1}"
 	pid_file="${ABL_PID_DIR}/adblock-lean.pid"
-	unset lock_req kill_req cleanup_req failure_msg luci_errors init_action_msg
+	unset lock_req utils_req utils_tip_req kill_req cleanup_req failure_msg luci_errors init_action_msg
 
 	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
 	luci_sourced=
@@ -2072,19 +2126,30 @@ init_command()
 
 	# set requirements
 	case ${action} in
-		help|status|gen_stats|print_log|enabled|enable|disable|upd_cron_job|'') ;;
-		setup|gen_config|pause) lock_req=1 ;;
-		boot|start|update|resume) cleanup_req=1 lock_req=1 ;;
+		help|gen_stats|enabled|enable|disable|'') ;;
+		status|print_log|upd_cron_job) utils_req=1 ;;
+		setup|gen_config|pause) lock_req=1 utils_req=1 ;;
+		boot|start|update|resume) cleanup_req=1 lock_req=1 utils_req=1 utils_tip_req=1 ;;
 		stop)
 			init_action_msg="Stopping adblock-lean."
 			reg_action -purple "${init_action_msg}" || exit 1
-			cleanup_req=1 kill_req=1 lock_req=1 ;;
+			cleanup_req=1 kill_req=1 lock_req=1 utils_req=1 ;;
 		set_dnsmasq_dir)
 			reg_action -purple "Checking dnsmasq." || exit 1
-			lock_req=1 ;;
+			lock_req=1 utils_req=1 ;;
 		reload|restart) reg_action -purple "Restarting adblock-lean." || exit 1 ;;
 		*) reg_failure "Invalid action '${action}'."; exit 1
 	esac
+
+	# detect utils, set $AWK_CMD, $SED_CMD, $SORT_CMD
+	if [ -n "${utils_req}" ] && [ -z "${UTILS_DONE}" ]
+	then
+		case "${utils_tip_req}" in
+			'') detect_utils -n ;;
+			*) detect_utils
+		esac || exit 1
+		UTILS_DONE=1
+	fi
 
 	# kill pids if needed
 	if [ -n "${kill_req}" ]
@@ -2131,7 +2196,7 @@ init_command()
 			load_config || { reg_failure "Failed to load config."; exit 1; } ;;
 		stop)
 			[ -f "${ABL_CONFIG_FILE}" ] &&
-			DNSMASQ_CONF_D="$(sed -n '/^\s*DNSMASQ_CONF_D=/{s/^\s*DNSMASQ_CONF_D=//;s/\s*#.*//;s/"//g;p;q;}' "${ABL_CONFIG_FILE}")" &&
+			DNSMASQ_CONF_D="$($SED_CMD -n '/^\s*DNSMASQ_CONF_D=/{s/^\s*DNSMASQ_CONF_D=//;s/\s*#.*//;s/"//g;p;q;}' "${ABL_CONFIG_FILE}")" &&
 			[ -n "${DNSMASQ_CONF_D}" ] ||
 			{
 				reg_failure "Failed to get DNSMASQ_CONF_D from config. Can not delete the blocklist from dnsmasq config directory."
@@ -2160,7 +2225,7 @@ detect_pkg_manager() {
 	command -v opkg >/dev/null && opkg_present=1
 	if [ -n "$apk_present" ] && [ -n "$opkg_present" ]
 	then
-		reg_failure "Both apk and opkg package managers present in the system. Can not automatically install packages."
+		reg_failure "Both apk and opkg package managers present in the system."
 		return 1
 	fi
 
@@ -2186,6 +2251,8 @@ upd_cron_job()
 {
 	local me="upd_cron_job" curr_cron cron_line
 
+	init_command upd_cron_job || return 1
+
 	log_msg -purple "" "Updating cron job for adblock-lean."
 
 	if [ "${action}" = upd_cron_job ]
@@ -2207,14 +2274,14 @@ upd_cron_job()
 	case ${?} in
 		0) print_msg "${green}Cron job for adblock-lean with schedule '${cron_schedule}' aldready exists.${n_c}"; return 0 ;;
 		1) return 1 ;;
-		2) curr_cron="$(printf %s "${curr_cron}" | sed "s~^.*${ABL_CRON_CMD}.*\$~~")" ;; # remove cron job with a different schedule
+		2) curr_cron="$(printf %s "${curr_cron}" | $SED_CMD "s~^.*${ABL_CRON_CMD}.*\$~~")" ;; # remove cron job with a different schedule
 		3) ;; # no adblock-lean cron job exists
 	esac
 
 	cron_line="${cron_schedule} RANDOM_DELAY=1 ${ABL_CRON_CMD} 1>/dev/null"
 
 	#### Create new cron job
-	printf '%s\n' "${curr_cron}${_NL_}${cron_line}" | sed '/^$/d' | crontab -u root - ||
+	printf '%s\n' "${curr_cron}${_NL_}${cron_line}" | $SED_CMD '/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	log_msg "Creating cron job with schedule '${blue}${cron_schedule}${n_c}'."
 	:
@@ -2235,7 +2302,7 @@ setup()
 		case "${PKG_MANAGER}" in
 			apk)
 				pkgs_list_cmd="apk list -I"
-				filter_cmd="sed -En '/^[ \t]*($1)-[0-9]/{s/^[ \t]+//;s/[ \t].*//;p;}'"
+				filter_cmd="$SED_CMD -En '/^[ \t]*($1)-[0-9]/{s/^[ \t]+//;s/[ \t].*//;p;}'"
 				;;
 			opkg)
 				pkgs_list_cmd="opkg list-installed"
@@ -2279,8 +2346,8 @@ setup()
 		# make a list of GNU utils to install
 		if [ -n "${missing_utils}" ]
 		then
-			local free_space_B='' free_space_KB="$(df -k /usr/ | tail -n1 | sed -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')" \
-				mount_point="$(df -k /usr/ | tail -n1 | sed -E 's/.*[ \t]+//')"
+			local free_space_B='' free_space_KB="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')" \
+				mount_point="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/.*[ \t]+//')"
 			case "${free_space_KB}" in
 				''|*[!0-9]*) reg_failure "Failed to check available free space." ;;
 				*) free_space_B=$((free_space_KB*1024))
@@ -2404,11 +2471,11 @@ setup()
 	luci_addnmount_failed=
 
 	detect_pkg_manager
-	case "$PKG_MANAGER" in
+	case "${PKG_MANAGER}" in
 		apk|opkg)
 			install_packages ;;
 		*)
-			log_msg -yellow "" "Can not automatically check and install recommended packages ($RECOMMENDED_PKGS)." \
+			log_msg -yellow "" "Can not automatically check and install recommended packages (${RECOMMENDED_PKGS})." \
 				"Consider to check for their presence and install if needed."
 	esac
 
@@ -2523,7 +2590,7 @@ set_dnsmasq_dir() {
 	if [ "${1}" != '-n' ]
 	then
 		write_config "$(
-			sed -E '/^\s*(DNSMASQ_CONF_D|DNSMASQ_INSTANCE|DNSMASQ_INDEX)=/d' "${ABL_CONFIG_FILE}"
+			$SED_CMD -E '/^\s*(DNSMASQ_CONF_D|DNSMASQ_INSTANCE|DNSMASQ_INDEX)=/d' "${ABL_CONFIG_FILE}"
 			printf '%s\n%s\n%s\n' \
 				"DNSMASQ_INSTANCE=\"${DNSMASQ_INSTANCE}\"" \
 				"DNSMASQ_CONF_D=\"${DNSMASQ_CONF_D}\"" \
@@ -2618,43 +2685,6 @@ start()
 {
 	init_command start || exit 1
 	log_msg -purple "Started adblock-lean." ""
-
-	detect_pkg_manager
-	for util in $RECOMMENDED_UTILS
-	do
-		case "$PKG_MANAGER" in
-			opkg|apk)
-				eval "local ${util}_inst_tip=\" ($PKG_MANAGER install $(get_pkg_name "${util}"))\"" ;;
-			*)
-				unset "${util}_inst_tip" ;;
-		esac
-	done
-
-	if type gawk &> /dev/null
-	then
-		log_msg "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
-		awk_cmd="gawk"
-	else
-		log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-		log_msg "Consider installing the gawk package${gawk_inst_tip} for faster processing and (sub)domain match removal."
-		awk_cmd="busybox awk"
-	fi
-
-	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
-	then
-		log_msg "GNU sed detected so list processing will be fast."
-	else
-		log_msg -yellow "GNU sed not detected so list processing will be a little slower."
-		log_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing."
-	fi
-
-	if sort --version 2>/dev/null | grep -qe coreutils
-	then
-		log_msg "coreutils-sort detected so sort will be fast."
-	else
-		log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
-		log_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort."
-	fi
 
 	final_compress=
 	if [ "${use_compression}" = 1 ]
