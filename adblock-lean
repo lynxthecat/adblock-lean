@@ -54,7 +54,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 START=99
 STOP=4
 
-EXTRA_COMMANDS="setup status pause resume gen_stats gen_config upd_cron_job print_log update uninstall"
+EXTRA_COMMANDS="setup status pause resume gen_stats set_dnsmasq_dir gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
 adblock-lean custom commands:
 	setup           run automated setup for adblock-lean
@@ -62,6 +62,7 @@ adblock-lean custom commands:
 	pause           pause adblock-lean
 	resume          resume adblock-lean
 	gen_stats       generate dnsmasq stats for system log
+	set_dnsmasq_dir analyze dnsmasq instances and set dnsmasq conf-dir
 	gen_config      generate default config based on one of the pre-defined presets
 	upd_cron_job    create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
 	                if config option set to 'disable', remove existing cron job if any
@@ -294,21 +295,34 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
+get_pkg_name()
+{
+	case "${1}" in
+		awk) printf gawk ;;
+		sed) printf sed ;;
+		sort) printf coreutils-sort
+	esac
+}
+
 # (optional) -d to print with allowed value types (otherwise print without)
 # (optional) -p to print with values from preset
 # (optional) -i to print with DNSMASQ_INSTANCE
+# (optional) -n to print with DNSMASQ_INDEX
+# (optional) -c to print with DNSMASQ_CONF_D
 print_def_config()
 {
 	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
 
 	# process args
-	local preset='' print_types='' preset='' instance=''
-	while getopts ":i:p:d" opt; do
+	local preset='' print_types='' preset='' dnsmasq_instance='' dnsmasq_index='' dnsmasq_conf_d=''
+	while getopts ":i:n:c:p:d" opt; do
 		case $opt in
-			d) print_types=1 ;;
+			i) dnsmasq_instance=$OPTARG ;;
+			n) dnsmasq_index=$OPTARG ;;
+			c) dnsmasq_conf_d=$OPTARG ;;
 			p) preset=$OPTARG ;;
-			i) instance=$OPTARG ;;
+			d) print_types=1 ;;
 			*) ;;
 		esac
 	done
@@ -400,9 +414,11 @@ print_def_config()
 	# Crontab schedule expression for periodic list updates
 	cron_schedule="${cron_schedule:-"0 5 * * *"}" @ string
 
-	# dnsmasq instance id
+	# dnsmasq instance and config directory
 	# normally this should be set automatically by the 'setup' command
-	DNSMASQ_INSTANCE="${instance}" @ string
+	DNSMASQ_INSTANCE="${dnsmasq_instance}" @ string
+	DNSMASQ_INDEX="${dnsmasq_index}" @ integer
+	DNSMASQ_CONF_D="${dnsmasq_conf_d}" @ string
 
 	EOT
 }
@@ -737,15 +753,14 @@ fix_config()
 	local missing_keys="${1}"
 
 	case "${missing_keys}" in
-		*DNSMASQ_INSTANCE*)
-			pick_dnsmasq_instance || exit 1
-			select_dnsmasq_conf_dir "${DNSMASQ_INSTANCE}" ;;
+		*DNSMASQ_CONF_D*|*DNSMASQ_INSTANCE*|*DNSMASQ_INDEX*)
+			set_dnsmasq_dir -n || exit 1 ;;
 	esac
 
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
 		IFS=$'\n'
-		print_def_config -i "${DNSMASQ_INSTANCE}" | while read -r line
+		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" | while read -r line
 		do
 			case ${line} in
 				\#*|'') printf '%s\n' "${line}"; continue ;;
@@ -786,6 +801,12 @@ write_config()
 	local tmp_config="${ABL_DIR}/write-config.tmp" missing_keys conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
+
+	if [ -n "${do_dialogs}" ] && [ -f "${ABL_CONFIG_FILE}" ]
+	then
+		print_msg "This will overwrite existing config. Proceed?"
+		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
+	fi
 
 	try_mkdir -p "${ABL_DIR}" || return 1
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
@@ -950,15 +971,13 @@ try_export_existing_blocklist()
 check_addnmount()
 {
 	hash uci 1>/dev/null || { reg_failure "uci command was not found."; return 2; }
-	local instance_index
-	eval "instance_index=\"\${${DNSMASQ_INSTANCE}_INDEX}\""
-	case "${instance_index}" in
+	case "${DNSMASQ_INDEX}" in
 		''|*[!0-9]*)
-			reg_failure "Invalid index '${instance_index}' registered for dnsmasq instance '${DNSMASQ_INSTANCE}'."
+			reg_failure "Invalid index '${DNSMASQ_INDEX}' registered for dnsmasq instance '${DNSMASQ_INSTANCE}'."
 			return 2
 	esac
 
-	uci -q get dhcp.@dnsmasq["${instance_index}"].addnmount | grep -qE "('|^|[ \t])/bin(/\*|/busybox)*([ \t]|'|$)" && return 0
+	uci -q get dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount | grep -qE "('|^|[ \t])/bin(/\*|/busybox)*([ \t]|'|$)" && return 0
 	return 1
 }
 
@@ -1521,10 +1540,16 @@ generate_and_process_blocklist_file()
 # 1 - dnsmasq instance is not running or other error
 check_dnsmasq_instance()
 {
-	local instance_running
+	local instance_running dnsmasq_conf_dirs please_run="Please run 'service adblock-lean set_dnsmasq_dir'."
 	[ -n "${DNSMASQ_INSTANCE}" ] ||
 	{
-		reg_failure "dnsmasq instance is not set."
+		reg_failure "dnsmasq instance is not set. ${please_run}"
+		return 1
+	}
+
+	[ -n "${DNSMASQ_CONF_D}" ] ||
+	{
+		reg_failure "dnsmasq config directory is not set. ${please_run}"
 		return 1
 	}
 
@@ -1532,13 +1557,20 @@ check_dnsmasq_instance()
 	eval "instance_running=\"\${${DNSMASQ_INSTANCE}_RUNNING}\"" &&
 	[ "${instance_running}" = 1 ] ||
 	{
-		reg_failure "dnsmasq instance '${DNSMASQ_INSTANCE} is misconfigured or not running."
+		reg_failure "dnsmasq instance '${DNSMASQ_INSTANCE} is misconfigured or not running. ${please_run}"
+		return 1
+	}
+
+	eval "dnsmasq_conf_dirs=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS}\""
+	is_included "${DNSMASQ_CONF_D}" "${dnsmasq_conf_dirs}" ||
+	{
+		reg_failure "Conf-dir for dnsmasq instance '${DNSMASQ_INSTANCE}' changed (was: '${DNSMASQ_CONF_D}'). ${please_run}"
 		return 1
 	}
 
 	[ -d "${DNSMASQ_CONF_D}" ] ||
 	{
-		reg_failure "Directory '${DNSMASQ_CONF_D}' does not exist. dnsmasq instance '${DNSMASQ_INSTANCE}' is misconfigured or not running."
+		reg_failure "Conf-dir '${DNSMASQ_CONF_D}' does not exist. dnsmasq instance '${DNSMASQ_INSTANCE}' is misconfigured. ${please_run}"
 		return 1
 	}
 	:
@@ -2040,6 +2072,9 @@ init_command()
 			init_action_msg="Stopping adblock-lean."
 			reg_action -purple "${init_action_msg}" || exit 1
 			cleanup_req=1 kill_req=1 lock_req=1 ;;
+		set_dnsmasq_dir)
+			reg_action -purple "Checking dnsmasq." || exit 1
+			lock_req=1 ;;
 		reload|restart) reg_action -purple "Restarting adblock-lean." || exit 1 ;;
 		*) reg_failure "Invalid action '${action}'."; exit 1
 	esac
@@ -2058,15 +2093,6 @@ init_command()
 		esac
 	fi
 
-	# check DNSMASQ_CONF_D
-	case ${action} in boot|start|stop|status|pause|resume|update)
-		[ -n "${DNSMASQ_CONF_D}" ] ||
-		{
-			reg_failure "dnsmasq config directory is not set. Please run 'service adblock-lean setup'."
-			exit 1
-		}
-	esac
-
 	# register lock status at init
 	check_lock
 	local init_lock_status=${?}
@@ -2081,7 +2107,7 @@ init_command()
 	log_file=
 	case ${init_lock_status} in 0|3)
 		case ${action} in
-			start|boot|stop|restart|reload|pause|resume|setup) log_file="${ABL_SESSION_LOG_FILE}" ;;
+			start|boot|stop|restart|reload|pause|resume|setup|set_dnsmasq_dir) log_file="${ABL_SESSION_LOG_FILE}" ;;
 			update) log_file="${ABL_UPDATE_LOG_FILE}"
 		esac
 	esac
@@ -2097,9 +2123,9 @@ init_command()
 			try_mkdir -p "${ABL_DIR}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; } ;;
 		start|pause|resume|update)
-			check_dnsmasq_instance || { [ ${?} = 1 ] && reg_failure "No running instance of dnsmasq detected."; exit 1; }
 			try_mkdir -p "${ABL_DIR}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; }
+			check_dnsmasq_instance || exit 1
 			if [ -n "${custom_script}" ]
 			then
 				custom_scr_sourced=
@@ -2185,15 +2211,6 @@ setup()
 	{
 		[ -n "${1}" ] && reg_failure "${1}"
 		exit 1
-	}
-
-	get_pkg_name()
-	{
-		case "${1}" in
-			awk) printf gawk ;;
-			sed) printf sed ;;
-			sort) printf coreutils-sort
-		esac
 	}
 
 	# 1 - '|' - separated package names
@@ -2410,69 +2427,67 @@ gen_stats()
 	[ "${1}" != '-noexit' ] && exit 0
 }
 
-pick_dnsmasq_instance() {
+# analyze dnsmasq instances and set $DNSMASQ_CONF_D
+# 1 - (optional) '-n' to only set vars (no config write)
+set_dnsmasq_dir() {
+	init_command set_dnsmasq_dir || return 1
 	get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] || return 1
 
 	if [ "${DNSMASQ_INSTANCES_CNT}" = 1 ]
 	then
 		DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES}"
-		log_msg "" "Detected only 1 dnsmasq instance '${DNSMASQ_INSTANCE}' - skipping instance selection."
-		return 0
-	fi
-
-	# check if all instances share same conf-dirs
-	local instance conf_dirs conf_dirs_instance cnt REPLY first=1 diff=
-	for instance in ${DNSMASQ_INSTANCES}
-	do
-		eval "conf_dirs_instance=\"\${${instance}_CONF_DIRS}\""
-		case "${first}" in
-			1)
-				conf_dirs="${conf_dirs_instance}" ;;
-			'')
-				# conf-dirs are sorted, so we can directly compare
-				[ "${conf_dirs_instance}" = "${conf_dirs}" ] && continue
-				diff=1
-				break
-		esac
-	done
-
-	# if conf-dirs are shared, attach to first instance
-	if [ -z "${diff}" ]
-	then
-		DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES%%"{_NL_}"*}"
-		log_msg "Detected multiple dnsmasq instances which are using the same conf-dir. Attaching to instance '${DNSMASQ_INSTANCE}'."
-		return 0
-	fi
-
-	# if conf-dirs are not shared, ask the user
-	log_msg "" "Multiple dnsmasq instances detected."
-	REPLY=a
-	if [ -n "${do_dialogs}" ]
-	then
-		log_msg "Active dnsmasq instances and assigned network interfaces:"
-		cnt=1
+		log_msg "" "Detected only 1 dnsmasq instance - skipping manual instance selection."
+	else
+		# check if all instances share same conf-dirs
+		local instance conf_dirs conf_dirs_instance cnt REPLY first=1 diff=
 		for instance in ${DNSMASQ_INSTANCES}
 		do
-			eval "ifaces=\"\${${instance}_IFACES}\""
-			log_msg "${cnt}. '${instance}': '${ifaces}'"
-			eval "local instance_${cnt}=\"${instance}\""
-			cnts="${cnts}${cnt}|"
+			eval "conf_dirs_instance=\"\${${instance}_CONF_DIRS}\""
+			case "${first}" in
+				1)
+					conf_dirs="${conf_dirs_instance}" ;;
+				'')
+					# conf-dirs are sorted, so we can directly compare
+					[ "${conf_dirs_instance}" = "${conf_dirs}" ] && continue
+					diff=1
+					break
+			esac
 		done
-		print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
-		pick_opt "${cnts}a" || exit 1
+
+		# if conf-dirs are shared, attach to first instance
+		if [ -z "${diff}" ]
+		then
+			DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES%%"{_NL_}"*}"
+			log_msg "" "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
+		else
+			# if conf-dirs are not shared, ask the user
+			log_msg "" "Multiple dnsmasq instances detected."
+			REPLY=a
+			if [ -n "${do_dialogs}" ]
+			then
+				log_msg "Active dnsmasq instances and assigned network interfaces:"
+				cnt=1
+				for instance in ${DNSMASQ_INSTANCES}
+				do
+					eval "ifaces=\"\${${instance}_IFACES}\""
+					log_msg "${cnt}. '${instance}': '${ifaces}'"
+					eval "local instance_${cnt}=\"${instance}\""
+					cnts="${cnts}${cnt}|"
+				done
+				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
+				pick_opt "${cnts}a" || exit 1
+			fi
+
+			[ "${REPLY}" = a ] && { log_msg "Aborted config generation."; exit 0; }
+			eval "DNSMASQ_INSTANCE=\"\${instance_${REPLY}}\""
+		fi
 	fi
+	eval "DNSMASQ_INDEX=\"\${${DNSMASQ_INSTANCE}_INDEX}\""
+	log_msg -purple "Selected dnsmasq instance ${DNSMASQ_INDEX}: '${DNSMASQ_INSTANCE}'."
 
-	[ "${REPLY}" = a ] && { log_msg "Aborted config generation."; exit 0; }
-	eval "DNSMASQ_INSTANCE=\"\${instance_${REPLY}}\""
-	log_msg "Selected dnsmasq instance '${DNSMASQ_INSTANCE}'."
-	return 0
-}
-
-# selects conf_dir for dnsmasq instance $1
-select_dnsmasq_conf_dir() {
 	local conf_dirs conf_dirs_cnt
-	eval "conf_dirs=\"\${${1}_CONF_DIRS}\""
-	eval "conf_dirs_cnt=\"\${${1}_CONF_DIRS_CNT}\""
+	eval "conf_dirs=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS}\""
+	eval "conf_dirs_cnt=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS_CNT}\""
 
 	if [ "${conf_dirs_cnt}" = 1 ]
 	then
@@ -2489,6 +2504,18 @@ select_dnsmasq_conf_dir() {
 			DNSMASQ_CONF_D="${conf_dirs%%"${_NL_}"*}"
 		fi
 	fi
+	log_msg -purple "Selected dnsmasq conf-dir '${DNSMASQ_CONF_D}'."
+	if [ "${1}" != '-n' ]
+	then
+		write_config "$(
+			sed -E '/^\s*(DNSMASQ_CONF_D|DNSMASQ_INSTANCE|DNSMASQ_INDEX)=/d' "${ABL_CONFIG_FILE}"
+			printf '%s\n%s\n%s\n' \
+				"DNSMASQ_INSTANCE=\"${DNSMASQ_INSTANCE}\"" \
+				"DNSMASQ_CONF_D=\"${DNSMASQ_CONF_D}\"" \
+				"DNSMASQ_INDEX=\"${DNSMASQ_INDEX}\""
+		)" || return 1
+	fi
+	:
 }
 
 # generates config
@@ -2529,9 +2556,7 @@ gen_config()
 
 	[ -z "${preset}" ] && { reg_failure "No config preset was selected."; return 1; }
 
-	pick_dnsmasq_instance || setup_failed "Failed to detect dnsmasq instances or no dnsmasq instances are running."
-
-	select_dnsmasq_conf_dir "${DNSMASQ_INSTANCE}" 
+	set_dnsmasq_dir -n || setup_failed "Failed to detect dnsmasq instances or no dnsmasq instances are running."
 
 	# create cron job
 	cron_schedule=
@@ -2560,13 +2585,7 @@ gen_config()
 	[ "${REPLY}" = n ] && cron_schedule=disable
 
 	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || return 1
-	if [ -n "${do_dialogs}" ] && [ -f "${ABL_CONFIG_FILE}" ]
-	then
-		print_msg "This will overwrite existing config. Proceed?"
-		pick_opt "y|n" || return 1
-		[ "${REPLY}" = n ] && return 1
-	fi
-	write_config "$(print_def_config -p "${preset}" -i "${DNSMASQ_INSTANCE}")" || return 1
+	write_config "$(print_def_config -p "${preset}" -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}")" -n "${DNSMASQ_INDEX}" || return 1
 
 	check_blocklist_compression_support
 	:
