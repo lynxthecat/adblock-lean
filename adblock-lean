@@ -879,9 +879,7 @@ write_config()
 # DNSMASQ_INSTANCES, DNSMASQ_INSTANCES_CNT, ${instance}_IFACES, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
 # ${instance}_INDEX, ${instance}_RUNNING
 get_dnsmasq_instances() {
-	local instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD _NL_ i s f
-	_NL_='
-'
+	local instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD i s f
 	DNSMASQ_INSTANCES=
 	DNSMASQ_INSTANCES_CNT=0
 	. /usr/share/libubox/jshn.sh
@@ -902,6 +900,7 @@ get_dnsmasq_instances() {
 		add2list DNSMASQ_INSTANCES "${instance}" || return 1
 		eval "${instance}_INDEX=${instance_index}"
 		instance_index=$((instance_index+1))
+		l1_conf_files=
 
 		# look for '-C' in values, get next value which is instance's conf file
 		i=0
@@ -923,7 +922,7 @@ get_dnsmasq_instances() {
 			for f in ${l1_conf_files}
 			do
 				$SED_CMD -nE '/^\s*(no-dhcp-){0,1}interface=/{s/.*=//;p;}' "${f}"
-			done | $SORT_CMD -u | $SED_CMD -z 's/\n/, /'
+			done | $SORT_CMD -u | $SED_CMD -z 's/\n/, /g'
 		)"
 		eval "${instance}_IFACES=\"${ifaces%, }\""
 
@@ -2521,12 +2520,13 @@ set_dnsmasq_dir() {
 		log_msg "" "Detected only 1 dnsmasq instance - skipping manual instance selection."
 	else
 		# check if all instances share same conf-dirs
-		local instance conf_dirs conf_dirs_instance cnt REPLY first=1 diff=
+		local instance conf_dirs conf_dirs_instance index indexes ifaces REPLY='' first=1 diff=
 		for instance in ${DNSMASQ_INSTANCES}
 		do
 			eval "conf_dirs_instance=\"\${${instance}_CONF_DIRS}\""
 			case "${first}" in
 				1)
+					first=
 					conf_dirs="${conf_dirs_instance}" ;;
 				'')
 					# conf-dirs are sorted, so we can directly compare
@@ -2539,7 +2539,7 @@ set_dnsmasq_dir() {
 		# if conf-dirs are shared, attach to first instance
 		if [ -z "${diff}" ]
 		then
-			DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES%%"{_NL_}"*}"
+			DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES%%"${_NL_}"*}"
 			log_msg "" "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
 		else
 			# if conf-dirs are not shared, ask the user
@@ -2547,17 +2547,17 @@ set_dnsmasq_dir() {
 			REPLY=a
 			if [ -n "${do_dialogs}" ]
 			then
-				log_msg "Active dnsmasq instances and assigned network interfaces:"
-				cnt=1
+				log_msg "Existing dnsmasq instances and assigned network interfaces:"
 				for instance in ${DNSMASQ_INSTANCES}
 				do
+					eval "index=\"\${${instance}_INDEX}\""
 					eval "ifaces=\"\${${instance}_IFACES}\""
-					log_msg "${cnt}. '${instance}': '${ifaces}'"
-					eval "local instance_${cnt}=\"${instance}\""
-					cnts="${cnts}${cnt}|"
+					log_msg "${index}. '${instance}': '${ifaces}'"
+					eval "local instance_${index}=\"${instance}\""
+					indexes="${indexes}${index}|"
 				done
 				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
-				pick_opt "${cnts}a" || exit 1
+				pick_opt "${indexes}a" || exit 1
 			fi
 
 			[ "${REPLY}" = a ] && { log_msg "Aborted config generation."; exit 0; }
