@@ -1568,6 +1568,13 @@ check_dnsmasq_instance()
 		return 1
 	}
 
+	eval "instance_index=\"\${${DNSMASQ_INSTANCE}_INDEX}\""
+	[ "${instance_index}" = "${DNSMASQ_INDEX}" ] ||
+	{
+		reg_failure "dnsmasq instances changed: actual instance index '${instance_index}' doesn't match configured index '${DNSMASQ_INDEX}'. ${please_run}"
+		return 1
+	}
+
 	[ -d "${DNSMASQ_CONF_D}" ] ||
 	{
 		reg_failure "Conf-dir '${DNSMASQ_CONF_D}' does not exist. dnsmasq instance '${DNSMASQ_INSTANCE}' is misconfigured. ${please_run}"
