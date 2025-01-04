@@ -922,7 +922,7 @@ get_dnsmasq_instances() {
 		ifaces="$(
 			for f in ${l1_conf_files}
 			do
-				cat "${f}" | $SED_CMD -nE '/^\s*(no-dhcp-){0,1}interface=/{s/.*=//;p;}'
+				$SED_CMD -nE '/^\s*(no-dhcp-){0,1}interface=/{s/.*=//;p;}' "${f}"
 			done | $SORT_CMD -u | $SED_CMD -z 's/\n/, /'
 		)"
 		eval "${instance}_IFACES=\"${ifaces%, }\""
@@ -931,7 +931,7 @@ get_dnsmasq_instances() {
 		conf_dirs="$(
 			for f in ${l1_conf_files}
 			do
-				cat "${f}" | $SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}'
+				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
 			done | $SORT_CMD -u
 		)"		
 		eval "${instance}_CONF_DIRS=\"${conf_dirs}\""
