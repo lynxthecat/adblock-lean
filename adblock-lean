@@ -129,7 +129,7 @@ cnt_lines()
 
 get_file_size_human()
 {
-	bytes2human "$(du -b "$1" | awk '{print $1}')"
+	bytes2human "$(du -b "$1" | ${awk_cmd} '{print $1}')"
 }
 
 # converts unsigned integer to [xB|xKiB|xMiB|xGiB|xTiB]
@@ -1464,7 +1464,7 @@ generate_and_process_blocklist_file()
 		then
 			# add block-everything entry: local=/*a/*b/*c/.../*z/
 			printf 'local=/'
-			awk 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
+			${awk_cmd} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
 			printf '\n'
 		fi
 		# add the blocklist test entry
