@@ -2127,7 +2127,6 @@ detect_pkg_manager() {
 	then
 		PKG_MANAGER=apk
 		PKG_INSTALL_CMD="apk add"
-		echo apk
 	elif [ -n "$opkg_present" ]
 	then
 		PKG_MANAGER=opkg
