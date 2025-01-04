@@ -2131,13 +2131,12 @@ init_command()
 			load_config || { reg_failure "Failed to load config."; exit 1; } ;;
 		stop)
 			[ -f "${ABL_CONFIG_FILE}" ] &&
-			DNSMASQ_CONF_D="$(sed -n '/^\s*DNSMASQ_CONF_D=/{s/^\s*DNSMASQ_CONF_D=//;s/\s*#.*//;s/"//g;p;}' "${ABL_CONFIG_FILE}")" &&
+			DNSMASQ_CONF_D="$(sed -n '/^\s*DNSMASQ_CONF_D=/{s/^\s*DNSMASQ_CONF_D=//;s/\s*#.*//;s/"//g;p;q;}' "${ABL_CONFIG_FILE}")" &&
 			[ -n "${DNSMASQ_CONF_D}" ] ||
 			{
 				reg_failure "Failed to get DNSMASQ_CONF_D from config. Can not delete the blocklist from dnsmasq config directory."
 				exit 1
-			}
-			[ -d "${DNSMASQ_CONF_D}" ] || { log_msg "dnsmasq config directory '${DNSMASQ_CONF_D}' doesn't exist."; exit 1; } ;;
+			} ;;
 		start|pause|resume|update)
 			try_mkdir -p "${ABL_DIR}" || exit 1
 			load_config || { reg_failure "Failed to load config."; exit 1; }
