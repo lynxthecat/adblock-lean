@@ -2464,7 +2464,7 @@ setup()
 		2) exit 1 ;;
 		1)
 			print_msg "" "${purple}Creating dnsmasq addnmount UCI entry.${n_c}"
-			uci add_list dhcp.@dnsmasq[0].addnmount='/bin/busybox' && uci commit ||
+			uci add_list dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount='/bin/busybox' && uci commit ||
 				setup_failed "Failed to create addnmount entry."
 	esac
 	luci_addnmount_failed=
