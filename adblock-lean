@@ -1680,7 +1680,7 @@ restart_dnsmasq()
 		[ "${action}" != stop ] && stop 1
 		exit 1
 	}
-	
+
 	reg_action -blue "Waiting for dnsmasq initialization." || return 1
 	local dnsmasq_ok=
 	for i in $(seq 1 60)
@@ -2951,6 +2951,7 @@ update()
 	fi
 
 	try_mv "${ABL_DIR}/adblock-lean.latest" "${ABL_SERVICE_PATH}" || exit 1
+	stop -noexit
 	chmod +x "${ABL_SERVICE_PATH}"
 	${ABL_SERVICE_PATH} enable
 	log_msg -green "adblock-lean has been updated to the latest version."
