@@ -2552,7 +2552,7 @@ set_dnsmasq_dir() {
 				do
 					eval "index=\"\${${instance}_INDEX}\""
 					eval "ifaces=\"\${${instance}_IFACES}\""
-					log_msg "${index}. '${instance}': '${ifaces}'"
+					log_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
 					eval "local instance_${index}=\"${instance}\""
 					indexes="${indexes}${index}|"
 				done
