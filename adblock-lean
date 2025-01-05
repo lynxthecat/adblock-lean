@@ -875,15 +875,18 @@ write_config()
 	return 1
 }
 
-# assigns global vars:
-# DNSMASQ_INSTANCES, DNSMASQ_INSTANCES_CNT, ${instance}_IFACES, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
+# populates global vars:
+# DNSMASQ_INSTANCES, DNSMASQ_INSTANCES_CNT, ${instance}_IFACES,
+# ALL_CONF_DIRS, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
 # ${instance}_INDEX, ${instance}_RUNNING
 get_dnsmasq_instances() {
-	local instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD i s f
+	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD i s f dir
 	DNSMASQ_INSTANCES=
 	DNSMASQ_INSTANCES_CNT=0
 	. /usr/share/libubox/jshn.sh
 	json_load "$(/etc/init.d/dnsmasq info)" &&
+	json_get_keys nonempty &&
+	[ -n "${nonempty}" ] &&
 	json_select dnsmasq &&
 	json_select instances &&
 	json_get_keys instances || return 1
@@ -933,8 +936,13 @@ get_dnsmasq_instances() {
 				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
 			done | $SORT_CMD -u
 		)"		
+
+		for dir in ${conf_dirs}
+		do
+			add2list ALL_CONF_DIRS "${dir}"
+		done
+		IFS="${IFS_OLD}"
 		eval "${instance}_CONF_DIRS=\"${conf_dirs}\""
-		IFS="$IFS_OLD"
 
 		cnt_lines conf_dirs_cnt "${conf_dirs}"
 		eval "${instance}_CONF_DIRS_CNT=\"${conf_dirs_cnt}\""
@@ -964,8 +972,32 @@ get_abl_run_state()
 
 clean_dnsmasq_dir()
 {
-	rm -f "${DNSMASQ_CONF_D}"/.blocklist.gz "${DNSMASQ_CONF_D}"/blocklist \
-		"${DNSMASQ_CONF_D}"/conf-script "${DNSMASQ_CONF_D}"/.extract_blocklist
+	# shellcheck disable=SC2317
+	add_conf_dir()
+	{
+		local confdir
+		config_get confdir "${1}" confidr
+		add2list ALL_CONF_DIRS "${confdir}"
+	}
+
+	# gather conf dirs of running instances
+	get_dnsmasq_instances
+	# gather conf dirs of configured instances
+	config_load dhcp
+	config_foreach add_conf_dir dnsmasq
+	# gather conf dirs from /tmp/
+	local dir tmp_conf_dirs IFS="${_NL_}"
+	tmp_conf_dirs="$(find /tmp/ -type d \( -name "dnsmasq.cfg*" -o -name dnsmasq.d \))"
+	for dir in ${tmp_conf_dirs}
+	do
+		add2list ALL_CONF_DIRS "${dir}"
+	done
+
+	for dir in ${ALL_CONF_DIRS}
+	do
+		rm -f "${dir}"/.blocklist.gz "${dir}"/blocklist \
+			"${dir}"/conf-script "${dir}"/.extract_blocklist
+	done
 }
 
 # exit with code ${1}
