@@ -883,6 +883,7 @@ get_dnsmasq_instances() {
 	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD i s f dir
 	DNSMASQ_INSTANCES=
 	DNSMASQ_INSTANCES_CNT=0
+	reg_action -blue "Checking dnsmasq instances."
 	. /usr/share/libubox/jshn.sh
 	json_load "$(/etc/init.d/dnsmasq info)" &&
 	json_get_keys nonempty &&
@@ -1638,12 +1639,29 @@ check_dnsmasq_instance()
 		return 1
 	}
 
-	get_dnsmasq_instances &&
+	get_dnsmasq_instances ||
+	{
+		reg_failure "No running dnsmasq instances found."
+		stop -noexit
+		get_dnsmasq_instances ||
+		{
+			reg_failure "dnsmasq service appears to be broken."
+			return 1
+		}
+	}
+
 	eval "instance_running=\"\${${DNSMASQ_INSTANCE}_RUNNING}\"" &&
 	[ "${instance_running}" = 1 ] ||
 	{
-		reg_failure "dnsmasq instance '${DNSMASQ_INSTANCE}' is misconfigured or not running. ${please_run}"
-		return 1
+		reg_failure "dnsmasq instance '${DNSMASQ_INSTANCE}' is not running."
+		stop -noexit
+		get_dnsmasq_instances &&
+		eval "instance_running=\"\${${DNSMASQ_INSTANCE}_RUNNING}\"" &&
+		[ "${instance_running}" = 1 ] ||
+		{
+			reg_failure "dnsmasq instance '${DNSMASQ_INSTANCE}' is misconfigured or not running. ${please_run}"
+			return 1
+		}
 	}
 
 	eval "dnsmasq_conf_dirs=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS}\""
@@ -1702,6 +1720,7 @@ check_active_blocklist()
 	:
 }
 
+# 1 - (optional) '-nostop' to not call stop on failure
 restart_dnsmasq()
 {
 	reg_action -blue "Restarting dnsmasq." || return 1
@@ -1709,8 +1728,8 @@ restart_dnsmasq()
 	/etc/init.d/dnsmasq restart &> /dev/null ||
 	{
 		reg_failure "Failed to restart dnsmasq."
-		[ "${action}" != stop ] && stop 1
-		exit 1
+		[ "${action}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
+		return 1
 	}
 
 	reg_action -blue "Waiting for dnsmasq initialization." || return 1
@@ -1724,8 +1743,8 @@ restart_dnsmasq()
 	[ -n "$dnsmasq_ok" ] ||
 	{
 		reg_failure "dnsmasq initialization failed."
-		[ "${action}" != stop ] && stop 1
-		exit 1
+		[ "${action}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
+		return 1
 	}
 
 	log_msg -green "Restart of dnsmasq completed."
@@ -2176,7 +2195,6 @@ init_command()
 			reg_action -purple "${init_action_msg}" || exit 1
 			cleanup_req=1 kill_req=1 lock_req=1 utils_req=1 ;;
 		set_dnsmasq_dir)
-			reg_action -purple "Checking dnsmasq." || exit 1
 			lock_req=1 utils_req=1 ;;
 		reload|restart) reg_action -purple "Restarting adblock-lean." || exit 1 ;;
 		*) reg_failure "Invalid action '${action}'."; exit 1
@@ -2554,7 +2572,12 @@ gen_stats()
 # 1 - (optional) '-n' to only set vars (no config write)
 set_dnsmasq_dir() {
 	init_command set_dnsmasq_dir || return 1
-	get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] || return 1
+	get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] ||
+	{
+		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
+		stop -noexit
+		get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] || return 1
+	}
 
 	if [ "${DNSMASQ_INSTANCES_CNT}" = 1 ]
 	then
@@ -2726,7 +2749,7 @@ boot()
 start()
 {
 	init_command start || exit 1
-	log_msg -purple "Started adblock-lean."
+	reg_action -purple "Starting adblock-lean."
 
 	final_compress=
 	if [ "${use_compression}" = 1 ]
@@ -2831,8 +2854,8 @@ stop()
 	init_command stop || exit 1
 	log_msg "Removing any adblock-lean blocklist files in dnsmasq config directories." || exit 1
 	clean_dnsmasq_dir
-	restart_dnsmasq || stop_rc=1
-	log_msg -purple "" "Stopped adblock-lean." ""
+	restart_dnsmasq -nostop || stop_rc=1
+	log_msg -purple "" "Stopped adblock-lean."
 	[ -n "$noexit" ] && return "${stop_rc}"
 	exit "${stop_rc}"
 }
