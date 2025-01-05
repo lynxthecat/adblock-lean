@@ -1838,7 +1838,7 @@ import_blocklist_file()
 	if [ -n "${final_compress}" ]
 	then
 		printf "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.extract_blocklist\"\n" > "${DNSMASQ_CONF_D}"/conf-script &&
-		printf "busybox gunzip -c ${DNSMASQ_CONF_D}/.blocklist.gz\nexit 0\n" > "${DNSMASQ_CONF_D}"/.extract_blocklist ||
+		printf '%s\n%s\n' "busybox gunzip -c ${DNSMASQ_CONF_D}/.blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.extract_blocklist ||
 			{ reg_failure "Failed to create conf-script for dnsmasq."; return 1; }
 	fi
 
@@ -2829,7 +2829,7 @@ stop()
 	msg="${msg% }"
 
 	init_command stop || exit 1
-	log_msg "Removing any adblock-lean blocklist files in ${DNSMASQ_CONF_D}." || exit 1
+	log_msg "Removing any adblock-lean blocklist files in dnsmasq config directories." || exit 1
 	clean_dnsmasq_dir
 	restart_dnsmasq || stop_rc=1
 	log_msg -purple "" "Stopped adblock-lean." ""
