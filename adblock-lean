@@ -2726,7 +2726,7 @@ boot()
 start()
 {
 	init_command start || exit 1
-	log_msg -purple "Started adblock-lean." ""
+	log_msg -purple "Started adblock-lean."
 
 	final_compress=
 	if [ "${use_compression}" = 1 ]
