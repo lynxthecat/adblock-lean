@@ -1610,7 +1610,7 @@ check_dnsmasq_instance()
 	eval "instance_running=\"\${${DNSMASQ_INSTANCE}_RUNNING}\"" &&
 	[ "${instance_running}" = 1 ] ||
 	{
-		reg_failure "dnsmasq instance '${DNSMASQ_INSTANCE} is misconfigured or not running. ${please_run}"
+		reg_failure "dnsmasq instance '${DNSMASQ_INSTANCE}' is misconfigured or not running. ${please_run}"
 		return 1
 	}
 
