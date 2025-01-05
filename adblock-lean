@@ -1674,7 +1674,12 @@ restart_dnsmasq()
 {
 	reg_action -blue "Restarting dnsmasq." || return 1
 
-	/etc/init.d/dnsmasq restart &> /dev/null || { reg_failure "Failed to restart dnsmasq."; stop 1; }
+	/etc/init.d/dnsmasq restart &> /dev/null ||
+	{
+		reg_failure "Failed to restart dnsmasq."
+		[ "${action}" != stop ] && stop 1
+		exit 1
+	}
 	
 	reg_action -blue "Waiting for dnsmasq initialization." || return 1
 	local dnsmasq_ok=
@@ -1684,7 +1689,12 @@ restart_dnsmasq()
 		sleep 1;
 	done
 
-	[ -z "$dnsmasq_ok" ] && { reg_failure "dnsmasq initialization failed."; stop 1; }
+	[ -n "$dnsmasq_ok" ] ||
+	{
+		reg_failure "dnsmasq initialization failed."
+		[ "${action}" != stop ] && stop 1
+		exit 1
+	}
 
 	log_msg -green "Restart of dnsmasq completed."
 	:
