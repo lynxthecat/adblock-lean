@@ -2667,7 +2667,7 @@ gen_config()
 	[ "${REPLY}" = n ] && cron_schedule=disable
 
 	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || return 1
-	write_config "$(print_def_config -p "${preset}" -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}")" -n "${DNSMASQ_INDEX}" || return 1
+	write_config "$(print_def_config -p "${preset}" -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}")" || return 1
 
 	check_blocklist_compression_support
 	:
