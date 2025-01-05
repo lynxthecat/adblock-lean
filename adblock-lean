@@ -875,12 +875,12 @@ write_config()
 	return 1
 }
 
-# Output via global vars: ${instance}_IPS_4, ${instance}_IPS_6
+# Output via global vars: ${instance}_NS_4, ${instance}_NS_6
 # 1 - instance id
-get_dnsmasq_instance_ips()
+get_dnsmasq_instance_ns()
 {
 	# get ip addresses for dnsmasq instances
-	local family ip_regex ip_regex_4 ip_regex_6 iface line instance_ifaces ip ip_tmp
+	local family ip_regex ip_regex_4 ip_regex_6 iface line instance_ns instance_ifaces ip ip_tmp
 	local instance="${1}"
 	ip_regex_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
 	ip_regex_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
@@ -888,7 +888,7 @@ get_dnsmasq_instance_ips()
 	do
 		eval "ip_regex=\"\${ip_regex_${family}}\""
 		eval "instance_ifaces=\"\${${instance}_IFACES}\""
-		instance_ips="$(
+		instance_ns="$(
 			ip -o -${family} addr show | sed -nE '/^\s*[0-9]+:\s*/{s/^\s*[0-9]+\s*:\s+//;s/scope .*//;s/\s+/ /g;p;}' |
 			while read -r line
 			do
@@ -902,7 +902,7 @@ get_dnsmasq_instance_ips()
 				[ -n "${ip}" ] && printf '%s\n' "${ip}"
 			done | grep -E "^${ip_regex}$"
 		)"
-		eval "${instance}_IPS_${family}=\"${instance_ips}\""
+		eval "${instance}_NS_${family}=\"${instance_ns}\""
 	done
 	:
 }
@@ -1748,21 +1748,21 @@ check_active_blocklist()
 {
 	reg_action -blue "Checking active blocklist." || return 1
 
-	local ip instance_ips instance_ips_4 instance_ips_6 lookup_ips='' lookup_ok=
+	local ip instance_ns instance_ns_4 instance_ns_6 lookup_ips='' lookup_ok=
 
 	check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || { [ ${?} = 1 ] && reg_failure "No running instance of dnsmasq detected."; return 1; }
-	get_dnsmasq_instance_ips "${DNSMASQ_INSTANCE}" &&
-	eval "instance_ips_4=\"\${${DNSMASQ_INSTANCE}_IPS_4}\" instance_ips_6=\"\${${DNSMASQ_INSTANCE}_IPS_6}\"" &&
-	[ -n "${instance_ips_4}" ] || [ -n "${instance_ips_6}" ] ||
+	get_dnsmasq_instance_ns "${DNSMASQ_INSTANCE}" &&
+	eval "instance_ns_4=\"\${${DNSMASQ_INSTANCE}_NS_4}\" instance_ns_6=\"\${${DNSMASQ_INSTANCE}_NS_6}\"" &&
+	[ -n "${instance_ns_4}" ] || [ -n "${instance_ns_6}" ] ||
 	{
-		reg_failure "Failed to detect ip addresses for dnsmasq instance '${DNSMASQ_INSTANCE}'."
-		return 1
+		log_msg "No ip addresses detected for dnsmasq instance '${DNSMASQ_INSTANCE}'. Using the loopback addresses."
+		eval "instance_ns_4=\"127.0.0.1\" instance_ns_6=\"::1\""
 	}
 
 	for family in 4 6
 	do
-		eval "instance_ips=\"\${instance_ips_${family}}\""
-		for ip in ${instance_ips}
+		eval "instance_ns=\"\${instance_ns_${family}}\""
+		for ip in ${instance_ns}
 		do
 			add2list lookup_ips "${ip}"
 		done
