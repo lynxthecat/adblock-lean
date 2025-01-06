@@ -314,6 +314,9 @@ detect_utils() {
 	}
 
 	local awk_inst_tip='' sed_inst_tip='' sort_inst_tip='' no_utils_tip="${1}"
+
+	[ -z "${no_utils_tip}" ] && printf '\n'
+
 	detect_pkg_manager
 
 	for util in ${RECOMMENDED_UTILS}
