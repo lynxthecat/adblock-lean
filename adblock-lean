@@ -2260,7 +2260,7 @@ init_command()
 	esac
 
 	# detect utils, set $AWK_CMD, $SED_CMD, $SORT_CMD
-	if [ -n "${utils_req}" ] && [ -z "${UTILS_DONE}" ]
+	if [ -n "${utils_req}" ] && { [ "${action}" = start ] || [ -z "${UTILS_DONE}" ]; }
 	then
 		case "${utils_tip_req}" in
 			'') detect_utils -n ;;
