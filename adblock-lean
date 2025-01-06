@@ -1759,7 +1759,7 @@ check_active_blocklist()
 
 	local ip instance_ns instance_ns_4 instance_ns_6 lookup_ips='' lookup_ok=
 
-	check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || { [ ${?} = 1 ] && reg_failure "No running instance of dnsmasq detected."; return 1; }
+	check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || return 1
 	get_dnsmasq_instance_ns "${DNSMASQ_INSTANCE}" &&
 	eval "instance_ns_4=\"\${${DNSMASQ_INSTANCE}_NS_4}\" instance_ns_6=\"\${${DNSMASQ_INSTANCE}_NS_6}\"" &&
 	[ -n "${instance_ns_4}" ] || [ -n "${instance_ns_6}" ] ||
