@@ -391,7 +391,7 @@ print_def_config()
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
 
 	# adblock-lean configuration options
-	# config_format=v5
+	# config_format=v6
 	#
 	# values must be enclosed in double-quotes
 	# custom comments are not preserved after automatic config update
@@ -1305,7 +1305,7 @@ test_url_domains()
 
 	for dom in $(printf %s "${domains}" | $SORT_CMD -u)
 	do
-		try_lookup_domain "${dom}" "127.0.0.1" || return 1
+		try_lookup_domain "${dom}" "127.0.0.1" || { reg_failure "Lookup of '${dom}' failed."; return 1; }
 	done
 	:
 }
@@ -1735,7 +1735,7 @@ try_lookup_domain()
 	do
 		ns_res="$(nslookup "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break; }
 	done
-	[ -n "${lookup_ok}" ] || { reg_failure "Lookup of '${1}' failed."; return 2; }
+	[ -n "${lookup_ok}" ] || return 2
 
 	[ "${3}" = '-n' ] && return 0
 
@@ -1774,12 +1774,20 @@ check_active_blocklist()
 		done
 	done
 
-	try_lookup_domain "adblocklean-test123.info" "${lookup_ips}" -n ||
-		{ reg_failure "Lookup of the blocklist test domain failed with new blocklist."; return 4; }
+	local lookup_ok=
+	for i in $(seq 1 15)
+	do
+		try_lookup_domain "adblocklean-test123.info" "${lookup_ips}" -n && { lookup_ok=1; break; }
+		sleep 1
+	done
+
+	[ -n "${lookup_ok}" ] ||
+		{ reg_failure "Lookup of the bogus test domain failed with new blocklist."; return 4; }
 
 	for domain in ${test_domains}
 	do
-		try_lookup_domain "${domain}" "${lookup_ips}" || return ${?}
+		try_lookup_domain "${domain}" "${lookup_ips}" ||
+			{ local rv=${?}; reg_failure "Lookup of test domain '${domain}' failed with new blocklist."; return ${rv}; }
 	done
 
 	:
