@@ -390,7 +390,23 @@ print_def_config()
 		esac
 	done
 
-	[ -n "${SED_CMD}" ] || detect_utils -n # @temp_workaround - remove a few months from now
+	# @temp_workaround for updating: exploiting the fact that print_def_config()
+	# is called from updated script - remove a few months from now
+	# sets variables for utils and removes files with old filenames from dnsmasq dir
+	if [ "${action}" = update ] && [ -z "${dnsmasq_instance}" ] &&
+		[ -z "${dnsmasq_index}" ] && [ -z "${dnsmasq_conf_d}" ] && [ -z "${preset}" ] && [ -z "${print_types}" ]
+	then
+		detect_utils -n
+		local dnsmasq_tmp_d file dnsmasq_restart_req
+		dnsmasq_tmp_d="$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+		: "${dnsmasq_tmp_d:=/tmp/dnsmasq.d}"
+		for file in "${dnsmasq_tmp_d}"/.blocklist.gz "${dnsmasq_tmp_d}"/blocklist \
+			"${dnsmasq_tmp_d}"/conf-script "${dnsmasq_tmp_d}"/.extract_blocklist
+		do
+			[ -f "${file}" ] && { rm -f "${file}"; dnsmasq_restart_req=1; }
+		done
+		[ -n "${dnsmasq_restart_req}" ] && restart_dnsmasq -nostop
+	fi
 
 	mk_preset_arrays
 	: "${preset:=small}"
@@ -1010,7 +1026,7 @@ get_dnsmasq_instances() {
 get_abl_run_state()
 {
 	local f
-	for f in "${DNSMASQ_CONF_D}/.blocklist.gz" "${DNSMASQ_CONF_D}/blocklist"
+	for f in "${DNSMASQ_CONF_D}/.abl-blocklist.gz" "${DNSMASQ_CONF_D}/abl-blocklist"
 	do
 		[ -f "${f}" ] && return 0
 	done
@@ -1044,8 +1060,8 @@ clean_dnsmasq_dir()
 
 	for dir in ${ALL_CONF_DIRS}
 	do
-		rm -f "${dir}"/.blocklist.gz "${dir}"/blocklist \
-			"${dir}"/conf-script "${dir}"/.extract_blocklist
+		rm -f "${dir}"/.abl-blocklist.gz "${dir}"/abl-blocklist \
+			"${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
 	done
 }
 
@@ -1555,7 +1571,7 @@ generate_and_process_blocklist_file()
 
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
-	local list_type out_f="${ABL_DIR}/blocklist"
+	local list_type out_f="${ABL_DIR}/abl-blocklist"
 
 	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
 
@@ -1845,28 +1861,28 @@ export_existing_blocklist()
 	}
 
 	local src src_d="${DNSMASQ_CONF_D}" dest="${ABL_DIR}/prev_blocklist"
-	if [ -f "${src_d}/.blocklist.gz" ]
+	if [ -f "${src_d}/.abl-blocklist.gz" ]
 	then
 		case ${use_compression} in
 			1)
-				src="${src_d}/.blocklist.gz" dest="${dest}.gz"
+				src="${src_d}/.abl-blocklist.gz" dest="${dest}.gz"
 				reg_export compressed || return 1 ;;
 			*)
 				reg_export uncompressed || return 1
-				try_gunzip "${src_d}/.blocklist.gz" || { rm -f "${src_d}/.blocklist.gz"; return 1; }
-				src="${src_d}/.blocklist"
+				try_gunzip "${src_d}/.abl-blocklist.gz" || { rm -f "${src_d}/.abl-blocklist.gz"; return 1; }
+				src="${src_d}/.abl-blocklist"
 		esac
-	elif [ -f "${src_d}/blocklist" ]
+	elif [ -f "${src_d}/abl-blocklist" ]
 	then
 		if [ "${use_compression}" = 1 ]
 		then
 			reg_export compressed || return 1
-			try_mv "${src_d}/blocklist" "${src_d}/.blocklist" || return 1
-			try_gzip "${src_d}/.blocklist" || return 1
-			src="${src_d}/.blocklist.gz" dest="${dest}.gz"
+			try_mv "${src_d}/abl-blocklist" "${src_d}/.abl-blocklist" || return 1
+			try_gzip "${src_d}/.abl-blocklist" || return 1
+			src="${src_d}/.abl-blocklist.gz" dest="${dest}.gz"
 		else
 			reg_export uncompressed || return 1
-			src="${src_d}/blocklist"
+			src="${src_d}/abl-blocklist"
 		fi
 	else
 		log_msg "" "No existing compressed or uncompressed blocklist identified."
@@ -1883,7 +1899,7 @@ restore_saved_blocklist()
 		reg_failure "Failed to restore saved blocklist."
 	}
 
-	local mv_src="${ABL_DIR}/prev_blocklist" mv_dest="${ABL_DIR}/blocklist"
+	local mv_src="${ABL_DIR}/prev_blocklist" mv_dest="${ABL_DIR}/abl-blocklist"
 	reg_action -blue "Restoring saved blocklist file." || { restore_failed; return 1; }
 	if [ -f "${mv_src}.gz" ]
 	then
@@ -1913,8 +1929,8 @@ restore_saved_blocklist()
 
 import_blocklist_file()
 {
-	local src src_compressed='' src_file="${ABL_DIR}/blocklist" dest_file="${DNSMASQ_CONF_D}/blocklist"
-	[ -n "${final_compress}" ] && dest_file="${DNSMASQ_CONF_D}/.blocklist.gz"
+	local src src_compressed='' src_file="${ABL_DIR}/abl-blocklist" dest_file="${DNSMASQ_CONF_D}/abl-blocklist"
+	[ -n "${final_compress}" ] && dest_file="${DNSMASQ_CONF_D}/.abl-blocklist.gz"
 	for src in "${src_file}" "${src_file}.gz"
 	do
 		case "${src}" in *.gz) src_compressed=1; esac
@@ -1938,8 +1954,8 @@ import_blocklist_file()
 
 	if [ -n "${final_compress}" ]
 	then
-		printf "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.extract_blocklist\"\n" > "${DNSMASQ_CONF_D}"/conf-script &&
-		printf '%s\n%s\n' "busybox gunzip -c ${DNSMASQ_CONF_D}/.blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.extract_blocklist ||
+		printf "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.abl-extract_blocklist\"\n" > "${DNSMASQ_CONF_D}"/abl-conf-script &&
+		printf '%s\n%s\n' "busybox gunzip -c ${DNSMASQ_CONF_D}/.abl-blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.abl-extract_blocklist ||
 			{ reg_failure "Failed to create conf-script for dnsmasq."; return 1; }
 	fi
 
@@ -2144,12 +2160,12 @@ get_active_entries_cnt()
 		list_prefixes="${list_prefixes}${list_prefix}|"
 	done
 
-	if [ -f "${DNSMASQ_CONF_D}"/.blocklist.gz ]
+	if [ -f "${DNSMASQ_CONF_D}"/.abl-blocklist.gz ]
 	then
-		gunzip -c "${DNSMASQ_CONF_D}"/.blocklist.gz
-	elif [ -f "${DNSMASQ_CONF_D}"/blocklist ]
+		gunzip -c "${DNSMASQ_CONF_D}"/.abl-blocklist.gz
+	elif [ -f "${DNSMASQ_CONF_D}"/abl-blocklist ]
 	then
-		cat "${DNSMASQ_CONF_D}/blocklist"
+		cat "${DNSMASQ_CONF_D}/abl-blocklist"
 	else
 		printf ''
 	fi |
@@ -3062,13 +3078,18 @@ update()
 		cp "${2}" "${ABL_DIR}/adblock-lean.latest"
 	fi
 
+	(
+		unset -f abl_post_update_1
+		. "${ABL_DIR}/adblock-lean.latest" || exit 1
+		command -v abl_post_update_1 1>/dev/null && abl_post_update_1 # call function abl_post_update_1() in new version
+		:
+	) &&
+
 	if [ "${1}" != '-no-check-config' ]
 	then
 		(
 			prev_config_format="${curr_config_format}"
 			. "${ABL_DIR}/adblock-lean.latest" || exit 1
-
-			command -v abl_post_update_1 && abl_post_update_1 # call function abl_post_update_1() in new version
 
 			command -v print_def_config && command -v get_config_format && upd_config_format="$(print_def_config | get_config_format)"
 			if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
@@ -3092,7 +3113,6 @@ update()
 	fi
 
 	try_mv "${ABL_DIR}/adblock-lean.latest" "${ABL_SERVICE_PATH}" || exit 1
-	stop -noexit
 	chmod +x "${ABL_SERVICE_PATH}"
 	${ABL_SERVICE_PATH} enable
 	log_msg -green "adblock-lean has been updated to the latest version."
@@ -3149,7 +3169,7 @@ uninstall()
 		log_msg -purple "" "Deleting the custom addnmount entry from /etc/config/dhcp."
 		if uci -q del_list dhcp.@dnsmasq[${i}].addnmount='/bin/busybox' && uci commit
 		then
-			case "$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" in */bin/busybox*) break; esac
+			case "$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" in */bin/busybox*) continue; esac
 			addnmount_deleted=1
 			log_msg "Note: the adblock-lean developers are not aware of any other software that requires the specific addnmount entry created by adblock-lean." \
 				"Should the addnmount entry be required for any reason then you will need to manually re-add it."
@@ -3178,6 +3198,8 @@ then
 	exit 1
 fi
 rm -f /tmp/abl-test
+
+. /lib/functions.sh # this is needed when running via 'sh /etc/init.d/adblock-lean'
 
 case "${1}" in
 	setup) setup; exit 0 ;;
