@@ -304,6 +304,12 @@ get_pkg_name()
 	esac
 }
 
+# will be executed upon update from the old version of the script
+abl_post_update_1()
+{
+	detect_utils
+}
+
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
 # 1 - (optional) '-n' to not print tips
 detect_utils() {
@@ -384,7 +390,7 @@ print_def_config()
 		esac
 	done
 
-	[ -n "${SED_CMD}" ] || detect_utils -n
+	[ -n "${SED_CMD}" ] || detect_utils -n # @temp_workaround - remove a few months from now
 
 	mk_preset_arrays
 	: "${preset:=small}"
@@ -539,7 +545,7 @@ mk_def_preset()
 get_config_format()
 {
 	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
-	[ -n "${SED_CMD}" ] || detect_utils -n
+	[ -n "${SED_CMD}" ] || detect_utils -n # @temp_workaround
 
 	if [ -n "${1}" ]
 	then
@@ -772,7 +778,7 @@ load_config()
 
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
 
-	[ -n "${SED_CMD}" ] || detect_utils -n
+	[ -n "${SED_CMD}" ] || detect_utils -n # @temp_workaround
 
 	# validate config and assign to variables
 	parse_config "${ABL_CONFIG_FILE}"
@@ -3062,6 +3068,8 @@ update()
 			prev_config_format="${curr_config_format}"
 			. "${ABL_DIR}/adblock-lean.latest" || exit 1
 
+			command -v abl_post_update_1 && abl_post_update_1 # call function abl_post_update_1() in new version
+
 			command -v print_def_config && command -v get_config_format && upd_config_format="$(print_def_config | get_config_format)"
 			if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
 			then
@@ -3069,6 +3077,7 @@ update()
 				if command -v load_config
 				then
 					load_config
+					command -v abl_post_update_2 && abl_post_update_2 # call function abl_post_update_2() in new version
 				else
 					failsafe_log "Please run 'service adblock-lean start' to initialize the new config."
 				fi
