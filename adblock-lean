@@ -381,6 +381,8 @@ print_def_config()
 		esac
 	done
 
+	[ -n "${SED_CMD}" ] || detect_utils -n
+
 	mk_preset_arrays
 	: "${preset:=small}"
 	case "${preset}" in mini|small|medium|large) ;; *) reg_failure "print_def_config: \$preset var has invalid value."; exit 1; esac
@@ -534,6 +536,8 @@ mk_def_preset()
 get_config_format()
 {
 	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
+	[ -n "${SED_CMD}" ] || detect_utils -n
+
 	if [ -n "${1}" ]
 	then
 		$SED_CMD -n "${conf_form_sed_expr}" "${1}"
@@ -764,6 +768,8 @@ load_config()
 	fi
 
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
+
+	[ -n "${SED_CMD}" ] || detect_utils -n
 
 	# validate config and assign to variables
 	parse_config "${ABL_CONFIG_FILE}"
@@ -3044,6 +3050,7 @@ update()
 		(
 			prev_config_format="${curr_config_format}"
 			. "${ABL_DIR}/adblock-lean.latest" || exit 1
+
 			command -v print_def_config && command -v get_config_format && upd_config_format="$(print_def_config | get_config_format)"
 			if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
 			then
