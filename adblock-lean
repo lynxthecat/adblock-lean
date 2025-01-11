@@ -983,6 +983,9 @@ get_dnsmasq_instances() {
 	instance_index=0
 	for instance in ${instances}
 	do
+		case "${instance}" in
+			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
+		esac
 		json_is_a "${instance}" object || continue # skip if $instance is not object
 		json_select "${instance}" &&
 		json_get_var "${instance}_RUNNING" running &&
