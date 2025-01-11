@@ -398,12 +398,13 @@ print_def_config()
 	then
 		detect_utils -n
 		local dnsmasq_tmp_d file dnsmasq_restart_req
-		dnsmasq_tmp_d="$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
-		: "${dnsmasq_tmp_d:=/tmp/dnsmasq.d}"
-		for file in "${dnsmasq_tmp_d}"/.blocklist.gz "${dnsmasq_tmp_d}"/blocklist \
-			"${dnsmasq_tmp_d}"/conf-script "${dnsmasq_tmp_d}"/.extract_blocklist
+		for dnsmasq_tmp_d in "/tmp/dnsmasq.d" "$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
 		do
-			[ -f "${file}" ] && { rm -f "${file}"; dnsmasq_restart_req=1; }
+			for file in "${dnsmasq_tmp_d}"/.blocklist.gz "${dnsmasq_tmp_d}"/blocklist \
+				"${dnsmasq_tmp_d}"/conf-script "${dnsmasq_tmp_d}"/.extract_blocklist
+			do
+				[ -f "${file}" ] && { rm -f "${file}"; dnsmasq_restart_req=1; }
+			done
 		done
 		[ -n "${dnsmasq_restart_req}" ] && restart_dnsmasq -nostop
 	fi
