@@ -556,7 +556,7 @@ mk_preset_arrays()
 	small_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.mini-onlydomains.txt" \
 		small_cnt=250 small_mem=128
 	medium_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.medium-onlydomains.txt" \
-		medium_cnt=350 medium_mem=256
+		medium_cnt=420 medium_mem=256
 	large_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
 		large_cnt=800 large_mem=512
 }
