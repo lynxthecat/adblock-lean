@@ -504,36 +504,60 @@ print_def_config()
 	EOT
 }
 
+
 # 1 - mini|small|medium|large
 # 2 - (optional) '-d' to print the description
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
 gen_preset()
 {
-	local val field mem cnt i=1
-	eval "mem=\"\${${1}_mem}\" cnt=\"\${${1}_cnt}\""
+	local val field mem tgt_lines_cnt_k final_entry_size_B source_entry_size_B
+
+	eval "mem=\"\${${1}_mem}\" tgt_lines_cnt_k=\"\${${1}_cnt}\" blocklist_urls=\"\${${1}_urls}\""
+
+	# Default values calculation:
+	# Values are rounded down to reasonable degree
+
+	final_entry_size_B=20 # assumption
+	source_entry_size_B=20 # assumption for raw domains format. dnsmasq source format not used by default
+
+	# target_lines_cnt / 3
+	min_good_line_count=$((tgt_lines_cnt_k*1000/3/10000*10000))
+
+	# target_lines_cnt * final_entry_size_B * 1.25
+	max_blocklist_file_size_KB=$(( ((tgt_lines_cnt_k*1250*final_entry_size_B)/1024)/1000*1000 ))
+
+	case "${1}" in
+		mini) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
+		*)
+			# target_lines_cnt * source_entry_size_B
+			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1000*source_entry_size_B)/1024)/1000*1000 ))
+	esac
+
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
-	[ "${2}" != '-n' ] && print_msg "${blue}Elements count:${n_c} ~${cnt}k"
-	for field in blocklist_urls max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
-	do
-		eval "val=\"\${${1}_${i}}\""
-		eval "${field}=\"${val}\""
-		[ "${2}" != '-n' ] && print_msg "${blue}${field}${n_c}=\"${val}\""
-		i=$((i+1))
-	done
+
+	if [ "${2}" != '-n' ]
+	then
+		print_msg "${blue}Elements count:${n_c} ~${tgt_lines_cnt_k}k"
+		for field in blocklist_urls max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
+		do
+			eval "val=\"\${${field}}\""
+			print_msg "${blue}${field}${n_c}=\"${val}\""
+		done
+	fi
 }
 
 mk_preset_arrays()
 {
-	# quasi-arrays for presets: 1 - url, 2 - max part size, 3 - max blocklist size, 4 - min line count,
-	# cnt - elements count/1000, mem - memory in MB
-	mini_1="${HAGEZI_DL_URL}/pro.mini-onlydomains.txt" \
-		mini_2=4000 mini_3=4000 mini_4=40000 mini_cnt=85 mini_mem=64
-	small_1="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.mini-onlydomains.txt" \
-		small_2=7000 small_3=10000 small_4=100000 small_cnt=250 small_mem=128
-	medium_1="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.medium-onlydomains.txt" \
-		medium_2=10000 medium_3=20000 medium_4=200000 medium_cnt=350 medium_mem=256
-	large_1="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
-		large_2=30000 large_3=50000 large_4=200000 large_cnt=700 large_mem=512
+	# quasi-arrays for presets
+	# cnt - target elements count/1000, mem - memory in MB
+	mini_urls="${HAGEZI_DL_URL}/pro.mini-onlydomains.txt" \
+		mini_cnt=85 mini_mem=64
+	small_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.mini-onlydomains.txt" \
+		small_cnt=250 small_mem=128
+	medium_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.medium-onlydomains.txt" \
+		medium_cnt=350 medium_mem=256
+	large_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
+		large_cnt=800 large_mem=512
 }
 
 # sets ${preset} to recommended preset, depending on system memory capacity
