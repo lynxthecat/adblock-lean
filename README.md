@@ -128,14 +128,16 @@ cron_schedule="disable"
 
 **USER NOTICE:**  Current versions September 19, 2024 and onwards switch to using raw formatted blocklists by default (the default lists are still Hagezi).  Dnsmasq formatted lists are still supported.  Raw lists have the benefit of smaller file size dowload, improvements in processing speed and reduced ram usage.  On the first run after updating, adblock-lean will prompt you (y/n) to automatically change URLs for Hagezi & OISD lists from dnsmasq format to raw format.  For other lists, you can choose to find a raw formatted list or continue using dnsmasq formatted lists.  You can always use ```service adblock-lean gen_config``` to generate a fresh configuration file if required.
 
-Hagezi raw lists can be found [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard). **NOTE** that the file names of correct lists have the `-onlydomains` suffix.
+The default Hagezi lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible.
+
+Hagezi **raw domains-formatted lists** can be found [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard). **NOTE** that the file names of correct lists have the `-onlydomains` suffix.
 Visual example of raw ```blocklist_urls``` [Hagezi light raw](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt).  
 Visual example of dnsmasq formmatted ```dnsmasq_blocklist_urls``` [Hagezi light dnsmasq](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt).
 
-oisd raw domains-formatted lists can be found [here](https://oisd.nl/setup). **NOTE** that the correct lists are **only** the ones named `domainswild2` (note the `2`).
+oisd raw domains-formatted lists can be found [here](https://oisd.nl/setup/adblock-lean). **NOTE** that the correct lists are **only** the ones named `domainswild2` (note the `2`).
 oisd dnsmasq-formatted lists can be found at the same URL, except you would be looking for lists named `dnsmasq2`.
 
-The default Hagezi dnsmasq format lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. Any other raw or dnsmasq format lists of your choice can also be configured and used.
+Any other raw or dnsmasq format lists of your choice can also be configured and used.
 
 ## Advanced configuration
 
@@ -189,37 +191,37 @@ The pre-defined presets are:
 - **Mini**: for devices with 64MB of RAM. Aim for <100k entries. This preset includes circa 85k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.mini-onlydomains.txt"
-min_blocklist_part_line_count=1
-max_file_part_size_KB=4000
-max_blocklist_file_size_KB=4000
-min_good_line_count=40000
+min_blocklist_part_line_count="1"
+max_file_part_size_KB="4000"
+max_blocklist_file_size_KB="4000"
+min_good_line_count="40000"
 ```
 
 - **Small**: for devices with 128MB of RAM. Aim for <300k entries. This preset includes circa 250k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
-min_blocklist_part_line_count=1
-max_file_part_size_KB=7000
-max_blocklist_file_size_KB=10000
-min_good_line_count=100000
+min_blocklist_part_line_count="1"
+max_file_part_size_KB="7000"
+max_blocklist_file_size_KB="10000"
+min_good_line_count="100000"
 ```
 
 - **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 350k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"
-min_blocklist_part_line_count=1
-max_file_part_size_KB=10000
-max_blocklist_file_size_KB=20000
-min_good_line_count=200000
+min_blocklist_part_line_count="1"
+max_file_part_size_KB="10000"
+max_blocklist_file_size_KB="20000"
+min_good_line_count="200000"
 ```
 
 - **Large**: for devices with 512MB of RAM or more. This preset includes circa 700k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
-min_blocklist_part_line_count=1
-max_file_part_size_KB=30000
-max_blocklist_file_size_KB=50000
-min_good_line_count=200000
+min_blocklist_part_line_count="1"
+max_file_part_size_KB="30000"
+max_blocklist_file_size_KB="50000"
+min_good_line_count="200000"
 ```
 An excellent breakdown of highly suitable lists and their merits is provided at:
 
@@ -232,7 +234,7 @@ For example, if the an allowlist has this entry: `google.com` and a blocklist ha
 
 Note that in this mode, the test domains (specified via the option `test_domains`) will be automatically added to the allowlist in order for the checks to pass. You can use empty string in that option - this will bypass that check and block the default domains (google.com, microsoft.com, amazon.com). Alternatively, you can specify preferred test domains instead of the default ones.
 
-Also note that in this mode by default the Github domains will be blocked, so the automatic adblock-lean version update functionality will not work - unless you add github.com to the allowlist.
+Also note that in this mode by default the Github domains will be blocked, so the automatic adblock-lean version update functionality will not work - unless you add `raw.githubusercontent.com` to the allowlist.
 
 The resulting blocklist generated in whitelist mode will be typically much smaller than otherwise, so you may need to reduce the value of the `min_good_line_count` option in order for the list to be accepted by adblock-lean.
 
@@ -245,7 +247,7 @@ adblock-lean supports specifying a custom script which defines the functions `re
 - Install mailsend package in OpenWRT
 - Sign up for free Brevo account (not affiliated!) - provides 300 free email sends per day
 - Edit your config file custom_script path.  Recommended path is '/usr/libexec/abl_custom-script.sh', which the adblock-lean luci app will have permission to access (for when the luci app is ready)
-- Create file /usr/libexec/abl_custom-script.sh - specific user details (user variables in CAPITALS below):
+- Create file `/usr/libexec/abl_custom-script.sh` - specific user details (user variables in CAPITALS below):
 
 ```bash
 #!/bin/sh
