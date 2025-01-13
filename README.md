@@ -191,37 +191,33 @@ The pre-defined presets are:
 - **Mini**: for devices with 64MB of RAM. Aim for <100k entries. This preset includes circa 85k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.mini-onlydomains.txt"
-min_blocklist_part_line_count="1"
-max_file_part_size_KB="4000"
-max_blocklist_file_size_KB="4000"
-min_good_line_count="40000"
+max_file_part_size_KB="2000"
+max_blocklist_file_size_KB="2000"
+min_good_line_count="20000"
 ```
 
 - **Small**: for devices with 128MB of RAM. Aim for <300k entries. This preset includes circa 250k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
-min_blocklist_part_line_count="1"
-max_file_part_size_KB="7000"
-max_blocklist_file_size_KB="10000"
-min_good_line_count="100000"
+max_file_part_size_KB="4000"
+max_blocklist_file_size_KB="6000"
+min_good_line_count="80000"
 ```
 
-- **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 350k entries
+- **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 450k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"
-min_blocklist_part_line_count="1"
-max_file_part_size_KB="10000"
-max_blocklist_file_size_KB="20000"
-min_good_line_count="200000"
+max_file_part_size_KB="8000"
+max_blocklist_file_size_KB="10000"
+min_good_line_count="150000"
 ```
 
-- **Large**: for devices with 512MB of RAM or more. This preset includes circa 700k entries
+- **Large**: for devices with 512MB of RAM or more. This preset includes circa 800k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
-min_blocklist_part_line_count="1"
-max_file_part_size_KB="30000"
-max_blocklist_file_size_KB="50000"
-min_good_line_count="200000"
+max_file_part_size_KB="15000"
+max_blocklist_file_size_KB="19000"
+min_good_line_count="260000"
 ```
 An excellent breakdown of highly suitable lists and their merits is provided at:
 
