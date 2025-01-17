@@ -1,0 +1,11 @@
+name: "ShellCheck"
+on: [push, pull_request]
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run ShellCheck
+      run: shellcheck adblock-lean
