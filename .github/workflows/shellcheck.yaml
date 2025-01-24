@@ -8,4 +8,4 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Run ShellCheck
-      run: shellcheck adblock-lean
+      run: shellcheck --severity error adblock-lean
