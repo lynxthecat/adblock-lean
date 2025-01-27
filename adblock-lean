@@ -1011,19 +1011,17 @@ get_dnsmasq_instances() {
 		json_select ..
 
 		IFS_OLD="$IFS"
-		# get ifaces for instance
 		IFS="${_NL_}"
-		ifaces="$(
-			for f in ${l1_conf_files}
-			do
-				$SED_CMD -nE '/^\s*interface=/{s/.*=//;p;}' "${f}"
-			done | $SORT_CMD -u | $SED_CMD -z 's/\n/, /g'
-		)"
+		set -- ${l1_conf_files}
+		IFS="${IFS_OLD}"
+
+		# get ifaces for instance
+		ifaces="$(${AWK_CMD} -F= '/^\s*interface=/ {if (!seen[$2]++) {ifaces = ifaces $2 ", "} } END {print ifaces}' "$@")"
 		eval "${instance}_IFACES=\"${ifaces%, }\""
 
 		# get conf-dirs for instance
 		conf_dirs="$(
-			for f in ${l1_conf_files}
+			for f in "${@}"
 			do
 				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
 			done | $SORT_CMD -u
@@ -1033,13 +1031,11 @@ get_dnsmasq_instances() {
 		do
 			add2list ALL_CONF_DIRS "${dir}"
 		done
-		IFS="${IFS_OLD}"
 		eval "${instance}_CONF_DIRS=\"${conf_dirs}\""
 
 		cnt_lines conf_dirs_cnt "${conf_dirs}"
 		eval "${instance}_CONF_DIRS_CNT=\"${conf_dirs_cnt}\""
 	done
-	IFS="${IFS_OLD}"
 	json_cleanup
 	cnt_lines DNSMASQ_INSTANCES_CNT "${DNSMASQ_INSTANCES}"
 
