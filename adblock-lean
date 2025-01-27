@@ -2468,14 +2468,14 @@ upd_cron_job()
 	:
 }
 
+# Error codes:
+# 1 - general error
+# 2 - gen_config failed
+# 3 - load_config failed
+# 4 - service enable failed
+# 5 - creating addnmount entry failed
 setup()
 {
-	setup_failed()
-	{
-		[ -n "${1}" ] && reg_failure "${1}"
-		exit 1
-	}
-
 	# 1 - '|' - separated package names
 	get_installed_pkgs()
 	{
@@ -2530,7 +2530,7 @@ setup()
 			local free_space_B='' free_space_KB="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')" \
 				mount_point="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/.*[ \t]+//')"
 			case "${free_space_KB}" in
-				''|*[!0-9]*) reg_failure "Failed to check available free space." ;;
+				''|*[!0-9]*) reg_failure "Failed to check available free space."; return 1 ;;
 				*) free_space_B=$((free_space_KB*1024))
 			esac
 
@@ -2549,7 +2549,7 @@ setup()
 				then
 					eval "util_size_B=\"\${${util}_size_B}\""
 					print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}$(bytes2human "${util_size_B}")${n_c}."
-					pick_opt "y|n" || exit 1
+					pick_opt "y|n" || return 1
 				elif [ -n "${luci_install_packages}" ]
 				then
 					REPLY=y
@@ -2583,31 +2583,34 @@ setup()
 				if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ ${free_space_B} -gt ${utils_size_B} ]
 				then
 					echo
-					$PKG_MANAGER update && $PKG_INSTALL_CMD ${pkgs2install% } && luci_pkgs_install_failed='' ||
-						reg_failure "Failed to automatically install packages. You can install them manually later."
+					$PKG_MANAGER update && $PKG_INSTALL_CMD ${pkgs2install% } && return 0
+					reg_failure "Failed to automatically install packages. You can install them manually later."
+					return 1
 				else
 					reg_failure "Not enough free space at mount point '${mount_point}'."
 					print_msg "Free up some space, then you can manually install the packages later by issuing the command:" \
 						"$PKG_MANAGER update; $PKG_INSTALL_CMD ${pkgs2install% }"
+					return 1
 				fi
 			fi
 		else
-			luci_pkgs_install_failed=
+			return 0
 		fi
+		:
 	}
 
-	# set all luci feedback vars to failed, unset later upon success
-	luci_addnmount_failed=1 luci_service_enable_failed=1 luci_pkgs_install_failed=1 luci_cron_job_creation_failed=1
+	# set luci feedback vars to failed, unset later upon success
+	luci_pkgs_install_failed=1 luci_cron_job_creation_failed=1
 
 	init_command setup
-	[ -z "${ABL_SERVICE_PATH}" ] && setup_failed "\${ABL_SERVICE_PATH} variable is unset."
-	[ ! -f "${ABL_SERVICE_PATH}" ] && setup_failed "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."
+	[ -n "${ABL_SERVICE_PATH}" ] || { reg_failure "\${ABL_SERVICE_PATH} variable is unset."; return 1; }
+	[ -f "${ABL_SERVICE_PATH}" ] || { reg_failure "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
 
 	# make the script executable
 	if [ ! -x "${ABL_SERVICE_PATH}" ]
 	then
 		print_msg "" "${purple}Making ${ABL_SERVICE_PATH} executable.${n_c}"
-		chmod +x "${ABL_SERVICE_PATH}" || setup_failed "Failed to make '${ABL_SERVICE_PATH}' executable."
+		chmod +x "${ABL_SERVICE_PATH}" || { reg_failure "Failed to make '${ABL_SERVICE_PATH}' executable."; return 1; }
 	else
 		print_msg "" "${green}${ABL_SERVICE_PATH} is already executable.${n_c}"
 	fi
@@ -2616,7 +2619,7 @@ setup()
 	if [ -n "${do_dialogs}" ] && { [ -s "${ABL_CONFIG_FILE}" ]; }
 	then
 		print_msg "" "Existing config file found." "Generate [n]ew config or use [e]xisting config?"
-		pick_opt 'n|e' || exit 1
+		pick_opt 'n|e' || return 1
 	elif [ -n "${luci_use_old_config}" ]
 	then
 		REPLY=e
@@ -2625,9 +2628,9 @@ setup()
 	if [ "${REPLY}" = n ]
 	then
 		# generate config
-		gen_config || exit 1
+		gen_config || return 2
 	else
-		load_config || exit 1
+		load_config || return 3
 	fi
 
 	# enable the service, update the cron job
@@ -2635,26 +2638,32 @@ setup()
 	then
 		upd_cron_job && luci_cron_job_creation_failed=
 	else
-		/sbin/service adblock-lean enable || exit 1
+		if /sbin/service adblock-lean enable; then
+			luci_cron_job_creation_failed=
+		else
+			local rv=${?}
+			[ "${rv}" = 6 ] || return ${rv}
+		fi
 	fi
-	luci_service_enable_failed=
 
 	# make addnmount entry - enables blocklist compression to reduce RAM usage
 	check_addnmount
 	case ${?} in
 		0) print_msg "" "${green}Found existing dnsmasq addnmount UCI entry.${n_c}" ;;
-		2) exit 1 ;;
+		2) return 5 ;;
 		1)
 			print_msg "" "${purple}Creating dnsmasq addnmount UCI entry.${n_c}"
 			uci add_list dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount='/bin/busybox' && uci commit ||
-				setup_failed "Failed to create addnmount entry."
+			{
+				reg_failure "Failed to create addnmount entry."
+				return 5
+			}
 	esac
-	luci_addnmount_failed=
 
 	detect_pkg_manager
 	case "${PKG_MANAGER}" in
 		apk|opkg)
-			install_packages ;;
+			install_packages && luci_pkgs_install_failed= ;;
 		*)
 			log_msg -yellow "" "Can not automatically check and install recommended packages (${RECOMMENDED_PKGS})." \
 				"Consider to check for their presence and install if needed."
@@ -2663,7 +2672,7 @@ setup()
 	if [ -n "${do_dialogs}" ]
 	then
 		print_msg "" "${purple}Setup is complete.${n_c}" "" "Start adblock-lean now?"
-		pick_opt "y|n" || exit 1
+		pick_opt "y|n" || return 1
 		[ "${REPLY}" != y ] && return 0
 		echo
 		start
@@ -2742,9 +2751,17 @@ set_dnsmasq_dir() {
 					log_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
 					eval "local instance_${index}=\"${instance}\""
 					indexes="${indexes}${index}|"
+					indexes_nl="${indexes_nl}${index}${_NL}"
 				done
 				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
 				pick_opt "${indexes}a" || exit 1
+			elif [ -n "${LUCI_DNSMASQ_INSTANCE_INDEX}" ]
+			then
+				REPLY="${LUCI_DNSMASQ_INSTANCE_INDEX}"
+				is_included "${REPLY}" "${indexes_nl}" ||
+					{ reg_failure "dnsmasq instance with index '${REPLY}' does not exist."; return 1; }
+			else
+				return 1
 			fi
 
 			[ "${REPLY}" = a ] && { log_msg "Aborted config generation."; exit 0; }
@@ -2825,7 +2842,7 @@ gen_config()
 
 	[ -z "${preset}" ] && { reg_failure "No config preset was selected."; return 1; }
 
-	set_dnsmasq_dir -n || setup_failed "Failed to detect dnsmasq instances or no dnsmasq instances are running."
+	set_dnsmasq_dir -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
 
 	# create cron job
 	cron_schedule=
@@ -3240,13 +3257,13 @@ case "${action}" in
 			then
 				log_msg -purple "" "Enabling the adblock-lean service."
 				/sbin/service adblock-lean enable && /sbin/service adblock-lean enabled ||
-					{ reg_failure "Failed to enable the adblock-lean service"; exit 1; }
+					{ reg_failure "Failed to enable the adblock-lean service"; exit 4; }
 			else
 				log_msg -green "The adblock-lean service is already enabled."
 				exit 0
 			fi
-			load_config
-			[ -n "${cron_schedule}" ] && upd_cron_job && luci_cron_job_creation_failed=
+			load_config || exit 3
+			[ -n "${cron_schedule}" ] && { upd_cron_job || exit 6; }
 		fi ;;
 	disable)
 		if [ -z "${disabling}" ]
