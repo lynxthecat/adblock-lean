@@ -284,7 +284,7 @@ pick_opt()
 	do
 		printf %s "$1: " 1>${MSGS_DEST}
 		read -r REPLY
-		case "$REPLY" in *[!A-Za-z0-9]*) printf '\n%s\n\n' "Please enter $1" 1>${MSGS_DEST}; continue; esac
+		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1" 1>${MSGS_DEST}; continue; esac
 		eval "case \"$REPLY\" in 
 				$1) return 0 ;;
 				*) printf '\n%s\n\n' \"Please enter $1\" 1>${MSGS_DEST}
@@ -419,7 +419,7 @@ print_def_config()
 
 	mk_preset_arrays
 	: "${preset:=small}"
-	case "${preset}" in mini|small|medium|large) ;; *) reg_failure "print_def_config: \$preset var has invalid value."; exit 1; esac
+	case "${preset}" in mini|small|medium|large|large_relaxed) ;; *) reg_failure "print_def_config: \$preset var has invalid value."; exit 1; esac
 	gen_preset "${preset}" -n
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
@@ -514,14 +514,14 @@ print_def_config()
 }
 
 
-# 1 - mini|small|medium|large
+# 1 - mini|small|medium|large|large_relaxed
 # 2 - (optional) '-d' to print the description
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
 gen_preset()
 {
-	local val field mem tgt_lines_cnt_k final_entry_size_B source_entry_size_B
+	local val field mem tgt_lines_cnt_k lim_coeff final_entry_size_B source_entry_size_B
 
-	eval "mem=\"\${${1}_mem}\" tgt_lines_cnt_k=\"\${${1}_cnt}\" blocklist_urls=\"\${${1}_urls}\""
+	eval "mem=\"\${${1}_mem}\" tgt_lines_cnt_k=\"\${${1}_cnt}\" lim_coeff=\"\${${1}_coeff:-1}\" blocklist_urls=\"\${${1}_urls}\""
 
 	# Default values calculation:
 	# Values are rounded down to reasonable degree
@@ -532,14 +532,14 @@ gen_preset()
 	# target_lines_cnt / 3
 	min_good_line_count=$((tgt_lines_cnt_k*1000/3/10000*10000))
 
-	# target_lines_cnt * final_entry_size_B * 1.25
-	max_blocklist_file_size_KB=$(( ((tgt_lines_cnt_k*1250*final_entry_size_B)/1024)/1000*1000 ))
+	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
+	max_blocklist_file_size_KB=$(( ((tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024)/1000*1000 ))
 
 	case "${1}" in
 		mini) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
 		*)
-			# target_lines_cnt * source_entry_size_B
-			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1000*source_entry_size_B)/1024)/1000*1000 ))
+			# target_lines_cnt * source_entry_size_B * lim_coeff
+			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1000*source_entry_size_B*lim_coeff)/1024)/1000*1000 ))
 	esac
 
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
@@ -566,7 +566,9 @@ mk_preset_arrays()
 	medium_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.medium-onlydomains.txt" \
 		medium_cnt=450 medium_mem=256
 	large_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
-		large_cnt=800 large_mem=512
+		large_cnt=1000 large_mem=512
+	large_relaxed_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
+		large_relaxed_cnt=1000 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 
 # sets ${preset} to recommended preset, depending on system memory capacity
@@ -579,7 +581,7 @@ mk_def_preset()
 	case "${totalmem}" in
 		''|*[!0-9]*) reg_failure "\$totalmem has invalid value '${totalmem}'. Failed to determine system memory capacity."; return 1 ;;
 		*)
-			for preset in large medium small mini
+			for preset in large_relaxed large medium small mini
 			do
 				eval "mem=\"\${${preset}_mem}\""
 				# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
@@ -2831,12 +2833,12 @@ gen_config()
 		if [ "${REPLY}" = p ]
 		then
 			print_msg "" "${purple}All available presets:${n_c}"
-			for preset in mini small medium large
+			for preset in mini small medium large large_relaxed
 			do
 				gen_preset "${preset}" -d
 			done
 			print_msg "" "Pick preset:"
-			pick_opt "mini|small|medium|large"
+			pick_opt "mini|small|medium|large|large_relaxed"
 			preset="${REPLY}"
 		fi
 	else
@@ -2848,7 +2850,7 @@ gen_config()
 	fi
 
 	case "${preset}" in
-		mini|small|medium|large) ;;
+		mini|small|medium|large|large_relaxed) ;;
 		*) reg_failure "Invalid preset '${preset}'."; return 1
 	esac
 	log_msg -blue "Selected preset '${preset}'."
