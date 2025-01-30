@@ -48,6 +48,7 @@ ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 ABL_CRON_SVC_PATH="/etc/init.d/cron"
 RECOMMENDED_PKGS="gawk sed coreutils-sort"
 RECOMMENDED_UTILS="awk sed sort"
+ALL_PRESETS="mini small medium large large_relaxed"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -83,10 +84,12 @@ set_colors()
 
 
 # checks if string $1 is included in newline-separated list $2
+# if $3 is specified, uses the value as list delimiter
 # result via return status
 is_included() {
+	local delim="${3:-"${_NL_}"}"
 	case "$2" in
-		"$1"|"$1${_NL_}"*|*"${_NL_}$1"|*"${_NL_}$1${_NL_}"*)
+		"$1"|"$1${delim}"*|*"${delim}$1"|*"${delim}$1${delim}"*)
 			return 0 ;;
 		*)
 			return 1
@@ -96,18 +99,19 @@ is_included() {
 # adds a string to a newline-separated list if it's not included yet
 # 1 - name of var which contains the list
 # 2 - new value
+# 3 - (optional) list delimiter (instead of newline)
 # returns 1 if bad var name, 0 otherwise
 add2list() {
 	case "${1}" in *[!A-Za-z0-9_]*)
 		return 1
 	esac
 
-	local curr_list fs=
+	local curr_list delim="${3:-"${_NL_}"}" fs=
 	eval "curr_list=\"\${${1}}\""
-	is_included "${2}" "${curr_list}" && return 0
+	is_included "${2}" "${curr_list}" "${delim}" && return 0
 	case "${curr_list}" in
 		'') fs='' ;;
-		*) fs="${_NL_}" ;;
+		*) fs="${delim}" ;;
 	esac
 	eval "${1}=\"\${${1}}${fs}${2}\""
 	:
@@ -419,7 +423,7 @@ print_def_config()
 
 	mk_preset_arrays
 	: "${preset:=small}"
-	case "${preset}" in mini|small|medium|large|large_relaxed) ;; *) reg_failure "print_def_config: \$preset var has invalid value."; exit 1; esac
+	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "print_def_config: \$preset var has invalid value."; exit 1; }
 	gen_preset "${preset}" -n
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
@@ -581,7 +585,7 @@ mk_def_preset()
 	case "${totalmem}" in
 		''|*[!0-9]*) reg_failure "\$totalmem has invalid value '${totalmem}'. Failed to determine system memory capacity."; return 1 ;;
 		*)
-			for preset in large_relaxed large medium small mini
+			for preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | sed 'x;1!H;$!d;x') # loop over presets in reverse order
 			do
 				eval "mem=\"\${${preset}_mem}\""
 				# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
@@ -2833,12 +2837,14 @@ gen_config()
 		if [ "${REPLY}" = p ]
 		then
 			print_msg "" "${purple}All available presets:${n_c}"
-			for preset in mini small medium large large_relaxed
+			local presets_case_opts=
+			for preset in ${ALL_PRESETS}
 			do
+				add2list presets_case_opts "${preset}" "|"
 				gen_preset "${preset}" -d
 			done
 			print_msg "" "Pick preset:"
-			pick_opt "mini|small|medium|large|large_relaxed"
+			pick_opt "${presets_case_opts}"
 			preset="${REPLY}"
 		fi
 	else
@@ -2849,10 +2855,7 @@ gen_config()
 		esac
 	fi
 
-	case "${preset}" in
-		mini|small|medium|large|large_relaxed) ;;
-		*) reg_failure "Invalid preset '${preset}'."; return 1
-	esac
+	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "Invalid preset '${preset}'."; return 1; }
 	log_msg -blue "Selected preset '${preset}'."
 
 	set_dnsmasq_dir -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
