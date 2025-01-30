@@ -52,9 +52,6 @@ This will ask you several questions and make all important changes automatically
 chmod +x /etc/init.d/adblock-lean # Makes the script executable
 service adblock-lean gen_config   # Generates default config in /root/adblock-lean/config and sets up blocklist updates
 
-# Optional/recommended. Enables blocklist compression to reduce RAM usage
-uci set dhcp.adblock_lean=dnsmasq && uci add_list dhcp.adblock_lean.addnmount='/bin/busybox' && uci commit
-
 # This will allow adblock-lean to automatically run on boot
 service adblock-lean enable
 
@@ -62,6 +59,27 @@ service adblock-lean enable
 opkg update
 opkg install gawk sed coreutils-sort
 ```
+
+The above command `service adblock-lean gen_config` should have automatically determined the dnsmasq instance to attach to, or asked you which instance you prefer (in case you have multiple instances). So unless you have a really good reason, ignore the following section.
+
+_<details><summary>If you need to manually configure the dnsmasq instance adblock-lean attaches to </summary>_
+
+1) Check which `config dnsmasq` sections are defined in `/etc/config/dhcp`.
+2) If only one `config dnsmasq` section exists then you are only running 1 dnsmasq instance. Note and write down: instance index is 0; instance name (it's either `cfg01411c` if the name is not specified or the optional word right after `config dnsmasq`); if `option confdir` is set, note and write down the value. If it is not set then the default conf-dir is `/tmp/dnsmasq.cfg01411c.d` in OpenWrt 24.10 and later (including current snapshots), or `/tmp/dnsmasq.d` in older OpenWrt versions.
+3) If you have multiple `config dnsmasq` sections then multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on. Use the command `/etc/init.d/dnsmasq info` to get a list of all running instances as json. Find the relevant dnsmasq instance. Note: instance index (1st instance has index 0, further instances increment the index by 1); instance name (example: `cfg01411c`); which network interfaces the relevant instance serves (likely listed in the 'netdev' section). In the `"command"` section of the json, look for a path in `/var/etc/`, write down the path. Check the contents of the file at that path and look for `conf_dir=`. This is the conf-dir this instance is using - note and write it down.
+4) In the adblock-lean config file: specify instance name in option `DNSMASQ_INSTANCE` (example: `DNSMASQ_INSTANCE="cfg01411c"`); specify instance index in option `DNSMASQ_INDEX` (example: `DNSMASQ_INDEX="0"`), specify instance conf-dir in option `DNSMASQ_CONF_D` (example: `DNSMASQ_CONF_D="/tmp/dnsmasq.d"`).
+
+</details>
+
+Optional/recommended: enable blocklist compression to reduce RAM usage. To achieve this, add the line
+```
+	list addnmount '/bin/busybox'
+```
+to the relevant dnsmasq section (under `config dnsmasq`) of file `/etc/config/dhcp`.
+
+If only one `config dnsmasq` section exists then that's the section to add the line to. If you have multiple `config dnsmasq` sections, this means that multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on - add the line to that section. Verify that same dnsmasq instance index is configured in `/etc/adblock-lean/config` (1st instance corresponds to the 1st `config dnsmasq` section and has index 0, further instances increment the index by 1).
+
+Now run the command `service dnsmasq restart`.
 
 ## Usage
 
@@ -81,7 +99,8 @@ Additional available commands:
 - `gen_stats`: generate dnsmasq stats (prints to system log)
 - `print_log`: print most recent session log
 - `upd_cron_job`: create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	              if config option set to 'disable', remove existing cron job if any
+                  if config option set to 'disable', remove existing cron job if any
+- `set_dnsmasq_dir`: analyze dnsmasq instances and set required options in the adblock-lean config
 
 ## Basic configuration
 The config file for adblock-lean is located in `/etc/adblock-lean/config`.
@@ -212,13 +231,22 @@ max_blocklist_file_size_KB="10000"
 min_good_line_count="150000"
 ```
 
-- **Large**: for devices with 512MB of RAM or more. This preset includes circa 800k entries
+- **Large**: for devices with 512MB of RAM. This preset includes circa 1M entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
-max_file_part_size_KB="15000"
-max_blocklist_file_size_KB="19000"
-min_good_line_count="260000"
+max_file_part_size_KB="19000"
+max_blocklist_file_size_KB="24000"
+min_good_line_count="330000"
+
 ```
+- **Large-Relaxed**: for devices with 1024MB of RAM or more. This preset includes circa 1M entries and same default blocklist URLs as 'Large' but the `max` values are more relaxed and allow for larger fluctuations in downloaded blocklist sizes.
+```bash
+blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
+max_file_part_size_KB="39000"
+max_blocklist_file_size_KB="48000"
+min_good_line_count="330000"
+```
+
 An excellent breakdown of highly suitable lists and their merits is provided at:
 
 https://github.com/hagezi/dns-blocklists
