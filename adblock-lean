@@ -969,7 +969,7 @@ get_dnsmasq_instances() {
 	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD i s f dir
 	DNSMASQ_INSTANCES=
 	DNSMASQ_INSTANCES_CNT=0
-	reg_action -purple "Checking dnsmasq instances."
+	reg_action -blue "Checking dnsmasq instances."
 	. /usr/share/libubox/jshn.sh
 	json_load "$(/etc/init.d/dnsmasq info)" &&
 	json_get_keys nonempty &&
@@ -1574,11 +1574,12 @@ generate_and_process_blocklist_file()
 		printf ''
 	}
 
-	# 1 - list type (block|blocklist_ipv4|allowlist)
+	# 1 - var name for output
+	# 2 - path to file
 	read_list_stats()
 	{
-		read -r ${1}_entries_cnt ${1}_size_B 2>/dev/null < "${ABL_DIR}/${1}_stats"
-		eval ": \"\${${1}_entries_cnt:=0}\" \"\${${1}_size_B:=0}\""
+		read -r "${1?}" 2>/dev/null < "${2}"
+		eval ": \"\${${1}:=0}\""
 	}
 
 	dedup()
@@ -1594,6 +1595,7 @@ generate_and_process_blocklist_file()
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 
 	local list_type out_f="${ABL_DIR}/abl-blocklist"
+	local max_blocklist_file_size_B=$((max_blocklist_file_size_KB*1024))
 
 	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
 
@@ -1604,8 +1606,9 @@ generate_and_process_blocklist_file()
 		print_list_parts blocklist |
 		# optional deduplication
 		dedup |
+
 		# count entries
-		tee >(wc -wc > "${ABL_DIR}/blocklist_stats") |
+		tee >(wc -w > "${ABL_DIR}/blocklist_entries") |
 		# pack entries in 1024 characters long lines
 		convert_entries blocklist
 
@@ -1615,7 +1618,7 @@ generate_and_process_blocklist_file()
 			print_list_parts blocklist_ipv4 |
 			# optional deduplication
 			dedup |
-			tee >(wc -wc > "${ABL_DIR}/blocklist_ipv4_stats") |
+			tee >(wc -w > "${ABL_DIR}/blocklist_ipv4_entries") |
 			# add prefix
 			$SED_CMD 's/^/bogus-nxdomain=/'
 		fi
@@ -1626,11 +1629,12 @@ generate_and_process_blocklist_file()
 			cat "${ABL_DIR}/allowlist" |
 			# optional deduplication
 			dedup |
-			tee >(wc -wc > "${ABL_DIR}/allowlist_stats") |
+			tee >(wc -w > "${ABL_DIR}/allowlist_entries") |
 			# pack entries in 1024 characters long lines
 			convert_entries allowlist
 			rm -f "${ABL_DIR}/allowlist"
 		fi
+
 		# add the optional whitelist entry
 		if [ "${whitelist_mode}" = 1 ]
 		then
@@ -1639,18 +1643,29 @@ generate_and_process_blocklist_file()
 			${AWK_CMD} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
 			printf '\n'
 		fi
+
 		# add the blocklist test entry
 		printf '%s\n' "address=/adblocklean-test123.info/#"
 	} |
 
+	# count bytes
+	tee >(wc -c > "${ABL_DIR}/final_list_bytes") |
+
 	# limit size
-	{ head -c "${max_blocklist_file_size_KB}k"; cat 1>/dev/null; } |
+	{ head -c "${max_blocklist_file_size_B}"; head -c 1 > "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } |
 	if  [ -n "${final_compress}" ]
 	then
 		gzip
 	else
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
+
+	if [ -s "${ABL_DIR}/abl-too-big.tmp" ]; then
+		rm -f "${out_f}"
+		reg_failure "Final uncompressed blocklist exceeded ${max_blocklist_file_size_KB} kiB set in max_blocklist_file_size_KB config option!"
+		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
+		return 1
+	fi
 
 	reg_action -blue "Stopping dnsmasq." || return 1
 	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
@@ -1675,24 +1690,17 @@ generate_and_process_blocklist_file()
 
 	rm -f "${ABL_DIR}/dnsmasq_err"
 
-	local blocklist_entries_cnt blocklist_size_B blocklist_ipv4_entries_cnt blocklist_ipv4_size_B allowlist_entries_cnt allowlist_size_B final_list_size_B
+	local blocklist_entries_cnt blocklist_ipv4_entries_cnt allowlist_entries_cnt final_list_size_B
 
 	for list_type in blocklist blocklist_ipv4 allowlist
 	do
-		read_list_stats ${list_type}
+		read_list_stats "${list_type}_entries_cnt" "${ABL_DIR}/${list_type}_entries"
 	done
 
 	final_entries_cnt=$(( blocklist_entries_cnt + blocklist_ipv4_entries_cnt + allowlist_entries_cnt ))
 
-	final_list_size_B=$(( blocklist_size_B + blocklist_ipv4_size_B + allowlist_size_B))
+	read_list_stats final_list_size_B "${ABL_DIR}/final_list_bytes"
 	final_list_size_human="$(bytes2human "${final_list_size_B}")"
-
-	if [ $(( final_list_size_B / 1024 )) -ge "${max_blocklist_file_size_KB}" ]
-	then
-		reg_failure "Blocklist file size reached the maximum value set in config ($(int2human "${max_blocklist_file_size_KB}") KB)."
-		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
-		return 1
-	fi
 
 	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
 	then
@@ -3233,8 +3241,7 @@ uninstall()
 
 rc_disable()
 {
-	rm -f /etc/rc.d/S??adblock-lean
-	rm -f /etc/rc.d/K??adblock-lean
+	rm -f /etc/rc.d/S??adblock-lean /etc/rc.d/K??adblock-lean
 }
 
 rc_enable()
