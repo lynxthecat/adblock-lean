@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090,SC3045,SC2016,SC3044,SC2155
+# shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090,SC3045,SC2016,SC3044,SC2155,SC2015
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
 
@@ -141,7 +141,7 @@ get_file_size_human()
 # 1 - int
 bytes2human()
 {
-	local i=${1:-0} s=0 d=0 m=1024 fp='' S=''
+	local i="${1:-0}" s=0 d=0 m=1024 fp='' S=''
 	case "$i" in *[!0-9]*) reg_failure "bytes2human: Invalid unsigned integer '$i'."; return 1; esac
 	for S in B KiB MiB GiB TiB
 	do
@@ -188,7 +188,7 @@ int2human()
 get_uptime_ms()
 {
 	read -r uptime_ms _ < /proc/uptime
-	printf "${uptime_ms%.*}${uptime_ms#*.}0"
+	printf %s "${uptime_ms%.*}${uptime_ms#*.}0"
 }
 
 get_elapsed_time_str()
@@ -1201,8 +1201,8 @@ cleanup_dl_status_files()
 # 3 - Download Failure (retry makes sense)
 process_list_part()
 {
-	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part" \
-		dest_file="${ABL_DIR}/${list_type}.${list_id}" compress_part='' \
+	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part"
+	local dest_file="${ABL_DIR}/${list_type}.${list_id}" compress_part='' \
 		min_list_part_line_count='' list_part_size_B='' list_part_size_KB='' val_entry_regex
 
 	for v in 1 2 3 4 5; do
@@ -1325,7 +1325,7 @@ process_list_part()
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
 		rm -f "${dest_file}"
-		reg_failure "Downloaded ${list_type} part line count: $(int2human ${list_part_line_count}) less than configured minimum: $(int2human ${min_list_part_line_count})."
+		reg_failure "Downloaded ${list_type} part line count: $(int2human "${list_part_line_count}") less than configured minimum: $(int2human "${min_list_part_line_count}")."
 		return 3
 	fi
 
@@ -1632,9 +1632,8 @@ generate_and_process_blocklist_file()
 		# print allowlist parts
 		if [ "${use_allowlist}" = 1 ]
 		then
-			cat "${ABL_DIR}/allowlist" |
 			# optional deduplication
-			dedup |
+			dedup < "${ABL_DIR}/allowlist" |
 			tee >(wc -w > "${ABL_DIR}/allowlist_entries") |
 			# pack entries in 1024 characters long lines
 			convert_entries allowlist
@@ -1990,7 +1989,7 @@ import_blocklist_file()
 
 	if [ -n "${final_compress}" ]
 	then
-		printf "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.abl-extract_blocklist\"\n" > "${DNSMASQ_CONF_D}"/abl-conf-script &&
+		printf '%s\n' "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.abl-extract_blocklist\"" > "${DNSMASQ_CONF_D}"/abl-conf-script &&
 		printf '%s\n%s\n' "busybox gunzip -c ${DNSMASQ_CONF_D}/.abl-blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.abl-extract_blocklist ||
 			{ reg_failure "Failed to create conf-script for dnsmasq."; return 1; }
 	fi
@@ -2586,7 +2585,7 @@ setup()
 
 			if [ "${REPLY}" = y ]
 			then
-				if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ ${free_space_B} -gt ${utils_size_B} ]
+				if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ "${free_space_B}" -gt ${utils_size_B} ]
 				then
 					echo
 					$PKG_MANAGER update && $PKG_INSTALL_CMD ${pkgs2install% } && return 0
@@ -2760,14 +2759,13 @@ set_dnsmasq_dir() {
 					log_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
 					eval "local instance_${index}=\"${instance}\""
 					indexes="${indexes}${index}|"
-					indexes_nl="${indexes_nl}${index}${_NL}"
 				done
 				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
 				pick_opt "${indexes}a" || exit 1
 			elif [ -n "${LUCI_DNSMASQ_INSTANCE_INDEX}" ]
 			then
 				REPLY="${LUCI_DNSMASQ_INSTANCE_INDEX}"
-				is_included "${REPLY}" "${indexes_nl}" ||
+				is_included "${REPLY}" "${indexes}" "|" ||
 					{ reg_failure "dnsmasq instance with index '${REPLY}' does not exist."; return 1; }
 			else
 				return 1
@@ -2947,7 +2945,7 @@ start()
 		exit 1
 	fi
 
-	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human ${preprocessed_list_line_cnt}) entries."
+	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human "${preprocessed_list_line_cnt}") entries."
 
 	if ! generate_and_process_blocklist_file
 	then
@@ -3207,7 +3205,7 @@ uninstall()
 		print_msg "" "Delete the config directory ${ABL_CONFIG_DIR}?"
 		pick_opt "y|n"
 	else
-		REPLY="${luci_uninstall_rm_config}"
+		REPLY="${luci_uninstall_rm_config:-n}"
 	fi
 
 	if [ "${REPLY}" = y ]
