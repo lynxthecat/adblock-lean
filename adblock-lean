@@ -2760,14 +2760,13 @@ set_dnsmasq_dir() {
 					log_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
 					eval "local instance_${index}=\"${instance}\""
 					indexes="${indexes}${index}|"
-					indexes_nl="${indexes_nl}${index}${_NL}"
 				done
 				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
 				pick_opt "${indexes}a" || exit 1
 			elif [ -n "${LUCI_DNSMASQ_INSTANCE_INDEX}" ]
 			then
 				REPLY="${LUCI_DNSMASQ_INSTANCE_INDEX}"
-				is_included "${REPLY}" "${indexes_nl}" ||
+				is_included "${REPLY}" "${indexes}" "|" ||
 					{ reg_failure "dnsmasq instance with index '${REPLY}' does not exist."; return 1; }
 			else
 				return 1
