@@ -1020,7 +1020,10 @@ get_dnsmasq_instances() {
 			done | $SORT_CMD -u
 		)"		
 
-		for dir in ${conf_dirs}
+		IFS="${_NL_}"
+		set -- ${conf_dirs}
+		IFS="${IFS_OLD}"
+		for dir in "${@}"
 		do
 			add2list ALL_CONF_DIRS "${dir}"
 		done
