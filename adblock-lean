@@ -944,10 +944,8 @@ get_dnsmasq_instance_ns()
 			while read -r line
 			do
 				iface="${line%% *}"
-				case "${instance_ifaces}" in
-					"${iface}"|"${iface},"*|*" ${iface}"|*" ${iface},"*) ;;
-					*) continue
-				esac
+				[ -n "${iface}" ] &&
+				is_included "${iface}" "${instance_ifaces}" ", " || continue
 				ip_tmp="${line##*inet"${family#4}" }"
 				ip="${ip_tmp%%/*}"
 				[ -n "${ip}" ] && printf '%s\n' "${ip}"
