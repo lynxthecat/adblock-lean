@@ -1711,6 +1711,7 @@ generate_and_process_blocklist_file()
 	:
 }
 
+# Checks that dnsmasq instance with given ID is running and verifies that its index and conf-dir are same as in config
 # 1 - instance id
 # return codes:
 # 0 - dnsmasq running
