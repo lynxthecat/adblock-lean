@@ -1805,39 +1805,41 @@ check_active_blocklist()
 {
 	reg_action -blue "Checking active blocklist." || return 1
 
-	local ip instance_ns instance_ns_4 instance_ns_6 lookup_ips='' lookup_ok=
+	local family ip instance_ns def_ns ns_ips='' ns_ips_sp='' lookup_ok=
 
 	check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || return 1
-	get_dnsmasq_instance_ns "${DNSMASQ_INSTANCE}" &&
-	eval "instance_ns_4=\"\${${DNSMASQ_INSTANCE}_NS_4}\" instance_ns_6=\"\${${DNSMASQ_INSTANCE}_NS_6}\"" &&
-	[ -n "${instance_ns_4}" ] || [ -n "${instance_ns_6}" ] ||
-	{
-		log_msg "No ip addresses detected for dnsmasq instance '${DNSMASQ_INSTANCE}'. Using the loopback addresses."
-		eval "instance_ns_4=\"127.0.0.1\" instance_ns_6=\"::1\""
-	}
+	get_dnsmasq_instance_ns "${DNSMASQ_INSTANCE}"
 
 	for family in 4 6
 	do
-		eval "instance_ns=\"\${instance_ns_${family}}\""
-		for ip in ${instance_ns}
+		case "${family}" in
+			4) def_ns=127.0.0.1 ;;
+			6) def_ns=::1
+		esac
+		eval "instance_ns=\"\${${DNSMASQ_INSTANCE}_NS_${family}}\""
+		for ip in ${instance_ns:-"${def_ns}"}
 		do
-			add2list lookup_ips "${ip}"
+			add2list ns_ips "${ip}"
+			add2list ns_ips_sp "${ip}" ", "
 		done
 	done
 
-	local lookup_ok=
+	log_msg "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
+	reg_action -blue "Testing adblocking."
+
 	for i in $(seq 1 15)
 	do
-		try_lookup_domain "adblocklean-test123.info" "${lookup_ips}" -n && { lookup_ok=1; break; }
+		try_lookup_domain "adblocklean-test123.info" "${ns_ips}" -n && { lookup_ok=1; break; }
 		sleep 1
 	done
 
 	[ -n "${lookup_ok}" ] ||
 		{ reg_failure "Lookup of the bogus test domain failed with new blocklist."; return 4; }
 
+	reg_action -blue "Testing DNS resolution."
 	for domain in ${test_domains}
 	do
-		try_lookup_domain "${domain}" "${lookup_ips}" ||
+		try_lookup_domain "${domain}" "${ns_ips}" ||
 			{ local rv=${?}; reg_failure "Lookup of test domain '${domain}' failed with new blocklist."; return ${rv}; }
 	done
 
