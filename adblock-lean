@@ -2,6 +2,7 @@
 # shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090,SC3045,SC2016,SC3044,SC2155,SC2015,SC3057
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
+ABL_VERSION=0.6.0
 
 # Project homepage: https://github.com/lynxthecat/adblock-lean
 
