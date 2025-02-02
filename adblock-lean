@@ -163,7 +163,6 @@ int2human() {
 		return 1
 	esac
 	local in_num="${1#"${1%%[!0]*}"}" out_num=
-	: "${in_num:=0}"
 	while :
 	do
 		case "$in_num" in 
@@ -173,7 +172,7 @@ int2human() {
 			*) break
 		esac
 	done
-	printf %s "${in_num}${out_num}"
+	printf %s "${in_num:-0}${out_num}"
 }
 
 get_uptime_ms()
