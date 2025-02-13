@@ -100,7 +100,7 @@ Additional available commands:
 - `print_log`: print most recent session log
 - `upd_cron_job`: create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
                   if config option set to 'disable', remove existing cron job if any
-- `set_dnsmasq_dir`: analyze dnsmasq instances and set required options in the adblock-lean config
+- `select_dnsmasq_instance`: analyze dnsmasq instances and set required options in the adblock-lean config
 
 ## Basic configuration
 The config file for adblock-lean is located in `/etc/adblock-lean/config`.
