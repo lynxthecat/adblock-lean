@@ -213,7 +213,7 @@ fetch_abl_dist()
 {
 	local fetch_tarball_url="${2}" fetch_ref="${3}"
 	local fetch_dir fetch_rv tarball="${ABL_INST_DIR}/remote_abl.tar.gz"
-	[ "${1}" != '-n' ] && { log_msg "Downloading adblock-lean, version '${fetch_ref}'." || return 1; }
+	log_msg "Downloading adblock-lean, version '${fetch_ref}'."
 	rm -rf "${UCL_ERR_FILE}" "${ABL_INST_DIR}/lynxthecat-adblock-lean-"*
 	uclient-fetch "${fetch_tarball_url}" -O "${tarball}" 2> "${UCL_ERR_FILE}" &&
 	grep -q "Download completed" "${UCL_ERR_FILE}" &&
