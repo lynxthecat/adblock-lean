@@ -856,6 +856,19 @@ install_abl_files()
 	:
 }
 
+# get config format from config or main script file contents
+# input via STDIN or ${1}
+get_config_format()
+{
+	local conf_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
+	if [ -n "${1}" ]
+	then
+		$SED_CMD -En "${conf_form_sed_expr}" "${1}"
+	else
+		$SED_CMD -En "${conf_form_sed_expr}"
+	fi
+}
+
 
 ### MAIN COMMAND FUNCTIONS
 
@@ -1124,7 +1137,7 @@ update()
 
 	init_command update || { upd_failed; return 1; }
 
-	local file version='' force_update='' dist_dir='' ref='' tarball_url='' upd_channel=''
+	local file version='' force_update='' dist_dir='' ref='' tarball_url='' upd_channel='' prev_config_format upd_config_format
 
 	while getopts ":s:v:f" opt; do
 		case ${opt} in
@@ -1157,16 +1170,18 @@ update()
 		fetch_abl_dist dist_dir "${tarball_url}" "${ref}" || { upd_failed; return 1; }
 	fi
 
+	prev_config_format="${CONFIG_FORMAT#v}"
+	upd_config_format="$(get_config_format < "${dist_dir}/adblock-lean")"
+
 	unset action ABL_CMD # prevents infinite loop
 
 	(
-		prev_config_format="${CONFIG_FORMAT#v}"
 		# shellcheck disable=SC2030
 		UPD_SOURCED=1
 
 		# unset vars and functions from current version to have a clean slate with the new version
-		unset ABL_LIB_FILES LIBS_SOURCED CONFIG_FORMAT upd_config_format libs_missing
-		unset -f abl_post_update_1 abl_post_update_2 print_def_config get_config_format load_config update
+		unset ABL_LIB_FILES LIBS_SOURCED CONFIG_FORMAT libs_missing
+		unset -f abl_post_update_1 abl_post_update_2 load_config update
 
 		curr_dist_dir="${dist_dir}"
 
@@ -1190,15 +1205,6 @@ update()
 		check_util abl_post_update_1 && abl_post_update_1
 
 		printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES}" > "${curr_dist_dir}/inst_files"
-
-		if [ -n "${CONFIG_FORMAT}" ]
-		then
-			upd_config_format="${CONFIG_FORMAT#v}"
-		elif check_util print_def_config && check_util get_config_format # for compatibility when downgrading to older versions
-		then
-			upd_config_format="$(print_def_config | get_config_format)"
-		fi
-		printf %s "${upd_config_format}" > "${curr_dist_dir}/upd_config_format"
 
 		if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
 		then
