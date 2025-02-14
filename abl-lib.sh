@@ -314,19 +314,6 @@ do_setup()
 	:
 }
 
-# get config format from config file contents
-# input via STDIN or ${1}
-get_config_format()
-{
-	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
-	if [ -n "${1}" ]
-	then
-		$SED_CMD -n "${conf_form_sed_expr}" "${1}"
-	else
-		$SED_CMD -n "${conf_form_sed_expr}"
-	fi
-}
-
 # shellcheck disable=2034
 mk_preset_arrays()
 {
