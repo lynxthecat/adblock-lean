@@ -957,7 +957,9 @@ boot()
 
 start()
 {
-	reg_action -purple "Starting adblock-lean."
+	local version upd_channel
+	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
+	reg_action -purple "Starting adblock-lean, version ${version}."
 	init_command start || exit 1
 
 	if [ "${RANDOM_DELAY}" = "1" ]
@@ -1048,6 +1050,9 @@ status()
 	esac
 	get_abl_run_state
 	run_state=${?}
+	local version upd_channel
+	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
+	log_msg "adblock-lean (version ${version}) status:"
 	case ${run_state} in
 		0) ;;
 		3) log_msg -purple "adblock-lean is currently paused." ;;
