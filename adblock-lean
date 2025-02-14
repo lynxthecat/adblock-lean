@@ -70,21 +70,22 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 START=99
 STOP=4
 
-EXTRA_COMMANDS="setup status pause resume gen_stats select_dnsmasq_instance gen_config upd_cron_job print_log update uninstall"
+EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instance gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
 adblock-lean custom commands:
-	setup           run automated setup for adblock-lean
-	status          check dnsmasq and entries count of existing blocklist
-	pause           pause adblock-lean
-	resume          resume adblock-lean
-	gen_stats       generate dnsmasq stats for system log
-	select_dnsmasq_instance analyze dnsmasq instances and set dnsmasq conf-dir
-	gen_config      generate default config based on one of the pre-defined presets
-	upd_cron_job    create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	                if config option set to 'disable', remove existing cron job if any
-	print_log       print most recent session log
-	update          update adblock-lean to the latest version
-	uninstall       uninstall adblock-lean, remove all adblock-lean-related files and settings"
+	version                  print adblock-lean version
+	setup                    run automated setup for adblock-lean
+	status                   check dnsmasq and entries count of existing blocklist
+	pause                    pause adblock-lean
+	resume                   resume adblock-lean
+	gen_stats                generate dnsmasq stats for system log
+	select_dnsmasq_instance  analyze dnsmasq instances and set dnsmasq conf-dir
+	gen_config               generate default config based on one of the pre-defined presets
+	upd_cron_job             create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+	                         if config option set to 'disable', remove existing cron job if any
+	print_log                print most recent session log
+	update                   update adblock-lean to the latest version
+	uninstall                uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 # silence shellcheck warnings
 : "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}"
@@ -674,9 +675,16 @@ init_command()
 }
 
 # get version of adblock-lean file $1
+# assign version to var $2, update channel to var $3
 get_abl_version()
 {
-	${SED_CMD} -n '/^\s*#\s*ABL_VERSION=/{s/^\s*#\s*ABL_VERSION=//;s/\s*$//;p;q;}' "${1}"
+	unset "${2}" "${3}"
+	local gv_ver_string gv_version gv_upd_channel
+	gv_ver_string="$(${SED_CMD} -n '/^\s*#\s*ABL_VERSION=/{s/^\s*#\s*ABL_VERSION=//;s/\s*$//;p;q;}' "${1}")"
+	gv_version="${gv_ver_string##*_}"
+	gv_upd_channel="${gv_ver_string%"_${gv_version}"}"
+	: "${gv_upd_channel}" # silence shellcheck warning
+	eval "${2}"='${gv_version}' "${3}"='${gv_upd_channel}'
 }
 
 # Get GitHub ref and tarball url for specified version
@@ -771,14 +779,22 @@ abl_post_update_1()
 }
 
 # assigns path to extracted distribution directory to $1
+# (optional) 1 - '-n' to quiet
 # 1 - var name for output
 # 2 - tarball url
 # 3 - github ref
 fetch_abl_dist()
 {
-	local fetch_tarball_url="${2}" fetch_ref="${3}"
+	if [ "${1}" = '-n' ]
+	then
+		shift
+	else
+		reg_action -blue "Downloading adblock-lean, version '${3}'." || return 1
+	fi
+
+	local fetch_tarball_url="${2}"
 	local fetch_dir fetch_rv tarball="${ABL_UPD_DIR}/remote_abl.tar.gz"
-	[ "${1}" != '-n' ] && { reg_action -blue "Downloading adblock-lean, version '${fetch_ref}'." || return 1; }
+
 	rm -rf "${UCL_ERR_FILE}" "${ABL_UPD_DIR}/lynxthecat-adblock-lean-"*
 	uclient-fetch "${fetch_tarball_url}" -O "${tarball}" 2> "${UCL_ERR_FILE}" &&
 	grep -q "Download completed" "${UCL_ERR_FILE}" &&
@@ -842,6 +858,13 @@ install_abl_files()
 
 
 ### MAIN COMMAND FUNCTIONS
+
+version()
+{
+	local version='' upd_channel=''
+	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
+	print_msg "adblock-lean version: '${version}', update channel: '${upd_channel}'."
+}
 
 setup()
 {
