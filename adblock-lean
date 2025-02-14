@@ -1262,9 +1262,9 @@ uninstall()
 	[ -z "${addnmount_deleted}" ] &&
 		reg_failure "Failed to delete the custom addnmount entry from /etc/config/dhcp. Please delete manually."
 
-	log_msg -purple "" "Deleting the script from ${ABL_SERVICE_PATH}."
-	rm -f "${ABL_SERVICE_PATH}" ||
-		{ reg_failure "Failed to delete the script from '${ABL_SERVICE_PATH}'. Please delete manually."; exit 1; }
+	log_msg -purple "" "Deleting the scripts."
+	rm -f "${ABL_SERVICE_PATH}"
+	rm -rf "${ABL_LIB_DIR}"
 
 	log_msg -purple "" "Uninstall complete."
 	exit 0
