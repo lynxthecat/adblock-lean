@@ -5,7 +5,7 @@
 # silence shellcheck warnings
 : "${blue:=}" "${purple:=}" "${green:=}" "${red:=}" "${yellow:=}" "${n_c:=}"
 : "${blocklist_urls:=}" "${test_domains:=}" "${whitelist_mode:=}"
-: "${luci_cron_job_creation_failed}" "${luci_pkgs_install_failed}" "${luci_upd_config_format}"
+: "${luci_cron_job_creation_failed}" "${luci_pkgs_install_failed}" "${luci_tarball_url}"
 
 ### UTILITY FUNCTIONS
 
@@ -1075,7 +1075,7 @@ check_blocklist_compression_support()
 # 3 - automatic updates check is disabled for current update channel
 check_for_updates()
 {
-	local ref='' tarball_url='' curr_ver='' upd_channel='' no_upd='' upd_check_result=
+	local ref='' tarball_url='' curr_ver='' upd_channel='' no_upd=''
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in
 		release) ref=latest ;;
@@ -1087,7 +1087,13 @@ check_for_updates()
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
-	get_gh_ref_data "${ref}" ref tarball_url upd_channel ||
+	get_gh_ref_data "${ref}" ref tarball_url upd_channel
+	local gh_ref_rv=${?}
+	luci_tarball_url="${tarball_url}"
+
+	rm -rf "${ABL_UPD_DIR}"
+
+	[ "${gh_ref_rv}" != 0 ] &&
 	{
 		reg_failure "Failed to check for adblock-lean updates."
 		return 2
@@ -1097,40 +1103,12 @@ check_for_updates()
 	if [ "${ref}" = "${curr_ver}" ]
 	then
 		log_msg "The locally installed adblock-lean is the latest version."
-		upd_check_result=0
+		return 0
 	else
 		log_msg -yellow "The locally installed adblock-lean seems to be outdated (installed: '${curr_ver}', latest: '${ref}'.)."
 		log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
-		upd_check_result=1
+		return 1
 	fi
-
-	# check config format version for the luci app
-	reg_action "Checking config format of the new version."
-	if fetch_abl_dist -n upd_dir "${tarball_url}" "${ref}"
-	then
-		(
-			unset CONFIG_FORMAT
-			unset -f print_def_config get_config_format
-			curr_upd_dir="${ABL_UPD_DIR}"
-			# shellcheck source=/dev/null
-			. "${ABL_UPD_DIR}/adblock-lean" || exit 1
-
-			if [ -n "${CONFIG_FORMAT}" ]
-			then
-				upd_config_format="${CONFIG_FORMAT#v}"
-			elif check_util print_def_config && check_util get_config_format # for compatibility with older versions
-			then
-				upd_config_format="$(print_def_config | get_config_format)"
-			fi
-			printf %s "${upd_config_format}" > "${curr_upd_dir}/upd_config_format"
-		)
-		read -r luci_upd_config_format _ < "${ABL_UPD_DIR}/upd_config_format" 2>/dev/null
-	else
-		reg_failure "Failed to check latest adblock-lean config version."
-	fi
-
-	rm -rf "${ABL_UPD_DIR}"
-	return ${upd_check_result}
 }
 
 # returns 0 if crontab is readable and the crond process is running, 1 otherwise
