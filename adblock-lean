@@ -47,7 +47,6 @@ ABL_FILES="${ABL_SERVICE_PATH} ${ABL_LIB_FILES}"
 
 ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
 CONFIG_FORMAT=v6
-upd_config_format="${CONFIG_FORMAT}" # for compatibility with older versions when upgrading
 
 PID_FILE="${ABL_PID_DIR}/adblock-lean.pid"
 
