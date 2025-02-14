@@ -1075,37 +1075,38 @@ check_blocklist_compression_support()
 # 3 - automatic updates check is disabled for current update channel
 check_for_updates()
 {
-	local ref='' tarball_url='' curr_ver upd_channel no_upd='' upd_check_result=
-	curr_ver="$(get_abl_version "${ABL_SERVICE_PATH}")"
-	case "${curr_ver}" in
-		release_*) upd_channel=latest ;;
-		snapshot_*) upd_channel=snapshot ;;
-		*_*) no_upd="is '${curr_ver%%_*}'" ;;
-		*) no_upd="is unknown"
+	local ref='' tarball_url='' curr_ver='' upd_channel='' no_upd='' upd_check_result=
+	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
+	case "${upd_channel}" in
+		release) ref=latest ;;
+		snapshot) ref=snapshot ;;
+		'') no_upd="is unknown" ;;
+		*) no_upd="is '${upd_channel}'" ;;
 	esac
 	[ -n "${no_upd}" ] && { log_msg "" "adblock-lean update channel ${no_upd}. Automatic updates check is disabled."; return 3; }
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
-	get_gh_ref_data "${upd_channel}" ref tarball_url upd_channel ||
+	get_gh_ref_data "${ref}" ref tarball_url upd_channel ||
 	{
 		reg_failure "Failed to check for adblock-lean updates."
 		return 2
 	}
 
-	curr_ver="${curr_ver#*_}"
+	[ "${upd_channel}" = release ] && ref="${ref#v}"
 	if [ "${ref}" = "${curr_ver}" ]
 	then
 		log_msg "The locally installed adblock-lean is the latest version."
 		upd_check_result=0
 	else
-		log_msg -yellow "The locally installed adblock-lean seems to be outdated."
+		log_msg -yellow "The locally installed adblock-lean seems to be outdated (installed: '${curr_ver}', latest: '${ref}'.)."
 		log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
 		upd_check_result=1
 	fi
 
 	# check config format version for the luci app
-	if fetch_update upd_dir "${tarball_url}" "${ref}"
+	reg_action "Checking config format of the new version."
+	if fetch_abl_dist -n upd_dir "${tarball_url}" "${ref}"
 	then
 		(
 			unset CONFIG_FORMAT
