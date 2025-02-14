@@ -1037,6 +1037,7 @@ reload()
 # 4 - adblock-lean is stopped
 status()
 {
+	local run_state='' active_entries_cnt=0 dnsmasq_status=''
 	init_command status || exit 1
 	check_lock
 	case ${?} in
@@ -1046,34 +1047,37 @@ status()
 			exit 2
 	esac
 	get_abl_run_state
-	case ${?} in
+	run_state=${?}
+	case ${run_state} in
 		0) ;;
-		3) log_msg -purple "adblock-lean is currently paused."; exit 3 ;;
-		4) log_msg -purple "adblock-lean is stopped."; exit 4;
+		3) log_msg -purple "adblock-lean is currently paused." ;;
+		4) log_msg -purple "adblock-lean is stopped."
 	esac
-	check_active_blocklist
-	local dnsmasq_status=${?}
-	luci_dnsmasq_status=${dnsmasq_status}
 
-	local active_entries_cnt=0
-
-	if [ ${dnsmasq_status} = 0 ]
+	if [ "${run_state}" = 0 ]
 	then
-		active_entries_cnt="$(get_active_entries_cnt)" || reg_failure "No entries found in the blocklist file."
-
-		luci_good_line_count=${active_entries_cnt}
-		log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human "${active_entries_cnt}")."
-		log_msg -green "adblock-lean is active."
-		gen_stats -noexit
-	else
-		reg_failure "The dnsmasq check failed with existing blocklist file."
-		log_msg "Consider a full reset by running: 'service adblock-lean restart'."
+		check_active_blocklist
+		dnsmasq_status=${?}
+		luci_dnsmasq_status=${dnsmasq_status}
+		if [ ${dnsmasq_status} = 0 ]
+		then
+			active_entries_cnt="$(get_active_entries_cnt)" && [ "${active_entries_cnt}" != 0 ] ||
+				{ reg_failure "No entries found in the blocklist file."; run_state=1; }
+			luci_good_line_count=${active_entries_cnt}
+			log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human "${active_entries_cnt}")."
+			log_msg -green "adblock-lean is active."
+			gen_stats -noexit
+		else
+			reg_failure "The dnsmasq check failed with existing blocklist file."
+			run_state=1
+			log_msg "Consider a full reset by running: 'service adblock-lean restart'."
+		fi
 	fi
+
 	check_for_updates
 	luci_update_status=${?}
 
-	[ ${dnsmasq_status} = 0 ] && [ "${active_entries_cnt}" != 0 ] && exit 0
-	exit 1
+	exit ${run_state}
 }
 
 pause()
