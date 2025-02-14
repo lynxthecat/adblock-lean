@@ -320,7 +320,7 @@ try_mkdir -p "${ABL_INST_DIR}" || { inst_failed; exit 1; }
 
 if [ -n "${SIM_PATH}" ]
 then
-	print_msg "Running in simulation mode."
+	print_msg "" "Running in simulation mode."
 	[ -d "${SIM_PATH}" ] || { inst_failed "Directory '${SIM_PATH}' does not exist."; exit 1; }
 	[ -n "${VERSION}" ] || { inst_failed "Specify new version."; exit 1; }
 	UPD_CHANNEL=dev REF="${VERSION}"
@@ -403,6 +403,8 @@ fi
 		fi
 	fi
 ) 1>/dev/null || { inst_failed "Failed to source the new version of adblock-lean. Update is cancelled."; exit 1; }
+
+print_msg ""
 
 install_abl_files "${DIST_DIR}" "${UPD_CHANNEL}_${REF}" || { inst_failed; exit 1; }
 
