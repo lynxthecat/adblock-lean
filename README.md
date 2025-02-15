@@ -41,7 +41,7 @@ sh /tmp/abl-install.sh
 adblock-lean includes automated interactive setup which makes it easy to get going. If you prefer manual setup, skip the following section.
 
 ### Automated interactive setup
-
+When the installation is completed, the install script will suggest to launch automated setup. If for some reason you did not accept that suggestion, you can start automated setup with this command:
 ```bash
 sh /etc/init.d/adblock-lean setup
 ```
@@ -49,6 +49,7 @@ sh /etc/init.d/adblock-lean setup
 This will ask you several questions and make all important changes automatically, based on your replies.
 
 ### Manual setup
+If you prefer to set up adblock-lean manually (after successful installation), use following commands:
 ```bash
 chmod +x /etc/init.d/adblock-lean # Makes the script executable
 service adblock-lean gen_config   # Generates default config in /root/adblock-lean/config and sets up blocklist updates
