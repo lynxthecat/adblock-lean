@@ -43,7 +43,6 @@ ABL_UPD_DIR="/var/run/adblock-lean-update"
 
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
 ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh"
-ABL_FILES="${ABL_SERVICE_PATH} ${ABL_LIB_FILES}"
 
 ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
 CONFIG_FORMAT=v6
@@ -87,9 +86,10 @@ adblock-lean custom commands:
 	uninstall                uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 # silence shellcheck warnings
-: "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}"
-: "${boot_start_delay_s:=}" "${luci_log}" "${luci_pid_action}" "${luci_errors}"
-: "${luci_dnsmasq_status}" "${luci_good_line_count}" "${luci_update_status}"
+: "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}" "${purple}" "${TAB}" "${CR_LF}"
+: "${AWK_CMD}" "${SORT_CMD}"
+: "${luci_log}" "${luci_pid_action}" "${luci_errors}" "${luci_dnsmasq_status}"
+: "${luci_good_line_count}" "${luci_update_status}" "${luci_pkgs_install_failed}" "${luci_cron_job_creation_failed}"
 
 
 ### UTILITY FUNCTIONS
@@ -119,6 +119,27 @@ is_included() {
 		*)
 			return 1
 	esac
+}
+
+# adds a string to a newline-separated list if it's not included yet
+# 1 - name of var which contains the list
+# 2 - new value
+# 3 - (optional) list delimiter (instead of newline)
+# returns 1 if bad var name, 0 otherwise
+add2list() {
+	case "${1}" in *[!A-Za-z0-9_]*)
+		return 1
+	esac
+
+	local curr_list delim="${3:-"${_NL_}"}" fs=
+	eval "curr_list=\"\${${1}}\""
+	is_included "${2}" "${curr_list}" "${delim}" && return 0
+	case "${curr_list}" in
+		'') fs='' ;;
+		*) fs="${delim}" ;;
+	esac
+	eval "${1}=\"\${${1}}${fs}${2}\""
+	:
 }
 
 get_md5()
@@ -486,13 +507,13 @@ get_abl_run_state()
 	return 4
 }
 
-# 1 - path to directory
+# 1 (optional) - libs directory
 check_libs()
 {
-	local abl_file
+	local abl_file libs_dir="${1:-"${ABL_LIB_DIR}"}"
 	for abl_file in ${ABL_LIB_FILES}
 	do
-		abl_file="${1}/${abl_file##*/}"
+		abl_file="${libs_dir}/${abl_file##*/}"
 		[ -s "${abl_file}" ] && continue
 		log_msg -warn "adblock-lean library files are missing."
 		return 1
@@ -500,18 +521,29 @@ check_libs()
 	:
 }
 
+# 1 (optional) - path to directory containing the libs
 source_libs()
 {
 	[ -n "${LIBS_SOURCED}" ] && return 0
-	if ! check_libs "${ABL_LIB_DIR}"
+
+	local file libs_dir="${1:-"${ABL_LIB_DIR}"}" libs_missing='' libs_source_failed=''
+	if ! check_libs "${libs_dir}"
 	then
 		log_msg "Please run 'sh /etc/init.d/adblock-lean update -f' to fetch required files."
 		return 1
 	fi
 
 	# source libs
-	. "${ABL_LIB_DIR}/abl-lib.sh" && . "${ABL_LIB_DIR}/abl-process.sh" ||
+	for file in ${ABL_LIB_FILES}
+	do
+		file="${file##*/}"
+		[ -f "${libs_dir}/${file}" ] || { libs_source_failed=1 libs_missing=1; break; }
+		. "${libs_dir}/${file}" || { libs_source_failed=1; break; }
+	done
+
+	[ -n "${libs_source_failed}" ] &&
 	{
+		[ -n "${libs_missing}" ] && reg_failure "Missing library scripts."
 		reg_failure "Failed to source library scripts."
 		return 1
 	}
@@ -813,28 +845,40 @@ fetch_abl_dist()
 # 2 - version string to write to files
 install_abl_files()
 {
-	local file preinst_path files_list
+	local file preinst_path new_files curr_files
 	local dist_dir="${1}" version="${2}"
 
-	read -r files_list < "${dist_dir}/inst_files" ||
+	# read new files list
+	read -r new_files < "${dist_dir}/inst_files" ||
 	{
 		reg_failure "Failed to read file '${dist_dir}/inst_files'."
 		return 1
 	}
 
-	# check for obsolete files
-	for file in ${ABL_FILES}
+	# compile current files list
+	curr_files="${ABL_SERVICE_PATH}"
+	for file in ${ABL_LIB_FILES}
 	do
-		if [ -f "${file}" ] && ! is_included "${file}" "${files_list}" " "
+		add2list curr_files "${file}" " "
+	done
+
+	# delete obsolete files
+	for file in ${curr_files}
+	do
+		if [ -f "${file}" ] && ! is_included "${file}" "${new_files}" " "
 		then
 			log_msg "Deleting obsolete file ${file}."
 			rm -f "${file}"
 		fi
 	done
 
-	for file in ${files_list}
+	for file in ${new_files}
 	do
-		preinst_path="${dist_dir}/${file##*/}"
+		case "${file##*/}" in
+			adblock-lean) preinst_path="${dist_dir}/adblock-lean" ;;
+			*) preinst_path="${dist_dir}/${file}"
+		esac
+
 		# set new ABL_VERSION
 		update_version "${version}" "${preinst_path}"
 
@@ -842,10 +886,11 @@ install_abl_files()
 		then
 			log_msg "File '${file}' did not change - not updating."
 		else
-			log_msg "Copying file '${file}'."
-			cp "${preinst_path}" "${file}" ||
+			log_msg "Copying file '${file##*/}'."
+			{ [ -d "${file%/*}" ] || try_mkdir -p "${file%/*}"; } &&
+				cp "${preinst_path}" "${file}" ||
 			{
-				reg_failure "Failed to copy file '${file}'."
+				reg_failure "Failed to copy file '${file##*/}'."
 				return 1
 			}
 		fi
@@ -855,6 +900,7 @@ install_abl_files()
 	:
 }
 
+# shellcheck disable=SC2120
 # get config format from config or main script file contents
 # input via STDIN or ${1}
 get_config_format()
@@ -1189,25 +1235,12 @@ update()
 
 		# unset vars and functions from current version to have a clean slate with the new version
 		unset ABL_LIB_FILES LIBS_SOURCED CONFIG_FORMAT libs_missing
-		unset -f abl_post_update_1 abl_post_update_2 load_config update
+		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs
 
 		curr_dist_dir="${dist_dir}"
 
 		# shellcheck source=/dev/null
 		. "${dist_dir}/adblock-lean" || { failsafe_log "Error: Failed to source the downloaded script."; exit 1; }
-
-		for file in ${ABL_LIB_FILES}
-		do
-			lib_file="${curr_dist_dir}/${file##*/}"
-			[ -f "${lib_file}" ] && . "${lib_file}" || libs_missing=1
-		done
-
-		if [ -z "${libs_missing}" ]
-		then
-			LIBS_SOURCED=1
-		else
-			failsafe_log "Warning: failed to source libraries for the new version."
-		fi
 
 		# call abl_post_update_1() in new version
 		check_util abl_post_update_1 && abl_post_update_1
@@ -1218,7 +1251,7 @@ update()
 		then
 			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 			# load config and call abl_post_update_2() in new version
-			if check_util load_config
+			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}"; } && check_util load_config
 			then
 				load_config
 				check_util abl_post_update_2 && abl_post_update_2
