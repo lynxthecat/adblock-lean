@@ -4,6 +4,8 @@
 # silence shellcheck warnings
 : "${LIBS_SOURCED}"
 
+ABL_CONFIG_DIR=/etc/adblock-lean
+ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
 ABL_DIR=/var/run/adblock-lean
 ABL_INST_DIR="${ABL_DIR}/remote_abl"
@@ -76,6 +78,27 @@ is_included() {
 	esac
 }
 
+# adds a string to a newline-separated list if it's not included yet
+# 1 - name of var which contains the list
+# 2 - new value
+# 3 - (optional) list delimiter (instead of newline)
+# returns 1 if bad var name, 0 otherwise
+add2list() {
+	case "${1}" in *[!A-Za-z0-9_]*)
+		return 1
+	esac
+
+	local curr_list delim="${3:-"${_NL_}"}" fs=
+	eval "curr_list=\"\${${1}}\""
+	is_included "${2}" "${curr_list}" "${delim}" && return 0
+	case "${curr_list}" in
+		'') fs='' ;;
+		*) fs="${delim}" ;;
+	esac
+	eval "${1}=\"\${${1}}${fs}${2}\""
+	:
+}
+
 try_mv()
 {
 	[ -z "${1}" ] || [ -z "${2}" ] && { reg_failure "try_mv(): bad arguments."; return 1; }
@@ -136,6 +159,20 @@ reg_failure()
 {
 	log_msg -err "" "${1}"
 	luci_errors="${luci_errors}${1}${_NL_}"
+}
+
+# shellcheck disable=SC2120
+# get config format from config or main script file contents
+# input via STDIN or ${1}
+get_config_format()
+{
+	local conf_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
+	if [ -n "${1}" ]
+	then
+		$SED_CMD -En "${conf_form_sed_expr}" "${1}"
+	else
+		$SED_CMD -En "${conf_form_sed_expr}"
+	fi
 }
 
 # 1 - new version
@@ -233,28 +270,43 @@ fetch_abl_dist()
 # 2 - version string to write to files
 install_abl_files()
 {
-	local file preinst_path files_list
+	local file preinst_path new_files curr_files
 	local dist_dir="${1}" version="${2}"
 
-	read -r files_list < "${dist_dir}/inst_files" ||
+	# read new files list
+	read -r new_files < "${dist_dir}/new_files" ||
 	{
-		reg_failure "Failed to read file '${dist_dir}/inst_files'."
+		reg_failure "Failed to read file '${dist_dir}/new_files'."
 		return 1
 	}
 
-	# check for obsolete files
-	for file in ${ABL_FILES}
+	# read current files list
+	if [ -f "${dist_dir}/curr_files" ]
+	then
+		read -r curr_files < "${dist_dir}/curr_files" ||
+		{
+			reg_failure "Failed to read file '${dist_dir}/curr_files'."
+			return 1
+		}
+	fi
+
+	# delete obsolete files
+	for file in ${curr_files}
 	do
-		if [ -f "${file}" ] && ! is_included "${file}" "${files_list}" " "
+		if [ -f "${file}" ] && ! is_included "${file}" "${new_files}" " "
 		then
 			log_msg "Deleting obsolete file ${file}."
 			rm -f "${file}"
 		fi
 	done
 
-	for file in ${files_list}
+	for file in ${new_files}
 	do
-		preinst_path="${dist_dir}/${file##*/}"
+		case "${file##*/}" in
+			adblock-lean) preinst_path="${dist_dir}/adblock-lean" ;;
+			*) preinst_path="${dist_dir}/${file}"
+		esac
+
 		# set new ABL_VERSION
 		update_version "${version}" "${preinst_path}"
 
@@ -262,10 +314,11 @@ install_abl_files()
 		then
 			log_msg "File '${file}' did not change - not updating."
 		else
-			log_msg "Copying file '${file}'."
-			cp "${preinst_path}" "${file}" ||
+			log_msg "Copying file '${file##*/}'."
+			{ [ -d "${file%/*}" ] || try_mkdir -p "${file%/*}"; } &&
+				cp "${preinst_path}" "${file}" ||
 			{
-				reg_failure "Failed to copy file '${file}'."
+				reg_failure "Failed to copy file '${file##*/}'."
 				return 1
 			}
 		fi
@@ -337,28 +390,33 @@ fi
 	# unset vars and functions from current version to have a clean slate with the new version
 	unset_vars()
 	{
-		unset ABL_LIB_FILES LIBS_SOURCED upd_config_format libs_missing
-		unset -f abl_post_update_1 abl_post_update_2 print_def_config get_config_format load_config
+		unset ABL_LIB_FILES ABL_EXTRA_FILES
+		unset -f abl_post_update_1 abl_post_update_2 get_config_format load_config
 	}
 
-	is_update=
+	unset is_update prev_config_format
 
-	# check config format in the installed adblock-lean version
-	unset_vars
-	# shellcheck source=/dev/null
+	# register config format in the installed adblock-lean version
+	if [ -s "${ABL_CONFIG_FILE}" ]
+	then
+		prev_config_format="$(get_config_format < "${ABL_CONFIG_FILE}")"
+	fi
+
+	# register files list in the installed adblock-lean version
 	if [ -s "${ABL_SERVICE_PATH}" ]
 	then
+		unset_vars
 		is_update=1
 		touch "${DIST_DIR}/is_update"
+		curr_abl_files="${ABL_SERVICE_PATH}"
+		# shellcheck source=/dev/null
 		if . "${ABL_SERVICE_PATH}"
 		then
-			for file in ${ABL_LIB_FILES}
+			for file in ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}
 			do
-				lib_file="${DIST_DIR}/${file##*/}"
-				[ -f "${lib_file}" ] && . "${lib_file}" || libs_missing=1
+				add2list curr_abl_files "${file}" " "
 			done
-			[ -z "${libs_missing}" ] && check_util print_def_config && check_util get_config_format &&
-				prev_config_format="$(print_def_config | get_config_format)"
+			printf '%s\n' "${curr_abl_files}" > "${DIST_DIR}/curr_files"
 		fi
 	fi
 
@@ -366,35 +424,25 @@ fi
 	# shellcheck source=/dev/null
 	. "${DIST_DIR}/adblock-lean" || { failsafe_log "Error: Failed to source the downloaded script."; exit 1; }
 
-	for file in ${ABL_LIB_FILES}
-	do
-		lib_file="${DIST_DIR}/${file##*/}"
-		[ -f "${lib_file}" ] && . "${lib_file}" || libs_missing=1
-	done
-
-	if [ -z "${libs_missing}" ]
-	then
-		LIBS_SOURCED=1
-	else
-		failsafe_log "Warning: failed to source libraries for the new version."
-	fi
-
 	# if updating, call abl_post_update_1() in new version
 	[ -n "${is_update}" ] && check_util abl_post_update_1 && abl_post_update_1
 
-	printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES}" > "${DIST_DIR}/inst_files"
+	# register files included in the new version
+	new_abl_files="${ABL_SERVICE_PATH}"
+	for file in ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}
+	do
+		add2list new_abl_files "${file}" " "
+	done
+	printf '%s\n' "${new_abl_files}" > "${DIST_DIR}/new_files"
 
-	# check config format in the new adblock-lean version
-	if check_util print_def_config && check_util get_config_format
-	then
-		upd_config_format="$(print_def_config | get_config_format)"
-	fi
+	# register config format in the new adblock-lean version
+	check_util get_config_format && upd_config_format="$(get_config_format < "${DIST_DIR}/adblock-lean")"
 
 	if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
 	then
 		failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
-		# if updating, load config and call abl_post_update_2() in new version
-		if [ -n "${is_update}" ] && check_util load_config
+		# load config and call abl_post_update_2() in new version
+		if { ! check_util source_libs || source_libs "${DIST_DIR}${ABL_LIB_DIR}"; } && check_util load_config
 		then
 			load_config
 			check_util abl_post_update_2 && abl_post_update_2
