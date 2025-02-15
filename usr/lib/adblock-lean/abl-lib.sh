@@ -30,27 +30,6 @@ cnt_lines()
 	eval "${1}=${cnt}"
 }
 
-# adds a string to a newline-separated list if it's not included yet
-# 1 - name of var which contains the list
-# 2 - new value
-# 3 - (optional) list delimiter (instead of newline)
-# returns 1 if bad var name, 0 otherwise
-add2list() {
-	case "${1}" in *[!A-Za-z0-9_]*)
-		return 1
-	esac
-
-	local curr_list delim="${3:-"${_NL_}"}" fs=
-	eval "curr_list=\"\${${1}}\""
-	is_included "${2}" "${curr_list}" "${delim}" && return 0
-	case "${curr_list}" in
-		'') fs='' ;;
-		*) fs="${delim}" ;;
-	esac
-	eval "${1}=\"\${${1}}${fs}${2}\""
-	:
-}
-
 get_file_size_human()
 {
 	bytes2human "$(du -b "$1" | ${AWK_CMD} '{print $1}')"
