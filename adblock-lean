@@ -924,6 +924,12 @@ version()
 	print_msg "adblock-lean version: '${version}', update channel: '${upd_channel}'."
 }
 
+gen_config()
+{
+	init_command gen_config &&
+	do_gen_config
+}
+
 setup()
 {
 	# set luci feedback vars to failed, unset later upon success
