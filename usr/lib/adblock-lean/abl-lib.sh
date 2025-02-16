@@ -1220,38 +1220,6 @@ do_select_dnsmasq_instance() {
 	:
 }
 
-# shellcheck disable=SC2120
-# 1 - (optional) '-nostop' to not call stop on failure
-restart_dnsmasq()
-{
-	reg_action -blue "Restarting dnsmasq." || return 1
-
-	/etc/init.d/dnsmasq restart &> /dev/null ||
-	{
-		reg_failure "Failed to restart dnsmasq."
-		[ "${ABL_CMD}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
-		return 1
-	}
-
-	reg_action -blue "Waiting for dnsmasq initialization." || return 1
-	local dnsmasq_ok=
-	for i in $(seq 1 60)
-	do
-		nslookup localhost 127.0.0.1 &> /dev/null && { dnsmasq_ok=1; break; }
-		sleep 1;
-	done
-
-	[ -n "$dnsmasq_ok" ] ||
-	{
-		reg_failure "dnsmasq initialization failed."
-		[ "${ABL_CMD}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
-		return 1
-	}
-
-	log_msg -green "Restart of dnsmasq completed."
-	:
-}
-
 clean_dnsmasq_dir()
 {
 	# shellcheck disable=SC2317
