@@ -489,10 +489,8 @@ print_def_config()
 }
 
 # generates config
-gen_config()
+do_gen_config()
 {
-	init_command gen_config || return 1
-
 	local cnt
 
 	if [ -n "${DO_DIALOGS}" ] && [ -z "${luci_preset}" ]
