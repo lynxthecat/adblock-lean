@@ -1348,16 +1348,15 @@ uninstall()
 
 enable()
 {
-	if ! rc_enabled
+	if rc_enabled
 	then
-		log_msg -purple "" "Enabling the adblock-lean service."
-		rc_enable && rc_enabled ||
-			{ reg_failure "Failed to enable the adblock-lean service"; return 4; }
-	else
 		log_msg -green "The adblock-lean service is already enabled."
 		return 0
 	fi
-	load_config || return 3
+	log_msg -purple "" "Enabling the adblock-lean service."
+	rc_enable && rc_enabled ||
+		{ reg_failure "Failed to enable the adblock-lean service"; return 4; }
+	source_libs && load_config || return 3
 	[ -n "${cron_schedule}" ] && { upd_cron_job || return 6; }
 	:
 }
