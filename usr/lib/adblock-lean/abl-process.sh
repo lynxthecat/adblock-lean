@@ -664,7 +664,7 @@ restore_saved_blocklist()
 	}
 
 	local mv_src="${ABL_DIR}/prev_blocklist" mv_dest="${ABL_DIR}/abl-blocklist"
-	reg_action -purple "Restoring saved blocklist file." || { restore_failed; return 1; }
+	reg_action -blue "Restoring saved blocklist file." || { restore_failed; return 1; }
 
 	local final_compress=
 	if [ "${use_compression}" = 1 ]
