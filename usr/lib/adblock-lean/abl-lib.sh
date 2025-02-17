@@ -585,7 +585,7 @@ mk_def_preset()
 	case "${totalmem}" in
 		''|*[!0-9]*) reg_failure "\$totalmem has invalid value '${totalmem}'. Failed to determine system memory capacity."; return 1 ;;
 		*)
-			for preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | sed 'x;1!H;$!d;x') # loop over presets in reverse order
+			for preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | ${SED_CMD} 'x;1!H;$!d;x') # loop over presets in reverse order
 			do
 				eval "mem=\"\${${preset}_mem}\""
 				# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
