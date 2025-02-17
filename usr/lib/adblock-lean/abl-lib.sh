@@ -7,6 +7,13 @@
 : "${blocklist_urls:=}" "${test_domains:=}" "${whitelist_mode:=}"
 : "${luci_cron_job_creation_failed}" "${luci_pkgs_install_failed}" "${luci_tarball_url}"
 
+### GLOBAL VARIABLES
+RECOMMENDED_PKGS="gawk sed coreutils-sort"
+RECOMMENDED_UTILS="awk sed sort"
+ABL_CRON_SVC_PATH=/etc/init.d/cron
+ALL_PRESETS="mini small medium large large_relaxed"
+
+
 ### UTILITY FUNCTIONS
 
 try_mv()
@@ -296,17 +303,19 @@ do_setup()
 # shellcheck disable=2034
 mk_preset_arrays()
 {
+	local hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
+
 	# quasi-arrays for presets
 	# cnt - target elements count/1000, mem - memory in MB
-	mini_urls="${HAGEZI_DL_URL}/pro.mini-onlydomains.txt" \
+	mini_urls="${hagezi_dl_url}/pro.mini-onlydomains.txt" \
 		mini_cnt=85 mini_mem=64
-	small_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.mini-onlydomains.txt" \
+	small_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" \
 		small_cnt=250 small_mem=128
-	medium_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.medium-onlydomains.txt" \
+	medium_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt" \
 		medium_cnt=450 medium_mem=256
-	large_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
+	large_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
 		large_cnt=1000 large_mem=512
-	large_relaxed_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
+	large_relaxed_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
 		large_relaxed_cnt=1000 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 

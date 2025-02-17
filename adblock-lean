@@ -54,14 +54,8 @@ ABL_SESSION_LOG_FILE=/var/log/abl_session.log
 UCL_ERR_FILE="${ABL_DIR}/uclient-fetch_err"
 
 ABL_CRON_CMD="/etc/init.d/adblock-lean start"
-ABL_CRON_SVC_PATH=/etc/init.d/cron
-
-RECOMMENDED_PKGS="gawk sed coreutils-sort"
-RECOMMENDED_UTILS="awk sed sort"
-ALL_PRESETS="mini small medium large large_relaxed"
 
 ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
-HAGEZI_DL_URL="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
