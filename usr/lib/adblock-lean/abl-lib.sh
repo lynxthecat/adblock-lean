@@ -138,9 +138,9 @@ do_setup()
 			case "${installed_pkgs}" in
 				*"${util}"*) log_msg "${green}GNU ${util} is already installed.${n_c}" ;;
 				*)
-					missing_utils="${missing_utils}${util} "
-					missing_utils_print="${missing_utils_print}${blue}GNU ${util}${n_c}, "
-					missing_packages="${missing_packages}${blue}$(get_pkg_name "${util}")${n_c}, "
+					add2list missing_utils "${util}" " "
+					add2list missing_utils_print "${blue}GNU ${util}${n_c}" ", "
+					add2list missing_packages "${blue}$(get_pkg_name "${util}")${n_c}" ", "
 			esac
 		done
 
@@ -156,8 +156,8 @@ do_setup()
 
 			if [ -n "${DO_DIALOGS}" ]
 			then
-				print_msg "" "For improved performance while processing the lists, it is recommended to install ${missing_utils_print%, }." \
-					"Corresponding packages are: ${missing_packages%, }."
+				print_msg "" "For improved performance while processing the lists, it is recommended to install ${missing_utils_print}." \
+					"Corresponding packages are: ${missing_packages}."
 				[ -n "${free_space_B}" ] &&
 					print_msg "" "Available free space at mount point '${mount_point}': ${yellow}$(bytes2human "${free_space_B}")${n_c}." ""
 			fi
