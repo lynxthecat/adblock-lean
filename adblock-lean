@@ -1165,7 +1165,6 @@ resume()
 
 	reg_action -purple "Resuming adblock-lean." || exit 1
 	restore_saved_blocklist || stop 1
-	restart_dnsmasq || stop 1
 	log_msg -purple "adblock-lean is now resumed."
 	exit 0
 }
