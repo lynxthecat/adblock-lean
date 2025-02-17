@@ -1098,7 +1098,7 @@ status()
 	run_state=${?}
 	local version upd_channel
 	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
-	log_msg "adblock-lean (version ${version}) status:"
+	log_msg -purple "" "adblock-lean (version ${version}) status:"
 	case ${run_state} in
 		0) ;;
 		3) log_msg -purple "adblock-lean is currently paused." ;;
