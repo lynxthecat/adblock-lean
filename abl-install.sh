@@ -5,6 +5,7 @@
 : "${LIBS_SOURCED}"
 
 ABL_CONFIG_DIR=/etc/adblock-lean
+ABL_PID_DIR=/tmp/adblock-lean
 ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
 ABL_DIR=/var/run/adblock-lean
@@ -37,6 +38,16 @@ else
 	SED_CMD="busybox sed"
 fi
 
+
+# exit with code ${1}
+# if function 'abl_luci_exit' is defined, execute it before exit
+cleanup_and_exit()
+{
+	trap - INT TERM EXIT
+	rm -rf "${ABL_DIR}" "${ABL_PID_DIR}"
+	[ -n "${luci_sourced}" ] && abl_inst_luci_exit "${1}"
+	exit "${1}"
+}
 
 check_util()
 {
@@ -333,6 +344,9 @@ then
 	${ABL_SERVICE_PATH} stop
 fi
 
+trap 'cleanup_and_exit 1' INT TERM
+trap 'cleanup_and_exit ${?}' EXIT
+
 try_mkdir -p "${ABL_DIR}" || exit 1
 
 unset VERSION DIST_DIR REF TARBALL_URL UPD_CHANNEL
@@ -440,9 +454,9 @@ install_abl_files "${DIST_DIR}" "${UPD_CHANNEL}_${REF}" || { inst_failed; exit 1
 IS_UPDATE=
 [ -f "${DIST_DIR}/is_update" ] && IS_UPDATE=1
 
-rm -rf "${ABL_INST_DIR}" "${UCL_ERR_FILE}"
+rm -rf "${ABL_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
 
-log_msg "adblock-lean ${REF} has been installed."
+log_msg "" "adblock-lean ${REF} has been installed."
 
 if [ -n "${DO_DIALOGS}" ]
 then
