@@ -915,11 +915,19 @@ write_config()
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
 	log_msg "" "Saving new config file to '${ABL_CONFIG_FILE}'."
-	try_mkdir -p "${ABL_CONFIG_DIR}" || return 1
-	try_mv "${tmp_config}" "${ABL_CONFIG_FILE}" && return 0
-
-	rm -f "${tmp_config}"
-	return 1
+	try_mkdir -p "${ABL_CONFIG_DIR}" ||
+		{
+			rm -f "${tmp_config}"
+			reg_failure "Failed to create directory '${ABL_CONFIG_DIR}'."
+			return 1
+		}
+	try_mv "${tmp_config}" "${ABL_CONFIG_FILE}" ||
+		{
+			rm -f "${tmp_config}"
+			reg_failure "Failed to move file '${tmp_config}' to '${ABL_CONFIG_FILE}'."
+			return 1
+		}
+	:
 }
 
 
