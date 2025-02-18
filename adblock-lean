@@ -61,7 +61,7 @@ ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 START=99
-STOP=4
+STOP=04
 
 EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instance gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
@@ -176,14 +176,14 @@ pick_opt()
 
 rc_disable()
 {
-	rm -f /etc/rc.d/S??adblock-lean /etc/rc.d/K??adblock-lean
+	rm -f /etc/rc.d/S${START}adblock-lean /etc/rc.d/K${STOP}adblock-lean
 }
 
 rc_enable()
 {
 	local err=1
-		ln -sf "${ABL_SERVICE_PATH}" "/etc/rc.d/S${START}adblock-lean" && err=0
-		ln -sf "${ABL_SERVICE_PATH}" "/etc/rc.d/K${STOP}adblock-lean" && err=0
+		ln -sf "../init.d/adblock-lean" "/etc/rc.d/S${START}adblock-lean" && err=0
+		ln -sf "../init.d/adblock-lean" "/etc/rc.d/K${STOP}adblock-lean" && err=0
 	return $err
 }
 
