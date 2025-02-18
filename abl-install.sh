@@ -374,6 +374,7 @@ fi
 	}
 
 	unset is_update prev_config_format
+	export pid_file=/tmp/adblock-lean/adblock-lean.pid # for compatibility with older versions
 
 	# register config format in the installed adblock-lean version
 	if [ -s "${ABL_CONFIG_FILE}" ]
@@ -429,6 +430,7 @@ fi
 			failsafe_log "Please run 'service adblock-lean start' to initialize the new config."
 		fi
 	fi
+	:
 ) 1>/dev/null || { inst_failed "Failed to source the new version of adblock-lean. Update is cancelled."; exit 1; }
 
 print_msg ""
