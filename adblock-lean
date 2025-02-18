@@ -359,27 +359,22 @@ mk_lock()
 # 3 - lock file belongs to current PID
 check_lock()
 {
-	unset ABL_PID PID_ABL_CMD
+	unset LOCK_PID PID_ABL_CMD
 	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
 	[ ! -f "${PID_FILE}" ] && return 0
-	if IFS=" " read -r ABL_PID PID_ABL_CMD < "${PID_FILE}"
+	if IFS=" " read -r LOCK_PID PID_ABL_CMD < "${PID_FILE}"
 	then
-		case "${ABL_PID}" in
+		case "${LOCK_PID}" in
 			"${$}") return 3 ;;
-			*[!0-9]*) reg_failure "pid file '${PID_FILE}' contains unexpected string."; return 1 ;;
-			*)
-				kill -0 "${ABL_PID}" 2>/dev/null &&
-				{
-					reg_failure "pid file '${PID_FILE}' contains unexpected string."; 
-					return 2
-				}
+			*[!0-9]*) reg_failure "pid file '${PID_FILE}' contains unexpected string '${LOCK_PID}'."; return 1 ;;
+			*) kill -0 "${LOCK_PID}" 2>/dev/null && return 2
 		esac
 	else
 		reg_failure "Failed to read the pid file '${PID_FILE}'."
 		return 1
 	fi
 
-	log_msg -warn "Detected stale pid file '${PID_FILE}' for PID ${ABL_PID}. Removing."
+	log_msg -warn "Detected stale pid file '${PID_FILE}' for PID ${LOCK_PID}. Removing."
 	rm_lock || return 1
 	:
 }
@@ -400,7 +395,7 @@ update_pid_action() {
 	case ${?} in
 		3) ;;
 		1) return 1 ;;
-		2) reg_failure "update_pid_action(): pid file '${PID_FILE}' has unexpected pid '${ABL_PID}'."; return 1 ;;
+		2) reg_failure "update_pid_action(): pid file '${PID_FILE}' has unexpected pid '${LOCK_PID}'."; return 1 ;;
 		0) return 0
 	esac
 	mk_lock -f "${1}"
@@ -410,7 +405,7 @@ update_pid_action() {
 report_pid_action()
 {
 	local reported_pid="unknown PID"
-	[ -n "${ABL_PID}" ] && reported_pid="PID ${ABL_PID}"
+	[ -n "${LOCK_PID}" ] && reported_pid="PID ${LOCK_PID}"
 	: "${PID_ABL_CMD:="unknown action"}"
 	print_msg "adblock-lean (${reported_pid}) is performing action '${PID_ABL_CMD}'."
 	luci_pid_action=${PID_ABL_CMD}
@@ -1178,7 +1173,7 @@ update()
 		[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
 		[ -n "${fail_msg}" ] && reg_failure "${fail_msg}"
 		reg_failure "Failed to update adblock-lean."
-		rm -rf "${ABL_UPD_DIR}" "${UCL_ERR_FILE}"
+		rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
 	}
 
 	failsafe_log()
@@ -1267,7 +1262,7 @@ update()
 	) 1>/dev/null || { upd_failed "Failed to source the new version of adblock-lean. Update is cancelled."; return 1; }
 
 	install_abl_files "${dist_dir}" "${upd_channel}_${ref}" || { upd_failed; return 1; }
-	rm -rf "${ABL_UPD_DIR}" "${UCL_ERR_FILE}"
+	rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
 
 	# shellcheck disable=SC2031
 	[ -n "${UPD_SOURCED}" ] && return 0
