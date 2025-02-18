@@ -362,7 +362,7 @@ check_lock()
 	unset ABL_PID PID_ABL_CMD
 	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
 	[ ! -f "${PID_FILE}" ] && return 0
-	if read -r ABL_PID PID_ABL_CMD < "${PID_FILE}"
+	if IFS=" " read -r ABL_PID PID_ABL_CMD < "${PID_FILE}"
 	then
 		case "${ABL_PID}" in
 			"${$}") return 3 ;;
