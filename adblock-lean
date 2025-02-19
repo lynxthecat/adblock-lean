@@ -1083,7 +1083,7 @@ reload()
 # 4 - adblock-lean is stopped
 status()
 {
-	local run_state='' active_entries_cnt=0 dnsmasq_status=''
+	local run_state version upd_channel active_entries_cnt=0 dnsmasq_status=''
 	init_command status || exit 1
 	check_lock
 	case ${?} in
@@ -1094,13 +1094,18 @@ status()
 	esac
 	get_abl_run_state
 	run_state=${?}
-	local version upd_channel
 	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
-	log_msg -purple "" "adblock-lean (version ${version}) status:"
+	log_msg -purple "" "adblock-lean (${version}) status:"
 	case ${run_state} in
 		0) ;;
-		3) log_msg -purple "adblock-lean is currently paused." ;;
-		4) log_msg -purple "adblock-lean is stopped."
+		3) log_msg -yellow "" "adblock-lean is paused." ;;
+		4) log_msg -yellow "" "adblock-lean is stopped."
+	esac
+
+	rc_enabled
+	case ${?} in
+		0) log_msg -green "" "adblock-lean service is enabled." ;;
+		1) log_msg -yellow "" "adblock-lean service is disabled."
 	esac
 
 	if [ "${run_state}" = 0 ]
