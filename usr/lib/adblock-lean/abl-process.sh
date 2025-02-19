@@ -342,7 +342,7 @@ generate_and_process_blocklist_file()
 	}
 
 	# convert to dnsmasq format and pack 4 input lines into 1 output line
-	# intput from STDIN, output to STDIN
+	# intput from STDIN, output to STDOUT
 	# 1 - blocklist|allowlist
 	pack_entries_sed()
 	{
