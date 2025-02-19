@@ -346,7 +346,6 @@ generate_and_process_blocklist_file()
 	# 1 - blocklist|allowlist
 	pack_entries_sed()
 	{
-		local entry_type
 		case "$1" in
 			blocklist)
 				# packs 4 domains in one 'local=/.../' line
