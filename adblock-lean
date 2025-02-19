@@ -2,9 +2,11 @@
 # shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
+# Project homepage: https://github.com/lynxthecat/adblock-lean
 # ABL_VERSION=dev
 
-# Project homepage: https://github.com/lynxthecat/adblock-lean
+START=99
+STOP=04
 
 # Authors: @Lynx and @Wizballs (OpenWrt forum)
 # Contributors: @antonk; @dave14305 (OpenWrt forum)
@@ -59,9 +61,6 @@ ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-
-START=99
-STOP=04
 
 EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instance gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
