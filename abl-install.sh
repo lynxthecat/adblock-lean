@@ -189,7 +189,7 @@ get_gh_ref_data()
 			gh_channel=snapshot ;;
 		latest)
 			ref_fetch_url="${ABL_GH_URL_API}/releases"
-			jsonfilter_ptrn='@[@.prerelease=false,$.target_commitish="master"].tag_name' # latest tag is first on the list
+			jsonfilter_ptrn='@[@.prerelease=false]' # ignore pre-releases
 			gh_channel=release ;;
 		v[0-9]*)
 			gh_ref="${version}"
@@ -212,12 +212,12 @@ get_gh_ref_data()
 			uclient-fetch -q "${ref_fetch_url}" -O - 2> "${UCL_ERR_FILE}" |
 			jsonfilter -e "${jsonfilter_ptrn}" |
 			{
-				if [ "${version}" = snapshot ]
-				then
-					head -c7
-				else
-					head -n1
-				fi
+				case "${version}" in
+					snapshot) head -c7 ;;
+					latest)
+						jsonfilter -a -e '@[@.target_commitish="master"].tag_name' | # get latest tag for master
+						head -n1
+				esac
 				cat 1>/dev/null
 			}
 		)"
