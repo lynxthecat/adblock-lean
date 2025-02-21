@@ -1061,10 +1061,11 @@ check_for_updates()
 	case "${upd_channel}" in
 		release) ref=latest ;;
 		snapshot) ref=snapshot ;;
-		'') no_upd="is unknown" ;;
-		*) no_upd="is '${upd_channel}'" ;;
+		tag|commit) no_upd="was installed from a specific Git ${upd_channel}" ;;
+		'') no_upd="update channel is unknown" ;;
+		*) no_upd="update channel is '${upd_channel}'" ;;
 	esac
-	[ -n "${no_upd}" ] && { log_msg "" "adblock-lean update channel ${no_upd}. Automatic updates check is disabled."; return 3; }
+	[ -n "${no_upd}" ] && { log_msg "" "adblock-lean ${no_upd}. Automatic updates check is disabled."; return 3; }
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
