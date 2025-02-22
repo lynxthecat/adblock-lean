@@ -497,26 +497,41 @@ get_abl_run_state()
 }
 
 # 1 (optional) - libs directory
+# 2 (optional) - service directory
 check_libs()
 {
-	local abl_file libs_dir="${1:-"${ABL_LIB_DIR}"}"
-	for abl_file in ${ABL_LIB_FILES}
+	local lib_file service_file service_version lib_version
+	local libs_dir="${1:-"${ABL_LIB_DIR}"}" service_dir="${2:-"${ABL_SERVICE_PATH%/*}"}"
+	service_file="${service_dir}/adblock-lean"
+	get_abl_version "${service_file}" service_version
+	for lib_file in ${ABL_LIB_FILES}
 	do
-		abl_file="${libs_dir}/${abl_file##*/}"
-		[ -s "${abl_file}" ] && continue
-		log_msg -warn "adblock-lean library files are missing."
+		lib_file="${libs_dir}/${lib_file##*/}"
+		if [ -s "${lib_file}" ]
+		then
+			get_abl_version "${lib_file}" lib_version
+			if [ "${lib_version}" = "${service_version}" ]
+			then
+				continue
+			else
+				log_msg -warn "Version mismatch between ${service_file} ('${service_version}') and ${lib_file} ('${lib_version}')."
+			fi
+		else
+			log_msg -warn "adblock-lean library files are missing."
+		fi
 		return 1
 	done
 	:
 }
 
-# 1 (optional) - path to directory containing the libs
+# 1 (optional) - libs directory
+# 2 (optional) - service directory
 source_libs()
 {
 	[ -n "${LIBS_SOURCED}" ] && return 0
 
-	local file libs_dir="${1:-"${ABL_LIB_DIR}"}" libs_missing='' libs_source_failed=''
-	if ! check_libs "${libs_dir}"
+	local file libs_dir="${1:-"${ABL_LIB_DIR}"}" service_dir="${2:-"${ABL_SERVICE_PATH%/*}"}" libs_missing='' libs_source_failed=''
+	if ! check_libs "${libs_dir}" "${service_dir}"
 	then
 		log_msg "Please run 'sh /etc/init.d/adblock-lean update -f' to fetch required files."
 		return 1
@@ -698,13 +713,14 @@ init_command()
 # assign version to var $2, update channel to var $3
 get_abl_version()
 {
-	unset "${2}" "${3}"
+	unset "${2}" "${3:-dummy}"
 	local gv_ver_string gv_version gv_upd_channel
 	gv_ver_string="$(${SED_CMD} -n '/^\s*#\s*ABL_VERSION=/{s/^\s*#\s*ABL_VERSION=//;s/\s*$//;p;q;}' "${1}")"
 	gv_version="${gv_ver_string##*_}"
 	gv_upd_channel="${gv_ver_string%"_${gv_version}"}"
 	: "${gv_upd_channel}" # silence shellcheck warning
-	eval "${2}"='${gv_version}' "${3}"='${gv_upd_channel}'
+	eval "${2}"='${gv_version}'
+	[ -n "${3}" ] && eval "${3}"='${gv_upd_channel}'
 }
 
 # Get GitHub ref and tarball url for specified version
@@ -1004,8 +1020,8 @@ boot()
 
 start()
 {
-	local version upd_channel
-	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
+	local version
+	get_abl_version "${ABL_SERVICE_PATH}" version
 	reg_action -purple "Starting adblock-lean, version ${version}."
 	init_command start || exit 1
 
@@ -1086,7 +1102,7 @@ reload()
 # 4 - adblock-lean is stopped
 status()
 {
-	local run_state version upd_channel active_entries_cnt=0 dnsmasq_status=''
+	local run_state version active_entries_cnt=0 dnsmasq_status=''
 	init_command status || exit 1
 	check_lock
 	case ${?} in
@@ -1097,7 +1113,7 @@ status()
 	esac
 	get_abl_run_state
 	run_state=${?}
-	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
+	get_abl_version "${ABL_SERVICE_PATH}" version
 	log_msg -purple "" "adblock-lean (${version}) status:"
 	case ${run_state} in
 		0) ;;
@@ -1219,7 +1235,7 @@ update()
 		print_msg "${yellow}Running in simulation mode.${n_c}"
 		[ -d "${SIM_PATH}" ] || { upd_failed "Directory '${SIM_PATH}' does not exist."; return 1; }
 		[ -n "${version}" ] || { upd_failed "Specify new version."; return 1; }
-		upd_channel=dev ref="${version}"
+		upd_channel=release ref="${version}"
 		dist_dir="${ABL_UPD_DIR}/simulation"
 		try_mkdir -p "${dist_dir}" || { upd_failed; return 1; }
 		cp -rT "${SIM_PATH}" "${dist_dir}"
@@ -1257,7 +1273,8 @@ update()
 		then
 			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 			# load config and call abl_post_update_2() in new version
-			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}"; } && check_util load_config
+			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}/adblock-lean"; } &&
+					check_util load_config
 			then
 				load_config
 				check_util abl_post_update_2 && abl_post_update_2
