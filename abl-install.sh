@@ -439,7 +439,8 @@ fi
 	then
 		failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 		# load config and call abl_post_update_2() in new version
-		if { ! check_util source_libs || source_libs "${DIST_DIR}${ABL_LIB_DIR}"; } && check_util load_config
+		if { ! check_util source_libs || source_libs "${DIST_DIR}${ABL_LIB_DIR}" "${DIST_DIR}/adblock-lean"; } &&
+				check_util load_config
 		then
 			load_config
 			check_util abl_post_update_2 && abl_post_update_2
