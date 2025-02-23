@@ -1081,7 +1081,6 @@ check_for_updates()
 		return 2
 	}
 
-	[ "${upd_channel}" = release ] && ref="${ref#v}"
 	if [ "${ref}" = "${curr_ver}" ]
 	then
 		log_msg "The locally installed adblock-lean is the latest version."
