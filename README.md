@@ -32,15 +32,16 @@ adblock-lean includes the following features:
 
 Connect to your OpenWrt router [via SSH](https://openwrt.org/docs/guide-quick-start/sshadministration) and then follow the guide below.
 
-To download adblock-lean, use the following command:
+To download and install adblock-lean, use the following commands:
 ```bash
-uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/main/adblock-lean -O /etc/init.d/adblock-lean
+uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/abl-install.sh -O /tmp/abl-install.sh
+sh /tmp/abl-install.sh
 ```
 
 adblock-lean includes automated interactive setup which makes it easy to get going. If you prefer manual setup, skip the following section.
 
 ### Automated interactive setup
-
+When the installation is completed, the install script will suggest to launch automated setup. If for some reason you did not accept that suggestion, you can start automated setup with this command:
 ```bash
 sh /etc/init.d/adblock-lean setup
 ```
@@ -48,6 +49,7 @@ sh /etc/init.d/adblock-lean setup
 This will ask you several questions and make all important changes automatically, based on your replies.
 
 ### Manual setup
+If you prefer to set up adblock-lean manually (after successful installation), use following commands:
 ```bash
 chmod +x /etc/init.d/adblock-lean # Makes the script executable
 service adblock-lean gen_config   # Generates default config in /root/adblock-lean/config and sets up blocklist updates
@@ -86,21 +88,22 @@ Now run the command `service dnsmasq restart`.
 adblock-lean is written as a service and `service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
 
 Additional available commands:
+- `version`: prints adblock-lean version
 - `stop`: stops any running adblock-lean instances, unloads the blocklist and removes it from memory
 - `restart`: runs the `stop`, then `start` commands
 - `pause`: unloads the blocklist and creates a compressed copy of it
 - `resume`: decompresses the blocklist and loads it into dnsmasq
 - `update`: pulls an update for adblock-lean from Github (if available) and installs the updated version
 - `uninstall`: removes the adblock-lean service and optionally adblock-lean settings, and undoes any other changes adblock-lean made to the system
-- `gen_config`: generate default config based on one of the pre-defined presets
-- `setup`: run automated setup for adblock-lean
-- `status`: check dnsmasq and entries count of the active blocklist.
+- `gen_config`: generates default config based on one of the pre-defined presets
+- `setup`: runs automated setup for adblock-lean
+- `status`: checks dnsmasq and entries count of the active blocklist.
             If adblock-lean is doing something in the background, `status` will print which operation is currently performed.
-- `gen_stats`: generate dnsmasq stats (prints to system log)
-- `print_log`: print most recent session log
-- `upd_cron_job`: create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-                  if config option set to 'disable', remove existing cron job if any
-- `set_dnsmasq_dir`: analyze dnsmasq instances and set required options in the adblock-lean config
+- `gen_stats`: generates dnsmasq stats (prints to system log)
+- `print_log`: prints most recent session log
+- `upd_cron_job`: creates cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+                  if config option set to 'disable', removes existing cron job if any
+- `select_dnsmasq_instance`: analyzes dnsmasq instances and sets required options in the adblock-lean config
 
 ## Basic configuration
 The config file for adblock-lean is located in `/etc/adblock-lean/config`.

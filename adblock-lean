@@ -1,9 +1,12 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC3043,SC1091,SC3001,SC2018,SC2019,SC3020,SC3003,SC2181,SC2254,SC1090,SC3045,SC2016,SC3044,SC2155,SC2015
+# shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
-
 # Project homepage: https://github.com/lynxthecat/adblock-lean
+# ABL_VERSION=dev
+
+START=99
+STOP=04
 
 # Authors: @Lynx and @Wizballs (OpenWrt forum)
 # Contributors: @antonk; @dave14305 (OpenWrt forum)
@@ -21,13 +24,11 @@
 action_rv="${?}"
 
 LC_ALL=C
-IFS='	 
+DEFAULT_IFS='	 
 '
 _NL_='
 '
-_DELIM_="$(printf '\35')"
-CR_LF="$(printf '\r\n')"
-DEFAULT_IFS="${IFS}"
+IFS="${DEFAULT_IFS}"
 
 if [ -t 0 ]
 then
@@ -36,52 +37,70 @@ else
 	MSGS_DEST=/dev/null
 fi
 
-ABL_SERVICE_PATH=/etc/init.d/adblock-lean
-ABL_CONFIG_DIR=/etc/adblock-lean
-ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
 ABL_DIR=/var/run/adblock-lean
+ABL_LIB_DIR=/usr/lib/adblock-lean
+ABL_CONFIG_DIR=/etc/adblock-lean
 ABL_PID_DIR=/tmp/adblock-lean
+ABL_UPD_DIR="/var/run/adblock-lean-update"
+
+ABL_SERVICE_PATH=/etc/init.d/adblock-lean
+ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh"
+ABL_EXTRA_FILES="" # may be useful in the future
+
+ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
+CONFIG_FORMAT=v6
+
+PID_FILE="${ABL_PID_DIR}/adblock-lean.pid"
+
 ABL_UPDATE_LOG_FILE=/var/log/abl_update.log
 ABL_SESSION_LOG_FILE=/var/log/abl_session.log
-HAGEZI_DL_URL="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
+UCL_ERR_FILE="${ABL_DIR}/uclient-fetch_err"
+
 ABL_CRON_CMD="/etc/init.d/adblock-lean start"
-ABL_CRON_SVC_PATH="/etc/init.d/cron"
-RECOMMENDED_PKGS="gawk sed coreutils-sort"
-RECOMMENDED_UTILS="awk sed sort"
-ALL_PRESETS="mini small medium large large_relaxed"
+
+ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-START=99
-STOP=4
-
-EXTRA_COMMANDS="setup status pause resume gen_stats set_dnsmasq_dir gen_config upd_cron_job print_log update uninstall"
+EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instance gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
 adblock-lean custom commands:
-	setup           run automated setup for adblock-lean
-	status          check dnsmasq and entries count of existing blocklist
-	pause           pause adblock-lean
-	resume          resume adblock-lean
-	gen_stats       generate dnsmasq stats for system log
-	set_dnsmasq_dir analyze dnsmasq instances and set dnsmasq conf-dir
-	gen_config      generate default config based on one of the pre-defined presets
-	upd_cron_job    create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	                if config option set to 'disable', remove existing cron job if any
-	print_log       print most recent session log
-	update          update adblock-lean to the latest version
-	uninstall       uninstall adblock-lean, remove all adblock-lean-related files and settings"
+	version                  print adblock-lean version
+	setup                    run automated setup for adblock-lean
+	status                   check dnsmasq and entries count of existing blocklist
+	pause                    pause adblock-lean
+	resume                   resume adblock-lean
+	gen_stats                generate dnsmasq stats for system log
+	select_dnsmasq_instance  analyze dnsmasq instances and set dnsmasq conf-dir
+	gen_config               generate default config based on one of the pre-defined presets
+	upd_cron_job             create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+	                         if config option set to 'disable', remove existing cron job if any
+	print_log                print most recent session log
+	update                   update adblock-lean to the latest version
+	uninstall                uninstall adblock-lean, remove all adblock-lean-related files and settings"
+
+# silence shellcheck warnings
+: "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}" "${purple}" "${TAB}" "${CR_LF}"
+: "${AWK_CMD}" "${SORT_CMD}"
+: "${luci_log}" "${luci_pid_action}" "${luci_errors}" "${luci_dnsmasq_status}"
+: "${luci_good_line_count}" "${luci_update_status}" "${luci_pkgs_install_failed}" "${luci_cron_job_creation_failed}"
 
 
 ### UTILITY FUNCTIONS
 
-# sets global variables for colors
-set_colors()
+check_util()
 {
-	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[0m')
-	red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" n_c="${6}"
+	command -v "${1}" 1>/dev/null
 }
 
-
+# sets global variables for colors, tab delimiter and cr_lf
+set_ansi()
+{
+	local IFS=" "
+	# shellcheck disable=SC2046
+	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[0m \35 \t \r')
+	red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" n_c="${6}" _DELIM_="${7}" TAB="${8}" CR_LF="${9}${_NL_}"
+}
 
 # checks if string $1 is included in newline-separated list $2
 # if $3 is specified, uses the value as list delimiter
@@ -117,88 +136,85 @@ add2list() {
 	:
 }
 
-# 1 - var for output
-# 2 - input lines
-cnt_lines()
+get_md5()
 {
-	local line cnt IFS="${_NL_}"
-	for line in ${2}; do
-		case "${line}" in
-			'') ;;
-			*) cnt=$((cnt+1))
-		esac
-	done
-	eval "${1}=${cnt}"
+	md5sum "${1}" | cut -d' ' -f1
 }
 
-get_file_size_human()
+# 0 - (optional) '-p'
+# 1 - path
+try_mkdir()
 {
-	bytes2human "$(du -b "$1" | ${AWK_CMD} '{print $1}')"
+	local p=
+	[ "${1}" = '-p' ] && { p='-p'; shift; }
+	[ -d "${1}" ] && return 0
+	mkdir ${p} "${1}" || { reg_failure "Failed to create directory '${1}'."; return 1; }
+	:
 }
 
-# converts unsigned integer to [xB|xKiB|xMiB|xGiB|xTiB]
-# if result is not an integer, outputs up to 2 digits after decimal point
-# 1 - int
-bytes2human()
+# asks the user to pick an option
+# 1 - input in the format 'a|b|c'
+# output via $REPLY
+pick_opt()
 {
-	local i="${1:-0}" s=0 d=0 m=1024 fp='' S=''
-	case "$i" in *[!0-9]*) reg_failure "bytes2human: Invalid unsigned integer '$i'."; return 1; esac
-	for S in B KiB MiB GiB TiB
-	do
-		[ $((i > m && s < 4)) = 0 ] && break
-		d=$i i=$((i/m)) s=$((s+1))
-	done
-	d=$((d % m * 100 / m))
-	case $d in
-		0) printf "%s %s\n" "$i" "$S"; return ;;
-		[1-9]) fp="02" ;;
-		*0) d=${d%0}; fp="01"
-	esac
-	printf "%s.%${fp}d %s\n" "$i" "$d" "$S"
-}
-
-int2human()
-{
-	case "$1" in *[!0-9]*) reg_failure "int2human: Invalid unsigned integer '$1'."; return 1; esac
-	local in_num="$1" out_num=''
-
-	# strip leading zeroes
+	update_pid_action "Waiting for user input in console" || return 1
 	while :
 	do
-		case "$in_num" in
-			0?*) in_num="${in_num#0}" ;;
-			*) break
-		esac
+		printf %s "$1: " 1>${MSGS_DEST}
+		read -r REPLY
+		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1" 1>${MSGS_DEST}; continue; esac
+		eval "case \"$REPLY\" in 
+				$1) return 0 ;;
+				*) printf '\n%s\n\n' \"Please enter $1\" 1>${MSGS_DEST}
+			esac"
 	done
-
-	while :
-	do
-		case "$in_num" in 
-			????*)
-				out_num=",${in_num#"${in_num%???}"}${out_num}"
-				in_num="${in_num%???}" ;;
-			*) break
-		esac
-	done
-	out_num="${in_num}${out_num}"
-
-	echo "${out_num#,}"
 }
 
-get_uptime_ms()
+
+### HELPER FUNCTIONS
+
+rc_disable()
 {
-	read -r uptime_ms _ < /proc/uptime
-	printf %s "${uptime_ms%.*}${uptime_ms#*.}0"
+	rm -f /etc/rc.d/S${START}adblock-lean /etc/rc.d/K${STOP}adblock-lean
 }
 
-get_elapsed_time_str()
+rc_enable()
 {
-	# To use, first set initial uptime: initial_uptime_ms=$(get_uptime_ms)
-	# Then call this function to get elapsed time string at desired intervals, e.g.:
-	# printf "Elapsed time: $(get_elapsed_time_str)\n"
+	local err=1
+		ln -sf "../init.d/adblock-lean" "/etc/rc.d/S${START}adblock-lean" && err=0
+		ln -sf "../init.d/adblock-lean" "/etc/rc.d/K${STOP}adblock-lean" && err=0
+	return $err
+}
 
-	elapsed_time_s=$(( ($(get_uptime_ms)-${initial_uptime_ms:-$(get_uptime_ms)})/1000 ))
-	printf '%dm:%ds' $((elapsed_time_s/60)) $((elapsed_time_s%60))
+rc_enabled()
+{
+	[ -L "/etc/rc.d/S${START}adblock-lean" ] &&
+	[ -L "/etc/rc.d/K${STOP}adblock-lean" ]
+}
+
+# sets $AWK_CMD, $SED_CMD, $SORT_CMD
+detect_utils() {
+	if type gawk &> /dev/null
+	then
+		AWK_CMD="gawk"
+	else
+		AWK_CMD="busybox awk"
+	fi
+
+	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
+	then
+		SED_CMD="sed"
+	else
+		SED_CMD="busybox sed"
+	fi
+
+	if sort --version 2>/dev/null | grep -qe coreutils
+	then
+		SORT_CMD="sort"
+	else
+		SORT_CMD="busybox sort"
+	fi
+	:
 }
 
 # prints each argument into a separate line
@@ -241,856 +257,14 @@ log_msg()
 				write_log_file "${m}" "${err_l}"
 		esac
 	done
+	:
 }
 
 # 1 - msg
 # 2 - err level
 write_log_file()
 {
-	[ -n "${log_file}" ] && { printf '['; date +'%b %d %Y, %H:%M:%S' | tr -d '\n'; printf '] %s\n' "${2:-info}: ${1}"; } >> "${log_file}"
-}
-
-try_mv()
-{
-	[ -z "${1}" ] || [ -z "${2}" ] && { reg_failure "try_mv(): bad arguments."; return 1; }
-	mv -f "${1}" "${2}" || { reg_failure "Failed to move '${1}' to '${2}'."; return 1; }
-	:
-}
-
-# 0 - (optional) '-p'
-# 1 - path
-try_mkdir()
-{
-	local p=
-	[ "${1}" = '-p' ] && { p='-p'; shift; }
-	[ -d "${1}" ] && return 0
-	mkdir ${p} "${1}" || { reg_failure "Failed to create directory '${1}'."; return 1; }
-	:
-}
-
-try_gzip()
-{
-	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
-}
-
-try_gunzip()
-{
-	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
-}
-
-# asks the user to pick an option
-# 1 - input in the format 'a|b|c'
-# output via $REPLY
-pick_opt()
-{
-	update_pid_action "Waiting for user input in console" || return 1
-	while :
-	do
-		printf %s "$1: " 1>${MSGS_DEST}
-		read -r REPLY
-		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1" 1>${MSGS_DEST}; continue; esac
-		eval "case \"$REPLY\" in 
-				$1) return 0 ;;
-				*) printf '\n%s\n\n' \"Please enter $1\" 1>${MSGS_DEST}
-			esac"
-	done
-}
-
-
-### HELPER FUNCTIONS
-
-get_pkg_name()
-{
-	case "${1}" in
-		awk) printf gawk ;;
-		sed) printf sed ;;
-		sort) printf coreutils-sort
-	esac
-}
-
-# will be executed upon update from the old version of the script
-abl_post_update_1()
-{
-	:
-}
-
-report_utils()
-{
-	local awk_inst_tip='' sed_inst_tip='' sort_inst_tip=''
-
-	printf '\n'
-
-	for util in ${RECOMMENDED_UTILS}
-	do
-		case "${PKG_MANAGER}" in
-			opkg|apk)
-				eval "${util}_inst_tip=\" (${PKG_INSTALL_CMD} $(get_pkg_name "${util}"))\"" ;;
-			*)
-				unset "${util}_inst_tip" ;;
-		esac
-	done
-
-	case "${AWK_CMD}" in
-		busybox*)
-			log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal." ;;
-		*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
-	esac
-
-	case "${SED_CMD}" in
-		busybox*)
-			log_msg -yellow "GNU sed not detected so list processing will be a little slower."
-			log_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
-		*) log_msg -green "GNU sed detected so list processing will be fast."
-	esac
-
-	case "${SORT_CMD}" in
-		busybox*)
-			log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
-			log_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
-		*) log_msg -green "coreutils-sort detected so sort will be fast."
-	esac
-
-}
-
-# sets $AWK_CMD, $SED_CMD, $SORT_CMD
-detect_utils() {
-	detect_pkg_manager
-
-	if type gawk &> /dev/null
-	then
-		AWK_CMD="gawk"
-	else
-		AWK_CMD="busybox awk"
-	fi
-
-	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
-	then
-		SED_CMD="sed"
-	else
-		SED_CMD="busybox sed"
-	fi
-
-	if sort --version 2>/dev/null | grep -qe coreutils
-	then
-		SORT_CMD="sort"
-	else
-		SORT_CMD="busybox sort"
-	fi
-	:
-}
-
-# (optional) -d to print with allowed value types (otherwise print without)
-# (optional) -p to print with values from preset
-# (optional) -i to print with DNSMASQ_INSTANCE
-# (optional) -n to print with DNSMASQ_INDEX
-# (optional) -c to print with DNSMASQ_CONF_D
-print_def_config()
-{
-	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
-	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
-
-	# process args
-	local preset='' print_types='' dnsmasq_instance='' dnsmasq_index='' dnsmasq_conf_d=''
-	while getopts ":i:n:c:p:d" opt; do
-		case $opt in
-			i) dnsmasq_instance=$OPTARG ;;
-			n) dnsmasq_index=$OPTARG ;;
-			c) dnsmasq_conf_d=$OPTARG ;;
-			p) preset=$OPTARG ;;
-			d) print_types=1 ;;
-			*) ;;
-		esac
-	done
-
-	# @temp_workaround for updating: exploiting the fact that print_def_config()
-	# is called from updated script - remove a few months from now
-	# removes files with old filenames from dnsmasq dir
-	if [ "${action}" = update ] && [ -z "${dnsmasq_instance}" ] &&
-		[ -z "${dnsmasq_index}" ] && [ -z "${dnsmasq_conf_d}" ] && [ -z "${preset}" ] && [ -z "${print_types}" ]
-	then
-		local dnsmasq_tmp_d file dnsmasq_restart_req
-		for dnsmasq_tmp_d in "/tmp/dnsmasq.d" "$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
-		do
-			for file in "${dnsmasq_tmp_d}"/.blocklist.gz "${dnsmasq_tmp_d}"/blocklist \
-				"${dnsmasq_tmp_d}"/conf-script "${dnsmasq_tmp_d}"/.extract_blocklist
-			do
-				[ -f "${file}" ] && { rm -f "${file}"; dnsmasq_restart_req=1; }
-			done
-		done
-		[ -n "${dnsmasq_restart_req}" ] && restart_dnsmasq -nostop
-	fi
-
-	mk_preset_arrays
-	: "${preset:=small}"
-	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "print_def_config: \$preset var has invalid value."; exit 1; }
-	gen_preset "${preset}" -n
-
-	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
-
-	# adblock-lean configuration options
-	# config_format=v6
-	#
-	# values must be enclosed in double-quotes
-	# custom comments are not preserved after automatic config update
-
-	# Whitelist mode: only domains (and their subdomains) included in the allowlist(s) are allowed, all other domains are blocked
-	# In this mode, if blocklists are used in addition to allowlists, subdomains included in the blocklists will be blocked,
-	# including subdomains of allowed domains
-	whitelist_mode="0" @ 0|1
-
-	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
-	blocklist_urls="${blocklist_urls}" @ string
-	blocklist_ipv4_urls="" @ string
-	allowlist_urls="" @ string
-
-	# One or more *dnsmasq format* domain blocklist/ipv4 blocklist/allowlist urls separated by spaces
-	dnsmasq_blocklist_urls="" @ string
-	dnsmasq_blocklist_ipv4_urls="" @ string
-	dnsmasq_allowlist_urls="" @ string
-
-	# Path to optional local *raw domain* allowlist/blocklist files in the form:
-	# site1.com
-	# site2.com
-	local_allowlist_path="${ABL_CONFIG_DIR}/allowlist" @ string
-	local_blocklist_path="${ABL_CONFIG_DIR}/blocklist" @ string
-
-	# Test domains are automatically querried after loading the blocklist into dnsmasq,
-	# in order to verify that the blocklist didn't break DNS resolution
-	# If query for any of the test domains fails, previous blocklist is restored from backup
-	# If backup doesn't exist, the blocklist is removed and adblock-lean is stopped
-	# Leaving this empty will disable verification
-	test_domains="google.com microsoft.com amazon.com" @ string
-
-	# List part failed action:
-	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
-	# SKIP - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
-	list_part_failed_action="SKIP" @ SKIP|STOP
-
-	# Maximum number of download retries
-	max_download_retries="3" @ integer
-
-	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="${min_good_line_count}" @ integer
-
-	# Mininum number of lines of any individual downloaded part
-	min_blocklist_part_line_count="1" @ integer
-	min_blocklist_ipv4_part_line_count="1" @ integer
-	min_allowlist_part_line_count="1" @ integer
-
-	# Maximum size of any individual downloaded blocklist part
-	max_file_part_size_KB="${max_file_part_size_KB}" @ integer
-
-	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB="${max_blocklist_file_size_KB}" @ integer
-
-	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
-	deduplication="1" @ 0|1
-
-	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
-	use_compression="1" @ 0|1
-
-	# restart dnsmasq if previous blocklist was extracted and before generation of
-	# new blocklist thereby to free up memory during generaiton of new blocklist - enable (1) or disable (0)
-	initial_dnsmasq_restart="0" @ 0|1
-
-	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s="120" @ integer
-
-	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
-	# one of these functions will be executed when adblock-lean completes the execution of some commands,
-	# with the success or failure message passed in first argument
-	# report_success() is only executed upon completion of the 'start' command
-	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
-	custom_script="" @ string
-
-	# Crontab schedule expression for periodic list updates
-	cron_schedule="${cron_schedule:-"0 5 * * *"}" @ string
-
-	# dnsmasq instance and config directory
-	# normally this should be set automatically by the 'setup' command
-	DNSMASQ_INSTANCE="${dnsmasq_instance}" @ string
-	DNSMASQ_INDEX="${dnsmasq_index}" @ integer
-	DNSMASQ_CONF_D="${dnsmasq_conf_d}" @ string
-
-	EOT
-}
-
-
-# 1 - mini|small|medium|large|large_relaxed
-# 2 - (optional) '-d' to print the description
-# 2 - (optional) '-n' to print nothing (only assign values to vars)
-gen_preset()
-{
-	local val field mem tgt_lines_cnt_k lim_coeff final_entry_size_B source_entry_size_B
-
-	eval "mem=\"\${${1}_mem}\" tgt_lines_cnt_k=\"\${${1}_cnt}\" lim_coeff=\"\${${1}_coeff:-1}\" blocklist_urls=\"\${${1}_urls}\""
-
-	# Default values calculation:
-	# Values are rounded down to reasonable degree
-
-	final_entry_size_B=20 # assumption
-	source_entry_size_B=20 # assumption for raw domains format. dnsmasq source format not used by default
-
-	# target_lines_cnt / 3
-	min_good_line_count=$((tgt_lines_cnt_k*1000/3/10000*10000))
-
-	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
-	max_blocklist_file_size_KB=$(( ((tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024)/1000*1000 ))
-
-	case "${1}" in
-		mini) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
-		*)
-			# target_lines_cnt * source_entry_size_B * lim_coeff
-			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1000*source_entry_size_B*lim_coeff)/1024)/1000*1000 ))
-	esac
-
-	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
-
-	if [ "${2}" != '-n' ]
-	then
-		print_msg "${blue}Elements count:${n_c} ~${tgt_lines_cnt_k}k"
-		for field in blocklist_urls max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
-		do
-			eval "val=\"\${${field}}\""
-			print_msg "${blue}${field}${n_c}=\"${val}\""
-		done
-	fi
-}
-
-mk_preset_arrays()
-{
-	# quasi-arrays for presets
-	# cnt - target elements count/1000, mem - memory in MB
-	mini_urls="${HAGEZI_DL_URL}/pro.mini-onlydomains.txt" \
-		mini_cnt=85 mini_mem=64
-	small_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.mini-onlydomains.txt" \
-		small_cnt=250 small_mem=128
-	medium_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif.medium-onlydomains.txt" \
-		medium_cnt=450 medium_mem=256
-	large_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
-		large_cnt=1000 large_mem=512
-	large_relaxed_urls="${HAGEZI_DL_URL}/pro-onlydomains.txt ${HAGEZI_DL_URL}/tif-onlydomains.txt" \
-		large_relaxed_cnt=1000 large_relaxed_mem=1024 large_relaxed_coeff=2
-}
-
-# sets ${preset} to recommended preset, depending on system memory capacity
-mk_def_preset()
-{
-	unset preset totalmem
-	local mem cnt
-	local IFS="${DEFAULT_IFS}"
-	read -r _ totalmem _ < /proc/meminfo
-	case "${totalmem}" in
-		''|*[!0-9]*) reg_failure "\$totalmem has invalid value '${totalmem}'. Failed to determine system memory capacity."; return 1 ;;
-		*)
-			for preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | sed 'x;1!H;$!d;x') # loop over presets in reverse order
-			do
-				eval "mem=\"\${${preset}_mem}\""
-				# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
-				[ "${totalmem}" -ge $((mem * 800)) ] && break
-			done
-	esac
-	:
-}
-
-# get config format from config file contents
-# input via STDIN or ${1}
-get_config_format()
-{
-	local conf_form_sed_expr='/^[ \t]*#[ \t]*config_format=v/{s/.*=v//;p;q;}'
-	if [ -n "${1}" ]
-	then
-		$SED_CMD -n "${conf_form_sed_expr}" "${1}"
-	else
-		$SED_CMD -n "${conf_form_sed_expr}"
-	fi
-}
-
-# validate config and assign to variables
-#
-# 1 - path to file
-#
-# return codes:
-# 0 - Success
-# 1 - Error
-# 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
-#
-# sets ${missing_keys}, ${conf_fixes}, ${bad_value_keys}
-# and variables for luci:
-# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
-# *_legacy_entries *_bad_conf_format *_conf_fixes *_bad_value_keys
-# shellcheck disable=SC2317,SC2034
-parse_config()
-{
-	inval_e()
-	{
-		IFS="${DEFAULT_IFS}"
-		reg_failure "Invalid entry '$entry' in config."
-	}
-
-	add_conf_fix() { conf_fixes="${conf_fixes}${1}"$'\n'; }
-
-	# Following 3 functions are needed to minimize ugly hacks and tinkering inside eval
-	parse_entry()
-	{
-		val=${entry#"${key}="}
-
-		# Following 'case' is a temporary solution to allow easy config migration - remove a few months from now (Aug 2024)
-		case "${entry}" in
-			"compress_blocklist="?" #"*|"initial_dnsmasq_restart="?" #"*)
-				legacy_entries="${legacy_entries}${entry}"$'\n'
-				test_keys="${test_keys%%"${key}|"*}${test_keys#*"${key}|"}"
-				val=${val%% *}
-				return 0
-		esac
-
-		case "${val}" in
-			*\"*\"*\"*) inval_e; return 1 ;; # do not allow more than 2 double-quote marks
-			\"*\"*)
-				local tmp_val="${val##*\"}" # remove value enclosed in double-quotes
-				case "${tmp_val%%\#*}" in # do not allow characters between 2nd double-quote and in-line comment
-					'') ;;
-					*[!\ ${tab}]*) inval_e; return 1
-				esac
-				;;
-			*\"*\"*) inval_e; return 1 ;; # double quote mark must be the first character
-			*\"*) inval_e; return 1 ;; # do not allow 1 double-quote mark
-			*"#"*) inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
-			*) legacy_entries="${legacy_entries}${entry}"$'\n'
-		esac
-		val=${val#\"}
-		val=${val%\"*} # throw away everything after the 2nd double-quote mark
-		test_keys="${test_keys%%"${key}|"*}${test_keys#*"${key}|"}" # remove current key from test_keys
-	}
-
-	add_unexp_entry()
-	{
-		unexp_keys="${unexp_keys}${key} "
-		unexp_entries="${unexp_entries}${entry}"$'\n'
-	}
-
-	check_val()
-	{
-		eval "case \"${val}\" in
-			${valid_values}) return 0
-			esac"
-
-		bad_val_entries="${bad_val_entries}${entry} (should be $(print_def_config -d | \
-			$SED_CMD -n "/^[ \t]*${key}[ \t]*=/{s/^.*@[ \t]*//;s/[ \t]//g;s/|/ or /g;s/''/empty string/;s/integer/non-negative integer/;p;q;}"))"$'\n'
-		bad_value_keys="${bad_value_keys}${key}|"
-		return 1
-	}
-
-	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
-		test_keys entry key val bad_val_entries='' corrected_entries='' \
-		tab="$(printf '\t')" sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
-
-	unset curr_config_format def_config_format bad_value_keys \
-		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
-		luci_legacy_entries luci_bad_conf_format luci_conf_fixes preset
-
-	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
-
-	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
-
-	# extract entries from default config
-	def_config="$(print_def_config)" || return 1
-
-	# extract valid values from default config
-	local sed_valid_vals_expr="/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; /\"/d; s/[ \t]//g; s/^/val_/; s/=string/=*/; \
-		s/=integer/=*[!0-9]*|'') ;; */; s/=/=\"/; s/$/\"/"
-	local all_valid_values="$(print_def_config -d | $SED_CMD "${sed_conf_san_exp};${sed_valid_vals_expr}")"
-	# assign 'val_*' variables
-	eval "${all_valid_values}" || { reg_failure "Failed to assign config parameters to variables."; return 1; }
-
-	# extract keys from default config, convert to '|' separated list
-	# 'dummy|' is needed to avoid errors in eval
-	test_keys="dummy|$(printf '%s\n' "${def_config}" | $SED_CMD "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
-
-	# read and sanitize current config
-	curr_config="$($SED_CMD "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
-
-	# get config versions
-	curr_config_format="$(get_config_format "${1}")"
-	luci_curr_config_format=${curr_config_format}
-	def_config_format="$(printf %s "${def_config}" | get_config_format)"
-	luci_def_config_format=${def_config_format}
-
-	local IFS=$'\n'
-	for entry in ${curr_config}
-	do
-		case ${entry} in
-			*"${CR_LF}"*)
-				reg_failure "Config file contains Windows-format (CR LF) newlines. Convert the config file to Unix-format (LF) newlines."
-				return 1 ;;
-			*?=*) ;;
-			*) { inval_e; return 1; } ;;
-		esac
-		key="${entry%%=*}"
-		case "${key}" in *[!A-Za-z0-9_]*) inval_e; return 1; esac
-		# check if the key is in the default keys list, assign value to var if so
-		eval "case \"${key}\" in
-				${test_keys%|})
-					parse_entry || return 1
-					valid_values=\"\${val_${key}}\"
-					[ -z \"\${valid_values}\" ] && { reg_failure \"Config key '${key}' has no assigned valid values.\"; return 1; }
-					check_val && ${key}"='${val}'" ;;
-				*) add_unexp_entry
-			esac"
-	done
-
-	IFS="${DEFAULT_IFS}"
-
-	if [ -n "${unexp_entries}" ]
-	then
-		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
-		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
-		add_conf_fix "Remove unexpected entries from the config"
-		luci_unexp_keys=${unexp_keys% }
-		luci_unexp_entries=${unexp_entries%$'\n'}
-	fi
-
-	test_keys=${test_keys#dummy|}
-	if [ -n "${test_keys}" ]
-	then
-		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
-		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
-		reg_failure "Missing keys in config: '${missing_keys% }'."
-		print_msg "Corresponding default config entries:" "${missing_entries}"
-		add_conf_fix "Re-add missing config entries with default values"
-		luci_missing_keys=${missing_keys% }
-		luci_missing_entries=${missing_entries}
-	fi
-
-	if [ -n "${legacy_entries}" ]
-	then
-		reg_failure "Detected config entries in legacy format (missing double-quotes)."
-		print_msg "The following config entries must be converted to the new config format:" "${legacy_entries%$'\n'}"
-		add_conf_fix "Convert legacy config entries to the new format"
-		luci_legacy_entries=${legacy_entries%$'\n'}
-	fi
-
-	if [ -n "${bad_value_keys}" ]
-	then
-		corrected_entries="$(printf %s "${def_config}" | grep -E "^(${bad_value_keys%|})=")"
-		bad_value_keys="$(printf %s "${bad_value_keys}" | tr '|' ' ')"
-		reg_failure "Detected config entries with unexpected values."
-		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
-			"Corresponding default config entries:" "${corrected_entries}"
-		add_conf_fix "Replace unexpected values with defaults"
-		luci_bad_val_entries=${bad_val_entries%$'\n'}
-		luci_corrected_entries=${corrected_entries%$'\n'}
-	fi
-
-	if [ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ]
-	then
-		case "${curr_config_format}" in
-			*[!0-9]*|'')
-				log_msg -warn "" "Config format version is unknown or invalid."
-				add_conf_fix "Update config format version" ;;
-			*)
-				if [ "${curr_config_format}" -lt "${def_config_format}" ]
-				then
-					log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
-					add_conf_fix "Update config format version"
-				fi
-		esac
-	fi
-
-	conf_fixes="${conf_fixes%$'\n'}"
-	luci_conf_fixes="${conf_fixes}"
-
-	[ -n "${conf_fixes}" ] && return 2
-	:
-}
-
-# shellcheck disable=SC2120
-# 1 - (optional) '-f' to force fixing the config if it has issues
-load_config()
-{
-	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt parse_res url_conv_req
-
-	# Need to set do_dialogs here for compatibility when updating from earlier versions
-	local do_dialogs=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && do_dialogs=1
-
-	if [ ! -f "${ABL_CONFIG_FILE}" ]
-	then
-		reg_failure "Config file is missing."
-		log_msg "Generate default config using 'service adblock-lean gen_config'."
-		return 1
-	fi
-
-	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
-
-	# validate config and assign to variables
-	parse_config "${ABL_CONFIG_FILE}"
-	parse_res=${?}
-	[ ${parse_res} = 1 ] && { log_msg "${tip_msg}"; return 1; }
-
-	[ ${parse_res} = 0 ] && [ -z "${url_conv_req}" ] && return 0
-
-	# if not in interactive console, return error
-	[ -z "${do_dialogs}" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
-
-	# sanity check
-	[ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ] && { reg_failure "Failed to parse config."; return 1; }
-
-	if [ -n "${do_dialogs}" ] && [ "${1}" != '-f' ]
-	then
-		if [ -n "${conf_fixes}" ]
-		then
-			print_msg "" "${blue}Perform following automatic changes?${n_c}"
-			cnt=0
-			local IFS=$'\n'
-			for fix in ${conf_fixes}
-			do
-				[ -z "${fix}" ] && continue
-				cnt=$((cnt+1))
-				print_msg "${cnt}. ${fix}"
-			done
-			IFS="${DEFAULT_IFS}"
-			pick_opt "y|n" || return 1
-			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
-		fi
-	fi
-
-	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
-	:
-}
-
-# 1 - missing keys (whitespace-separated)
-fix_config()
-{
-	local missing_keys="${1}"
-
-	case "${missing_keys}" in
-		*DNSMASQ_CONF_D*|*DNSMASQ_INSTANCE*|*DNSMASQ_INDEX*)
-			set_dnsmasq_dir -n || return 1 ;;
-	esac
-
-	# recreate config from default while replacing values with values from the existing config
-	fixed_config="$(
-		IFS=$'\n'
-		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" | while read -r line
-		do
-			case ${line} in
-				\#*|'') printf '%s\n' "${line}"; continue ;;
-				*=*)
-					key=${line%%=*}
-					case " ${missing_keys} " in
-						*" ${key} "*) printf '%s\n' "${line}"; continue ;;
-						*)
-							eval "val=\"\${${key}}\""
-							printf '%s\n' "${key}=\"${val}\""
-							continue
-					esac
-			esac
-		done
-	)"
-
-	local old_config_f="/tmp/adblock-lean_config.old"
-	if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
-	then
-		reg_failure "Failed to save old config file as ${old_config_f}."
-		[ -z "${do_dialogs}" ] && return 1
-		log_msg "Proceed with suggested config changes?"
-		pick_opt "y|n" || return 1
-		[ "${REPLY}" = n ] && return 1
-	else
-		log_msg "" "Old config file was saved as ${old_config_f}."
-	fi
-
-	write_config "${fixed_config}" || return 1
-
-	:
-}
-
-# Writes config to temp file, validates it, moves it to permanent storage
-# 1 - new config file contents
-write_config()
-{
-	local tmp_config="${ABL_DIR}/write-config.tmp" missing_keys conf_fixes
-
-	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
-
-	if [ -n "${do_dialogs}" ] && [ -f "${ABL_CONFIG_FILE}" ]
-	then
-		print_msg "This will overwrite existing config. Proceed?"
-		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
-	fi
-
-	try_mkdir -p "${ABL_DIR}" || return 1
-	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
-	parse_config "${tmp_config}" ||
-		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
-
-	log_msg "" "Saving new config file to '${ABL_CONFIG_FILE}'."
-	try_mkdir -p "${ABL_CONFIG_DIR}" || return 1
-	try_mv "${tmp_config}" "${ABL_CONFIG_FILE}" && return 0
-
-	rm -f "${tmp_config}"
-	return 1
-}
-
-# Output via global vars: ${instance}_NS_4, ${instance}_NS_6
-# 1 - instance id
-get_dnsmasq_instance_ns()
-{
-	# get ip addresses for dnsmasq instances
-	local family ip_regex ip_regex_4 ip_regex_6 iface line instance_ns instance_ifaces ip ip_tmp
-	local instance="${1}"
-	ip_regex_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
-	ip_regex_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
-	for family in 4 6
-	do
-		eval "ip_regex=\"\${ip_regex_${family}}\""
-		eval "instance_ifaces=\"\${${instance}_IFACES}\""
-		instance_ns="$(
-			ip -o -${family} addr show | $SED_CMD -nE '/^\s*[0-9]+:\s*/{s/^\s*[0-9]+\s*:\s+//;s/scope .*//;s/\s+/ /g;p;}' |
-			while read -r line
-			do
-				iface="${line%% *}"
-				case "${instance_ifaces}" in
-					"${iface}"|"${iface},"*|*" ${iface}"|*" ${iface},"*) ;;
-					*) continue
-				esac
-				ip_tmp="${line##*inet"${family#4}" }"
-				ip="${ip_tmp%%/*}"
-				[ -n "${ip}" ] && printf '%s\n' "${ip}"
-			done | grep -E "^${ip_regex}$"
-		)"
-		eval "${instance}_NS_${family}=\"${instance_ns}\""
-	done
-	:
-}
-
-# populates global vars:
-# DNSMASQ_INSTANCES, DNSMASQ_INSTANCES_CNT, ${instance}_IFACES,
-# ALL_CONF_DIRS, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
-# ${instance}_INDEX, ${instance}_RUNNING
-get_dnsmasq_instances() {
-	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD i s f dir
-	DNSMASQ_INSTANCES=
-	DNSMASQ_INSTANCES_CNT=0
-	reg_action -blue "Checking dnsmasq instances."
-	. /usr/share/libubox/jshn.sh
-	json_load "$(/etc/init.d/dnsmasq info)" &&
-	json_get_keys nonempty &&
-	[ -n "${nonempty}" ] &&
-	json_select dnsmasq &&
-	json_select instances &&
-	json_get_keys instances || return 1
-
-	instance_index=0
-	for instance in ${instances}
-	do
-		case "${instance}" in
-			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
-		esac
-		json_is_a "${instance}" object || continue # skip if $instance is not object
-		json_select "${instance}" &&
-		json_get_var "${instance}_RUNNING" running &&
-		json_is_a command array &&
-		json_select command || return 1
-
-		add2list DNSMASQ_INSTANCES "${instance}" || return 1
-		eval "${instance}_INDEX=${instance_index}"
-		instance_index=$((instance_index+1))
-		l1_conf_files=
-
-		# look for '-C' in values, get next value which is instance's conf file
-		i=0
-		while json_is_a $((i+1)) string
-		do
-			i=$((i+1))
-			json_get_var s ${i}
-			[ "${s}" = '-C' ] || continue
-			json_get_var l1_conf_file $((i+1)) || return 1
-			add2list l1_conf_files "${l1_conf_file}" || return 1
-		done
-		json_select ..
-		json_select ..
-
-		IFS_OLD="$IFS"
-		IFS="${_NL_}"
-		set -- ${l1_conf_files}
-		IFS="${IFS_OLD}"
-
-		# get ifaces for instance
-		ifaces="$(${AWK_CMD} -F= '/^\s*interface=/ {if (!seen[$2]++) {ifaces = ifaces $2 ", "} } END {print ifaces}' "$@")"
-		eval "${instance}_IFACES=\"${ifaces%, }\""
-
-		# get conf-dirs for instance
-		conf_dirs="$(
-			for f in "${@}"
-			do
-				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
-			done | $SORT_CMD -u
-		)"		
-
-		for dir in ${conf_dirs}
-		do
-			add2list ALL_CONF_DIRS "${dir}"
-		done
-		eval "${instance}_CONF_DIRS=\"${conf_dirs}\""
-
-		cnt_lines conf_dirs_cnt "${conf_dirs}"
-		eval "${instance}_CONF_DIRS_CNT=\"${conf_dirs_cnt}\""
-	done
-	json_cleanup
-	cnt_lines DNSMASQ_INSTANCES_CNT "${DNSMASQ_INSTANCES}"
-
-	:
-}
-
-# return codes:
-# 0 - running
-# 1,2 - (reserved)
-# 3 - paused
-# 4 - stopped
-get_abl_run_state()
-{
-	local f
-	for f in "${DNSMASQ_CONF_D}/.abl-blocklist.gz" "${DNSMASQ_CONF_D}/abl-blocklist"
-	do
-		[ -f "${f}" ] && return 0
-	done
-
-	[ -f "${ABL_DIR}/prev_blocklist.gz" ] && return 3
-	return 4
-}
-
-clean_dnsmasq_dir()
-{
-	# shellcheck disable=SC2317
-	add_conf_dir()
-	{
-		local confdir
-		config_get confdir "${1}" confidr
-		add2list ALL_CONF_DIRS "${confdir}"
-	}
-
-	# gather conf dirs of running instances
-	get_dnsmasq_instances
-	# gather conf dirs of configured instances
-	config_load dhcp
-	config_foreach add_conf_dir dnsmasq
-	# gather conf dirs from /tmp/
-	local dir tmp_conf_dirs IFS="${_NL_}"
-	tmp_conf_dirs="$(find /tmp/ -type d \( -name "dnsmasq.cfg*" -o -name dnsmasq.d \))"
-	for dir in ${tmp_conf_dirs}
-	do
-		add2list ALL_CONF_DIRS "${dir}"
-	done
-
-	for dir in ${ALL_CONF_DIRS}
-	do
-		rm -f "${dir}"/.abl-blocklist.gz "${dir}"/abl-blocklist \
-			"${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
-	done
+	[ -n "${LOG_FILE}" ] && { printf '['; date +'%b %d %Y, %H:%M:%S' | tr -d '\n'; printf '] %s\n' "${2:-info}: ${1}"; } >> "${LOG_FILE}"
 }
 
 # exit with code ${1}
@@ -1098,761 +272,21 @@ clean_dnsmasq_dir()
 cleanup_and_exit()
 {
 	trap - INT TERM EXIT
-	[ -n "${cleanup_req}" ] && rm -rf "${ABL_DIR}"
-	[ -n "${lock_req}" ] && rm_lock
+	[ -n "${CLEANUP_REQ}" ] && rm -rf "${ABL_DIR}"
+	[ -n "${LOCK_REQ}" ] && rm_lock
 	local recent_log=
-	[ -n "${log_file}" ] && [ -s "${log_file}" ] && read -rd '' recent_log < "${log_file}"
+	[ -n "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ] && read -rd '' recent_log < "${LOG_FILE}"
 	luci_log="${recent_log}"
-	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && command -v report_failure 1>/dev/null
+	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_util report_failure
 	then
-		[ -n "${recent_log}" ] && failure_msg="${failure_msg}"$'\n'$'\n'"Session log:"$'\n'"${recent_log}"
+		[ -n "${recent_log}" ] && failure_msg="${failure_msg}${_NL_}${_NL_}Session log:${_NL_}${recent_log}"
 		report_failure "${failure_msg}"
 	fi
 	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
 	exit "${1}"
 }
 
-reg_failure()
-{
-	log_msg -err "" "${1}"
-	failure_msg="${failure_msg}${1}"$'\n'
-	luci_errors="${failure_msg}"
-}
-
-log_success()
-{
-	log_msg "${1}"
-	success_msg="${1}"
-	local recent_log=
-	[ -n "${log_file}" ] && [ -s "${log_file}" ] && read -rd '' recent_log < "${log_file}"
-	[ -n "${recent_log}" ] && success_msg="${success_msg}"$'\n'$'\n'"Session log:"$'\n'"${recent_log}"
-	if [ -n "${custom_scr_sourced}" ] && command -v report_success 1>/dev/null
-	then
-		report_success "${1}"
-	fi
-}
-
-try_export_existing_blocklist()
-{
-	export_existing_blocklist
-	case ${?} in
-		1) reg_failure "Failed to export the blocklist."; return 1 ;;
-		2) return 2
-	esac
-	:	
-}
-
-# return codes:
-# 0 - addnmount entry exists
-# 1 - addnmount entry doesn't exist
-# 2 - error
-check_addnmount()
-{
-	hash uci 1>/dev/null || { reg_failure "uci command was not found."; return 2; }
-	case "${DNSMASQ_INDEX}" in
-		''|*[!0-9]*)
-			reg_failure "Invalid index '${DNSMASQ_INDEX}' registered for dnsmasq instance '${DNSMASQ_INSTANCE}'."
-			return 2
-	esac
-
-	uci -q get dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount | grep -qE "('|^|[ \t])/bin(/\*|/busybox)*([ \t]|'|$)" && return 0
-	return 1
-}
-
-# return codes:
-# 0 - addnmount entry exists
-# 1 - addnmount entry doesn't exist
-# 2 - error
-check_blocklist_compression_support()
-{
-	if ! dnsmasq --help | grep -qe "--conf-script"
-	then
-		log_msg "" "Note: The version of dnsmasq installed on this system does not support blocklist compression." \
-			"Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\"" \
-			"To use dnsmasq compression (which saves memory), upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression."
-		return 1
-	fi
-
-	check_addnmount && return 0
-	[ ${?} = 2 ] && { reg_failure "Failed to check addnmount entry for dnsmasq instance '${DNSMASQ_INSTANCE}'"; return 2; }
-	log_msg -warn "" "No appropriate 'addnmount' entry in /etc/config/dhcp was identified." \
-		"Final blocklist compression will be disabled."
-	log_msg "addnmount entry is required to give dnsmasq access to busybox gunzip in order to extract compressed blocklist." \
-		"Run 'service adblock-lean setup' to have the entry created automatically, or follow the steps in the README." \
-		"Alternatively, change the 'use_compression' option in adblock-lean config to '0'."
-	return 1
-}
-
-cleanup_dl_status_files()
-{
-	rm -f "${ABL_DIR}/rogue_element" "${ABL_DIR}/uclient-fetch_err"
-}
-
-# 1 - list id
-# 2 - list type (allowlist|blocklist|blocklist_ipv4)
-# 3 - list origin (local or downloaded)
-# 4 - list format (dnsmasq or raw)
-# 5 - local list path (for local lists) or URL (for downloaded lists)
-#
-# return codes:
-# 0 - Success
-# 1 - General error (stop processing)
-# 2 - Bad List (retry doesn't make sense)
-# 3 - Download Failure (retry makes sense)
-process_list_part()
-{
-	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part"
-	local dest_file="${ABL_DIR}/${list_type}.${list_id}" compress_part='' \
-		min_list_part_line_count='' list_part_size_B='' list_part_size_KB='' val_entry_regex
-
-	for v in 1 2 3 4 5; do
-		eval "[ -z \"\${${v}}\" ]" && { reg_failure "${me}: Missing arguments."; return 1; }
-	done
-
-	case "${list_type}" in
-		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+|(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
-		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
-		*) reg_failure "${me}: Invalid list type '${list_type}'"; return 1
-	esac
-
-	case ${list_type} in
-		allowlist) dest_file="${ABL_DIR}/allowlist.0" ;;
-		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
-	esac
-
-	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
-
-	cleanup_dl_status_files
-
-	# Download or cat the list
-	case "${list_origin}" in
-		downloaded) uclient-fetch "${list_path}" -O- --timeout=3 2> "${ABL_DIR}/uclient-fetch_err";;
-		local) cat "${list_path}"
-	esac |
-	# limit size
-	{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
-
-	# Count bytes
-	tee >(wc -c > "${ABL_DIR}/list_part_size_B") |
-
-	# Remove comment lines and trailing comments, remove whitespaces
-	$SED_CMD 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
-
-	# Convert dnsmasq format to raw format
-	if [ "${list_format}" = dnsmasq ]
-	then
-		local rm_prefix_expr="s~^[ \t]*(local|server|address)=/~~" rm_suffix_expr=''
-		case "${list_type}" in
-			blocklist) rm_suffix_expr='s~/$~~' ;;
-			blocklist_ipv4) rm_prefix_expr="s~^[ \t]*bogus-nxdomain=~~" ;;
-			allowlist) rm_suffix_expr='s~/#$~~'
-		esac
-		$SED_CMD -E "${rm_prefix_expr};${rm_suffix_expr}" | tr '/' '\n'
-	else
-		cat
-	fi |
-
-	# Count entries
-	tee >(wc -w > "${ABL_DIR}/list_part_line_count") |
-
-	# Convert to lowercase
-	case "${list_type}" in allowlist|blocklist) tr 'A-Z' 'a-z' ;; *) cat; esac |
-
-	if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
-	then
-		case "${whitelist_mode}" in
-		0)
-			# remove allowlist domains from blocklist
-			${AWK_CMD} 'NR==FNR { if ($0 ~ /^\*\./) { allow_wild[substr($0,3)]; next }; allow[$0]; next }
-				{ n=split($1,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- )
-				{ addr = arr[i] "." addr; if ( (i>1 && addr in allow_wild) || addr in allow ) next } } 1' "${ABL_DIR}/allowlist" - ;;
-		1)
-			# only print subdomains of allowlist domains
-			${AWK_CMD} 'NR==FNR { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
-				for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${ABL_DIR}/allowlist" -
-		esac
-	else
-		cat
-	fi |
-
-	# check lists for rogue elements
-	tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${ABL_DIR}/rogue_element") |
-
-	# compress parts
-	if [ -n "${compress_part}" ]
-	then
-		gzip
-	else
-		cat
-	fi > "${dest_file}"
-
-	read -r list_part_size_B _ < "${ABL_DIR}/list_part_size_B" 2>/dev/null
-	list_part_size_KB=$(( (list_part_size_B + 0) / 1024 ))
-	list_part_size_human="$(bytes2human "${list_part_size_B:-0}")"
-	read -r list_part_line_count _ < "${ABL_DIR}/list_part_line_count" 2>/dev/null
-	: "${list_part_line_count:=0}"
-
-	rm -f "${ABL_DIR}/list_part_size_B" "${ABL_DIR}/list_part_line_count"
-
-	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
-	then
-		reg_failure "${list_origin} ${list_type} part size reached the maximum value set in config (${max_file_part_size_KB} KB)."
-		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
-		rm -f "${dest_file}"
-		return 2
-	fi
-
-	if [ "${list_origin}" = downloaded ] && ! grep -q "Download completed" "${ABL_DIR}/uclient-fetch_err"
-	then
-		rm -f "${dest_file}"
-		reg_failure "Download of new ${list_type} file part from: ${list_path} failed."
-		return 3
-	fi
-
-	if read -r rogue_element < "${ABL_DIR}/rogue_element"
-	then
-		rm -f "${dest_file}"
-		case "${rogue_element}" in
-			*"${CR_LF}"*)
-				log_msg -warn "${list_type} file from ${list_path} contains Windows-format (CR LF) newlines." \
-					"This file needs to be converted to Unix newline format (LF)." ;;
-			*) log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file from: ${list_path}."
-		esac
-		return 2
-	fi
-	rm -f "${ABL_DIR}/rogue_element"
-
-	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
-	then
-		rm -f "${dest_file}"
-		reg_failure "Downloaded ${list_type} part line count: $(int2human "${list_part_line_count}") less than configured minimum: $(int2human "${min_list_part_line_count}")."
-		return 3
-	fi
-
-	# keep the allowlist consolidated in one file
-	if [ "${list_type}" = allowlist ]
-	then
-		cat "${dest_file}" >> "${ABL_DIR}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
-		rm -f "${dest_file}"
-	fi
-
-	cleanup_dl_status_files
-	:
-}
-
-test_url_domains()
-{
-	local urls list_type list_format d domains='' dom IFS="${DEFAULT_IFS}"
-	for list_type in allowlist blocklist blocklist_ipv4
-	do
-		for list_format in raw dnsmasq
-		do
-			d=
-			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
-			eval "urls=\"\${${d}${list_type}_urls}\""
-			[ -z "${urls}" ] && continue
-			domains="${domains}$(printf %s "${urls}" | tr ' \t' '\n' | $SED_CMD -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}')${_NL_}"
-		done
-	done
-	[ -z "${domains}" ] && return 0
-
-	for dom in $(printf %s "${domains}" | $SORT_CMD -u)
-	do
-		try_lookup_domain "${dom}" "127.0.0.1" || { reg_failure "Lookup of '${dom}' failed."; return 1; }
-	done
-	:
-}
-
-gen_list_parts()
-{
-	# 1 - list origin (local or downloaded)
-	log_process_success()
-	{
-		local part=
-		[ "${1}" = downloaded ] && part=" part"
-		log_msg "Successfully processed ${list_type}${part} (source file size: ${list_part_size_human}, sanitized line count: $(int2human ${list_part_line_count}))."
-	}
-
-	handle_process_failure()
-	{
-		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-		log_msg "Skipping file and continuing."
-		:
-	}
-
-	local list_type='' list_format='' list_id list_line_cnt list_part_line_count and_compressing='' list_urls list_url local_list_path
-
-	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
-
-	rm -f "${ABL_DIR}/allowlist"
-
-	if [ "${whitelist_mode}" = 1 ]
-	then
-		# allow test domains
-		for d in ${test_domains}
-		do
-			printf '%s\n' "${d}" >> "${ABL_DIR}/allowlist"
-		done
-		use_allowlist=1
-	fi
-
-	for list_type in allowlist blocklist blocklist_ipv4
-	do
-		rm -f "${ABL_DIR}/${list_type}".*
-		list_id=0 list_line_cnt=0 list_part_line_count=0
-		and_compressing=
-		case ${list_type} in blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && and_compressing=" and compressing"; esac
-
-		# Local list
-		if [ "${list_type}" != blocklist_ipv4 ]
-		then
-			eval "local_list_path=\"\${local_${list_type}_path}\""
-			if [ ! -f "${local_list_path}" ]
-			then
-				log_msg -blue "" "No local ${list_type} identified."
-			elif [ ! -s "${local_list_path}" ]
-			then
-				log_msg -warn "" "Local ${list_type} file is empty."
-			else
-				log_msg -blue "" "Found local ${list_type}. Sanitizing${and_compressing}."
-				reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
-				process_list_part "${list_id}" "${list_type}" "local" "raw" "${local_list_path}"
-				case ${?} in
-					0)
-						log_process_success "local"
-						list_line_cnt=$(( list_line_cnt + list_part_line_count )) ;;
-					*) handle_process_failure || return 1
-				esac
-			fi
-		fi
-
-		# List parts download
-
-		for list_format in raw dnsmasq
-		do
-			local d=
-			local invalid_urls='' bad_hagezi_urls=''
-			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
-
-			eval "list_urls=\"\${${d}${list_type}_urls}\""
-			[ -z "${list_urls}" ] && continue
-
-			reg_action -blue "Starting ${list_format} ${list_type} part(s) download." || return 1
-
-			invalid_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
-				log_msg -warn "" "Invalid URLs detected:" "${invalid_urls}"
-
-			if [ "${list_format}" = raw ]
-			then
-				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
-				log_msg -warn "" "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
-					"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
-				case "${list_type}" in blocklist|allowlist)
-					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | $SED_CMD -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
-					[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
-						"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
-				esac
-			fi
-
-			for list_url in ${list_urls}
-			do
-				list_id=$((list_id+1))
-				retry=0
-				while :
-				do
-					retry=$((retry + 1))
-					list_part_line_count=0
-					reg_action "Downloading, checking and sanitizing ${list_format} ${list_type} part from: ${list_url}." || return 1
-					process_list_part "${list_id}" "${list_type}" "downloaded" "${list_format}" "${list_url}"
-					case ${?} in
-						0)
-							log_process_success "downloaded ${list_format}"
-							[ "${list_type}" = blocklist_ipv4 ] && use_blocklist_ipv4=1
-							list_line_cnt=$(( list_line_cnt + list_part_line_count ))
-							continue 2 ;;
-						1) return 1 ;;
-						2)
-							handle_process_failure || return 1
-							continue 2 ;;
-						3)
-					esac
-
-					if [ "${retry}" -ge "${max_download_retries}" ]
-					then
-						reg_failure "Three download attempts failed for URL ${list_url}."
-						handle_process_failure || return 1
-						continue 2
-					fi
-
-					reg_action -blue "Sleeping for 5 seconds after failed download attempt." || return 1
-					sleep 5
-					continue
-				done
-			done
-		done
-
-		if [ "${list_line_cnt}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${ABL_DIR}/allowlist" ]; }
-		then
-			case ${list_type} in
-				blocklist)
-					[ "${whitelist_mode}" = 0 ] && return 1
-					log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
-				allowlist)
-					log_msg "Not using any allowlist for blocklist processing."
-					use_allowlist=0
-					continue ;;
-				blocklist_ipv4) use_blocklist_ipv4=0
-			esac
-		fi
-
-		if [ "${list_type}" = allowlist ]
-		then
-			log_msg -green "" "Successfully generated allowlist with $(int2human ${list_line_cnt}) entries."
-			log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
-			use_allowlist=1
-		fi
-		preprocessed_list_line_cnt="$((preprocessed_list_line_cnt+list_line_cnt))"
-	done
-	:
-}
-
-generate_and_process_blocklist_file()
-{
-	convert_entries()
-	{
-		if [ "${AWK_CMD}" = gawk ]
-		then
-			pack_entries_awk "$@"
-		else
-			pack_entries_sed "$@"
-		fi
-	}
-
-	# convert to dnsmasq format and pack 4 input lines into 1 output line
-	# intput from STDIN, output to STDIN
-	# 1 - blocklist|allowlist
-	pack_entries_sed()
-	{
-		local entry_type
-		case "$1" in
-			blocklist)
-				# packs 4 domains in one 'local=/.../' line
-				$SED_CMD "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${_NL_}};\$!{n;a /${_NL_}};\$!{n; a /${_NL_}};a @" ;;
-			allowlist)
-				# packs 4 domains in one 'server=/.../#'' line
-				{ cat; printf '\n'; } | $SED_CMD '/^$/d;$!N;$!N;$!N;s~\n~/~g;s~^~server=/~;s~/*$~/#@~' ;;
-			*) printf ''; return 1
-		esac | tr -d '\n' | tr "@" '\n'
-	}
-
-	# convert to dnsmasq format and pack input lines into 1024 characters-long lines
-	# intput from STDIN, output to STDOUT
-	# 1 - blocklist|allowlist
-	pack_entries_awk()
-	{
-		local entry_type len_lim=1024 allow_char=''
-		case "$1" in
-			blocklist) entry_type=local ;;
-			allowlist) entry_type=server allow_char="#" ;;
-		esac
-
-		len_lim=$((len_lim-${#entry_type}-${#allow_char}-2))
-		# shellcheck disable=SC2016
-		$AWK_CMD -v ORS="" -v m=${len_lim} -v a="${allow_char}" -v t=${entry_type} '
-			BEGIN {al=0; r=0; s=""}
-			NF {
-				r=r+1
-				if (r==1) {print t "=/"}
-				l=length($0)
-				n=al+1+l
-				if (n<=m) {al=n; print $0 "/"; next}
-				else {print a "\n" t "=/" $0 "/"; al=l+1}
-			}
-			END {print a "\n"}'
-	}
-
-	# 1 - list type (blocklist|blocklist_ipv4)
-	print_list_parts()
-	{
-		local find_name="${1}.[0-9]*" find_cmd="cat"
-		[ "${use_compression}" = 1 ] && { find_name="${1}.*.gz" find_cmd="gunzip -c"; }
-		find "${ABL_DIR}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
-		printf ''
-	}
-
-	# 1 - var name for output
-	# 2 - path to file
-	read_list_stats()
-	{
-		read -r "${1?}" 2>/dev/null < "${2}"
-		eval ": \"\${${1}:=0}\""
-	}
-
-	dedup()
-	{
-		if [ "${deduplication}" = 1 ]
-		then
-			$SORT_CMD -u -
-		else
-			cat
-		fi
-	}
-
-	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
-
-	local list_type out_f="${ABL_DIR}/abl-blocklist"
-	local max_blocklist_file_size_B=$((max_blocklist_file_size_KB*1024))
-
-	[ -n "${final_compress}" ] && out_f="${out_f}.gz"
-
-	rm -f "${ABL_DIR}/dnsmasq_err"
-
-	{
-		# print blocklist parts
-		print_list_parts blocklist |
-		# optional deduplication
-		dedup |
-
-		# count entries
-		tee >(wc -w > "${ABL_DIR}/blocklist_entries") |
-		# pack entries in 1024 characters long lines
-		convert_entries blocklist
-
-		# print ipv4 blocklist parts
-		if [ "${use_blocklist_ipv4}" ]
-		then
-			print_list_parts blocklist_ipv4 |
-			# optional deduplication
-			dedup |
-			tee >(wc -w > "${ABL_DIR}/blocklist_ipv4_entries") |
-			# add prefix
-			$SED_CMD 's/^/bogus-nxdomain=/'
-		fi
-
-		# print allowlist parts
-		if [ "${use_allowlist}" = 1 ]
-		then
-			# optional deduplication
-			dedup < "${ABL_DIR}/allowlist" |
-			tee >(wc -w > "${ABL_DIR}/allowlist_entries") |
-			# pack entries in 1024 characters long lines
-			convert_entries allowlist
-			rm -f "${ABL_DIR}/allowlist"
-		fi
-
-		# add the optional whitelist entry
-		if [ "${whitelist_mode}" = 1 ]
-		then
-			# add block-everything entry: local=/*a/*b/*c/.../*z/
-			printf 'local=/'
-			${AWK_CMD} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
-			printf '\n'
-		fi
-
-		# add the blocklist test entry
-		printf '%s\n' "address=/adblocklean-test123.info/#"
-	} |
-
-	# count bytes
-	tee >(wc -c > "${ABL_DIR}/final_list_bytes") |
-
-	# limit size
-	{ head -c "${max_blocklist_file_size_B}"; head -c 1 > "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } |
-	if  [ -n "${final_compress}" ]
-	then
-		gzip
-	else
-		cat
-	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
-
-	if [ -s "${ABL_DIR}/abl-too-big.tmp" ]; then
-		rm -f "${out_f}"
-		reg_failure "Final uncompressed blocklist exceeded ${max_blocklist_file_size_KB} kiB set in max_blocklist_file_size_KB config option!"
-		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
-		return 1
-	fi
-
-	reg_action -blue "Stopping dnsmasq." || return 1
-	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
-
-	# check the final blocklist with dnsmasq --test
-	reg_action -blue "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
-	if  [ -n "${final_compress}" ]
-	then
-		gunzip -fc "${out_f}"
-	else
-		cat "${out_f}"
-	fi |
-	dnsmasq --test -C - 2> "${ABL_DIR}/dnsmasq_err"
-	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ABL_DIR}/dnsmasq_err"
-	then
-		local dnsmasq_err="$(head -n10 "${ABL_DIR}/dnsmasq_err" | $SED_CMD '/^$/d')"
-		rm -f "${out_f}" "${ABL_DIR}/dnsmasq_err"
-		reg_failure "The dnsmasq test on the final blocklist failed."
-		log_msg "dnsmasq --test errors:" "${dnsmasq_err:-"No specifics: probably killed because of OOM."}"
-		return 2
-	fi
-
-	rm -f "${ABL_DIR}/dnsmasq_err"
-
-	local blocklist_entries_cnt blocklist_ipv4_entries_cnt allowlist_entries_cnt final_list_size_B
-
-	for list_type in blocklist blocklist_ipv4 allowlist
-	do
-		read_list_stats "${list_type}_entries_cnt" "${ABL_DIR}/${list_type}_entries"
-	done
-
-	final_entries_cnt=$(( blocklist_entries_cnt + blocklist_ipv4_entries_cnt + allowlist_entries_cnt ))
-
-	read_list_stats final_list_size_B "${ABL_DIR}/final_list_bytes"
-	final_list_size_human="$(bytes2human "${final_list_size_B}")"
-
-	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
-	then
-		reg_failure "Entries count ($(int2human "${final_entries_cnt}")) is below the minimum value set in config ($(int2human "${min_good_line_count}"))."
-		return 1
-	fi
-
-	log_msg -green "New blocklist file check passed."
-	log_msg "Final list uncompressed file size: ${final_list_size_human}."
-
-	:
-}
-
-# 1 - instance id
-# return codes:
-# 0 - dnsmasq running
-# 1 - dnsmasq instance is not running or other error
-check_dnsmasq_instance()
-{
-	local instance_running dnsmasq_conf_dirs please_run="Please run 'service adblock-lean set_dnsmasq_dir'."
-	[ -n "${1}" ] ||
-	{
-		reg_failure "dnsmasq instance is not set. ${please_run}"
-		return 1
-	}
-
-	[ -n "${DNSMASQ_CONF_D}" ] ||
-	{
-		reg_failure "dnsmasq config directory is not set. ${please_run}"
-		return 1
-	}
-
-	get_dnsmasq_instances ||
-	{
-		reg_failure "No running dnsmasq instances found."
-		stop -noexit
-		get_dnsmasq_instances ||
-		{
-			reg_failure "dnsmasq service appears to be broken."
-			return 1
-		}
-	}
-
-	eval "instance_running=\"\${${1}_RUNNING}\"" &&
-	[ "${instance_running}" = 1 ] ||
-	{
-		reg_failure "dnsmasq instance '${1}' is not running."
-		stop -noexit
-		get_dnsmasq_instances &&
-		eval "instance_running=\"\${${1}_RUNNING}\"" &&
-		[ "${instance_running}" = 1 ] ||
-		{
-			reg_failure "dnsmasq instance '${1}' is misconfigured or not running. ${please_run}"
-			return 1
-		}
-	}
-
-	eval "dnsmasq_conf_dirs=\"\${${1}_CONF_DIRS}\""
-	is_included "${DNSMASQ_CONF_D}" "${dnsmasq_conf_dirs}" ||
-	{
-		reg_failure "Conf-dir for dnsmasq instance '${1}' changed (was: '${DNSMASQ_CONF_D}'). ${please_run}"
-		return 1
-	}
-
-	eval "instance_index=\"\${${1}_INDEX}\""
-	[ "${instance_index}" = "${DNSMASQ_INDEX}" ] ||
-	{
-		reg_failure "dnsmasq instances changed: actual instance index '${instance_index}' doesn't match configured index '${DNSMASQ_INDEX}'. ${please_run}"
-		return 1
-	}
-
-	[ -d "${DNSMASQ_CONF_D}" ] ||
-	{
-		reg_failure "Conf-dir '${DNSMASQ_CONF_D}' does not exist. dnsmasq instance '${1}' is misconfigured. ${please_run}"
-		return 1
-	}
-	:
-}
-
-# 1 - domain
-# 2 - nameservers
-# 3 - (optional) '-n': don't check if result is 127.0.0.1 or 0.0.0.0
-try_lookup_domain()
-{
-	local ns_res ip lookup_ok=
-	for ip in ${2}
-	do
-		ns_res="$(nslookup "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break; }
-	done
-	[ -n "${lookup_ok}" ] || return 2
-
-	[ "${3}" = '-n' ] && return 0
-
-	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^(Address: *0\.0\.0\.0|Address: *127\.0\.0\.1)$' &&
-		{ reg_failure "Lookup of '${1}' resulted in 0.0.0.0 or 127.0.0.1."; return 3; }
-	:
-}
-
-# return values:
-# 0 - dnsmasq is running, and all checks passed
-# 1 - dnsmasq is not running
-# 2 - dnsmasq is running, but one of the test domains failed to resolve
-# 3 - dnsmasq is running, but one of the test domains resolved to 0.0.0.0
-# 4 - dnsmasq is running, but the blocklist test domain failed to resolve (blocklist not loaded)
-check_active_blocklist()
-{
-	reg_action -blue "Checking active blocklist." || return 1
-
-	local ip instance_ns instance_ns_4 instance_ns_6 lookup_ips='' lookup_ok=
-
-	check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || return 1
-	get_dnsmasq_instance_ns "${DNSMASQ_INSTANCE}" &&
-	eval "instance_ns_4=\"\${${DNSMASQ_INSTANCE}_NS_4}\" instance_ns_6=\"\${${DNSMASQ_INSTANCE}_NS_6}\"" &&
-	[ -n "${instance_ns_4}" ] || [ -n "${instance_ns_6}" ] ||
-	{
-		log_msg "No ip addresses detected for dnsmasq instance '${DNSMASQ_INSTANCE}'. Using the loopback addresses."
-		eval "instance_ns_4=\"127.0.0.1\" instance_ns_6=\"::1\""
-	}
-
-	for family in 4 6
-	do
-		eval "instance_ns=\"\${instance_ns_${family}}\""
-		for ip in ${instance_ns}
-		do
-			add2list lookup_ips "${ip}"
-		done
-	done
-
-	local lookup_ok=
-	for i in $(seq 1 15)
-	do
-		try_lookup_domain "adblocklean-test123.info" "${lookup_ips}" -n && { lookup_ok=1; break; }
-		sleep 1
-	done
-
-	[ -n "${lookup_ok}" ] ||
-		{ reg_failure "Lookup of the bogus test domain failed with new blocklist."; return 4; }
-
-	for domain in ${test_domains}
-	do
-		try_lookup_domain "${domain}" "${lookup_ips}" ||
-			{ local rv=${?}; reg_failure "Lookup of test domain '${domain}' failed with new blocklist."; return ${rv}; }
-	done
-
-	:
-}
-
+# shellcheck disable=SC2120
 # 1 - (optional) '-nostop' to not call stop on failure
 restart_dnsmasq()
 {
@@ -1861,7 +295,7 @@ restart_dnsmasq()
 	/etc/init.d/dnsmasq restart &> /dev/null ||
 	{
 		reg_failure "Failed to restart dnsmasq."
-		[ "${action}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
+		[ "${ABL_CMD}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
 		return 1
 	}
 
@@ -1876,181 +310,12 @@ restart_dnsmasq()
 	[ -n "$dnsmasq_ok" ] ||
 	{
 		reg_failure "dnsmasq initialization failed."
-		[ "${action}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
+		[ "${ABL_CMD}" != stop ] && [ "${1}" != '-nostop' ] && stop 1 -noexit
 		return 1
 	}
 
 	log_msg -green "Restart of dnsmasq completed."
 	:
-}
-
-# return codes:
-# 0 - success
-# 1 - failure
-# 2 - blocklist file not found (nothing to export)
-export_existing_blocklist()
-{
-	reg_export()
-	{
-		reg_action -blue "Creating ${1} backup of existing blocklist." || return 1
-	}
-
-	local src src_d="${DNSMASQ_CONF_D}" dest="${ABL_DIR}/prev_blocklist"
-	if [ -f "${src_d}/.abl-blocklist.gz" ]
-	then
-		case ${use_compression} in
-			1)
-				src="${src_d}/.abl-blocklist.gz" dest="${dest}.gz"
-				reg_export compressed || return 1 ;;
-			*)
-				reg_export uncompressed || return 1
-				try_gunzip "${src_d}/.abl-blocklist.gz" || { rm -f "${src_d}/.abl-blocklist.gz"; return 1; }
-				src="${src_d}/.abl-blocklist"
-		esac
-	elif [ -f "${src_d}/abl-blocklist" ]
-	then
-		if [ "${use_compression}" = 1 ]
-		then
-			reg_export compressed || return 1
-			try_mv "${src_d}/abl-blocklist" "${src_d}/.abl-blocklist" || return 1
-			try_gzip "${src_d}/.abl-blocklist" || return 1
-			src="${src_d}/.abl-blocklist.gz" dest="${dest}.gz"
-		else
-			reg_export uncompressed || return 1
-			src="${src_d}/abl-blocklist"
-		fi
-	else
-		log_msg "" "No existing compressed or uncompressed blocklist identified."
-		return 2
-	fi
-	try_mv "${src}" "${dest}" || return 1
-	:
-}
-
-restore_saved_blocklist()
-{
-	restore_failed()
-	{
-		reg_failure "Failed to restore saved blocklist."
-	}
-
-	local mv_src="${ABL_DIR}/prev_blocklist" mv_dest="${ABL_DIR}/abl-blocklist"
-	reg_action -purple "Restoring saved blocklist file." || { restore_failed; return 1; }
-	if [ -f "${mv_src}.gz" ]
-	then
-		try_mv "${mv_src}.gz" "${mv_dest}.gz" || { restore_failed; return 1; }
-		if [ -z "${final_compress}" ]
-		then
-			try_gunzip "${mv_dest}.gz" || { restore_failed; return 1; }
-		fi
-	elif [ -f "${mv_src}" ]
-	then
-		try_mv "${mv_src}" "${mv_dest}" || { restore_failed; return 1; }
-		if [ -n "${final_compress}" ]
-		then
-			try_gzip -f "${mv_dest}" || { restore_failed; return 1; }
-		fi
-	else
-		reg_failure "No previous blocklist file found."
-		restore_failed
-		return 1
-	fi
-	import_blocklist_file || { reg_failure "Failed to import the blocklist file."; restore_failed; return 1; }
-
-	restart_dnsmasq || { restore_failed; return 1; }
-
-	:
-}
-
-import_blocklist_file()
-{
-	local src src_compressed='' src_file="${ABL_DIR}/abl-blocklist" dest_file="${DNSMASQ_CONF_D}/abl-blocklist"
-	[ -n "${final_compress}" ] && dest_file="${DNSMASQ_CONF_D}/.abl-blocklist.gz"
-	for src in "${src_file}" "${src_file}.gz"
-	do
-		case "${src}" in *.gz) src_compressed=1; esac
-		[ -f "${src}" ] && { src_file="${src}"; break; }
-	done || { reg_failure "Failed to find file to import."; return 1; }
-
-	clean_dnsmasq_dir
-
-	if [ -n "${src_compressed}" ] && [ -z "${final_compress}" ]
-	then
-		try_gunzip "${src_file}" || return 1
-		src_file="${src_file%.gz}"
-	elif [ -z "${src_compressed}" ] && [ -n "${final_compress}" ]
-	then
-		try_gzip "${src_file}" || return 1
-		src_file="${src_file}.gz"
-	fi
-
-	try_mv "${src_file}" "${dest_file}" || return 1
-	imported_final_list_size_human=$(get_file_size_human "${dest_file}")
-
-	if [ -n "${final_compress}" ]
-	then
-		printf '%s\n' "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.abl-extract_blocklist\"" > "${DNSMASQ_CONF_D}"/abl-conf-script &&
-		printf '%s\n%s\n' "busybox gunzip -c ${DNSMASQ_CONF_D}/.abl-blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.abl-extract_blocklist ||
-			{ reg_failure "Failed to create conf-script for dnsmasq."; return 1; }
-	fi
-
-	:
-}
-
-# return values:
-# 0 - up-to-date
-# 1 - not up-to-date
-# 2 - update check failed
-check_for_updates()
-{
-	reg_action -blue "Checking for adblock-lean updates."
-	rm -f "${ABL_DIR}/uclient-fetch_err"
-	sha256sum_adblock_lean_local=$(sha256sum "${ABL_SERVICE_PATH}" | $SED_CMD -E 's/[ \t]+.*$//')
-	sha256sum_adblock_lean_remote=$(uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean -O - \
-		2> "${ABL_DIR}/uclient-fetch_err" |
-		tee >(cat > "${ABL_DIR}/remote_abl"; . "${ABL_DIR}/remote_abl" 1>/dev/null 2>/dev/null && print_def_config -d |
-			get_config_format > "${ABL_DIR}/upd_config_format") |
-		sha256sum | $SED_CMD -E 's/[ \t]+.*$//')
-
-	local bad_dl='' update_check_result=''
-	read -r luci_upd_config_format _ < "${ABL_DIR}/upd_config_format" 2>/dev/null
-	rm -f "${ABL_DIR}/remote_abl" "${ABL_DIR}/upd_config_format"
-
-	# safeguard against receiving empty string or empty string+newline
-	case "${sha256sum_adblock_lean_remote}" in *9805daca546b|*991b7852b855) bad_dl=1; esac
-
-	if [ -z "${bad_dl}" ] && grep -q "Download completed" "${ABL_DIR}/uclient-fetch_err"
-	then
-		if [ "${sha256sum_adblock_lean_local}" = "${sha256sum_adblock_lean_remote}" ]
-		then
-			log_msg "The locally installed adblock-lean is the latest version."
-			update_check_result=0
-		else
-			log_msg -yellow "The locally installed adblock-lean seems to be outdated."
-			log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
-			update_check_result=1
-		fi
-	else
-		reg_failure "Unable to download latest version of adblock-lean to check for any updates."
-		update_check_result=2
-	fi
-	rm -f "${ABL_DIR}/uclient-fetch_err"
-
-	return ${update_check_result}
-}
-
-# updates the pid file with a new action
-# 1 - new action
-update_pid_action() {
-	check_lock
-	case ${?} in
-		3) ;;
-		1) return 1 ;;
-		2) reg_failure "update_pid_action(): pid file '${pid_file}' has unexpected pid '${_pid}'."; return 1 ;;
-		0) return 0
-	esac
-	mk_lock -f "${1}"
-	return ${?}
 }
 
 # args:
@@ -2079,19 +344,10 @@ mk_lock()
 	fi
 
 	[ -z "${1%.}" ] && { reg_failure "${me}: pid action is unspecified."; return 1; }
-	[ -z "${pid_file}" ] && { reg_failure "${me}: \${pid_file} variable is unset."; return 1; }
+	[ -z "${PID_FILE}" ] && { reg_failure "${me}: \${PID_FILE} variable is unset."; return 1; }
 
 	try_mkdir -p "${ABL_PID_DIR}" || return 1
-	printf '%s\n' "${$} ${1%.}" > "${pid_file}" || { reg_failure "${me}: Failed to write to pid file '${pid_file}'."; return 1; }
-	:
-}
-
-rm_lock()
-{
-	if [ -f "${pid_file}" ]
-	then
-		rm -f "${pid_file}" || { reg_failure "Failed to delete the pid file '${pid_file}'."; return 1; }
-	fi
+	printf '%s\n' "${$} ${1%.}" > "${PID_FILE}" || { reg_failure "${me}: Failed to write to pid file '${PID_FILE}'."; return 1; }
 	:
 }
 
@@ -2102,24 +358,100 @@ rm_lock()
 # 3 - lock file belongs to current PID
 check_lock()
 {
-	unset _pid pid_action
-	[ -z "${pid_file}" ] && { reg_failure "\${pid_file} variable is unset."; return 1; }
-	[ ! -f "${pid_file}" ] && return 0
-	if read -r _pid pid_action < "${pid_file}"
+	unset LOCK_PID PID_ABL_CMD
+	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
+	[ ! -f "${PID_FILE}" ] && return 0
+	if IFS=" " read -r LOCK_PID PID_ABL_CMD < "${PID_FILE}"
 	then
-		case "${_pid}" in
-			${$}) return 3 ;;
-			*[!0-9]*) reg_failure "pid file '${pid_file}' contains unexpected string."; return 1 ;;
-			*) kill -0 "${_pid}" 2>/dev/null && return 2
+		case "${LOCK_PID}" in
+			"${$}") return 3 ;;
+			*[!0-9]*) reg_failure "pid file '${PID_FILE}' contains unexpected string '${LOCK_PID}'."; return 1 ;;
+			*) kill -0 "${LOCK_PID}" 2>/dev/null && return 2
 		esac
 	else
-		reg_failure "Failed to read the pid file '${pid_file}'."
+		reg_failure "Failed to read the pid file '${PID_FILE}'."
 		return 1
 	fi
 
-	log_msg -warn "Detected stale pid file '${pid_file}' for PID ${_pid}. Removing."
+	log_msg -warn "Detected stale pid file '${PID_FILE}' for PID ${LOCK_PID}. Removing."
 	rm_lock || return 1
 	:
+}
+
+rm_lock()
+{
+	if [ -f "${PID_FILE}" ]
+	then
+		rm -f "${PID_FILE}" || { reg_failure "Failed to delete the pid file '${PID_FILE}'."; return 1; }
+	fi
+	:
+}
+
+# updates the pid file with a new action
+# 1 - new action
+update_pid_action() {
+	check_lock
+	case ${?} in
+		3) ;;
+		1) return 1 ;;
+		2) reg_failure "update_pid_action(): pid file '${PID_FILE}' has unexpected pid '${LOCK_PID}'."; return 1 ;;
+		0) return 0
+	esac
+	mk_lock -f "${1}"
+	return ${?}
+}
+
+report_pid_action()
+{
+	local reported_pid="unknown PID"
+	[ -n "${LOCK_PID}" ] && reported_pid="PID ${LOCK_PID}"
+	: "${PID_ABL_CMD:="unknown action"}"
+	print_msg "adblock-lean (${reported_pid}) is performing action '${PID_ABL_CMD}'."
+	luci_pid_action=${PID_ABL_CMD}
+	:
+}
+
+# (optional) -nolog
+# (optional) -[color]
+# other args - action
+reg_action()
+{
+	local arg msg='' nolog='' color=''
+	for arg in "$@"
+	do
+		case "${arg}" in
+			-nolog) nolog=1 ;;
+			-blue|-red|-green|-purple|-yellow) color="${arg}" ;;
+			*) msg="${msg}${arg} "
+		esac
+	done
+
+	[ -z "${nolog}" ] && log_msg "" ${color} "${msg% }"
+	if [ -n "${LOCK_REQ}" ]
+	then
+		update_pid_action "${msg% }" || return 1
+	fi
+	:
+}
+
+reg_failure()
+{
+	log_msg -err "" "${1}"
+	failure_msg="${failure_msg}${1}${_NL_}"
+	luci_errors="${failure_msg}"
+}
+
+log_success()
+{
+	log_msg "${1}"
+	success_msg="${1}"
+	local recent_log=
+	[ -n "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ] && read -rd '' recent_log < "${LOG_FILE}"
+	[ -n "${recent_log}" ] && success_msg="${success_msg}${_NL_}${_NL_}Session log:${_NL_}${recent_log}"
+	if [ -n "${custom_scr_sourced}" ] && check_util report_success
+	then
+		report_success "${success_msg}"
+	fi
 }
 
 # kills any running adblock-lean instances
@@ -2147,83 +479,81 @@ kill_abl_pids()
 	:
 }
 
-# (optional) -nolog
-# (optional) -[color]
-# other args - action
-reg_action()
+# return codes:
+# 0 - running
+# 1,2 - (reserved)
+# 3 - paused
+# 4 - stopped
+get_abl_run_state()
 {
-	local msg='' nolog='' color=''
-	for _arg in "$@"
+	local f
+	for f in "${DNSMASQ_CONF_D}/.abl-blocklist.gz" "${DNSMASQ_CONF_D}/abl-blocklist"
 	do
-		case "${_arg}" in
-			-nolog) nolog=1 ;;
-			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
-			*) msg="${msg}${_arg} "
-		esac
+		[ -f "${f}" ] && return 0
 	done
 
-	[ -z "${nolog}" ] && log_msg "" ${color} "${msg% }"
-	if [ -n "${lock_req}" ]
-	then
-		update_pid_action "${msg% }" || return 1
-	fi
-	:
+	[ -f "${ABL_DIR}/prev_blocklist.gz" ] && return 3
+	return 4
 }
 
-report_pid_action()
+# 1 (optional) - libs directory
+# 2 (optional) - service directory
+check_libs()
 {
-	local reported_pid="unknown PID"
-	[ -n "${_pid}" ] && reported_pid="PID ${_pid}"
-	: "${pid_action:="unknown action"}"
-	print_msg "adblock-lean (${reported_pid}) is performing action '${pid_action}'."
-	luci_pid_action=${pid_action}
-	:
-}
-
-get_active_entries_cnt()
-{
-	local cnt entry_type allow_opt='' list_prefix list_prefixes=
-
-	# 'blocklist_ipv4' prefix doesn't need to be added for counting
-	for entry_type in blocklist allowlist
+	local lib_file service_file service_version lib_version
+	local libs_dir="${1:-"${ABL_LIB_DIR}"}" service_dir="${2:-"${ABL_SERVICE_PATH%/*}"}"
+	service_file="${service_dir}/adblock-lean"
+	get_abl_version "${service_file}" service_version
+	for lib_file in ${ABL_LIB_FILES}
 	do
-		eval "[ ! \"\${${entry_type}_urls}\" ] && [ ! -s \"\${local_${entry_type}_path}\" ]" && continue
-		case ${entry_type} in
-			blocklist) list_prefix=local ;;
-			allowlist) list_prefix=server allow_opt="#"
-		esac
-		list_prefixes="${list_prefixes}${list_prefix}|"
+		lib_file="${libs_dir}/${lib_file##*/}"
+		if [ -s "${lib_file}" ]
+		then
+			get_abl_version "${lib_file}" lib_version
+			if [ "${lib_version}" = "${service_version}" ]
+			then
+				continue
+			else
+				log_msg -warn "Version mismatch between ${service_file} ('${service_version}') and ${lib_file} ('${lib_version}')."
+			fi
+		else
+			log_msg -warn "adblock-lean library files are missing."
+		fi
+		return 1
+	done
+	:
+}
+
+# 1 (optional) - libs directory
+# 2 (optional) - service directory
+source_libs()
+{
+	[ -n "${LIBS_SOURCED}" ] && return 0
+
+	local file libs_dir="${1:-"${ABL_LIB_DIR}"}" service_dir="${2:-"${ABL_SERVICE_PATH%/*}"}" libs_missing='' libs_source_failed=''
+	if ! check_libs "${libs_dir}" "${service_dir}"
+	then
+		log_msg "Please run 'sh /etc/init.d/adblock-lean update -f' to fetch required files."
+		return 1
+	fi
+
+	# source libs
+	for file in ${ABL_LIB_FILES}
+	do
+		file="${file##*/}"
+		[ -f "${libs_dir}/${file}" ] || { libs_source_failed=1 libs_missing=1; break; }
+		. "${libs_dir}/${file}" || { libs_source_failed=1; break; }
 	done
 
-	if [ -f "${DNSMASQ_CONF_D}"/.abl-blocklist.gz ]
-	then
-		gunzip -c "${DNSMASQ_CONF_D}"/.abl-blocklist.gz
-	elif [ -f "${DNSMASQ_CONF_D}"/abl-blocklist ]
-	then
-		cat "${DNSMASQ_CONF_D}/abl-blocklist"
-	else
-		printf ''
-	fi |
-	$SED_CMD -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
-
-	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
-	rm -f "/tmp/abl_entries_cnt"
-	case "${cnt}" in *[!0-9]*|'') printf 0; return 1; esac
-	local d i=0 IFS="${DEFAULT_IFS}"
-	if [ "${whitelist_mode}" = 1 ]
-	then
-		i=1
-		for d in ${test_domains}
-		do
-			i=$((i+1))
-		done
-	fi
-	[ "${cnt}" -lt $((2+i)) ] && { printf 0; return 1; }
-	printf %s "$((cnt-2-i))"
+	[ -n "${libs_source_failed}" ] &&
+	{
+		[ -n "${libs_missing}" ] && reg_failure "Missing library scripts."
+		reg_failure "Failed to source library scripts."
+		return 1
+	}
+	LIBS_SOURCED=1
 	:
 }
-
-### Cron-related functions
 
 # args: 1 - (optional) schedule
 # return codes:
@@ -2256,88 +586,68 @@ rm_cron_job()
 	esac
 
 	log_msg -purple "" "Removing cron job for adblock-lean."
-	printf '%s\n' "${curr_cron}" | $SED_CMD '/adblock-lean start/d;/^$/d' | crontab -u root - ||
+	printf '%s\n' "${curr_cron}" | ${SED_CMD} '/adblock-lean start/d;/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	:
 }
 
-# returns 0 if crontab is readable and the crond process is running, 1 otherwise
-check_cron_service()
-{
-	# check if service is enabled
-	${ABL_CRON_SVC_PATH} enabled || return 1
-	# check reading crontab
-	crontab -u root -l &>/dev/null || return 1
-	# check for crond in running processes
-	pidof crond 1>/dev/null || return 1
-	:
-}
-
-# checks if the cron service is enabled and running
-# if not enabled or not running or if crontab doesn't exist, implements automatic correction
-# return codes: 0 - success, 1 - failure
-enable_cron_service()
-{
-	local enable_failed="Failed to enable and start the cron service"
-
-	hash crontab || { reg_failure "${enable_failed}: 'crontab' utility is inaccessible."; return 1; }
-	[ -f "${ABL_CRON_SVC_PATH}" ] || { reg_failure "${enable_failed}: the cron service was not found at path '${ABL_CRON_SVC_PATH}'."; return 1; }
-
-	check_cron_service && return 0
-	log_msg -warn "The cron service is not enabled or not running."
-
-	printf '\n%s' "${purple}Attempting to enable and start the cron service...${n_c} " > "${MSGS_DEST}"
-
-	# if crontab doesn't exist yet, try to create an empty crontab
-	crontab -u root -l &>/dev/null || printf '' | crontab -u root -
-
-	# try to enable and start the cron service
-	${ABL_CRON_SVC_PATH} enabled 1>/dev/null || ${ABL_CRON_SVC_PATH} enable && { ${ABL_CRON_SVC_PATH} start; sleep 2; }
-
-	check_cron_service || { printf '%s\n' "${red}Failed.${n_c}"; reg_failure "${enable_failed}."; return 1; }
-	printf '%s\n' "${green}OK${n_c}" > "${MSGS_DEST}"
-	:
-}
 
 ### Commands init
 
 init_command()
 {
-	action="${1}"
-	pid_file="${ABL_PID_DIR}/adblock-lean.pid"
-	unset utils_tip_req kill_req cleanup_req failure_msg luci_errors init_action_msg
+	ABL_CMD="${1}"
+	local config_req='' work_dir_req='' kill_req='' init_action_msg=''
 
 	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
 	luci_sourced=
-	command -v "abl_luci_exit" 1>/dev/null && luci_sourced=1
+	check_util "abl_luci_exit" && luci_sourced=1
 
-	do_dialogs=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && do_dialogs=1
+	DO_DIALOGS=
+	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
-	trap 'cleanup_and_exit 1' INT TERM
-	trap 'cleanup_and_exit ${?}' EXIT
+	if [ -n "${UPD_SOURCED}" ]
+	then
+		trap 'exit 1' INT TERM
+	else
+		trap 'cleanup_and_exit 1' INT TERM
+		trap 'cleanup_and_exit ${?}' EXIT
+	fi
 
 	# set requirements
-	case ${action} in
-		help|gen_stats|enabled|enable|disable|'') ;;
-		status|print_log|upd_cron_job) ;;
-		setup|gen_config|pause) lock_req=1 ;;
-		boot|start|update|resume) cleanup_req=1 lock_req=1 utils_tip_req=1 ;;
+	case ${ABL_CMD} in
+		help|enabled|enable|disable|print_log|'') ;;
+		gen_stats) ;;
+		status) libs_req=1 work_dir_req=1 config_req=1 ;;
+		upd_cron_job) libs_req=1 config_req=1 ;;
+		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
+		boot) libs_req=1 config_req=1 ;;
+		pause) libs_req=1 work_dir_req=1 config_req=1 LOCK_REQ=1 ;;
+		start|resume) libs_req=1 work_dir_req=1 config_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			init_action_msg="Stopping adblock-lean."
 			reg_action -purple "${init_action_msg}" || exit 1
-			cleanup_req=1 kill_req=1 lock_req=1 ;;
-		set_dnsmasq_dir)
-			lock_req=1 ;;
+			libs_req=1 kill_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		select_dnsmasq_instance)
+			libs_req=1 LOCK_REQ=1
+			[ "${action}" = select_dnsmasq_instance ] && config_req=1 # require config when called directly
+			;;
 		reload|restart) reg_action -purple "Restarting adblock-lean." || exit 1 ;;
-		*) reg_failure "Invalid action '${action}'."; exit 1
+		update) work_dir_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		*) reg_failure "Invalid action '${ABL_CMD}'."; exit 1
 	esac
 
-	# report installed utils
-	if [ -n "${utils_tip_req}" ] && [ -z "${UTILS_REPORT_DONE}" ]
+	# source library scripts
+	if [ -n "${libs_req}" ]
 	then
+		source_libs || exit 1
+	fi
+
+	# report installed utils
+	if [ "${ABL_CMD}" = start ]
+	then
+		detect_pkg_manager
 		report_utils
-		UTILS_REPORT_DONE=1
 	fi
 
 	# kill pids if needed
@@ -2349,7 +659,7 @@ init_command()
 			1) exit 1 ;;
 			2)
 				reg_failure "Failed to kill running adblock-lean processes."
-				unset lock_req cleanup_req
+				unset LOCK_REQ CLEANUP_REQ
 				exit 1
 		esac
 	fi
@@ -2357,40 +667,36 @@ init_command()
 	# register lock status at init
 	check_lock
 	local init_lock_status=${?}
+
 	# make lock if needed
-	if [ -n "${lock_req}" ]
+	if [ -n "${LOCK_REQ}" ]
 	then
-		mk_lock "${action}" || { unset lock_req cleanup_req; exit ${?}; }
+		mk_lock "${ABL_CMD}" || { unset LOCK_REQ CLEANUP_REQ; exit ${?}; }
 	fi
 
 	# enable writing session log if we have the lock
-	log_file=
+	LOG_FILE=
 	case ${init_lock_status} in 0|3)
-		log_file="${ABL_SESSION_LOG_FILE}"
-		[ "${action}" = update ] && log_file="${ABL_UPDATE_LOG_FILE}"
+		LOG_FILE="${ABL_SESSION_LOG_FILE}"
+		[ "${ABL_CMD}" = update ] && LOG_FILE="${ABL_UPDATE_LOG_FILE}"
 	esac
 
 	# if creating new session, rotate the old session log file
-	[ "${init_lock_status}" = 0 ] && [ -n "${log_file}" ] && [ -f "${log_file}" ] && mv "${log_file}" "${log_file}.0"
+	[ "${init_lock_status}" = 0 ] && [ -n "${LOG_FILE}" ] && [ -f "${LOG_FILE}" ] && mv "${LOG_FILE}" "${LOG_FILE}.0"
 
 	[ -n "${init_action_msg}" ] && write_log_file "${init_action_msg}" "info"
 
-	# create work dir, check dnsmasq, load config, source custom script
-	case ${action} in
-		status|boot)
-			try_mkdir -p "${ABL_DIR}" || exit 1
-			load_config || { reg_failure "Failed to load config."; exit 1; } ;;
-		stop)
-			[ -f "${ABL_CONFIG_FILE}" ] &&
-			DNSMASQ_CONF_D="$($SED_CMD -n '/^\s*DNSMASQ_CONF_D=/{s/^\s*DNSMASQ_CONF_D=//;s/\s*#.*//;s/"//g;p;q;}' "${ABL_CONFIG_FILE}")" &&
-			[ -n "${DNSMASQ_CONF_D}" ] ||
-			{
-				reg_failure "Failed to get DNSMASQ_CONF_D from config. Can not delete the blocklist from dnsmasq config directory."
-				exit 1
-			} ;;
-		start|pause|resume|update)
-			try_mkdir -p "${ABL_DIR}" || exit 1
-			load_config || { reg_failure "Failed to load config."; exit 1; }
+	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_DIR}" || exit 1; }
+
+	if [ -n "${config_req}" ] && [ -z "${CONFIG_LOADED}" ]
+	then
+		load_config || { reg_failure "Failed to load config."; exit 1; }
+		CONFIG_LOADED=1
+	fi
+
+	# check dnsmasq, source custom script
+	case ${ABL_CMD} in
+		start|pause|resume)
 			check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || exit 1
 			if [ -n "${custom_script}" ]
 			then
@@ -2403,57 +709,270 @@ init_command()
 	:
 }
 
-# Detect package manager (opkg or apk)
-# Sets global vars: $PKG_MANAGER $PKG_INSTALL_CMD
-detect_pkg_manager() {
-	local apk_present='' opkg_present=''
-	command -v apk >/dev/null && apk_present=1
-	command -v opkg >/dev/null && opkg_present=1
-	if [ -n "$apk_present" ] && [ -n "$opkg_present" ]
+# get version of adblock-lean file $1
+# assign version to var $2, update channel to var $3
+get_abl_version()
+{
+	unset "${2}" "${3:-dummy}"
+	local gv_ver_string gv_version gv_upd_channel
+	gv_ver_string="$(${SED_CMD} -n '/^\s*#\s*ABL_VERSION=/{s/^\s*#\s*ABL_VERSION=//;s/\s*$//;p;q;}' "${1}")"
+	gv_version="${gv_ver_string##*_}"
+	gv_upd_channel="${gv_ver_string%"_${gv_version}"}"
+	: "${gv_upd_channel}" # silence shellcheck warning
+	eval "${2}"='${gv_version}'
+	[ -n "${3}" ] && eval "${3}"='${gv_upd_channel}'
+}
+
+# Get GitHub ref and tarball url for specified version
+# 1 - [latest|snapshot|v<version>|tag=<github_tag>|commit=<commit_hash>]
+# Output via variables:
+#   $2 - github ref, $3 - tarball url, $4 - update channel
+get_gh_ref_data()
+{
+	local me=get_gh_ref_data ref_fetch_url jsonfilter_ptrn commit version="${1}"
+	local gh_ref=''  gh_channel=''
+	unset "${2}" "${3}" "${4}"
+
+	case "${version}" in
+		snapshot)
+			ref_fetch_url="${ABL_GH_URL_API}/commits/master"
+			jsonfilter_ptrn='@.sha' # latest commit is first on the list
+			gh_channel=snapshot ;;
+		latest)
+			ref_fetch_url="${ABL_GH_URL_API}/releases"
+			jsonfilter_ptrn='@[@.prerelease=false]' # ignore pre-releases
+			gh_channel=release ;;
+		v[0-9]*)
+			gh_ref="${version}"
+			gh_channel=release ;;
+		tag=*)
+			gh_ref="${version#tag=}"
+			gh_channel=tag ;;
+		commit=*)
+			commit="${version#commit=}"
+			gh_ref="${commit%"${commit#???????}"}" # trim commit hash to 7 characters
+			gh_channel=commit ;;
+		*) reg_failure "${me}: invalid version '${version}'."; return 1
+	esac
+
+	if [ -n "${ref_fetch_url}" ]
 	then
-		reg_failure "Both apk and opkg package managers present in the system."
-		return 1
+		# Get ref for latest/snapshot
+		log_msg -blue "Getting GitHub ref for ${version} version of adblock-lean from GitHub."
+		gh_ref="$(
+			uclient-fetch -q "${ref_fetch_url}" -O - 2> "${UCL_ERR_FILE}" |
+			jsonfilter -e "${jsonfilter_ptrn}" |
+			{
+				case "${version}" in
+					snapshot) head -c7 ;;
+					latest)
+						jsonfilter -a -e '@[@.target_commitish="master"].tag_name' | # get latest tag for master
+						head -n1
+				esac
+				cat 1>/dev/null
+			}
+		)"
 	fi
 
-	if [ -n "$apk_present" ]
+	# validate resulting ref
+	case "${gh_ref}" in
+		''|*[!a-zA-Z0-9._-]*) reg_failure "${me}: failed to get GitHub ref for version '${version}'."; return 1
+	esac
+
+	eval "${2}"='${gh_ref}' "${3}"='${ABL_GH_URL_API}/tarball/${gh_ref}' "${4}"='${gh_channel}'
+	: "${gh_channel}" # silence shellcheck warning
+
+	:
+}
+
+# 1 - new version
+# 2 - path to file
+update_version()
+{
+	${SED_CMD} -i "/^\s*#\s*ABL_VERSION=/{s/.*/# ABL_VERSION=${1}/;:1 n;b1;}" "${2}"
+}
+
+# will be executed upon update from the old version of the script, before new version is installed
+abl_post_update_1()
+{
+	# fix incorrect rc.d symlink from older versions
+	[ -f /etc/rc.d/K4adblock-lean ] && mv /etc/rc.d/K4adblock-lean /etc/rc.d/K${START}adblock-lean
+
+	# @temp_workaround - remove a few months from now
+	# when upgrading from older versions, fetch and install latest release
+	if [ -z "${POST_UPDATE_1_DONE}" ] && [ -f "${ABL_DIR}/adblock-lean.latest" ]
 	then
-		PKG_MANAGER=apk
-		PKG_INSTALL_CMD="apk add"
-	elif [ -n "$opkg_present" ]
-	then
-		PKG_MANAGER=opkg
-		PKG_INSTALL_CMD="opkg install"
-	else
-		reg_failure "Failed to detect package manager."
-		return 1
+		if rc_enabled
+		then
+			# use installed script to clean dnsmasq dir
+			(
+				unset -f clean_dnsmasq_dir restart_dnsmasq
+				unset action ABL_CMD
+				. "${ABL_SERVICE_PATH}"
+				check_util clean_dnsmasq_dir && clean_dnsmasq_dir &&
+				check_util restart_dnsmasq && restart_dnsmasq
+			)
+		fi
+		POST_UPDATE_1_DONE=1
+		update -f -v latest || exit 1
+		cp "${ABL_SERVICE_PATH}" "${ABL_DIR}/adblock-lean.latest"
 	fi
 	:
+}
+
+# assigns path to extracted distribution directory to $1
+# (optional) 1 - '-n' to quiet
+# 1 - var name for output
+# 2 - tarball url
+# 3 - github ref
+fetch_abl_dist()
+{
+	if [ "${1}" = '-n' ]
+	then
+		shift
+	else
+		reg_action -blue "Downloading adblock-lean, version '${3}'." || return 1
+	fi
+
+	local fetch_tarball_url="${2}"
+	local fetch_dir fetch_rv tarball="${ABL_UPD_DIR}/remote_abl.tar.gz"
+
+	rm -rf "${UCL_ERR_FILE}" "${ABL_UPD_DIR}/lynxthecat-adblock-lean-"*
+	uclient-fetch "${fetch_tarball_url}" -O "${tarball}" 2> "${UCL_ERR_FILE}" &&
+	grep -q "Download completed" "${UCL_ERR_FILE}" &&
+	tar -C "${ABL_UPD_DIR}" -xzf "${tarball}" &&
+	fetch_dir="$(find "${ABL_UPD_DIR}/" -type d -name "lynxthecat-adblock-lean-*")"
+	fetch_rv=${?}
+
+	[ "${fetch_rv}" != 0 ] && [ -s "${UCL_ERR_FILE}" ] && ! grep -q "Download completed" "${UCL_ERR_FILE}" &&
+		reg_failure "uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'."
+	rm -f "${UCL_ERR_FILE}"
+	eval "${1}"='${fetch_dir}'
+	: "${fetch_dir}" # silence shellcheck warning
+	return ${fetch_rv}
+}
+
+# 1 - path to distribution dir
+# 2 - version string to write to files
+install_abl_files()
+{
+	local file preinst_path new_files curr_files
+	local dist_dir="${1}" version="${2}"
+
+	# read new files list
+	read -r new_files < "${dist_dir}/inst_files" ||
+	{
+		reg_failure "Failed to read file '${dist_dir}/inst_files'."
+		return 1
+	}
+
+	# compile current files list
+	curr_files="${ABL_SERVICE_PATH}"
+	for file in ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}
+	do
+		add2list curr_files "${file}" " "
+	done
+
+	# delete obsolete files
+	for file in ${curr_files}
+	do
+		if [ -f "${file}" ] && ! is_included "${file}" "${new_files}" " "
+		then
+			log_msg "Deleting obsolete file ${file}."
+			rm -f "${file}"
+		fi
+	done
+
+	for file in ${new_files}
+	do
+		case "${file##*/}" in
+			adblock-lean) preinst_path="${dist_dir}/adblock-lean" ;;
+			*) preinst_path="${dist_dir}/${file}"
+		esac
+
+		# set new ABL_VERSION
+		update_version "${version}" "${preinst_path}"
+
+		if [ -f "${file}" ] && check_util md5sum && [ "$(get_md5 "${preinst_path}")" = "$(get_md5 "${file}")" ]
+		then
+			log_msg "File '${file}' did not change - not updating."
+		else
+			log_msg "Copying file '${file##*/}'."
+			{ [ -d "${file%/*}" ] || try_mkdir -p "${file%/*}"; } &&
+				cp "${preinst_path}" "${file}" ||
+			{
+				reg_failure "Failed to copy file '${file##*/}'."
+				return 1
+			}
+		fi
+	done
+
+	chmod +x "${ABL_SERVICE_PATH}"
+	:
+}
+
+# shellcheck disable=SC2120
+# get config format from config or main script file contents
+# input via STDIN or ${1}
+get_config_format()
+{
+	local conf_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
+	if [ -n "${1}" ]
+	then
+		$SED_CMD -En "${conf_form_sed_expr}" "${1}"
+	else
+		$SED_CMD -En "${conf_form_sed_expr}"
+	fi
 }
 
 
 ### MAIN COMMAND FUNCTIONS
 
+version()
+{
+	local version='' upd_channel=''
+	get_abl_version "${ABL_SERVICE_PATH}" version upd_channel
+	print_msg "adblock-lean version: '${version}', update channel: '${upd_channel}'."
+}
+
+gen_config()
+{
+	init_command gen_config &&
+	do_gen_config
+}
+
+setup()
+{
+	# set luci feedback vars to failed, unset later upon success
+	luci_pkgs_install_failed=1 luci_cron_job_creation_failed=1
+
+	init_command setup &&
+	do_setup
+}
+
+print_log()
+{
+	[ ! -s "${ABL_SESSION_LOG_FILE}" ] && { log_msg -err "Session log file '${ABL_SESSION_LOG_FILE}' doesn't exist or is empty."; exit 1; }
+	echo "Most recent session log:"
+	cat "${ABL_SESSION_LOG_FILE}"
+	:
+}
+
 upd_cron_job()
 {
 	local me="upd_cron_job" curr_cron cron_line
 
-	init_command upd_cron_job || return 1
-
 	log_msg -purple "" "Updating cron job for adblock-lean."
 
-	if [ "${action}" = upd_cron_job ]
-	then
-		load_config || return 1
-	fi
+	init_command upd_cron_job || return 1
 
-	[ -z "${cron_schedule}" ] && { reg_failure "${me}: the \$cron_schedule variable is unset."; return 1; }
-
-	if [ "${cron_schedule}" = disable ]
-	then
-		log_msg -yellow "cron_schedule is set to 'disable' in config."
-		rm_cron_job
-		return 0
-	fi
+	case "${cron_schedule}" in
+		'') reg_failure "${me}: the \$cron_schedule variable is unset."; return 1 ;;
+		disable)
+			log_msg -yellow "cron_schedule is set to 'disable' in config."
+			rm_cron_job
+			return 0
+	esac
 
 	enable_cron_service || return 1
 	curr_cron="$(get_curr_crontab)"
@@ -2473,446 +992,38 @@ upd_cron_job()
 	:
 }
 
-# Error codes:
-# 1 - general error
-# 2 - gen_config failed
-# 3 - load_config failed
-# 4 - service enable failed
-# 5 - creating addnmount entry failed
-setup()
-{
-	# 1 - '|' - separated package names
-	get_installed_pkgs()
-	{
-		local all_installed_pkgs pkgs_list_cmd filter_cmd
-		case "${PKG_MANAGER}" in
-			apk)
-				pkgs_list_cmd="apk list -I"
-				filter_cmd="$SED_CMD -En '/^[ \t]*($1)-[0-9]/{s/^[ \t]+//;s/[ \t].*//;p;}'"
-				;;
-			opkg)
-				pkgs_list_cmd="opkg list-installed"
-				filter_cmd="grep -E '^[ \t]*($1)([ \t]|$)'"
-				;;
-			*)
-				reg_failure "Unexpected package manager '${PKG_MANAGER}'."
-				return 1
-		esac
-
-		all_installed_pkgs="$(${pkgs_list_cmd})" && [ -n "${all_installed_pkgs}" ] || {
-			reg_failure "Failed to check installed packages with package manager '$PKG_MANAGER'."
-			return 1
-		}
-		printf '%s\n' "$all_installed_pkgs" | eval "${filter_cmd}"
-
-		:
-	}
-
-	install_packages()
-	{
-		# determine if there are missing GNU utils
-		local recomm_pkgs_regex="$(printf %s "$RECOMMENDED_PKGS" | tr ' ' '|')"
-		local pkgs2install='' missing_packages='' missing_utils='' missing_utils_print='' util package installed_pkgs='' \
-			util_size_B utils_size_B=0 awk_size_B=1048576 sort_size_B=122880 sed_size_B=153600
-
-		installed_pkgs="$(get_installed_pkgs "${recomm_pkgs_regex}")" || return 1
-
-		echo
-		for util in ${RECOMMENDED_UTILS}
-		do
-			case "${installed_pkgs}" in
-				*"${util}"*) log_msg "${green}GNU ${util} is already installed.${n_c}" ;;
-				*)
-					missing_utils="${missing_utils}${util} "
-					missing_utils_print="${missing_utils_print}${blue}GNU ${util}${n_c}, "
-					missing_packages="${missing_packages}${blue}$(get_pkg_name "${util}")${n_c}, "
-			esac
-		done
-
-		# make a list of GNU utils to install
-		if [ -n "${missing_utils}" ]
-		then
-			local free_space_B='' free_space_KB="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')" \
-				mount_point="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/.*[ \t]+//')"
-			case "${free_space_KB}" in
-				''|*[!0-9]*) reg_failure "Failed to check available free space."; return 1 ;;
-				*) free_space_B=$((free_space_KB*1024))
-			esac
-
-			if [ -n "${do_dialogs}" ]
-			then
-				print_msg "" "For improved performance while processing the lists, it is recommended to install ${missing_utils_print%, }." \
-					"Corresponding packages are: ${missing_packages%, }."
-				[ -n "${free_space_B}" ] &&
-					print_msg "" "Available free space at mount point '${mount_point}': ${yellow}$(bytes2human "${free_space_B}")${n_c}." ""
-			fi
-
-			for util in ${missing_utils}
-			do
-				REPLY=n
-				if [ -n "${do_dialogs}" ]
-				then
-					eval "util_size_B=\"\${${util}_size_B}\""
-					print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}$(bytes2human "${util_size_B}")${n_c}."
-					pick_opt "y|n" || return 1
-				elif [ -n "${luci_install_packages}" ]
-				then
-					REPLY=y
-				fi
-
-				if [ "${REPLY}" = y ]
-				then
-					pkgs2install="${pkgs2install}$(get_pkg_name "${util}") "
-					utils_size_B=$((utils_size_B+util_size_B))
-				fi
-			done
-		fi
-
-		# install GNU utils
-		if [ -n "${pkgs2install}" ]
-		then
-			REPLY=n
-			if [ -n "${do_dialogs}" ]
-			then
-				print_msg "" "Selected packages: ${blue}${pkgs2install% }${n_c}" \
-					"Total installed size: ${yellow}$(bytes2human ${utils_size_B})${n_c}." \
-					"Proceed with packages installation?"
-				pick_opt "y|n"
-			elif [ -n "${luci_install_packages}" ]
-			then
-				REPLY=y
-			fi
-
-			if [ "${REPLY}" = y ]
-			then
-				if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ "${free_space_B}" -gt ${utils_size_B} ]
-				then
-					echo
-					$PKG_MANAGER update && $PKG_INSTALL_CMD ${pkgs2install% } && return 0
-					reg_failure "Failed to automatically install packages. You can install them manually later."
-					return 1
-				else
-					reg_failure "Not enough free space at mount point '${mount_point}'."
-					print_msg "Free up some space, then you can manually install the packages later by issuing the command:" \
-						"$PKG_MANAGER update; $PKG_INSTALL_CMD ${pkgs2install% }"
-					return 1
-				fi
-			fi
-		else
-			return 0
-		fi
-		:
-	}
-
-	# set luci feedback vars to failed, unset later upon success
-	luci_pkgs_install_failed=1 luci_cron_job_creation_failed=1
-
-	init_command setup
-	[ -n "${ABL_SERVICE_PATH}" ] || { reg_failure "\${ABL_SERVICE_PATH} variable is unset."; return 1; }
-	[ -f "${ABL_SERVICE_PATH}" ] || { reg_failure "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
-
-	# make the script executable
-	if [ ! -x "${ABL_SERVICE_PATH}" ]
-	then
-		log_msg "" "${purple}Making ${ABL_SERVICE_PATH} executable.${n_c}"
-		chmod +x "${ABL_SERVICE_PATH}" || { reg_failure "Failed to make '${ABL_SERVICE_PATH}' executable."; return 1; }
-	else
-		log_msg "" "${green}${ABL_SERVICE_PATH} is already executable.${n_c}"
-	fi
-
-	REPLY=n
-
-	if [ -s "${ABL_CONFIG_FILE}" ]
-	then
-		if [ -n "${do_dialogs}" ]
-		then
-			print_msg "" "Existing config file found." "Generate [n]ew config or use [e]xisting config?"
-			pick_opt 'n|e' || return 1
-		elif [ -n "${luci_use_old_config}" ]
-		then
-			REPLY=e
-		fi
-	fi
-
-	if [ "${REPLY}" = n ]
-	then
-		# generate config
-		gen_config || return 2
-	else
-		load_config || return 3
-	fi
-
-	# enable the service, update the cron job
-	if rc_enabled
-	then
-		upd_cron_job && luci_cron_job_creation_failed=
-	elif enable
-	then
-		luci_cron_job_creation_failed=
-	else
-		local rv=${?}
-		[ "${rv}" = 6 ] || return ${rv}
-	fi
-
-	# make addnmount entry - enables blocklist compression to reduce RAM usage
-	check_addnmount
-	case ${?} in
-		0) log_msg -green "" "Found existing dnsmasq addnmount UCI entry." ;;
-		2) return 5 ;;
-		1)
-			log_msg -purple "" "Creating dnsmasq addnmount UCI entry."
-			uci add_list dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount='/bin/busybox' && uci commit ||
-			{
-				reg_failure "Failed to create addnmount entry."
-				return 5
-			}
-	esac
-
-	detect_pkg_manager
-	case "${PKG_MANAGER}" in
-		apk|opkg)
-			install_packages && luci_pkgs_install_failed= ;;
-		*)
-			log_msg -yellow "" "Can not automatically check and install recommended packages (${RECOMMENDED_PKGS})." \
-				"Consider to check for their presence and install if needed."
-	esac
-
-	if [ -n "${do_dialogs}" ]
-	then
-		print_msg "" "${purple}Setup is complete.${n_c}" "" "Start adblock-lean now?"
-		pick_opt "y|n" || return 1
-		[ "${REPLY}" != y ] && return 0
-		echo
-		start
-	fi
-	:
-}
-
-print_log()
-{
-	[ ! -s "${ABL_SESSION_LOG_FILE}" ] && { log_msg -err "Session log file '${ABL_SESSION_LOG_FILE}' doesn't exist or is empty."; exit 1; }
-	echo "Most recent session log:"
-	cat "${ABL_SESSION_LOG_FILE}"
-	:
+select_dnsmasq_instance() {
+	init_command select_dnsmasq_instance &&
+	do_select_dnsmasq_instance "${@}"
 }
 
 # 1 - (optional) '-noexit' to return to the calling function
 gen_stats()
 {
+	source_libs &&
 	reg_action -blue "Generating dnsmasq stats." || exit 1
 	local dnsmasq_pid
 	dnsmasq_pid="$(pidof /usr/sbin/dnsmasq)" || { reg_failure "Failed to detect dnsmasq PID or dnsmasq is not running."; exit 1; }
 	kill -USR1 "${dnsmasq_pid}"
 	print_msg "dnsmasq stats available for reading using 'logread'."
 	[ "${1}" != '-noexit' ] && exit 0
-}
-
-# analyze dnsmasq instances and set $DNSMASQ_CONF_D
-# 1 - (optional) '-n' to only set vars (no config write)
-set_dnsmasq_dir() {
-	init_command set_dnsmasq_dir || return 1
-	get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] ||
-	{
-		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
-		stop -noexit
-		get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] || return 1
-	}
-
-	if [ "${DNSMASQ_INSTANCES_CNT}" = 1 ]
-	then
-		DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES}"
-		log_msg -blue "Detected only 1 dnsmasq instance - skipping manual instance selection."
-	else
-		# check if all instances share same conf-dirs
-		local instance conf_dirs conf_dirs_instance index indexes ifaces REPLY='' first=1 diff=
-		for instance in ${DNSMASQ_INSTANCES}
-		do
-			eval "conf_dirs_instance=\"\${${instance}_CONF_DIRS}\""
-			case "${first}" in
-				1)
-					first=
-					conf_dirs="${conf_dirs_instance}" ;;
-				'')
-					# conf-dirs are sorted, so we can directly compare
-					[ "${conf_dirs_instance}" = "${conf_dirs}" ] && continue
-					diff=1
-					break
-			esac
-		done
-
-		# if conf-dirs are shared, attach to first instance
-		if [ -z "${diff}" ]
-		then
-			DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES%%"${_NL_}"*}"
-			log_msg -blue "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
-		else
-			# if conf-dirs are not shared, ask the user
-			log_msg -blue "Multiple dnsmasq instances detected."
-			REPLY=a
-			if [ -n "${do_dialogs}" ]
-			then
-				log_msg "" "Existing dnsmasq instances and assigned network interfaces:"
-				for instance in ${DNSMASQ_INSTANCES}
-				do
-					eval "index=\"\${${instance}_INDEX}\""
-					eval "ifaces=\"\${${instance}_IFACES}\""
-					log_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
-					eval "local instance_${index}=\"${instance}\""
-					indexes="${indexes}${index}|"
-				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
-				pick_opt "${indexes}a" || exit 1
-			elif [ -n "${LUCI_DNSMASQ_INSTANCE_INDEX}" ]
-			then
-				REPLY="${LUCI_DNSMASQ_INSTANCE_INDEX}"
-				is_included "${REPLY}" "${indexes}" "|" ||
-					{ reg_failure "dnsmasq instance with index '${REPLY}' does not exist."; return 1; }
-			else
-				return 1
-			fi
-
-			[ "${REPLY}" = a ] && { log_msg "Aborted config generation."; exit 0; }
-			eval "DNSMASQ_INSTANCE=\"\${instance_${REPLY}}\""
-		fi
-	fi
-	eval "DNSMASQ_INDEX=\"\${${DNSMASQ_INSTANCE}_INDEX}\""
-	log_msg "Selected dnsmasq instance ${DNSMASQ_INDEX}: '${DNSMASQ_INSTANCE}'."
-
-	local conf_dirs conf_dirs_cnt
-	eval "conf_dirs=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS}\""
-	eval "conf_dirs_cnt=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS_CNT}\""
-
-	if [ "${conf_dirs_cnt}" = 1 ]
-	then
-		DNSMASQ_CONF_D="${conf_dirs}"
-	else
-		if is_included "/tmp/dnsmasq.d" "${conf_dirs}"
-		then
-			DNSMASQ_CONF_D=/tmp/dnsmasq.d
-		elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}"
-		then
-			DNSMASQ_CONF_D=/tmp/dnsmasq.cfg01411c.d
-		else
-			# fall back to first conf-dir
-			DNSMASQ_CONF_D="${conf_dirs%%"${_NL_}"*}"
-		fi
-	fi
-	log_msg "Selected dnsmasq conf-dir '${DNSMASQ_CONF_D}'."
-	if [ "${1}" != '-n' ]
-	then
-		write_config "$(
-			$SED_CMD -E '/^\s*(DNSMASQ_CONF_D|DNSMASQ_INSTANCE|DNSMASQ_INDEX)=/d' "${ABL_CONFIG_FILE}"
-			printf '%s\n%s\n%s\n' \
-				"DNSMASQ_INSTANCE=\"${DNSMASQ_INSTANCE}\"" \
-				"DNSMASQ_CONF_D=\"${DNSMASQ_CONF_D}\"" \
-				"DNSMASQ_INDEX=\"${DNSMASQ_INDEX}\""
-		)" || return 1
-	fi
-	:
-}
-
-# generates config
-gen_config()
-{
-	init_command gen_config || return 1
-
-	local cnt
-
-	if [ -n "${do_dialogs}" ] && [ -z "${luci_preset}" ]
-	then
-		mk_preset_arrays
-		mk_def_preset || print_msg "Skipping automatic preset recommendation."
-		if [ -n "${preset}" ]
-		then
-			print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is '${purple}${preset}${n_c}':"
-			gen_preset "${preset}"
-			print_msg "" "[C]onfirm this preset or [p]ick another preset?"
-			pick_opt "c|p"
-		else
-			REPLY=p
-		fi
-
-		if [ "${REPLY}" = p ]
-		then
-			print_msg "" "${purple}All available presets:${n_c}"
-			local presets_case_opts=
-			for preset in ${ALL_PRESETS}
-			do
-				add2list presets_case_opts "${preset}" "|"
-				gen_preset "${preset}" -d
-			done
-			print_msg "" "Pick preset:"
-			pick_opt "${presets_case_opts}"
-			preset="${REPLY}"
-		fi
-	else
-		# determine preset for luci
-		case "${luci_preset}" in
-			''|auto) mk_def_preset || { log_msg "Falling back to preset 'small'."; preset=small; } ;;
-			*) preset="${luci_preset}"
-		esac
-	fi
-
-	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "Invalid preset '${preset}'."; return 1; }
-	log_msg -blue "Selected preset '${preset}'."
-
-	set_dnsmasq_dir -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
-
-	# create cron job
-	cron_schedule=
-	local def_schedule="0 5 * * *" def_schedule_desc="daily at 5am (5 o'clock at night)"
-
-	REPLY=n
-	if [ -n "${do_dialogs}" ]
-	then
-		print_msg "" "${purple}Cron job configuration:${n_c}" \
-			"A cron job can be created to enable automatic list updates." \
-			"The default schedule is '${blue}${def_schedule}${n_c}': ${def_schedule_desc}" \
-			"The cron job will run with an added random number of minutes." \
-			"" "Create cron job with default schedule for automatic list updates?" \
-			"'n' will set the 'cron_schedule' setting to 'disable'. You can later create a cron job with a custom schedule as described in:" \
-			"https://github.com/lynxthecat/adblock-lean/blob/master/README.md"
-		pick_opt "y|n" || return 1
-		cron_schedule="${def_schedule}"
-	elif [ -n "${luci_upd_cron_job}" ] && [ -n "${luci_cron_schedule}" ]
-	then
-		REPLY=y
-		cron_schedule="${luci_cron_schedule}"
-	elif  [ -n "${luci_upd_cron_job}" ]
-	then
-		reg_failure "Can not create cron job for luci because the \${luci_cron_schedule} var is empty."
-	fi
-	[ "${REPLY}" = n ] && cron_schedule=disable
-
-	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || return 1
-	write_config "$(print_def_config -p "${preset}" -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}")" || return 1
-
-	[ "${action}" = gen_config ] && check_blocklist_compression_support
 	:
 }
 
 boot()
 {
 	init_command boot || exit 1
-	log_msg -purple "Sleeping for ${boot_start_delay_s} seconds." || exit 1
+	log_msg -purple "Sleeping for ${boot_start_delay_s} seconds."
 	sleep "${boot_start_delay_s}"
 	start "$@"
 }
 
 start()
 {
+	local version
+	get_abl_version "${ABL_SERVICE_PATH}" version
+	reg_action -purple "Starting adblock-lean, version ${version}."
 	init_command start || exit 1
-	reg_action -purple "Starting adblock-lean."
-
-	final_compress=
-	if [ "${use_compression}" = 1 ]
-	then
-		check_blocklist_compression_support
-		case ${?} in
-			0) final_compress=1 ;;
-			2) exit 1
-		esac
-	fi
 
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
@@ -2924,66 +1035,14 @@ start()
 	try_export_existing_blocklist
 	[ ${?} = 1 ] && exit 1
 
-	if [ "${initial_dnsmasq_restart}" != 1 ]
-	then
-		reg_action -blue "Testing connectivity." || exit 1
-		test_url_domains || initial_dnsmasq_restart=1
-	fi
-
-	if [ "${initial_dnsmasq_restart}" = 1 ]
-	then
-		clean_dnsmasq_dir
-		restart_dnsmasq || exit 1
-	fi
-
-	initial_uptime_ms=$(get_uptime_ms)
-
-	if ! gen_list_parts
-	then
-		reg_failure "Failed to generate preprocessed blocklist file with at least one entry."
-		restore_saved_blocklist || stop 1
-		exit 1
-	fi
-
-	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human "${preprocessed_list_line_cnt}") entries."
-
 	if ! generate_and_process_blocklist_file
 	then
-		reg_failure "New blocklist file check failed."
+		reg_failure "Failed to generate new blocklist."
 		restore_saved_blocklist || stop 1
-		exit 1
-	fi
-
-	if ! import_blocklist_file
-	then
-		reg_failure "Failed to import new blocklist file."
-		restore_saved_blocklist || stop 1
-		exit 1
-	fi
-
-	compressed=
-	[ -n "${final_compress}" ] && compressed=" compressed"
-	log_msg "" "Successfully imported new${compressed} blocklist file for use by dnsmasq with size: ${imported_final_list_size_human}."
-
-	restart_dnsmasq || exit 1
-
-	elapsed_time_str=$(get_elapsed_time_str)
-	log_msg "" "Processing time for blocklist generation and import: ${elapsed_time_str}."
-
-	if ! check_active_blocklist
-	then
-		reg_failure "Active blocklist check failed with new blocklist file."
-		restore_saved_blocklist || stop 1
-
 		check_active_blocklist || { reg_failure "Active blocklist check failed with previous blocklist file."; stop 1; }
-
 		log_msg -green "Previous blocklist restored and dnsmasq check passed."
 		exit 1
 	fi
-
-	log_msg -green "" "Active blocklist check passed with the new blocklist file."
-	log_success "New blocklist installed with entries count: $(int2human "${final_entries_cnt}")."
-	rm -f "${ABL_DIR}/prev_blocklist.gz"
 
 	check_for_updates
 	exit 0
@@ -3005,8 +1064,18 @@ stop()
 	msg="${msg% }"
 
 	init_command stop || exit 1
-	log_msg "Removing any adblock-lean blocklist files in dnsmasq config directories." || exit 1
-	clean_dnsmasq_dir
+
+	# get DNSMASQ_CONF_D without calling load_config()
+	[ -f "${ABL_CONFIG_FILE}" ] &&
+	DNSMASQ_CONF_D="$($SED_CMD -n '/^\s*DNSMASQ_CONF_D=/{s/^\s*DNSMASQ_CONF_D=//;s/\s*#.*//;s/"//g;p;q;}' "${ABL_CONFIG_FILE}")" &&
+	[ -n "${DNSMASQ_CONF_D}" ] ||
+	{
+		reg_failure "Failed to get DNSMASQ_CONF_D from config. Can not delete the blocklist from dnsmasq config directory."
+		exit 1
+	}
+
+	log_msg "Removing any adblock-lean blocklist files in dnsmasq config directories."
+	clean_dnsmasq_dir || exit 1
 	restart_dnsmasq -nostop || stop_rc=1
 	log_msg -purple "" "Stopped adblock-lean."
 	[ -n "$noexit" ] && return "${stop_rc}"
@@ -3033,6 +1102,7 @@ reload()
 # 4 - adblock-lean is stopped
 status()
 {
+	local run_state version active_entries_cnt=0 dnsmasq_status=''
 	init_command status || exit 1
 	check_lock
 	case ${?} in
@@ -3042,33 +1112,45 @@ status()
 			exit 2
 	esac
 	get_abl_run_state
-	case ${?} in
+	run_state=${?}
+	get_abl_version "${ABL_SERVICE_PATH}" version
+	log_msg -purple "" "adblock-lean (${version}) status:"
+	case ${run_state} in
 		0) ;;
-		3) log_msg -purple "adblock-lean is currently paused."; exit 3 ;;
-		4) log_msg -purple "adblock-lean is stopped."; exit 4;
+		3) log_msg -yellow "" "adblock-lean is paused." ;;
+		4) log_msg -yellow "" "adblock-lean is stopped."
 	esac
-	check_active_blocklist; local dnsmasq_status=${?}
-	luci_dnsmasq_status=${dnsmasq_status}
 
-	local active_entries_cnt=0
+	rc_enabled
+	case ${?} in
+		0) log_msg -green "" "adblock-lean service is enabled." ;;
+		1) log_msg -yellow "" "adblock-lean service is disabled."
+	esac
 
-	if [ ${dnsmasq_status} = 0 ]
+	if [ "${run_state}" = 0 ]
 	then
-		active_entries_cnt="$(get_active_entries_cnt)" || reg_failure "No entries found in the blocklist file."
-
-		luci_good_line_count=${active_entries_cnt}
-		log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human ${active_entries_cnt})."
-		log_msg -green "adblock-lean is active."
-		gen_stats -noexit
-	else
-		reg_failure "The dnsmasq check failed with existing blocklist file."
-		log_msg "Consider a full reset by running: 'service adblock-lean restart'."
+		check_active_blocklist
+		dnsmasq_status=${?}
+		luci_dnsmasq_status=${dnsmasq_status}
+		if [ ${dnsmasq_status} = 0 ]
+		then
+			active_entries_cnt="$(get_active_entries_cnt)" && [ "${active_entries_cnt}" != 0 ] ||
+				{ reg_failure "No entries found in the blocklist file."; run_state=1; }
+			luci_good_line_count=${active_entries_cnt}
+			log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human "${active_entries_cnt}")."
+			log_msg -green "adblock-lean is active."
+			gen_stats -noexit
+		else
+			reg_failure "The dnsmasq check failed with existing blocklist file."
+			run_state=1
+			log_msg "Consider a full reset by running: 'service adblock-lean restart'."
+		fi
 	fi
+
 	check_for_updates
 	luci_update_status=${?}
 
-	[ ${dnsmasq_status} = 0 ] && [ ${active_entries_cnt} != 0 ] && exit 0
-	exit 1
+	exit ${run_state}
 }
 
 pause()
@@ -3099,92 +1181,131 @@ resume()
 
 	reg_action -purple "Resuming adblock-lean." || exit 1
 	restore_saved_blocklist || stop 1
-	restart_dnsmasq || stop 1
 	log_msg -purple "adblock-lean is now resumed."
 	exit 0
 }
 
-# 1 - (optional) '-no-check-config' to skip checking config compatibility with the newer version
-# 1 - (optional) '--simulation <path>' to simulate update (intended for testing: service adblock-lean update --simulation <path_to_new_ver>)
+# optional: '-s <path>' to simulate update (intended for testing: service adblock-lean update -s <path_to_new_ver> -v <version>)
+# optional: -v [latest|snapshot|v<version>|tag=<github_tag>|commit=<commit_hash>]
+# optional: '-f' to skip calling stop()
 update()
 {
+	upd_failed()
+	{
+		local fail_msg="${1}"
+		[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
+		[ -n "${fail_msg}" ] && reg_failure "${fail_msg}"
+		reg_failure "Failed to update adblock-lean."
+		rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
+	}
+
 	failsafe_log()
 	{
 		printf '%s\n' "${1}" > "${MSGS_DEST:-/dev/tty}"
 		logger -t adblock-lean "${1}"
 	}
 
-	init_command update || exit 1
-	reg_action -purple "Obtaining latest version of adblock-lean." || exit 1
+	unexp_arg()
+	{
+		upd_failed "update: unexpected argument '${1}'."
+	}
 
-	if [ "${1}" != "--simulation" ]
-		then
-		uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/adblock-lean \
-			-O "${ABL_DIR}/adblock-lean.latest" 1> /dev/null 2> "${ABL_DIR}/uclient-fetch_err"
-		if ! grep -q "Download completed" "${ABL_DIR}/uclient-fetch_err"
-		then
-			reg_failure "Unable to download latest version of adblock-lean."
-			rm -f "${ABL_DIR}/adblock-lean.latest" "${ABL_DIR}/uclient-fetch_err"
-			exit 1
-		fi
-	else
+	init_command update || { upd_failed; return 1; }
+
+	local file version='' force_update='' dist_dir='' ref='' tarball_url='' upd_channel='' prev_config_format upd_config_format
+
+	while getopts ":s:v:f" opt; do
+		case ${opt} in
+			s) SIM_PATH=${OPTARG} ;;
+			v) version=${OPTARG} ;;
+			f) force_update=1 ;;
+			*) unexp_arg "-${OPTARG}"; return 1
+		esac
+	done
+	shift $((OPTIND-1))
+	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
+
+	[ -z "${force_update}" ] && stop -noexit
+
+	rm -rf "${ABL_UPD_DIR}"
+	try_mkdir -p "${ABL_UPD_DIR}" || { upd_failed; return 1; }
+
+	if [ -n "${SIM_PATH}" ]
+	then
 		print_msg "${yellow}Running in simulation mode.${n_c}"
-		[ -z "${2}" ] && { print_msg "${red}Provide path to the new version.${n_c}"; exit 1; }
-		cp "${2}" "${ABL_DIR}/adblock-lean.latest"
+		[ -d "${SIM_PATH}" ] || { upd_failed "Directory '${SIM_PATH}' does not exist."; return 1; }
+		[ -n "${version}" ] || { upd_failed "Specify new version."; return 1; }
+		upd_channel=release ref="${version}"
+		dist_dir="${ABL_UPD_DIR}/simulation"
+		try_mkdir -p "${dist_dir}" || { upd_failed; return 1; }
+		cp -rT "${SIM_PATH}" "${dist_dir}"
+	else
+		: "${version:=latest}"
+		get_gh_ref_data "${version}" ref tarball_url upd_channel &&
+		fetch_abl_dist dist_dir "${tarball_url}" "${ref}" || { upd_failed; return 1; }
 	fi
+
+	prev_config_format="${CONFIG_FORMAT#v}"
+	upd_config_format="$(get_config_format < "${dist_dir}/adblock-lean")"
+
+	unset action ABL_CMD # prevents infinite loop
 
 	(
-		unset -f abl_post_update_1
-		. "${ABL_DIR}/adblock-lean.latest" || exit 1
-		command -v abl_post_update_1 1>/dev/null && abl_post_update_1 # call function abl_post_update_1() in new version
-		:
-	) &&
+		# shellcheck disable=SC2030
+		UPD_SOURCED=1
 
-	if [ "${1}" != '-no-check-config' ]
-	then
-		(
-			prev_config_format="${curr_config_format}"
-			. "${ABL_DIR}/adblock-lean.latest" || exit 1
+		# unset vars and functions from current version to have a clean slate with the new version
+		unset ABL_LIB_FILES ABL_EXTRA_FILES LIBS_SOURCED CONFIG_FORMAT libs_missing
+		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs
+		export pid_file="${PID_FILE}" # for compatibility with older versions
 
-			command -v print_def_config && command -v get_config_format && upd_config_format="$(print_def_config | get_config_format)"
-			if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
+		curr_dist_dir="${dist_dir}"
+
+		# shellcheck source=/dev/null
+		. "${dist_dir}/adblock-lean" || { failsafe_log "Error: Failed to source the downloaded script."; exit 1; }
+
+		# call abl_post_update_1() in new version
+		check_util abl_post_update_1 && abl_post_update_1
+
+		printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}" > "${curr_dist_dir}/inst_files"
+
+		if [ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && [ "${upd_config_format}" != "${prev_config_format}" ]
+		then
+			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
+			# load config and call abl_post_update_2() in new version
+			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}/adblock-lean"; } &&
+					check_util load_config
 			then
-				failsafe_log "NOTE: config format has changed."
-				if command -v load_config
-				then
-					load_config
-					command -v abl_post_update_2 && abl_post_update_2 # call function abl_post_update_2() in new version
-				else
-					failsafe_log "Please run 'service adblock-lean start' to initialize the new config."
-				fi
+				load_config
+				check_util abl_post_update_2 && abl_post_update_2
+			else
+				failsafe_log "Please run 'service adblock-lean start' to initialize the new config."
 			fi
-			:
-		) 1>/dev/null ||
-		{
-			reg_failure "Failed to source the downloaded file. Canceling the update."
-			rm -f "${ABL_DIR}/adblock-lean.latest"
-			exit 1
-		}
-	fi
+		fi
+		:
+	) 1>/dev/null || { upd_failed "Failed to source the new version of adblock-lean. Update is cancelled."; return 1; }
 
-	try_mv "${ABL_DIR}/adblock-lean.latest" "${ABL_SERVICE_PATH}" || exit 1
-	chmod +x "${ABL_SERVICE_PATH}"
-	${ABL_SERVICE_PATH} enable
-	log_msg -green "adblock-lean has been updated to the latest version."
+	install_abl_files "${dist_dir}" "${upd_channel}_${ref}" || { upd_failed; return 1; }
+	rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
 
-	rm -f "${ABL_DIR}/adblock-lean.latest" "${ABL_DIR}/uclient-fetch_err"
-	if [ -n "${do_dialogs}" ]
+	# shellcheck disable=SC2031
+	[ -n "${UPD_SOURCED}" ] && return 0
+
+	enable || return 1
+	log_msg -green "adblock-lean has been updated to version '${version}'."
+
+	if [ -n "${DO_DIALOGS}" ]
 	then
 		print_msg "" "Start adblock-lean now? (y|n)"
 		pick_opt "y|n"
 		if [ "$REPLY" = y ]
 		then
-			. "${ABL_SERVICE_PATH}" || exit 1
+			# shellcheck source=/dev/null
+			. "${ABL_SERVICE_PATH}" || return 1
 			start
-			exit $?
 		fi
 	fi
-	exit 0
+	:
 }
 
 uninstall()
@@ -3200,7 +1321,7 @@ uninstall()
 
 	rm_cron_job
 
-	if [ -n "${do_dialogs}" ]
+	if [ -n "${DO_DIALOGS}" ]
 	then
 		print_msg "" "Delete the config directory ${ABL_CONFIG_DIR}?"
 		pick_opt "y|n"
@@ -3234,45 +1355,25 @@ uninstall()
 	[ -z "${addnmount_deleted}" ] &&
 		reg_failure "Failed to delete the custom addnmount entry from /etc/config/dhcp. Please delete manually."
 
-	log_msg -purple "" "Deleting the script from ${ABL_SERVICE_PATH}."
-	rm -f "${ABL_SERVICE_PATH}" ||
-		{ reg_failure "Failed to delete the script from '${ABL_SERVICE_PATH}'. Please delete manually."; exit 1; }
+	log_msg -purple "" "Deleting the scripts."
+	rm -f "${ABL_SERVICE_PATH}"
+	rm -rf "${ABL_LIB_DIR}"
 
 	log_msg -purple "" "Uninstall complete."
 	exit 0
 }
 
-rc_disable()
-{
-	rm -f /etc/rc.d/S??adblock-lean /etc/rc.d/K??adblock-lean
-}
-
-rc_enable()
-{
-	local err=1
-		ln -sf "${ABL_SERVICE_PATH}" "/etc/rc.d/S${START}adblock-lean" && err=0
-		ln -sf "${ABL_SERVICE_PATH}" "/etc/rc.d/K${STOP}adblock-lean" && err=0
-	return $err
-}
-
-rc_enabled()
-{
-	[ -L "/etc/rc.d/S${START}adblock-lean" ] &&
-	[ -L "/etc/rc.d/K${STOP}adblock-lean" ]
-}
-
 enable()
 {
-	if ! rc_enabled
+	if rc_enabled
 	then
-		log_msg -purple "" "Enabling the adblock-lean service."
-		rc_enable && rc_enabled ||
-			{ reg_failure "Failed to enable the adblock-lean service"; return 4; }
-	else
 		log_msg -green "The adblock-lean service is already enabled."
 		return 0
 	fi
-	load_config || return 3
+	log_msg -purple "" "Enabling the adblock-lean service."
+	rc_enable && rc_enabled ||
+		{ reg_failure "Failed to enable the adblock-lean service"; return 4; }
+	source_libs && load_config || return 3
 	[ -n "${cron_schedule}" ] && { upd_cron_job || return 6; }
 	:
 }
@@ -3294,7 +1395,7 @@ disable()
 }
 
 
-set_colors
+set_ansi
 
 # test process substitution support
 printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
@@ -3308,14 +1409,22 @@ rm -f /tmp/abl-test
 
 detect_utils
 
-# this is needed when running via 'sh /etc/init.d/adblock-lean'
-command -v config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
+# register 1st arg as $ABL_CMD when called by 'sh /etc/init.d/adblock-lean'
+if [ "${0}" = "${ABL_SERVICE_PATH}" ]
+then
+	ABL_CMD="${1}"
+	shift
+fi
 
-case "${1}" in
-	enable) enable; exit $? ;;
-	disable) disable; exit $? ;;
-	setup) setup; exit $? ;;
-	uninstall) uninstall; exit $? ;;
+# shellcheck source=/dev/null
+# this is needed when running via 'sh /etc/init.d/adblock-lean'
+check_util config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
+
+# detect when sourced from update() in older versions
+check_util failsafe_log 1>/dev/null && UPD_SOURCED=1
+
+case "${ABL_CMD}" in
+	enable|disable|uninstall|update|setup) ${ABL_CMD} "${@}"; exit ${?} ;;
 esac
 
 :
