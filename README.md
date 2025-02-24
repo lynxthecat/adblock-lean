@@ -328,6 +328,7 @@ Just add the files:
 
 ```bash
 /etc/init.d/adblock-lean
+/usr/lib/adblock-lean/
 /usr/lib/adblock-lean/abl-lib.sh
 /usr/lib/adblock-lean/abl-process.sh
 /etc/adblock-lean/
