@@ -1241,7 +1241,7 @@ clean_dnsmasq_dir()
 	add_conf_dir()
 	{
 		local confdir
-		config_get confdir "${1}" confidr
+		config_get confdir "${1}" confdir
 		add2list ALL_CONF_DIRS "${confdir}"
 	}
 
