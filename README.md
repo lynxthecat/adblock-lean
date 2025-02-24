@@ -148,7 +148,7 @@ cron_schedule="disable"
 
 ## Supported formats
 
-**USER NOTICE:**  Current versions September 19, 2024 and onwards switch to using raw formatted blocklists by default (the default lists are still Hagezi).  Dnsmasq formatted lists are still supported.  Raw lists have the benefit of smaller file size dowload, improvements in processing speed and reduced ram usage.  On the first run after updating, adblock-lean will prompt you (y/n) to automatically change URLs for Hagezi & OISD lists from dnsmasq format to raw format.  For other lists, you can choose to find a raw formatted list or continue using dnsmasq formatted lists.  You can always use ```service adblock-lean gen_config``` to generate a fresh configuration file if required.
+adblock-lean supports 2 blocklist/allowlist formats: **raw format** and **dnsmasq format**. Raw-format lists have the benefit of smaller file size dowload, improved processing speed and reduced ram usage. Hence built-in presets include lists in the raw format.
 
 The default Hagezi lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible.
 
@@ -195,6 +195,9 @@ Each configuration option is internally documented with comments in `/etc/adbloc
 |`boot_start_delay_s`                 | Start delay in seconds when service is started from system boot                               |
 |`custom_script`                      | Path to custom user script to execute on success on failure                                   |
 |`cron_schedule`                      | Crontab schedule for automatic blocklist updates or `disable`                                 |
+|`DNSMASQ_INSTANCE`                   | Name of the dnsmasq instance to attach to. Normally set automatically by the `setup` command  |
+|`DNSMASQ_CONF_D`                     | Conf-dir used by the dnsmasq instance. Normally set automatically by the `setup` command      |
+|`DNSMASQ_INDEX`                      | Index of the dnsmasq instance. Normally set automatically by the `setup` command              |
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
@@ -319,18 +322,19 @@ The locally installed adblock-lean is the latest version.
 
 Verify adverts are removed from newspaper sites and e.g. https://www.speedtest.net/. 
 
-This test can also be helpful: https://d3ward.github.io/toolz/adblock
-
-## Preserve service file and config across OpenWrt upgrades
+## Preserve adblock-lean files and config across OpenWrt upgrades
 
 Just add the files:
 
 ```bash
 /etc/init.d/adblock-lean
+/usr/lib/adblock-lean/abl-lib.sh
+/usr/lib/adblock-lean/abl-process.sh
 /etc/adblock-lean/
 /etc/adblock-lean/config
 /etc/adblock-lean/allowlist   # if used with your config
 /etc/adblock-lean/blocklist   # if used with your config
+/usr/libexec/abl_custom-script.sh   # if used with your config
 ```
 
 to the list of files to backup in the Configuration tab in LuCi here:
