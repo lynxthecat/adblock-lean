@@ -671,7 +671,7 @@ init_command()
 	# make lock if needed
 	if [ -n "${LOCK_REQ}" ]
 	then
-		mk_lock "${ABL_CMD}" || { unset LOCK_REQ CLEANUP_REQ; exit ${?}; }
+		mk_lock "${ABL_CMD}" || { local rv=${?}; unset LOCK_REQ CLEANUP_REQ; exit ${rv}; }
 	fi
 
 	# enable writing session log if we have the lock
