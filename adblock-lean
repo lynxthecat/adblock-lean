@@ -754,7 +754,7 @@ get_gh_ref_data()
 	if [ -n "${ref_fetch_url}" ]
 	then
 		# Get ref for latest/snapshot
-		log_msg -blue "Getting GitHub ref for ${version} version of adblock-lean from GitHub."
+		log_msg -blue "Getting GitHub ref for ${version} version of adblock-lean."
 		gh_ref="$(
 			uclient-fetch -q "${ref_fetch_url}" -O - 2> "${UCL_ERR_FILE}" |
 			jsonfilter -e "${jsonfilter_ptrn}" |
