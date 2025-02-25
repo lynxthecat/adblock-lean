@@ -470,7 +470,6 @@ then
 		pick_opt "y|n"
 		if [ "$REPLY" = y ]
 		then
-			# shellcheck source=/dev/null
 			${ABL_SERVICE_PATH} start
 		fi
 	else
@@ -478,7 +477,6 @@ then
 		pick_opt "y|n"
 		if [ "$REPLY" = y ]
 		then
-			# shellcheck source=/dev/null
 			${ABL_SERVICE_PATH} setup
 		fi
 	fi

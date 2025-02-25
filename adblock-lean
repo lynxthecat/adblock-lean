@@ -444,13 +444,9 @@ reg_failure()
 log_success()
 {
 	log_msg "${1}"
-	success_msg="${1}"
-	local recent_log=
-	[ -n "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ] && read -rd '' recent_log < "${LOG_FILE}"
-	[ -n "${recent_log}" ] && success_msg="${success_msg}${_NL_}${_NL_}Session log:${_NL_}${recent_log}"
 	if [ -n "${custom_scr_sourced}" ] && check_util report_success
 	then
-		report_success "${success_msg}"
+		report_success "${1}"
 	fi
 }
 
@@ -671,7 +667,7 @@ init_command()
 	# make lock if needed
 	if [ -n "${LOCK_REQ}" ]
 	then
-		mk_lock "${ABL_CMD}" || { unset LOCK_REQ CLEANUP_REQ; exit ${?}; }
+		mk_lock "${ABL_CMD}" || { local rv=${?}; unset LOCK_REQ CLEANUP_REQ; exit ${rv}; }
 	fi
 
 	# enable writing session log if we have the lock
