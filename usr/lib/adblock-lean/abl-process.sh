@@ -1,10 +1,283 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018
+# shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045
 # ABL_VERSION=dev
 
 # silence shellcheck warnings
 : "${use_compression:=}" "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}"
 : "${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}"
+
+
+TO_PROCESS_DIR="${ABL_DIR}/to_process"
+
+PROCESS_SCHEDULE_DIR="${ABL_DIR}/process_schedule"
+DL_SCHEDULE_DIR="${ABL_DIR}/dl_schedule"
+DL_IN_PROGRESS_FILE="${DL_SCHEDULE_DIR}/dl_in_progress"
+FINISHED_DL_PID_FILE="${DL_SCHEDULE_DIR}/finished-dl.pid"
+FINISHED_PROCESS_PID_FILE="${DL_SCHEDULE_DIR}/finished-process.pid"
+
+IDLE_TIMEOUT_S=300 # 5 minutes
+PROCESSING_TIMEOUT_S=900 # 15 minutes
+
+# TODO
+DL_THREADS=1
+PROCESS_THREADS=1
+
+# 1 - var name for output
+get_uptime_s()
+{
+	local uptime
+	read -r uptime _ < /proc/uptime
+	uptime="${uptime%.*}"
+	eval "${1}"='${uptime:-0}'
+}
+
+# To use, first get initial uptime: 'get_uptime_s INITIAL_UPTIME_S'
+# Then call this function to get elapsed time string at desired intervals, e.g.:
+# get_elapsed_time_s elapsed_time "${INITIAL_UPTIME_S}"
+# 1 - var name for output
+# 2 - initial uptime in seconds
+get_elapsed_time_s()
+{
+	local uptime_s
+	get_uptime_s uptime_s
+	eval "${1}"=$(( uptime_s-${2:-uptime_s} ))
+}
+
+
+# JOB SCHEDULER FUNCTIONS
+
+# 1 - job type (Download|Processing)
+# 2 - job PID
+# 3 - path (URL for download, file path for local)
+# 4 - return code
+handle_process_failure()
+{
+	reg_failure "${1} job (PID ${2}) for list '${3}' returned code ${4}."
+	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
+	log_msg "Skipping file and continuing."
+	:
+}
+
+# 1 - job type
+# the rest of the args passed as-is to workers
+schedule_job()
+{
+	local jobs_running_cnt threads job_pid last_job_rv job_type="${1}" job_url job_type_print=
+	shift
+	eval "jobs_running_cnt=\"\${${job_type}_jobs_running_cnt:-0}\" \
+		threads=\"\${${job_type}_THREADS}\""
+	case "${job_type}" in
+		DL) job_type_print=Download ;;
+		PROCESS) job_type_print=Processing
+	esac
+
+	# wait for job vacancy
+	while [ "${jobs_running_cnt}" -ge "${threads}" ]
+	do
+		wait -n
+		last_job_rv=${?}
+		get_finished_job_pid job_pid
+		get_a_arr_val DL_JOBS_ARR "${job_pid}" job_url
+		jobs_running_cnt=$((jobs_running_cnt-1))
+		eval "${job_type}_jobs_running_cnt"='${jobs_running_cnt}'
+		[ "${last_job_rv}" = 0 ] || handle_process_failure "${job_type_print}" "${job_pid}" "${job_url}" "${last_job_rv}" || return 1
+	done
+
+	case "${job_type}" in
+		DL) dl_list_part "${@}" & ;;
+		PROCESS) process_list_part "${@}"
+	esac
+	:
+}
+
+# 1 - list types (allowlist|blocklist|blocklist_ipv4)
+schedule_download_jobs()
+{
+	rm_in_progress()
+	{
+		rm -f "${DL_IN_PROGRESS_FILE}"
+	}
+
+	local list_type list_types="${1}" list_format list_url list_id dl_pids='' dl_pid job_url
+	[ -f "${DL_IN_PROGRESS_FILE}" ] && { reg_failure "File '${DL_IN_PROGRESS_FILE}' already exists."; return 1; }
+	touch "${DL_IN_PROGRESS_FILE}" || return 1
+	for list_type in ${list_types}
+	do
+		for list_format in raw dnsmasq
+		do
+			local list_urls invalid_urls='' bad_hagezi_urls='' d=''
+			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
+
+			eval "list_urls=\"\${${d}${list_type}_urls}\""
+			[ -z "${list_urls}" ] && continue
+
+			reg_action -blue "Starting ${list_format} ${list_type} part(s) download." || { rm_in_progress; return 1; }
+
+			invalid_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
+				log_msg -warn "" "Invalid URLs detected:" "${invalid_urls}"
+
+			if [ "${list_format}" = raw ]
+			then
+				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
+				log_msg -warn "" "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
+					"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
+				case "${list_type}" in blocklist|allowlist)
+					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | $SED_CMD -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
+					[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
+						"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
+				esac
+			fi
+
+			for list_url in ${list_urls}
+			do
+				list_id=$((list_id+1))
+				list_part_line_count=0
+				schedule_job DL "${list_url}" "${list_type}" "${list_format}" "${list_id}" || { rm_in_progress; return 1; }
+				add2list dl_pids "${!}"
+				set_a_arr_el DL_JOBS_ARR "${!}=${list_url}"
+			done
+		done
+	done
+
+	for dl_pid in ${dl_pids}
+	do
+		get_a_arr_val DL_JOBS_ARR "${dl_pid}" job_url
+		wait "${dl_pid}" || handle_process_failure "Download" "${dl_pid}" "${job_url}" "${?}" || { rm_in_progress; return 1; }
+	done
+	rm_in_progress
+	:
+}
+
+schedule_local_jobs()
+{
+	local list_types="${1}" local_list_path
+	for list_type in ${list_types}
+	do
+		list_id=0
+		if [ "${list_type}" != blocklist_ipv4 ]
+		then
+			eval "local_list_path=\"\${local_${list_type}_path}\""
+			if [ ! -f "${local_list_path}" ]
+			then
+				log_msg -blue "" "No local ${list_type} identified."
+			elif [ ! -s "${local_list_path}" ]
+			then
+				log_msg -warn "" "Local ${list_type} file is empty."
+			else
+				log_msg -blue "" "Scheduling processing for the local ${list_type}."
+				ln -sf "${local_list_path}" "${TO_PROCESS_DIR}/${list_type}_local_raw.${list_id}"
+			fi
+		fi
+	done
+	:
+}
+
+schedule_processing_jobs()
+{
+	find_files_to_process()
+	{
+		find "${TO_PROCESS_DIR}" \( -type l -o -type p \) \( -name ${1} \) | grep .
+	}
+
+	local IFS file files_to_process processing_time_s=0 list_type list_types="${1}" find_names=
+
+	for list_type in ${list_types}
+	do
+		add2list find_names "${list_type}_*" " -o -name "
+	done
+
+	files_to_process="$(find_files_to_process "${find_names}")"
+
+	while [ -f "${DL_IN_PROGRESS_FILE}" ] || [ -n "${files_to_process}" ]
+	do
+		get_elapsed_time_s processing_time_s "${INITIAL_UPTIME_S}"
+		[ "${processing_time_s}" -lt "${PROCESSING_TIMEOUT_S}" ] ||
+			{
+				reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s): stopping unfinished processing."
+				return 1
+			}
+
+		local idle_time_s=0
+		while ! files_to_process="$(find_files_to_process "${find_names}")" 
+		do
+			[ "${idle_time_s}" -lt "${IDLE_TIMEOUT_S}" ] ||
+				{
+					reg_failure "Idle timeout (${IDLE_TIMEOUT_S} s): giving up on waiting for files to process."
+					return 1
+				}
+			print_msg -yellow "Waiting for files to process..."
+			sleep 1
+			idle_time_s=$((idle_time_s+1))
+		done
+
+		IFS="${_NL_}"
+		for file in ${files_to_process}
+		do
+			IFS="_"
+			set -- ${file##*/}
+			local list_type="${1}" list_origin="${2}" list_format="${3}" list_id="${file##*.}"
+			IFS="${DEFAULT_IFS}"
+			schedule_job PROCESS "${list_id}" "${list_type}" "downloaded" "${list_format}" "${file}" || return 1
+		done
+		IFS="${DEFAULT_IFS}"
+	done
+	:
+}
+
+# register finished job
+# 1 - PID of finished job
+# 2 - directory
+reg_finished_job_pid()
+{
+	local reg_wait_time=0 reg_file="${2}/finished_job"
+	# avoid race conditions
+	[ -f "${reg_file}" ] && print_msg -yellow "Job ${1} completed but is waiting for another completed job to be cleared."
+	while [ "${reg_wait_time}" -lt 5 ] && [ -f "${reg_file}" ]
+	do
+		sleep 1
+		reg_wait_time=$((reg_wait_time+1))
+	done
+	[ -f "${reg_file}" ] &&
+	{
+		reg_failure "Can not register finished job (PID '${1}') because file '${reg_file}' exists (contains PID '$(cat "${2}")')."
+		return 1
+	}
+	printf '%s\n' "${1}" > "${reg_file}"
+}
+
+# 1 - var name for output
+# 2 - directory
+get_finished_job_pid()
+{
+	local fin_job_pid='' reg_file="${2}/finished_job"
+	unset "${2}"
+
+	[ -s "${reg_file}" ] && read -r fin_job_pid < "${reg_file}" && [ -n "${fin_job_pid}" ] ||
+		{ reg_failure "Failed to get finished job pid from file '${reg_file}'."; return 1; }
+	rm -f "${reg_file}"
+
+	eval "${2}"='${fin_job_pid}'
+}
+
+# get current job PID
+# 1 - var name for output
+get_curr_job_pid()
+{
+	local __pid='' pid_line=''
+	unset "${1}"
+	IFS="${_NL_}" read -r -n512 -d '' _ _ _ _ _ pid_line _ < /proc/self/status
+	__pid="${pid_line##*[^0-9]}"
+	case "${__pid}" in ''|*[!0-9]*) reg_failure "Failed to get current job PID."; return 1; esac
+	eval "${1}=\"${__pid}\""
+}
+
+try_mkfifo()
+{
+	[ -f "${1}" ] && { reg_failure "fifo file '${1}' already exists."; return 1; }
+	mkfifo "${1}" || { reg_failure "Failed to create fifo file '${1}'."; return 1; }
+	:
+}
+
 
 try_gzip()
 {
@@ -16,16 +289,62 @@ try_gunzip()
 	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
 }
 
-cleanup_dl_status_files()
+# 1 - URL
+# 2 - list type (allowlist|blocklist|blocklist_ipv4)
+# 3 - list format (dnsmasq|raw)
+# 4 - list id
+dl_list_part()
 {
-	rm -f "${ABL_DIR}/rogue_element" "${ABL_DIR}/uclient-fetch_err"
+	rm_ucl_err_file()
+	{
+		rm -f "${ucl_err_file}"
+	}
+
+	local me=dl_list_part dl_rv dl_completed='' retry=0 list_url="${1}" list_type="${2}" list_format="${3}" list_id="${4}" curr_job_pid
+	local ucl_err_file="${ABL_DIR}/ucl_err_${list_type}_${list_format}.${list_id}"
+	local fifo_file="${TO_PROCESS_DIR}/${list_type}_download_${list_format}.${list_id}"
+	get_curr_job_pid curr_job_pid || return 1
+
+	while :
+	do
+		retry=$((retry + 1))
+		if [ "${retry}" -ge "${max_download_retries}" ]
+		then
+			reg_failure "${max_download_retries} download attempts failed for URL '${list_url}'."
+			return 1
+		fi
+		try_mkfifo "${fifo_file}" || return 1
+
+		rm_ucl_err_file
+
+		uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" 1> "${fifo_file}"
+		dl_rv=${?}
+		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
+		if [ "${dl_rv}" = 0 ] && [ "${dl_completed}" = 1 ]
+		then
+			rm_ucl_err_file
+			log_msg -green "Successfully downloaded list part from URL '${list_url}'."
+			return 0
+		fi
+		rm -f "${fifo_file}"
+		reg_failure "Failed to download list part from URL '${list_url}'. uclient-fetch exited with code ${dl_rv}."
+		[ -f "${ucl_err_file}" ] && [ -z "${dl_completed}" ] &&
+			reg_failure "uclient-fetch errors: '$(cat "${ucl_err_file}")'."
+		rm_ucl_err_file
+
+		reg_action -blue "Sleeping for 5 seconds after failed download attempt." || return 1
+		sleep 5
+		continue
+	done
+	reg_finished_job_pid "${curr_job_pid}" "${DL_SCHEDULE_DIR}" || return 1
+	:
 }
 
 # 1 - list id
 # 2 - list type (allowlist|blocklist|blocklist_ipv4)
 # 3 - list origin (local or downloaded)
 # 4 - list format (dnsmasq or raw)
-# 5 - local list path (for local lists) or URL (for downloaded lists)
+# 5 - symlink path (for local lists) or fifo path (for downloaded lists)
 #
 # return codes:
 # 0 - Success
@@ -34,12 +353,18 @@ cleanup_dl_status_files()
 # 3 - Download Failure (retry makes sense)
 process_list_part()
 {
+	rm_rogue_el_file()
+	{
+		rm -f "${rogue_el_file}"
+	}
+
 	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part"
-	local dest_file="${ABL_DIR}/${list_type}.${list_id}" compress_part='' \
-		min_list_part_line_count='' list_part_size_B='' list_part_size_KB='' val_entry_regex
+	local curr_job_pid dest_file="${ABL_DIR}/${list_type}.${list_id}" compress_part='' \
+		list_part_line_count min_list_part_line_count='' list_part_size_B='' list_part_size_KB='' val_entry_regex
+	local rogue_el_file="${ABL_DIR}/rogue_el_${list_type}_${list_format}.${list_id}"
 
 	for v in 1 2 3 4 5; do
-		eval "[ -z \"\${${v}}\" ]" && { reg_failure "${me}: Missing arguments."; return 1; }
+		eval "[ -z \"\${${v}}\" ]" && { reg_failure "${me}: Missing argument ${v}."; return 1; }
 	done
 
 	case "${list_type}" in
@@ -48,6 +373,8 @@ process_list_part()
 		*) reg_failure "${me}: Invalid list type '${list_type}'"; return 1
 	esac
 
+	get_curr_job_pid curr_job_pid || return 1
+
 	case ${list_type} in
 		allowlist) dest_file="${ABL_DIR}/allowlist.0" ;;
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
@@ -55,15 +382,10 @@ process_list_part()
 
 	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
 
-	cleanup_dl_status_files
+	rm_rogue_el_file
 
-	# Download or cat the list
-	case "${list_origin}" in
-		downloaded) uclient-fetch "${list_path}" -O- --timeout=3 2> "${ABL_DIR}/uclient-fetch_err";;
-		local) cat "${list_path}"
-	esac |
-	# limit size
-	{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
+	# read input file and limit size
+	{ head -c "${max_file_part_size_KB}k" "${list_path}"; cat 1>/dev/null; } |
 
 	# Count bytes
 	tee >(wc -c > "${ABL_DIR}/list_part_size_B") |
@@ -109,7 +431,7 @@ process_list_part()
 	fi |
 
 	# check lists for rogue elements
-	tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${ABL_DIR}/rogue_element") |
+	tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${rogue_el_file}") |
 
 	# compress parts
 	if [ -n "${compress_part}" ]
@@ -135,16 +457,10 @@ process_list_part()
 		return 2
 	fi
 
-	if [ "${list_origin}" = downloaded ] && ! grep -q "Download completed" "${ABL_DIR}/uclient-fetch_err"
+	if read -r rogue_element < "${rogue_el_file}"
 	then
 		rm -f "${dest_file}"
-		reg_failure "Download of new ${list_type} file part from: ${list_path} failed."
-		return 3
-	fi
-
-	if read -r rogue_element < "${ABL_DIR}/rogue_element"
-	then
-		rm -f "${dest_file}"
+		rm_rogue_el_file
 		case "${rogue_element}" in
 			*"${CR_LF}"*)
 				log_msg -warn "${list_type} file from ${list_path} contains Windows-format (CR LF) newlines." \
@@ -153,7 +469,8 @@ process_list_part()
 		esac
 		return 2
 	fi
-	rm -f "${ABL_DIR}/rogue_element"
+	rm_rogue_el_file
+
 
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
@@ -169,29 +486,20 @@ process_list_part()
 		rm -f "${dest_file}"
 	fi
 
-	cleanup_dl_status_files
+	local part=
+	[ "${list_origin}" = downloaded ] && part=" part"
+	log_msg "Successfully processed ${list_origin} ${list_type}${part} (source file size: ${list_part_size_human}, sanitized line count: $(int2human "${list_part_line_count}"))."
+
+	[ "${list_type}" = blocklist_ipv4 ] && use_blocklist_ipv4=1
+	printf '%s\n' "${list_line_cnt}" > "${ABL_DIR}/${curr_job_pid}_lines_cnt"
+
 	:
 }
 
 gen_list_parts()
 {
-	# 1 - list origin (local or downloaded)
-	log_process_success()
-	{
-		local part=
-		[ "${1}" = downloaded ] && part=" part"
-		log_msg "Successfully processed ${list_type}${part} (source file size: ${list_part_size_human}, sanitized line count: $(int2human ${list_part_line_count}))."
-	}
-
-	handle_process_failure()
-	{
-		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-		log_msg "Skipping file and continuing."
-		:
-	}
-
-	local list_type='' list_format='' list_id list_line_cnt list_urls list_url local_list_path
-	local list_part_line_count preprocessed_lines_cnt=0
+	local list_type='' list_format='' list_line_cnt
+	local list_part_line_count preprocessed_lines_cnt=0 last_job_rv
 
 	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
@@ -207,100 +515,51 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
+	# clean up before processing
 	for list_type in allowlist blocklist blocklist_ipv4
 	do
 		rm -f "${ABL_DIR}/${list_type}".*
-		list_id=0 list_line_cnt=0 list_part_line_count=0
-		local and_compressing=
-		case ${list_type} in blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && and_compressing=" and compressing"; esac
+	done
 
-		# Local list
-		if [ "${list_type}" != blocklist_ipv4 ]
-		then
-			eval "local_list_path=\"\${local_${list_type}_path}\""
-			if [ ! -f "${local_list_path}" ]
-			then
-				log_msg -blue "" "No local ${list_type} identified."
-			elif [ ! -s "${local_list_path}" ]
-			then
-				log_msg -warn "" "Local ${list_type} file is empty."
-			else
-				log_msg -blue "" "Found local ${list_type}. Sanitizing${and_compressing}."
-				reg_action -nolog "Sanitizing${and_compressing} the local ${list_type}." || return 1
-				process_list_part "${list_id}" "${list_type}" "local" "raw" "${local_list_path}"
-				case ${?} in
-					0)
-						log_process_success "local"
-						list_line_cnt=$(( list_line_cnt + list_part_line_count )) ;;
-					*) handle_process_failure || return 1
-				esac
-			fi
-		fi
+	set +m # disable job complete notification
 
-		# List parts download
+	local dl_scheduler_pid process_scheduler_pid
 
-		for list_format in raw dnsmasq
-		do
-			local d=
-			local invalid_urls='' bad_hagezi_urls=''
-			[ "${list_format}" = dnsmasq ] && d="dnsmasq_"
+	# Asynchronously download and process parts
 
-			eval "list_urls=\"\${${d}${list_type}_urls}\""
-			[ -z "${list_urls}" ] && continue
+	try_mkdir -p "${DL_SCHEDULE_DIR}" &&
+	try_mkdir -p "${TO_PROCESS_DIR}" || return 1
 
-			reg_action -blue "Starting ${list_format} ${list_type} part(s) download." || return 1
+	# schedule allowlist download and processing
+	if [ -n "${allowlist_urls}${dnsmasq_allowlist_urls}" ]
+	then
+		schedule_download_jobs allowlist &
+		dl_scheduler_pid=${!}
+		schedule_local_jobs allowlist # synchronous
+		schedule_processing_jobs allowlist &
+		process_scheduler_pid=${!}
 
-			invalid_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
-				log_msg -warn "" "Invalid URLs detected:" "${invalid_urls}"
+		wait "${dl_scheduler_pid}" &&
+		wait "${process_scheduler_pid}" || return 1
+	fi
 
-			if [ "${list_format}" = raw ]
-			then
-				bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
-				log_msg -warn "" "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
-					"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
-				case "${list_type}" in blocklist|allowlist)
-					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | $SED_CMD -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
-					[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
-						"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
-				esac
-			fi
+	# schedule local jobs
+	schedule_local_jobs "blocklist blocklist_ipv4"  # synchronous
 
-			for list_url in ${list_urls}
-			do
-				list_id=$((list_id+1))
-				retry=0
-				while :
-				do
-					retry=$((retry + 1))
-					list_part_line_count=0
-					reg_action "Downloading, checking and sanitizing ${list_format} ${list_type} part from: ${list_url}." || return 1
-					process_list_part "${list_id}" "${list_type}" "downloaded" "${list_format}" "${list_url}"
-					case ${?} in
-						0)
-							log_process_success "downloaded ${list_format}"
-							[ "${list_type}" = blocklist_ipv4 ] && use_blocklist_ipv4=1
-							list_line_cnt=$(( list_line_cnt + list_part_line_count ))
-							continue 2 ;;
-						1) return 1 ;;
-						2)
-							handle_process_failure || return 1
-							continue 2 ;;
-						3)
-					esac
+	# schedule download jobs
+	schedule_download_jobs "blocklist blocklist_ipv4" &
+	dl_scheduler_pid=${!}
 
-					if [ "${retry}" -ge "${max_download_retries}" ]
-					then
-						reg_failure "Three download attempts failed for URL ${list_url}."
-						handle_process_failure || return 1
-						continue 2
-					fi
+	# schedule processing jobs
+	schedule_processing_jobs "blocklist blocklist_ipv4" &
+	process_scheduler_pid=${!}
 
-					reg_action -blue "Sleeping for 5 seconds after failed download attempt." || return 1
-					sleep 5
-					continue
-				done
-			done
-		done
+	wait "${dl_scheduler_pid}" &&
+	wait "${process_scheduler_pid}" || return 1
+
+	for list_type in blocklist blocklist_ipv4
+	do
+		list_line_cnt=0 list_part_line_count=0
 
 		if [ "${list_line_cnt}" = 0 ] || { [ "${list_type}" = allowlist ] && [ ! -f "${ABL_DIR}/allowlist" ]; }
 		then
@@ -324,8 +583,7 @@ gen_list_parts()
 		fi
 		preprocessed_lines_cnt="$((preprocessed_lines_cnt+list_line_cnt))"
 	done
-	log_msg -green "" \
-		"Successfully generated preprocessed blocklist file with $(int2human "${preprocessed_lines_cnt}") entries."
+	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human "${preprocessed_lines_cnt}") entries."
 	:
 }
 
@@ -410,28 +668,7 @@ generate_and_process_blocklist_file()
 		fi
 	}
 
-	# 1 - var name for output
-	get_uptime_s()
-	{
-		local uptime
-		read -r uptime _ < /proc/uptime
-		uptime="${uptime%.*}"
-		eval "${1}"='${uptime:-0}'
-	}
-
-	get_elapsed_time_str()
-	{
-		# To use, first set initial uptime: 'get_uptime_s initial_uptime_s'
-		# Then call this function to get elapsed time string at desired intervals, e.g.:
-		# printf '%s\n' "Elapsed time: $(get_elapsed_time_str)"
-
-		local uptime_s
-		get_uptime_s uptime_s
-		elapsed_time_s=$(( uptime_s-${initial_uptime_s:-uptime_s} ))
-		printf '%dm:%ds' $((elapsed_time_s/60)) $((elapsed_time_s%60))
-	}
-
-	local list_type out_f="${ABL_DIR}/abl-blocklist"
+	local elapsed_time_s list_type out_f="${ABL_DIR}/abl-blocklist"
 	local dnsmasq_err max_blocklist_file_size_B=$((max_blocklist_file_size_KB*1024))
 
 	local final_compress=
@@ -456,7 +693,7 @@ generate_and_process_blocklist_file()
 		restart_dnsmasq || exit 1
 	fi
 
-	get_uptime_s initial_uptime_s
+	get_uptime_s INITIAL_UPTIME_S
 
 	if ! gen_list_parts
 	then
@@ -587,7 +824,8 @@ generate_and_process_blocklist_file()
 
 	restart_dnsmasq || return 1
 
-	log_msg "" "Processing time for blocklist generation and import: $(get_elapsed_time_str)."
+	get_elapsed_time_s elapsed_time_s "${INITIAL_UPTIME_S}"
+	log_msg "" "Processing time for blocklist generation and import: $((elapsed_time_s/60))m:$((elapsed_time_s%60))s."
 
 	if ! check_active_blocklist
 	then
