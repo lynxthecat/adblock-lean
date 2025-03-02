@@ -44,7 +44,7 @@ ABL_PID_DIR=/tmp/adblock-lean
 ABL_UPD_DIR="/var/run/adblock-lean-update"
 
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
-ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh"
+ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh ${ABL_LIB_DIR}/abl-arrays.sh"
 ABL_EXTRA_FILES="" # may be useful in the future
 
 ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
@@ -217,13 +217,15 @@ detect_utils() {
 	:
 }
 
+# 1: (optional) '-[color]'
 # prints each argument into a separate line
 print_msg()
 {
-	local m
+	local m color=
+	case "${1}" in -blue|-red|-green|-purple|-yellow) eval "color=\"\${${1#-}}\""; shift; esac
 	for m in "${@}"
 	do
-		printf '%s\n' "${m}" > "$MSGS_DEST"
+		printf '%s\n' "${color}${m}${n_c}" > "$MSGS_DEST"
 	done
 }
 
@@ -239,7 +241,7 @@ log_msg()
 		case "${_arg}" in
 			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
 			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
-			-blue|-red|-green|-purple|-yellow) eval "color=\"\${${_arg#-}}\"" ;;
+			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
 			'') msgs="${msgs}dummy${_DELIM_}" ;;
 			*) msgs="${msgs}${msgs_prefix}${_arg}${_DELIM_}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
 		esac
@@ -253,7 +255,7 @@ log_msg()
 		case "${m}" in
 			dummy) echo ;;
 			*)
-				print_msg "${color}${m}${n_c}"
+				print_msg ${color} "${m}${n_c}"
 				logger -t adblock-lean -p user."${err_l}" "${m}"
 				write_log_file "${m}" "${err_l}"
 		esac
