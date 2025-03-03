@@ -254,7 +254,7 @@ log_msg()
 		case "${m}" in
 			dummy) echo ;;
 			*)
-				print_msg ${color} "${m}${n_c}"
+				print_msg ${color} "${m}"
 				logger -t adblock-lean -p user."${err_l}" "${m}"
 				write_log_file "${m}" "${err_l}"
 		esac
@@ -975,7 +975,7 @@ upd_cron_job()
 	enable_cron_service || return 1
 	curr_cron="$(get_curr_crontab)"
 	case ${?} in
-		0) print_msg "${green}Cron job for adblock-lean with schedule '${cron_schedule}' aldready exists.${n_c}"; return 0 ;;
+		0) print_msg -green "Cron job for adblock-lean with schedule '${cron_schedule}' aldready exists."; return 0 ;;
 		1) return 1 ;;
 		2) curr_cron="$(printf %s "${curr_cron}" | $SED_CMD "s~^.*${ABL_CRON_CMD}.*\$~~")" ;; # remove cron job with a different schedule
 		3) ;; # no adblock-lean cron job exists
@@ -1230,7 +1230,7 @@ update()
 
 	if [ -n "${SIM_PATH}" ]
 	then
-		print_msg "${yellow}Running in simulation mode.${n_c}"
+		print_msg -yellow "Running in simulation mode."
 		[ -d "${SIM_PATH}" ] || { upd_failed "Directory '${SIM_PATH}' does not exist."; return 1; }
 		[ -n "${version}" ] || { upd_failed "Specify new version."; return 1; }
 		upd_channel=release ref="${version}"
