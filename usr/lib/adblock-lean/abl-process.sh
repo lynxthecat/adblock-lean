@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045
+# shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045,SC3003
 # ABL_VERSION=dev
 
 # silence shellcheck warnings
@@ -14,6 +14,7 @@ DL_SCHEDULE_DIR="${ABL_DIR}/dl_schedule"
 DL_IN_PROGRESS_FILE="${DL_SCHEDULE_DIR}/dl_in_progress"
 FINISHED_DL_PID_FILE="${DL_SCHEDULE_DIR}/finished-dl.pid"
 FINISHED_PROCESS_PID_FILE="${DL_SCHEDULE_DIR}/finished-process.pid"
+DL_JOBS_REG_FILE="${DL_SCHEDULE_DIR}/dl_jobs_running"
 
 IDLE_TIMEOUT_S=300 # 5 minutes
 PROCESSING_TIMEOUT_S=900 # 15 minutes
@@ -21,6 +22,24 @@ PROCESSING_TIMEOUT_S=900 # 15 minutes
 # TODO
 DL_THREADS=1
 PROCESS_THREADS=1
+
+
+# subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
+# output via optional variable with name $3
+# returns status 0 if the result is null, 1 if not
+subtract_a_from_b() {
+	sab_out="${3:-___dummy}"
+	case "$2" in '') unset "$sab_out"; return 0; esac
+	case "$1" in '') eval "$sab_out"='$2'; [ ! "$2" ]; return; esac
+	_fs_su="${4:-"${_NL_}"}"
+	rv_su=0 _subt=
+	local IFS="$_fs_su"
+	for e in $2; do
+		is_included "$e" "$1" "$_fs_su" || { add2list _subt "$e" "$_fs_su"; rv_su=1; }
+	done
+	eval "$sab_out"='$_subt'
+	return $rv_su
+}
 
 # 1 - var name for output
 get_uptime_s()
@@ -46,6 +65,29 @@ get_elapsed_time_s()
 
 # JOB SCHEDULER FUNCTIONS
 
+# 1 - job PID
+# 2 - job URL
+reg_dl_job_url()
+{
+	${SED_CMD} -i "/^${1}=/d;\$a\\\n${1}=${2}" "${DL_JOBS_REG_FILE}"
+}
+
+# 1 - var name for output
+# 2 - job PID
+get_dl_job_url()
+{
+	local line
+	unset "${1}"
+	while read -r line
+	do
+		case "${line}" in "${2}="*)
+			eval "${1}"='${line##*=}'
+			return 0
+		esac
+	done < "${DL_JOBS_REG_FILE}"
+	return 1
+}
+
 # 1 - job type (Download|Processing)
 # 2 - job PID
 # 3 - path (URL for download, file path for local)
@@ -58,13 +100,14 @@ handle_process_failure()
 	:
 }
 
-# 1 - job type
+# 1 - job type (DL|PROCESS)
 # the rest of the args passed as-is to workers
 schedule_job()
 {
-	local jobs_running_cnt threads job_pid last_job_rv job_type="${1}" job_url job_type_print=
+	local pids_running jobs_running_cnt threads job_pid last_job_rv job_type="${1}" job_path job_type_print=
 	shift
-	eval "jobs_running_cnt=\"\${${job_type}_jobs_running_cnt:-0}\" \
+	eval "pids_running=\"\${${job_type}_PIDS}\" \
+		jobs_running_cnt=\"\${${job_type}_jobs_running_cnt:-0}\" \
 		threads=\"\${${job_type}_THREADS}\""
 	case "${job_type}" in
 		DL) job_type_print=Download ;;
@@ -77,15 +120,16 @@ schedule_job()
 		wait -n
 		last_job_rv=${?}
 		get_finished_job_pid job_pid
-		get_a_arr_val DL_JOBS_ARR "${job_pid}" job_url
+		subtract_a_from_b "${job_pid}" "${pids_running}" "${job_type}_PIDS"
+		get_dl_job_url job_path "${job_pid}"
 		jobs_running_cnt=$((jobs_running_cnt-1))
 		eval "${job_type}_jobs_running_cnt"='${jobs_running_cnt}'
-		[ "${last_job_rv}" = 0 ] || handle_process_failure "${job_type_print}" "${job_pid}" "${job_url}" "${last_job_rv}" || return 1
+		[ "${last_job_rv}" = 0 ] || handle_process_failure "${job_type_print}" "${job_pid}" "${job_path}" "${last_job_rv}" || return 1
 	done
 
 	case "${job_type}" in
 		DL) dl_list_part "${@}" & ;;
-		PROCESS) process_list_part "${@}"
+		PROCESS) process_list_part "${@}" &
 	esac
 	:
 }
@@ -98,9 +142,11 @@ schedule_download_jobs()
 		rm -f "${DL_IN_PROGRESS_FILE}"
 	}
 
-	local list_type list_types="${1}" list_format list_url list_id dl_pids='' dl_pid job_url
+	local list_type list_types="${1}" list_format list_url list_id dl_pid job_url
+	DL_PIDS=
 	[ -f "${DL_IN_PROGRESS_FILE}" ] && { reg_failure "File '${DL_IN_PROGRESS_FILE}' already exists."; return 1; }
-	touch "${DL_IN_PROGRESS_FILE}" || return 1
+	rm -f "${DL_JOBS_REG_FILE}"
+	touch "${DL_IN_PROGRESS_FILE}" && touch "${DL_JOBS_REG_FILE}" || return 1
 	for list_type in ${list_types}
 	do
 		for list_format in raw dnsmasq
@@ -133,13 +179,14 @@ schedule_download_jobs()
 				list_id=$((list_id+1))
 				list_part_line_count=0
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" "${list_id}" || { rm_in_progress; return 1; }
-				add2list dl_pids "${!}"
+				add2list DL_PIDS "${!}"
 				set_a_arr_el DL_JOBS_ARR "${!}=${list_url}"
+				reg_dl_job_url "${!}" "${list_url}"
 			done
 		done
 	done
 
-	for dl_pid in ${dl_pids}
+	for dl_pid in ${DL_PIDS}
 	do
 		get_a_arr_val DL_JOBS_ARR "${dl_pid}" job_url
 		wait "${dl_pid}" || handle_process_failure "Download" "${dl_pid}" "${job_url}" "${?}" || { rm_in_progress; return 1; }
@@ -174,19 +221,25 @@ schedule_local_jobs()
 
 schedule_processing_jobs()
 {
+	# 1 - var name for output
+	# 2 - find -name expression
 	find_files_to_process()
 	{
-		find "${TO_PROCESS_DIR}" \( -type l -o -type p \) \( -name ${1} \) | grep .
+		local f
+		unset "${1}"
+		f="$(find "${TO_PROCESS_DIR}" \( -type l -o -type p \) \( -name ${2} \) | grep .)" || return 1
+		subtract_a_from_b "${files_processed}" "${f}" "${1}"
+		eval "[ -n \"\${${1}}\" ]"
 	}
 
-	local IFS file files_to_process processing_time_s=0 list_type list_types="${1}" find_names=
+	local IFS file files_to_process processing_time_s=0 list_type list_types="${1}" files_processed='' find_names=
 
 	for list_type in ${list_types}
 	do
 		add2list find_names "${list_type}_*" " -o -name "
 	done
 
-	files_to_process="$(find_files_to_process "${find_names}")"
+	find_files_to_process files_to_process "${find_names}"
 
 	while [ -f "${DL_IN_PROGRESS_FILE}" ] || [ -n "${files_to_process}" ]
 	do
@@ -198,7 +251,7 @@ schedule_processing_jobs()
 			}
 
 		local idle_time_s=0
-		while ! files_to_process="$(find_files_to_process "${find_names}")" 
+		while ! find_files_to_process files_to_process "${find_names}"
 		do
 			[ "${idle_time_s}" -lt "${IDLE_TIMEOUT_S}" ] ||
 				{
@@ -218,6 +271,7 @@ schedule_processing_jobs()
 			local list_type="${1}" list_origin="${2}" list_format="${3}" list_id="${file##*.}"
 			IFS="${DEFAULT_IFS}"
 			schedule_job PROCESS "${list_id}" "${list_type}" "downloaded" "${list_format}" "${file}" || return 1
+			add2list files_processed "${file}"
 		done
 		IFS="${DEFAULT_IFS}"
 	done
@@ -317,6 +371,7 @@ dl_list_part()
 
 		rm_ucl_err_file
 
+		log_msg "Downloading ${list_format} ${list_type} part from ${list_url}."
 		uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" 1> "${fifo_file}"
 		dl_rv=${?}
 		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
@@ -374,6 +429,9 @@ process_list_part()
 	esac
 
 	get_curr_job_pid curr_job_pid || return 1
+
+	get_dl_job_url list_url "${dl_pid}"
+	log_msg "Processing ${list_format} ${list_type} part from ${list_url}."
 
 	case ${list_type} in
 		allowlist) dest_file="${ABL_DIR}/allowlist.0" ;;
@@ -441,7 +499,7 @@ process_list_part()
 		cat
 	fi > "${dest_file}"
 
-	read -r list_part_size_B _ < "${ABL_DIR}/list_part_size_B" 2>/dev/null
+	read -r list_part_size_B _ < "${ABL_DIR}/list_part_size_B" 2>/dev/null || return 1
 	list_part_size_KB=$(( (list_part_size_B + 0) / 1024 ))
 	list_part_size_human="$(bytes2human "${list_part_size_B:-0}")"
 	read -r list_part_line_count _ < "${ABL_DIR}/list_part_line_count" 2>/dev/null
