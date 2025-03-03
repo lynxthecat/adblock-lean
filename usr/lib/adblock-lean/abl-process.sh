@@ -146,7 +146,7 @@ schedule_download_jobs()
 	DL_PIDS=
 	[ -f "${DL_IN_PROGRESS_FILE}" ] && { reg_failure "File '${DL_IN_PROGRESS_FILE}' already exists."; return 1; }
 	rm -f "${DL_JOBS_REG_FILE}"
-	touch "${DL_IN_PROGRESS_FILE}" && touch "${DL_JOBS_REG_FILE}" || return 1
+	touch "${DL_IN_PROGRESS_FILE}" && printf '\n' > "${DL_JOBS_REG_FILE}" || return 1
 	for list_type in ${list_types}
 	do
 		for list_format in raw dnsmasq
@@ -181,7 +181,6 @@ schedule_download_jobs()
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" "${list_id}" || { rm_in_progress; return 1; }
 				add2list DL_PIDS "${!}"
 				set_a_arr_el DL_JOBS_ARR "${!}=${list_url}"
-				reg_dl_job_url "${!}" "${list_url}"
 			done
 		done
 	done
@@ -266,11 +265,12 @@ schedule_processing_jobs()
 		IFS="${_NL_}"
 		for file in ${files_to_process}
 		do
+			local dl_attrib="${file##*/}"
 			IFS="_"
-			set -- ${file##*/}
-			local list_type="${1}" list_origin="${2}" list_format="${3}" list_id="${file##*.}"
+			set -- ${dl_attrib%%.*}
+			local list_type="${1}" list_origin="${2}" list_format="${3}" dl_pid="${4}" list_id="${file##*.}"
 			IFS="${DEFAULT_IFS}"
-			schedule_job PROCESS "${list_id}" "${list_type}" "downloaded" "${list_format}" "${file}" || return 1
+			schedule_job PROCESS "${list_id}" "${list_type}" "${list_origin}" "${list_format}" "${file}" "${dl_pid}" || return 1
 			add2list files_processed "${file}"
 		done
 		IFS="${DEFAULT_IFS}"
@@ -354,10 +354,11 @@ dl_list_part()
 		rm -f "${ucl_err_file}"
 	}
 
-	local me=dl_list_part dl_rv dl_completed='' retry=0 list_url="${1}" list_type="${2}" list_format="${3}" list_id="${4}" curr_job_pid
+	local me=dl_list_part dl_rv dl_completed='' retry=0
+	local list_url="${1}" list_type="${2}" list_format="${3}" list_id="${4}" curr_job_pid
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_type}_${list_format}.${list_id}"
-	local fifo_file="${TO_PROCESS_DIR}/${list_type}_download_${list_format}.${list_id}"
 	get_curr_job_pid curr_job_pid || return 1
+	local fifo_file="${TO_PROCESS_DIR}/${list_type}_downloaded_${list_format}_${curr_job_pid}.${list_id}"
 
 	while :
 	do
@@ -367,11 +368,13 @@ dl_list_part()
 			reg_failure "${max_download_retries} download attempts failed for URL '${list_url}'."
 			return 1
 		fi
-		try_mkfifo "${fifo_file}" || return 1
 
 		rm_ucl_err_file
 
 		log_msg "Downloading ${list_format} ${list_type} part from ${list_url}."
+		reg_dl_job_url "${curr_job_pid}" "${list_url}"
+		try_mkfifo "${fifo_file}" || return 1
+
 		uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" 1> "${fifo_file}"
 		dl_rv=${?}
 		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
@@ -400,6 +403,7 @@ dl_list_part()
 # 3 - list origin (local or downloaded)
 # 4 - list format (dnsmasq or raw)
 # 5 - symlink path (for local lists) or fifo path (for downloaded lists)
+# 6 - (optional): download PID
 #
 # return codes:
 # 0 - Success
@@ -413,8 +417,8 @@ process_list_part()
 		rm -f "${rogue_el_file}"
 	}
 
-	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" me="process_list_part"
-	local curr_job_pid dest_file="${ABL_DIR}/${list_type}.${list_id}" compress_part='' \
+	local list_id="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" dl_pid="${6}" me="process_list_part"
+	local curr_job_pid dest_file="${ABL_DIR}/${list_type}.${list_id}" compress_part='' print_url='' \
 		list_part_line_count min_list_part_line_count='' list_part_size_B='' list_part_size_KB='' val_entry_regex
 	local rogue_el_file="${ABL_DIR}/rogue_el_${list_type}_${list_format}.${list_id}"
 
@@ -431,7 +435,8 @@ process_list_part()
 	get_curr_job_pid curr_job_pid || return 1
 
 	get_dl_job_url list_url "${dl_pid}"
-	log_msg "Processing ${list_format} ${list_type} part from ${list_url}."
+	[ -n "${list_url}" ] && print_url=" from ${list_url}"
+	log_msg "Processing ${list_origin} ${list_format} ${list_type} part${print_url}."
 
 	case ${list_type} in
 		allowlist) dest_file="${ABL_DIR}/allowlist.0" ;;
