@@ -250,7 +250,7 @@ schedule_processing_jobs()
 			}
 
 		local idle_time_s=0
-		while ! find_files_to_process files_to_process "${find_names}"
+		while [ -f "${DL_IN_PROGRESS_FILE}" ] && ! find_files_to_process files_to_process "${find_names}"
 		do
 			[ "${idle_time_s}" -lt "${IDLE_TIMEOUT_S}" ] ||
 				{
