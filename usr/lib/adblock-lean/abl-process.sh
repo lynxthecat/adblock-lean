@@ -10,12 +10,11 @@
 TO_PROCESS_DIR="${ABL_DIR}/to_process"
 PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 
-PROCESS_SCHEDULE_DIR="${ABL_DIR}/process_schedule"
-DL_SCHEDULE_DIR="${ABL_DIR}/dl_schedule"
-DL_IN_PROGRESS_FILE="${DL_SCHEDULE_DIR}/dl_in_progress"
-FINISHED_DL_PID_FILE="${DL_SCHEDULE_DIR}/finished-dl.pid"
-FINISHED_PROCESS_PID_FILE="${DL_SCHEDULE_DIR}/finished-process.pid"
-DL_JOBS_REG_FILE="${DL_SCHEDULE_DIR}/dl_jobs_running"
+SCHEDULE_DIR="${ABL_DIR}/schedule"
+DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
+FINISHED_DL_PID_FILE="${SCHEDULE_DIR}/finished-dl.pid"
+FINISHED_PROCESS_PID_FILE="${SCHEDULE_DIR}/finished-process.pid"
+DL_JOBS_REG_FILE="${SCHEDULE_DIR}/dl_jobs_running"
 
 IDLE_TIMEOUT_S=300 # 5 minutes
 PROCESSING_TIMEOUT_S=900 # 15 minutes
@@ -89,49 +88,96 @@ get_dl_job_url()
 	return 1
 }
 
-# 1 - job type (Download|Processing)
-# 2 - job PID
-# 3 - path (URL for download, file path for local)
-# 4 - return code
-handle_process_failure()
+# get current job PID
+# 1 - var name for output
+get_curr_job_pid()
 {
-	reg_failure "${1} job (PID ${2}) for list '${3}' returned code ${4}."
-	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-	log_msg "Skipping file and continuing."
-	:
+	local __pid='' pid_line=''
+	unset "${1}"
+	IFS="${_NL_}" read -r -n512 -d '' _ _ _ _ _ pid_line _ < /proc/self/status
+	__pid="${pid_line##*[^0-9]}"
+	case "${__pid}" in ''|*[!0-9]*) reg_failure "Failed to get current job PID."; return 1; esac
+	eval "${1}=\"${__pid}\""
 }
 
 # 1 - job type (DL|PROCESS)
 # the rest of the args passed as-is to workers
 schedule_job()
 {
-	local pids_running jobs_running_cnt threads job_pid last_job_rv job_type="${1}" job_path job_type_print=
+	local jobs_running_cnt threads job_type="${1}"
 	shift
-	eval "pids_running=\"\${${job_type}_PIDS}\" \
-		jobs_running_cnt=\"\${${job_type}_jobs_running_cnt:-0}\" \
+	eval "jobs_running_cnt=\"\${${job_type}_jobs_running_cnt:-0}\" \
 		threads=\"\${${job_type}_THREADS}\""
-	case "${job_type}" in
-		DL) job_type_print=Download ;;
-		PROCESS) job_type_print=Processing
-	esac
 
 	# wait for job vacancy
 	while [ "${jobs_running_cnt}" -ge "${threads}" ]
 	do
+print_msg -yellow "Waiting for ${job_type} vacancy..."
 		wait -n
-		last_job_rv=${?}
-		get_finished_job_pid job_pid
-		subtract_a_from_b "${job_pid}" "${pids_running}" "${job_type}_PIDS"
-		get_dl_job_url job_path "${job_pid}"
 		jobs_running_cnt=$((jobs_running_cnt-1))
-		eval "${job_type}_jobs_running_cnt"='${jobs_running_cnt}'
-		[ "${last_job_rv}" = 0 ] || handle_process_failure "${job_type_print}" "${job_pid}" "${job_path}" "${last_job_rv}" || return 1
+		handle_finished_jobs "${job_type}" || return 1
 	done
 
+	eval "${job_type}_jobs_running_cnt"='$((jobs_running_cnt+1))'
 	case "${job_type}" in
 		DL) dl_list_part "${@}" & ;;
 		PROCESS) process_list_part "${@}" &
 	esac
+	:
+}
+
+# 1 - job type (DL|PROCESS)
+# 2 - pid
+# 3 - return code
+reg_finished_job()
+{
+	touch "${SCHEDULE_DIR}/finished_${1}_${2}_${3}"
+}
+
+# 1 - job type (DL|PROCESS)
+# 2 (optional) - only handle job with pid $2
+handle_finished_jobs()
+{
+	local job_type="${1}" finished_job_file finished_job_rv finished_pid_tmp finished_pid job_pids job_url suffix=
+	[ -n "${2}" ] && suffix="${2}_"
+	eval "job_pids=\"\${${job_type}_PIDS}\""
+	for finished_job_file in "${SCHEDULE_DIR}/finished_${job_type}_${suffix}"*
+	do
+		[ -e "${finished_job_file} " ] || break
+		rm -f "${finished_job_file}"
+		finished_pid_tmp="${finished_job_file%_*}"
+		finished_pid="${finished_pid_tmp##*_}"
+		finished_job_rv="${finished_job_file##*_}"
+		subtract_a_from_b "${finished_pid}" "${job_pids}" job_pids
+		eval "${job_type}_PIDS"='${job_pids}'
+print_msg -yellow "${job_type} job (PID ${finished_pid}) completed with rv ${finished_job_rv}."
+		if [ "${finished_job_rv}" != 0 ]
+		then
+			get_a_arr_val "${job_type}_JOBS_URLS" "${finished_pid}" job_url
+			handle_process_failure "${job_type}" "${finished_pid}" "${job_url}" "${finished_job_rv}" || return 1
+		fi
+	done
+	:
+}
+
+# 1 - job type (DL|PROCESS)
+handle_running_jobs()
+{
+	local job_pids job_pid
+
+	# handle errors in previously finished jobs
+	handle_finished_jobs "${1}" || return 1
+
+	eval "job_pids=\"\${${1}_PIDS}\""
+
+	# wait for jobs to finish and handle errors
+	for job_pid in ${job_pids}
+	do
+print_msg -yellow "Waiting for ${1} job ${job_pid} to finish..."
+		wait "${job_pid}"
+print_msg -yellow "${1} job ${job_pid} completed..."
+		handle_finished_jobs "${1}" "${job_pid}" || return 1
+	done
 	:
 }
 
@@ -143,8 +189,8 @@ schedule_download_jobs()
 		rm -f "${DL_IN_PROGRESS_FILE}"
 	}
 
-	local list_type list_types="${1}" list_format list_url list_num dl_pid job_url
-	DL_PIDS=
+	local list_type list_types="${1}" list_format list_url list_num
+	unset DL_PIDS
 	[ -f "${DL_IN_PROGRESS_FILE}" ] && { reg_failure "File '${DL_IN_PROGRESS_FILE}' already exists."; return 1; }
 	rm -f "${DL_JOBS_REG_FILE}"
 	touch "${DL_IN_PROGRESS_FILE}" && printf '\n' > "${DL_JOBS_REG_FILE}" || return 1
@@ -182,16 +228,12 @@ schedule_download_jobs()
 				list_part_line_count=0
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" "${list_num}" || { rm_in_progress; return 1; }
 				add2list DL_PIDS "${!}"
-				set_a_arr_el DL_JOBS_ARR "${!}=${list_url}"
+				set_a_arr_el DL_JOBS_URLS "${!}=${list_url}"
 			done
 		done
 	done
 
-	for dl_pid in ${DL_PIDS}
-	do
-		get_a_arr_val DL_JOBS_ARR "${dl_pid}" job_url
-		wait "${dl_pid}" || handle_process_failure "Download" "${dl_pid}" "${job_url}" "${?}" || { rm_in_progress; return 1; }
-	done
+	handle_running_jobs DL || { rm_in_progress; return 1; }
 	rm_in_progress
 	:
 }
@@ -213,7 +255,7 @@ schedule_local_jobs()
 				log_msg -warn "" "Local ${list_type} file is empty."
 			else
 				log_msg -blue "" "Scheduling processing for the local ${list_type}."
-				ln -sf "${local_list_path}" "${TO_PROCESS_DIR}/${list_type}_local_raw.${list_num}"
+				ln -sf "${local_list_path}" "${TO_PROCESS_DIR}/${list_type}-local-raw-${list_num}"
 			fi
 		fi
 	done
@@ -233,7 +275,7 @@ schedule_processing_jobs()
 		eval "[ -n \"\${${1}}\" ]"
 	}
 
-	local IFS file files_to_process processing_time_s=0 list_type list_types="${1}" files_processed='' find_names=
+	local IFS dl_url file files_to_process processing_time_s=0 list_type list_types="${1}" files_processed='' find_names=
 
 	for list_type in ${list_types}
 	do
@@ -272,58 +314,33 @@ schedule_processing_jobs()
 			IFS="${DEFAULT_IFS}"
 			local list_type="${1}" list_origin="${2}" list_format="${3}" dl_pid="${4}" list_num="${5}"
 			schedule_job PROCESS "${list_num}" "${list_type}" "${list_origin}" "${list_format}" "${file}" "${dl_pid}" || return 1
+			add2list PROCESS_PIDS "${!}"
+			get_dl_job_url dl_url "${dl_pid}"
+			set_a_arr_el PROCESS_JOBS_URLS "${!}=${dl_url}"
 			add2list files_processed "${file}"
 		done
 		IFS="${DEFAULT_IFS}"
 	done
+
+	handle_running_jobs PROCESS || return 1
 	:
 }
 
-# register finished job
-# 1 - PID of finished job
-# 2 - directory
-reg_finished_job_pid()
+# 1 - job type (DL|PROCESS)
+# 2 - job PID
+# 3 - path (URL for download, file path for local)
+# 4 - return code
+handle_process_failure()
 {
-	local reg_wait_time=0 reg_file="${2}/finished_job"
-	# avoid race conditions
-	[ -f "${reg_file}" ] && print_msg -yellow "Job ${1} completed but is waiting for another completed job to be cleared."
-	while [ "${reg_wait_time}" -lt 5 ] && [ -f "${reg_file}" ]
-	do
-		sleep 1
-		reg_wait_time=$((reg_wait_time+1))
-	done
-	[ -f "${reg_file}" ] &&
-	{
-		reg_failure "Can not register finished job (PID '${1}') because file '${reg_file}' exists (contains PID '$(cat "${2}")')."
-		return 1
-	}
-	printf '%s\n' "${1}" > "${reg_file}"
-}
-
-# 1 - var name for output
-# 2 - directory
-get_finished_job_pid()
-{
-	local fin_job_pid='' reg_file="${2}/finished_job"
-	unset "${2}"
-
-	[ -s "${reg_file}" ] && read -r fin_job_pid < "${reg_file}" && [ -n "${fin_job_pid}" ] ||
-		{ reg_failure "Failed to get finished job pid from file '${reg_file}'."; return 1; }
-	rm -f "${reg_file}"
-
-	eval "${2}"='${fin_job_pid}'
-}
-
-# get current job PID
-# 1 - var name for output
-get_curr_job_pid()
-{
-	local __pid='' pid_line=''
-	unset "${1}"
-	IFS="${_NL_}" read -r -n512 -d '' _ _ _ _ _ pid_line _ < /proc/self/status
-	__pid="${pid_line##*[^0-9]}"
-	case "${__pid}" in ''|*[!0-9]*) reg_failure "Failed to get current job PID."; return 1; esac
-	eval "${1}=\"${__pid}\""
+	local job_type_print
+	case "${1}" in
+		DL) job_type_print=Download ;;
+		PROCESS) job_type_print=Processing
+	esac
+	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${4}."
+	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
+	log_msg "Skipping file and continuing."
+	:
 }
 
 try_mkfifo()
@@ -347,9 +364,15 @@ try_gunzip()
 # 1 - URL
 # 2 - list type (allowlist|blocklist|blocklist_ipv4)
 # 3 - list format (dnsmasq|raw)
-# 4 - list id
+# 4 - list num
 dl_list_part()
 {
+	finalize_job()
+	{
+		reg_finished_job DL "${curr_job_pid}" "${1}"
+		exit "${1}"
+	}
+
 	rm_ucl_err_file()
 	{
 		rm -f "${ucl_err_file}"
@@ -362,20 +385,22 @@ dl_list_part()
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
 	local fifo_file="${TO_PROCESS_DIR}/${list_id}"
 
+print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
+
 	while :
 	do
 		retry=$((retry + 1))
 		if [ "${retry}" -ge "${max_download_retries}" ]
 		then
 			reg_failure "${max_download_retries} download attempts failed for URL '${list_url}'."
-			return 1
+			finalize_job 1
 		fi
 
 		rm_ucl_err_file
 
 		log_msg "Downloading ${list_format} ${list_type} part from ${list_url}."
 		reg_dl_job_url "${curr_job_pid}" "${list_url}"
-		try_mkfifo "${fifo_file}" || return 1
+		try_mkfifo "${fifo_file}" || finalize_job 1
 
 		uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" 1> "${fifo_file}"
 		dl_rv=${?}
@@ -384,7 +409,7 @@ dl_list_part()
 		then
 			rm_ucl_err_file
 			log_msg -green "Successfully downloaded list part from URL '${list_url}'."
-			return 0
+			finalize_job 0
 		fi
 		rm -f "${fifo_file}"
 		reg_failure "Failed to download list part from URL '${list_url}'. uclient-fetch exited with code ${dl_rv}."
@@ -392,18 +417,17 @@ dl_list_part()
 			reg_failure "uclient-fetch errors: '$(cat "${ucl_err_file}")'."
 		rm_ucl_err_file
 
-		reg_action -blue "Sleeping for 5 seconds after failed download attempt." || return 1
+		reg_action -blue "Sleeping for 5 seconds after failed download attempt." || finalize_job 1
 		sleep 5
 		continue
 	done
-	reg_finished_job_pid "${curr_job_pid}" "${DL_SCHEDULE_DIR}" || return 1
-	:
+	finalize_job 0
 }
 
 # 1 - list number
 # 2 - list type (allowlist|blocklist|blocklist_ipv4)
-# 3 - list origin (local or downloaded)
-# 4 - list format (dnsmasq or raw)
+# 3 - list origin (local|downloaded)
+# 4 - list format (dnsmasq|raw)
 # 5 - symlink path (for local lists) or fifo path (for downloaded lists)
 # 6 - (optional): download PID
 #
@@ -414,11 +438,17 @@ dl_list_part()
 # 3 - Download Failure (retry makes sense)
 process_list_part()
 {
+	finalize_job()
+	{
+		reg_finished_job PROCESS "${curr_job_pid}" "${1}"
+		exit "${1}"
+	}
+
 	rm_rogue_el_file()
 	{
 		rm -f "${rogue_el_file}"
 	}
-	local list_num="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_path="${5}" dl_pid="${6}"
+	local list_num="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_file="${5}" dl_pid="${6}"
 	local curr_job_pid me="process_list_part"
 	get_curr_job_pid curr_job_pid || return 1
 	local list_id="${list_type}-${list_origin}-${list_format}-${curr_job_pid}-${list_num}"
@@ -429,21 +459,28 @@ process_list_part()
 		list_part_line_count compress_part='' print_url='' min_list_part_line_count='' \
 		list_part_size_B='' list_part_size_KB='' val_entry_regex
 
+print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}."
 
 
 	for v in 1 2 3 4 5; do
-		eval "[ -z \"\${${v}}\" ]" && { reg_failure "${me}: Missing argument ${v}."; return 1; }
+		eval "[ -z \"\${${v}}\" ]" && { reg_failure "${me}: Missing argument ${v}."; finalize_job 1; }
 	done
 
 	case "${list_type}" in
 		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+|(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
 		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
-		*) reg_failure "${me}: Invalid list type '${list_type}'"; return 1
+		*) reg_failure "${me}: Invalid list type '${list_type}'"; finalize_job 1
 	esac
 
-	get_dl_job_url list_url "${dl_pid}"
-	[ -n "${list_url}" ] && print_url=" from ${list_url}"
-	log_msg "Processing ${list_origin} ${list_format} ${list_type} part${print_url}."
+	case "${list_origin}" in
+		local)
+			list_path="$(readlink -f "${list_file}")" ;;
+		downloaded)
+			get_dl_job_url list_url "${dl_pid}"
+			list_path="${list_url}"
+	esac
+
+	log_msg "Processing ${list_origin} ${list_format} ${list_type} part from ${list_path}."
 
 	case ${list_type} in
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
@@ -454,7 +491,7 @@ process_list_part()
 	rm_rogue_el_file
 
 	# read input file and limit size
-	{ head -c "${max_file_part_size_KB}k" "${list_path}"; cat 1>/dev/null; } |
+	{ head -c "${max_file_part_size_KB}k" "${list_file}"; cat 1>/dev/null; } |
 
 	# Count bytes
 	tee >(wc -c > "${list_part_size_file}") |
@@ -510,7 +547,7 @@ process_list_part()
 		cat
 	fi > "${dest_file}"
 
-	read -r list_part_size_B _ < "${list_part_size_file}" 2>/dev/null || return 1
+	read -r list_part_size_B _ < "${list_part_size_file}" 2>/dev/null || finalize_job 1
 	list_part_size_KB=$(( (list_part_size_B + 0) / 1024 ))
 	list_part_size_human="$(bytes2human "${list_part_size_B:-0}")"
 	read -r list_part_line_count _ < "${list_part_line_cnt_file}" 2>/dev/null
@@ -520,10 +557,10 @@ process_list_part()
 
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
-		reg_failure "${list_origin} ${list_type} part size reached the maximum value set in config (${max_file_part_size_KB} KB)."
+		reg_failure "Size of ${list_origin} ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
 		rm -f "${dest_file}"
-		return 2
+		finalize_job 2
 	fi
 
 	if read -r rogue_element < "${rogue_el_file}"
@@ -532,26 +569,25 @@ process_list_part()
 		rm_rogue_el_file
 		case "${rogue_element}" in
 			*"${CR_LF}"*)
-				log_msg -warn "${list_type} file from ${list_path} contains Windows-format (CR LF) newlines." \
+				log_msg -warn "${list_type} file from '${list_path}' contains Windows-format (CR LF) newlines." \
 					"This file needs to be converted to Unix newline format (LF)." ;;
 			*) log_msg -warn "Rogue element: '${rogue_element}' identified originating in ${list_type} file from: ${list_path}."
 		esac
-		return 2
+		finalize_job 2
 	fi
 	rm_rogue_el_file
-
 
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
 		rm -f "${dest_file}"
-		reg_failure "Downloaded ${list_type} part line count: $(int2human "${list_part_line_count}") less than configured minimum: $(int2human "${min_list_part_line_count}")."
-		return 3
+		reg_failure "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
+		finalize_job 3
 	fi
 
 	local part=
 	[ "${list_origin}" = downloaded ] && part=" part"
-	log_msg "Successfully processed ${list_origin} ${list_type}${part} (source file size: ${list_part_size_human}, sanitized line count: $(int2human "${list_part_line_count}"))."
-	:
+	log_msg "Successfully processed ${list_origin} ${list_type}${part} from ${list_path} (size: ${list_part_size_human}, lines: $(int2human "${list_part_line_count}"))."
+	finalize_job 0
 }
 
 # 1 - var name for output
@@ -559,8 +595,9 @@ process_list_part()
 get_processed_lines_cnt()
 {
 	local file part_line_count=0 list_type_line_count=0
-	for file in $(find "${ABL_DIR}" -type f -name "linecnt_${2}-*")
+	for file in "${ABL_DIR}/linecnt_${2}-"*
 	do
+		[ -e "${file}" ] || break
 		read -r part_line_count < "${file}"
 		: "${part_line_count:=0}"
 		list_type_line_count=$((list_type_line_count+part_line_count))
@@ -594,7 +631,7 @@ gen_list_parts()
 
 	local file dl_scheduler_pid process_scheduler_pid allowlist_line_count list_line_count
 
-	try_mkdir -p "${DL_SCHEDULE_DIR}" &&
+	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" &&
 	try_mkdir -p "${TO_PROCESS_DIR}" || return 1
 
@@ -609,6 +646,7 @@ gen_list_parts()
 		schedule_processing_jobs allowlist &
 		process_scheduler_pid=${!}
 
+print_msg -yellow "Waiting for schedulers..."
 		wait "${process_scheduler_pid}" &&
 		wait "${dl_scheduler_pid}" || return 1
 	fi
@@ -647,6 +685,7 @@ gen_list_parts()
 	schedule_processing_jobs "blocklist blocklist_ipv4" &
 	process_scheduler_pid=${!}
 
+print_msg -yellow "Waiting for schedulers..."
 	wait "${process_scheduler_pid}" &&
 	wait "${dl_scheduler_pid}" || return 1
 
