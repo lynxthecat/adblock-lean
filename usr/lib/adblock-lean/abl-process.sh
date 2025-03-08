@@ -12,8 +12,6 @@ PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 
 SCHEDULE_DIR="${ABL_DIR}/schedule"
 DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
-FINISHED_DL_PID_FILE="${SCHEDULE_DIR}/finished-dl.pid"
-FINISHED_PROCESS_PID_FILE="${SCHEDULE_DIR}/finished-process.pid"
 DL_JOBS_REG_FILE="${SCHEDULE_DIR}/dl_jobs_running"
 
 IDLE_TIMEOUT_S=300 # 5 minutes
