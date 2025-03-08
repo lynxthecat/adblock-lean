@@ -1188,6 +1188,13 @@ resume()
 # optional: '-f' to skip calling stop()
 update()
 {
+	# unset vars and functions from current version to have a clean slate with the new version
+	clean_abl_env()
+	{
+		unset ABL_LIB_FILES ABL_EXTRA_FILES LIBS_SOURCED CONFIG_FORMAT libs_missing
+		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs
+	}
+
 	upd_failed()
 	{
 		local fail_msg="${1}"
@@ -1252,9 +1259,7 @@ update()
 		# shellcheck disable=SC2030
 		UPD_SOURCED=1
 
-		# unset vars and functions from current version to have a clean slate with the new version
-		unset ABL_LIB_FILES ABL_EXTRA_FILES LIBS_SOURCED CONFIG_FORMAT libs_missing
-		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs
+		clean_abl_env
 		export pid_file="${PID_FILE}" # for compatibility with older versions
 
 		curr_dist_dir="${dist_dir}"
@@ -1298,6 +1303,7 @@ update()
 		pick_opt "y|n"
 		if [ "$REPLY" = y ]
 		then
+			clean_abl_env
 			# shellcheck source=/dev/null
 			. "${ABL_SERVICE_PATH}" || return 1
 			start
