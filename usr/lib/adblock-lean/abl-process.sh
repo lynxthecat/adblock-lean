@@ -17,11 +17,6 @@ DL_JOBS_REG_FILE="${SCHEDULE_DIR}/dl_jobs_running"
 IDLE_TIMEOUT_S=300 # 5 minutes
 PROCESSING_TIMEOUT_S=900 # 15 minutes
 
-# TODO
-DL_THREADS=1
-PROCESS_THREADS=1
-
-
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
 # output via optional variable with name $3
 # returns status 0 if the result is null, 1 if not
