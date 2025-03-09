@@ -384,7 +384,7 @@ fi
 
 (
 	# unset vars and functions from current version to have a clean slate with the new version
-	unset_vars()
+	clean_abl_env()
 	{
 		unset ABL_LIB_FILES ABL_EXTRA_FILES
 		unset -f abl_post_update_1 abl_post_update_2 get_config_format load_config
@@ -402,7 +402,7 @@ fi
 	# register files list in the installed adblock-lean version
 	if [ -s "${ABL_SERVICE_PATH}" ]
 	then
-		unset_vars
+		clean_abl_env
 		is_update=1
 		touch "${DIST_DIR}/is_update"
 		curr_abl_files="${ABL_SERVICE_PATH}"
@@ -417,7 +417,7 @@ fi
 		fi
 	fi
 
-	unset_vars
+	clean_abl_env
 	# shellcheck source=/dev/null
 	. "${DIST_DIR}/adblock-lean" || { failsafe_log "Error: Failed to source the downloaded script."; exit 1; }
 
@@ -439,7 +439,7 @@ fi
 	then
 		failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 		# load config and call abl_post_update_2() in new version
-		if { ! check_util source_libs || source_libs "${DIST_DIR}${ABL_LIB_DIR}" "${DIST_DIR}/adblock-lean"; } &&
+		if { ! check_util source_libs || source_libs "${DIST_DIR}${ABL_LIB_DIR}" "${DIST_DIR}"; } &&
 				check_util load_config
 		then
 			load_config

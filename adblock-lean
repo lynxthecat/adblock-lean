@@ -1186,6 +1186,13 @@ resume()
 # optional: '-f' to skip calling stop()
 update()
 {
+	# unset vars and functions from current version to have a clean slate with the new version
+	clean_abl_env()
+	{
+		unset ABL_LIB_FILES ABL_EXTRA_FILES LIBS_SOURCED CONFIG_FORMAT libs_missing
+		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs
+	}
+
 	upd_failed()
 	{
 		local fail_msg="${1}"
@@ -1228,7 +1235,7 @@ update()
 
 	if [ -n "${SIM_PATH}" ]
 	then
-		print_msg "${yellow}Running in simulation mode.${n_c}"
+		print_msg -yellow "Running in simulation mode."
 		[ -d "${SIM_PATH}" ] || { upd_failed "Directory '${SIM_PATH}' does not exist."; return 1; }
 		[ -n "${version}" ] || { upd_failed "Specify new version."; return 1; }
 		upd_channel=release ref="${version}"
@@ -1250,9 +1257,7 @@ update()
 		# shellcheck disable=SC2030
 		UPD_SOURCED=1
 
-		# unset vars and functions from current version to have a clean slate with the new version
-		unset ABL_LIB_FILES ABL_EXTRA_FILES LIBS_SOURCED CONFIG_FORMAT libs_missing
-		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs
+		clean_abl_env
 		export pid_file="${PID_FILE}" # for compatibility with older versions
 
 		curr_dist_dir="${dist_dir}"
@@ -1269,7 +1274,7 @@ update()
 		then
 			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 			# load config and call abl_post_update_2() in new version
-			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}/adblock-lean"; } &&
+			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}"; } &&
 					check_util load_config
 			then
 				load_config
@@ -1296,6 +1301,7 @@ update()
 		pick_opt "y|n"
 		if [ "$REPLY" = y ]
 		then
+			clean_abl_env
 			# shellcheck source=/dev/null
 			. "${ABL_SERVICE_PATH}" || return 1
 			start
