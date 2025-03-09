@@ -176,7 +176,7 @@ handle_done_jobs()
 		done_job_rv="${done_job_file##*_}"
 		subtract_a_from_b "${done_pid}" "${job_pids}" job_pids " "
 		eval "${job_type}_PIDS"='${job_pids}'
-print_msg -yellow "${job_type} job (PID ${done_pid}) completed with rv ${done_job_rv}."
+print_msg -yellow "${job_type} job (PID ${done_pid}) completed with code ${done_job_rv}."
 		if [ "${done_job_rv}" != 0 ]
 		then
 			get_a_arr_val "${job_type}_JOBS_URLS" "${done_pid}" job_url
@@ -413,7 +413,6 @@ dl_list_part()
 	get_curr_job_pid curr_job_pid || return 1
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
-	local fifo_file="${TO_PROCESS_DIR}/${list_id}"
 
 print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
 
@@ -430,6 +429,7 @@ print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
 
 		log_msg "Downloading ${list_format} ${list_type} part from ${list_url}."
 		reg_dl_job_url "${curr_job_pid}" "${list_url}"
+		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}"
 		try_mkfifo "${fifo_file}" || finalize_job 1
 		uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" 1> "${fifo_file}"
 		dl_rv=${?}
