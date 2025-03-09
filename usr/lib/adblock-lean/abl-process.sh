@@ -4,7 +4,7 @@
 
 # silence shellcheck warnings
 : "${use_compression:=}" "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}"
-: "${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}"
+: "${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" "${local_allowlist_path}"
 
 
 TO_PROCESS_DIR="${ABL_DIR}/to_process"
@@ -449,7 +449,7 @@ process_list_part()
 		rogue_el_file="${ABL_DIR}/rogue_el_${list_id}" \
 		list_part_size_file="${ABL_DIR}/size_${list_id}" \
 		list_part_line_cnt_file="${ABL_DIR}/linecnt_${list_id}" \
-		list_part_line_count compress_part='' print_url='' min_list_part_line_count='' \
+		list_part_line_count compress_part='' min_list_part_line_count='' \
 		list_part_size_B='' list_part_size_KB='' val_entry_regex
 
 print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}."
@@ -631,7 +631,7 @@ gen_list_parts()
 	# Asynchronously download and process parts
 
 	# schedule allowlist download and processing
-	if [ -n "${allowlist_urls}${dnsmasq_allowlist_urls}" ]
+	if [ -n "${allowlist_urls}${dnsmasq_allowlist_urls}" ] || [ -f "${local_allowlist_path}" ]
 	then
 		schedule_download_jobs allowlist &
 		dl_scheduler_pid=${!}
@@ -639,20 +639,18 @@ gen_list_parts()
 		schedule_processing_jobs allowlist &
 		process_scheduler_pid=${!}
 
-print_msg -yellow "Waiting for schedulers..."
+print_msg -yellow "Waiting for allowlist schedulers..."
 		wait "${process_scheduler_pid}" &&
 		wait "${dl_scheduler_pid}" || return 1
 	fi
 
 	# consolidate allowlist parts into one file
-	if [ "${list_type}" = allowlist ]
-	then
-		for file in "${PROCESSED_PARTS_DIR}/allowlist_"*
-		do
-			cat "${file}" >> "${PROCESSED_PARTS_DIR}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
-			rm -f "${file}"
-		done
-	fi
+	for file in "${PROCESSED_PARTS_DIR}/allowlist_"*
+	do
+		[ -e "${file}" ] || break
+		cat "${file}" >> "${PROCESSED_PARTS_DIR}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
+		rm -f "${file}"
+	done
 
 	# count lines in allowlist files
 	get_processed_lines_cnt allowlist_line_count allowlist
