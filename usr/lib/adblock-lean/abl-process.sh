@@ -108,25 +108,25 @@ get_curr_job_pid()
 # the rest of the args passed as-is to workers
 schedule_job()
 {
-	local jobs_running_cnt threads job_type="${1}" jobs_running_pids
+	local running_jobs_cnt threads job_type="${1}" running_jobs_pids
 	shift
-	eval "jobs_running_cnt=\"\${${job_type}_jobs_running_cnt:-0}\" \
+	eval "running_jobs_cnt=\"\${${job_type}_running_jobs_cnt:-0}\" \
 		threads=\"\${${job_type}_THREADS}\""
 
 	# wait for job vacancy
-	while [ "${jobs_running_cnt}" -ge "${threads}" ] && [ ! -f "${SCHEDULE_DIR}/fatal" ]
+	while [ "${running_jobs_cnt}" -ge "${threads}" ] && [ ! -f "${SCHEDULE_DIR}/fatal" ]
 	do
-		eval "jobs_running_pids=\"\${${job_type}_PIDS}\""
-		[ -n "${jobs_running_pids}" ] ||
-			{ reg_failure "\$jobs_running_cnt=${jobs_running_cnt} but no registered jobs PIDs."; return 1; }
+		eval "running_jobs_pids=\"\${${job_type}_PIDS}\""
+		[ -n "${running_jobs_pids}" ] ||
+			{ reg_failure "\$running_jobs_cnt=${running_jobs_cnt} but no registered jobs PIDs."; return 1; }
 
-print_msg -yellow "Waiting for ${job_type} jobs vacancy (running PIDS: ${jobs_running_pids})..."
-		wait -n ${jobs_running_pids}
-		jobs_running_cnt=$((jobs_running_cnt-1))
+print_msg -yellow "Waiting for ${job_type} jobs vacancy (running PIDS: ${running_jobs_pids})..."
+		wait -n ${running_jobs_pids}
+		running_jobs_cnt=$((running_jobs_cnt-1))
 		handle_done_jobs "${job_type}" || return 1
 	done
 
-	eval "${job_type}_jobs_running_cnt"='$((jobs_running_cnt+1))'
+	eval "${job_type}_running_jobs_cnt"='$((running_jobs_cnt+1))'
 
 	handle_schedule_fatal || return 1
 
