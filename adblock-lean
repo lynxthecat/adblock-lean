@@ -48,7 +48,7 @@ ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh ${ABL_LIB
 ABL_EXTRA_FILES="" # may be useful in the future
 
 ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
-CONFIG_FORMAT=v6
+CONFIG_FORMAT=v7
 
 PID_FILE="${ABL_PID_DIR}/adblock-lean.pid"
 
@@ -1276,7 +1276,7 @@ update()
 		then
 			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 			# load config and call abl_post_update_2() in new version
-			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}/adblock-lean"; } &&
+			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}"; } &&
 					check_util load_config
 			then
 				load_config
