@@ -146,15 +146,17 @@ print_msg -yellow "Waiting for ${job_type} jobs vacancy (running PIDS: ${running
 reg_done_job()
 {
 	[ -n "${2}" ] && touch "${SCHEDULE_DIR}/done_${1}_${2}_${3}"
-	if [ "${3}" = 1 ]
-	then
-		local fatal_pars=
-		if [ -n "${1}" ] && [ -n "${2}" ]
-		then
-			fatal_pars="${1} ${2}"
-		fi
-		printf '%s\n' "${fatal_pars}" > "${SCHEDULE_DIR}/fatal"
-	fi
+	case "${3}" in
+		1)
+			local fatal_pars=
+			if [ -n "${1}" ] && [ -n "${2}" ]
+			then
+				fatal_pars="${1} ${2}"
+			fi
+			printf '%s\n' "${fatal_pars}" > "${SCHEDULE_DIR}/fatal" ;;
+		2)
+			[ "${1}" = PROCESS ] && touch "${SCHEDULE_DIR}/cancel_${dl_pid}"
+	esac
 }
 
 # 1 - job type (DL|PROCESS)
@@ -165,6 +167,19 @@ handle_done_jobs()
 	[ -n "${2}" ] && suffix="${2}_"
 
 	handle_schedule_fatal || return 1
+
+	# clean up processed files related to failed downloads
+	local failed_dl_file file_suffix
+	for failed_dl_file in "${SCHEDULE_DIR}/failed_"*
+	do
+		[ -s "${failed_dl_file}" ] || continue
+		file_suffix="${failed_dl_file##*_}"
+print_msg -red "Cleaning up after ${file_suffix}"
+		rm -f "${failed_dl_file}"\
+			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}" \
+			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}.gz" \
+			"${ABL_DIR}/"*"-${file_suffix}"
+	done
 
 	eval "job_pids=\"\${${job_type}_PIDS}\""
 	for done_job_file in "${SCHEDULE_DIR}/done_${job_type}_${suffix}"*
@@ -399,6 +414,7 @@ dl_list_part()
 {
 	finalize_job()
 	{
+		[ -n "${2}" ] && reg_failure "${2}"
 		reg_done_job DL "${curr_job_pid}" "${1}"
 		exit "${1}"
 	}
@@ -408,7 +424,7 @@ dl_list_part()
 		rm -f "${ucl_err_file}"
 	}
 
-	local me=dl_list_part dl_rv dl_completed='' retry=0
+	local me=dl_list_part dl_completed='' retry=0
 	local list_url="${1}" list_type="${2}" list_format="${3}" list_num="${4}" curr_job_pid
 	get_curr_job_pid curr_job_pid || return 1
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
@@ -421,26 +437,33 @@ print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
 		retry=$((retry + 1))
 		if [ "${retry}" -ge "${max_download_retries}" ]
 		then
-			reg_failure "${max_download_retries} download attempts failed for URL '${list_url}'."
-			finalize_job 2
+			finalize_job 2 "${max_download_retries} download attempts failed for URL '${list_url}'."
 		fi
 
 		rm_ucl_err_file
 
 		log_msg "Downloading ${list_format} ${list_type} part from ${list_url}."
 		reg_dl_job_url "${curr_job_pid}" "${list_url}"
-		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}"
+		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}" dl_failed_file="${SCHEDULE_DIR}/failed_${curr_job_pid}-${retry}"
+		rm -f "${dl_failed_file}"
 		try_mkfifo "${fifo_file}" || finalize_job 1
-		uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" 1> "${fifo_file}"
-		dl_rv=${?}
+
+		{ uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" || printf fail > "${dl_failed_file}"; } |
+			{ cat 1> "${fifo_file}"; head -c1 1> "${dl_failed_file}"; cat &> /dev/null; }
+
 		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
-		if [ "${dl_rv}" = 0 ] && [ "${dl_completed}" = 1 ]
+		if [ "${dl_completed}" = 1 ] && [ ! -s "${dl_failed_file}" ]
 		then
+			rm -f "${dl_failed_file}"
 			rm_ucl_err_file
 			log_msg -green "Successfully downloaded list part from URL '${list_url}'."
 			finalize_job 0
 		fi
-		reg_failure "Failed to download list part from URL '${list_url}'. uclient-fetch exited with code ${dl_rv}."
+
+		sleep 1
+		[ -f "${SCHEDULE_DIR}/cancel_${curr_job_pid}" ] && finalize_job 2 # obey cancel signal from the processing thread
+
+		reg_failure "Failed to download list part from URL '${list_url}'."
 		[ -f "${ucl_err_file}" ] && [ -z "${dl_completed}" ] &&
 			reg_failure "uclient-fetch errors: '$(cat "${ucl_err_file}")'."
 		rm_ucl_err_file
@@ -458,6 +481,7 @@ print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
 # 4 - list format (dnsmasq|raw)
 # 5 - symlink path (for local lists) or fifo path (for downloaded lists)
 # 6 - (optional): download PID
+# 7 - (optional): download retry
 #
 # return codes:
 # 0 - Success
@@ -468,6 +492,8 @@ process_list_part()
 	finalize_job()
 	{
 		rm -f "${list_file}"
+		[ -n "${2}" ] && reg_failure "${2}"
+		[ "${1}" != 0 ] && rm -f "${list_part_size_file}" "${list_part_line_cnt_file}"
 		reg_done_job PROCESS "${curr_job_pid}" "${1}"
 		exit "${1}"
 	}
@@ -479,23 +505,17 @@ process_list_part()
 
 	local list_num="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_file="${5}" dl_pid="${6}"
 	local curr_job_pid me="process_list_part"
-	get_curr_job_pid curr_job_pid || { finalize_job 1; }
-	local list_id="${list_type}-${list_origin}-${list_format}-${list_num}-${curr_job_pid}"
-	local dest_file="${PROCESSED_PARTS_DIR}/${list_id}" \
-		rogue_el_file="${ABL_DIR}/rogue_el_${list_id}" \
-		list_part_size_file="${ABL_DIR}/size_${list_id}" \
-		list_part_line_cnt_file="${ABL_DIR}/linecnt_${list_id}" \
-		list_part_line_count compress_part='' min_list_part_line_count='' \
-		list_part_size_B='' list_part_size_KB='' val_entry_regex
+	get_curr_job_pid curr_job_pid || finalize_job 1
+	local list_path val_entry_regex dl_retry=
 
 	for v in 1 2 3 4 5; do
-		eval "[ -z \"\${${v}}\" ]" && { reg_failure "${me}: Missing argument ${v}."; finalize_job 1; }
+		eval "[ -z \"\${${v}}\" ]" && finalize_job 1 "${me}: Missing argument ${v}."
 	done
 
 	case "${list_type}" in
 		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
 		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
-		*) reg_failure "${me}: Invalid list type '${list_type}'"; finalize_job 1
+		*) finalize_job 1 "${me}: Invalid list type '${list_type}'"
 	esac
 
 	case "${list_origin}" in
@@ -504,12 +524,22 @@ process_list_part()
 		downloaded)
 			get_dl_job_url list_url "${dl_pid}"
 			list_path="${list_url}"
+			dl_retry="${list_file##*-}"
 	esac
+
+	local list_id="${list_type}-${list_origin}-${list_format}-${list_num}-${curr_job_pid}-${dl_pid}-${dl_retry}"
+	local dest_file="${PROCESSED_PARTS_DIR}/${list_id}" \
+		rogue_el_file="${ABL_DIR}/rogue_el_${list_id}" \
+		list_part_size_file="${ABL_DIR}/size_${list_id}" \
+		list_part_line_cnt_file="${ABL_DIR}/linecnt_${list_id}" \
+		list_part_line_count compress_part='' min_list_part_line_count='' \
+		list_part_size_B='' list_part_size_KB='' val_entry_regex
+
 
 print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}, path: ${list_path}."
 	log_msg "Processing ${list_origin} ${list_format} ${list_type} part from ${list_path}."
 
-	[ -e "${list_file}" ] || { reg_failure "${me}: list file '${list_file}' not found."; finalize_job 1; }
+	[ -e "${list_file}" ] || finalize_job 1 "${me}: list file '${list_file}' not found."
 
 	case ${list_type} in
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
@@ -586,9 +616,9 @@ print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}, path: ${list_path}
 
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
+		rm -f "${dest_file}"
 		reg_failure "Size of ${list_origin} ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
-		rm -f "${dest_file}"
 		finalize_job 2
 	fi
 
@@ -609,8 +639,7 @@ print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}, path: ${list_path}
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
 		rm -f "${dest_file}"
-		reg_failure "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
-		finalize_job 2
+		finalize_job 2 "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
 	fi
 
 	local part=
