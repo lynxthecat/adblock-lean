@@ -442,7 +442,7 @@ dl_list_part()
 
 		rm_ucl_err_file
 
-		log_msg "Downloading ${list_format} ${list_type} part from ${list_url}."
+		log_msg "Downloading ${list_format} ${list_type} part from ${blue}${list_url}${n_c}"
 		reg_dl_job_url "${curr_job_pid}" "${list_url}"
 		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}" dl_failed_file="${SCHEDULE_DIR}/failed_${curr_job_pid}-${retry}"
 		rm -f "${dl_failed_file}"
@@ -456,7 +456,7 @@ dl_list_part()
 		then
 			rm -f "${dl_failed_file}"
 			rm_ucl_err_file
-			log_msg -green "Successfully downloaded list part from URL '${list_url}'."
+			log_msg -green "Successfully downloaded list part from ${blue}${list_url}${n_c}"
 			finalize_job 0
 		fi
 
@@ -535,7 +535,7 @@ process_list_part()
 		list_part_line_count compress_part='' min_list_part_line_count='' \
 		list_part_size_B='' list_part_size_KB='' val_entry_regex
 
-	log_msg "Processing ${list_origin} ${list_format} ${list_type} part from ${list_path}."
+	log_msg "Processing ${list_format} ${list_type} part from ${blue}${list_path}${n_c}"
 
 	[ -e "${list_file}" ] || finalize_job 1 "${me}: list file '${list_file}' not found."
 
@@ -615,7 +615,7 @@ process_list_part()
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
 		rm -f "${dest_file}"
-		reg_failure "Size of ${list_origin} ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
+		reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
 		finalize_job 2
 	fi
@@ -642,7 +642,7 @@ process_list_part()
 
 	local part=
 	[ "${list_origin}" = downloaded ] && part=" part"
-	log_msg "Successfully processed ${list_origin} ${list_type}${part} from ${list_path} (size: ${list_part_size_human}, lines: $(int2human "${list_part_line_count}"))."
+	log_msg -green "Successfully processed list${part} from ${blue}${list_path}${n_c} (size: ${list_part_size_human}, lines: $(int2human "${list_part_line_count}"))."
 	finalize_job 0
 }
 
