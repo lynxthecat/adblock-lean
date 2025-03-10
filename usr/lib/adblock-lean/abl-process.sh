@@ -12,7 +12,6 @@ PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 
 SCHEDULE_DIR="${ABL_DIR}/schedule"
 DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
-DL_JOBS_REG_FILE="${SCHEDULE_DIR}/dl_jobs_running"
 
 IDLE_TIMEOUT_S=300 # 5 minutes
 PROCESSING_TIMEOUT_S=900 # 15 minutes
@@ -73,23 +72,26 @@ handle_schedule_fatal()
 # 2 - job URL
 reg_dl_job_url()
 {
-	${SED_CMD} -i "/^${1}=/d;\$a\\\n${1}=${2}" "${DL_JOBS_REG_FILE}"
+	printf '%s\n' "${2}" > "${SCHEDULE_DIR}/url_${1}"
 }
 
 # 1 - var name for output
 # 2 - job PID
 get_dl_job_url()
 {
-	local line
+	get_url_failed()
+	{
+		reg_failure "get_dl_job_url: URL reg file '${reg_file}' ${1}."
+	}
+
+	local line reg_file="${SCHEDULE_DIR}/url_${2}"
 	unset "${1}"
-	while read -r line
-	do
-		case "${line}" in "${2}="*)
-			eval "${1}"='${line##*=}'
-			return 0
-		esac
-	done < "${DL_JOBS_REG_FILE}"
-	return 1
+	[ -f "${reg_file}" ] || { get_url_failed "not found"; return 1; }
+	read -r line < "${reg_file}" || { get_url_failed "could not be read"; return 1; }
+	[ -n "${line}" ] || { get_url_failed "is empty"; return 1; }
+
+	eval "${1}"='${line##*=}'
+	:
 }
 
 # get current job PID
@@ -234,8 +236,7 @@ schedule_download_jobs()
 
 	local list_type list_types="${1}" list_format list_url list_num
 	unset DL_PIDS
-	rm -f "${DL_JOBS_REG_FILE}"
-	printf '\n' > "${DL_JOBS_REG_FILE}" || finalize_scheduler 1
+	rm -f "${SCHEDULE_DIR}"/url_*
 	for list_type in ${list_types}
 	do
 		for list_format in raw dnsmasq
@@ -311,20 +312,26 @@ schedule_processing_jobs()
 	}
 
 	# 1 - var name for output
-	# 2 - find -name expression
+	# extra args - paths with optional patterns
 	find_files_to_process()
 	{
-		local f
-		unset "${1}"
-		f="$(find "${TO_PROCESS_DIR}" \( -type l -o -type p \) \( -name ${2} \) | grep .)" || return 1
-		subtract_a_from_b "${files_processed}" "${f}" "${1}"
-		eval "[ -n \"\${${1}}\" ]"
+		local f var_name="${1}" to_process=
+		shift
+		unset "${var_name}"
+		# shellcheck disable=SC2048
+		for f in ${*}
+		do
+			[ -e "${f}" ] || continue
+			add2list to_process "${f}"
+		done
+		subtract_a_from_b "${files_processed}" "${to_process}" "${var_name}"
+		eval "[ -n \"\${${var_name}}\" ]"
 	}
 
-	local IFS dl_url file files_to_process processing_time_s=0 list_type list_types="${1}" files_processed='' find_names=
+	local dl_url file files_to_process processing_time_s=0 list_type list_types="${1}" files_processed='' find_names=
 	for list_type in ${list_types}
 	do
-		add2list find_names "${list_type}-*" " -o -name "
+		add2list find_names "${TO_PROCESS_DIR}/${list_type}-*" " "
 	done
 
 	while :
@@ -346,16 +353,16 @@ schedule_processing_jobs()
 			find_files_to_process files_to_process "${find_names}"
 		done
 
-		IFS="${_NL_}"
+		local IFS="${_NL_}"
 		for file in ${files_to_process}
 		do
 			IFS="-"
 			set -- ${file##*/}
 			IFS="${DEFAULT_IFS}"
 			local list_type="${1}" list_origin="${2}" list_format="${3}" list_num="${4}" dl_pid="${5}"
+			[ -n "${dl_pid}" ] && { get_dl_job_url dl_url "${dl_pid}" || finalize_scheduler 1; }
 			schedule_job PROCESS "${list_num}" "${list_type}" "${list_origin}" "${list_format}" "${file}" "${dl_pid}" ||
 				finalize_scheduler 1
-			get_dl_job_url dl_url "${dl_pid}"
 			set_a_arr_el PROCESS_JOBS_URLS "${!}=${dl_url}"
 			add2list files_processed "${file}"
 		done
@@ -522,7 +529,7 @@ process_list_part()
 		local)
 			list_path="$(readlink -f "${list_file}")" ;;
 		downloaded)
-			get_dl_job_url list_url "${dl_pid}"
+			get_dl_job_url list_url "${dl_pid}" || finalize_job 1
 			list_path="${list_url}"
 			dl_retry="${list_file##*-}"
 	esac
@@ -670,12 +677,9 @@ gen_list_parts()
 	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
 	# clean up before processing
-	for list_type in allowlist blocklist blocklist_ipv4
-	do
-		rm -f "${ABL_DIR}/${list_type}"*
-	done
+	rm -rf "${PROCESSED_PARTS_DIR}" "${TO_PROCESS_DIR}" "${SCHEDULE_DIR}"
 
-	local file dl_scheduler_pid process_scheduler_pid allowlist_line_count list_line_count
+	local file dl_scheduler_pid process_scheduler_pid list_line_count list_types
 
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" &&
@@ -693,80 +697,80 @@ gen_list_parts()
 
 	set +m # disable job complete notification
 
-	# Asynchronously download and process parts
-
-	# schedule allowlist download and processing
-	if [ -n "${allowlist_urls}${dnsmasq_allowlist_urls}" ] || [ -f "${local_allowlist_path}" ]
-	then
-		touch "${DL_IN_PROGRESS_FILE}" || return 1
-		schedule_download_jobs allowlist &
-		dl_scheduler_pid=${!}
-		schedule_local_jobs allowlist # synchronous
-
-		schedule_processing_jobs allowlist &
-		process_scheduler_pid=${!}
-
-print_msg -yellow "Waiting for allowlist schedulers..."
-		wait "${process_scheduler_pid}" &&
-		wait "${dl_scheduler_pid}" || return 1
-	fi
-
-	# consolidate allowlist parts into one file
-	for file in "${PROCESSED_PARTS_DIR}/allowlist-"*
+	# Asynchronously download and process parts, allowlist must be processed separately and first
+	for list_types in allowlist "blocklist blocklist_ipv4"
 	do
-		[ -e "${file}" ] || break
-		cat "${file}" >> "${PROCESSED_PARTS_DIR}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
-		rm -f "${file}"
-	done
-
-	# count lines in allowlist files
-	get_processed_lines_cnt allowlist_line_count allowlist
-
-
-	if [ "${allowlist_line_count}" != 0 ]
-	then
-		log_msg -green "" "Successfully generated allowlist with $(int2human "${allowlist_line_count}") entries."
-		log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
-		use_allowlist=1
-		preprocessed_line_count="$((preprocessed_line_count+allowlist_line_count))"
-	else
-		log_msg "Not using any allowlist for blocklist processing."
-	fi
-
-	# schedule local jobs
-	schedule_local_jobs "blocklist blocklist_ipv4"  # synchronous
-
-	touch "${DL_IN_PROGRESS_FILE}" || return 1
-	# schedule download jobs
-	schedule_download_jobs "blocklist blocklist_ipv4" &
-	dl_scheduler_pid=${!}
-
-	# schedule processing jobs
-	schedule_processing_jobs "blocklist blocklist_ipv4" &
-	process_scheduler_pid=${!}
-
-print_msg -yellow "Waiting for schedulers..."
-	wait "${process_scheduler_pid}" &&
-	wait "${dl_scheduler_pid}" || return 1
-
-	for list_type in blocklist blocklist_ipv4
-	do
-		# count lines for current list type
-		local file list_line_count
-		get_processed_lines_cnt list_line_count "${list_type}"
-		if [ "${list_line_count}" = 0 ]
-		then
-			if [ "${list_type}" = blocklist ]
+		local process_list_types='' dl_list_types='' local_list_types=''
+		for list_type in ${list_types}
+		do
+			eval "list_urls=\"\${${list_type}_urls}\""
+			if eval "[ -n \"\${${list_type}_urls}\${dnsmasq_${list_type}_urls}\" ]"
 			then
-				[ "${whitelist_mode}" = 0 ] && return 1
-				log_msg -yellow "Whitelist mode is on - accepting empty blocklist."
+				process_list_types=1
+				dl_list_types=1
+				touch "${DL_IN_PROGRESS_FILE}" || return 1
 			fi
-		elif [ "${list_type}" = blocklist_ipv4 ]
+			if eval "[ -f \"\${local_${list_type}_path}\" ]"
+			then
+				process_list_types=1
+				local_list_types=1
+			fi
+		done
+
+		if [ -n "${process_list_types}" ]
 		then
-			use_blocklist_ipv4=1
+			[ -n "${dl_list_types}" ] && {
+				schedule_download_jobs "${list_types}" &
+				dl_scheduler_pid=${!}
+			}
+			[ -n "${local_list_types}" ] && schedule_local_jobs "${list_types}" # synchronous
+
+			schedule_processing_jobs "${list_types}" &
+			process_scheduler_pid=${!}
+
+print_msg -yellow "Waiting for ${list_types} PROCESS scheduler..."
+			wait "${process_scheduler_pid}" || return 1
+
+			[ -n "${dl_list_types}" ] && {
+print_msg -yellow "Waiting for ${list_types} DL scheduler..."
+				wait "${dl_scheduler_pid}" || return 1
+			}
 		fi
-		preprocessed_line_count="$((preprocessed_line_count+list_line_count))"
+
+		if [ "${list_types}" = allowlist ]
+		then
+			# consolidate allowlist parts into one file
+			for file in "${PROCESSED_PARTS_DIR}/allowlist-"*
+			do
+				[ -e "${file}" ] || break
+				cat "${file}" >> "${PROCESSED_PARTS_DIR}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
+				rm -f "${file}"
+			done
+		fi
+
+		for list_type in ${list_types}
+		do
+			# count lines for current list type
+			local file list_line_count
+			get_processed_lines_cnt list_line_count "${list_type}"
+			if [ "${list_line_count}" = 0 ]
+			then
+				[ "${list_type}" = blocklist ] && {
+					[ "${whitelist_mode}" = 0 ] && return 1
+					log_msg -yellow "Whitelist mode is on - accepting empty blocklist."
+				}
+			elif [ "${list_type}" = blocklist_ipv4 ]
+			then
+				use_blocklist_ipv4=1
+			elif [ "${list_type}" = allowlist ]
+			then
+				use_allowlist=1
+			fi
+			[ -n "${use_allowlist}" ] || log_msg "Not using any allowlist for blocklist processing."
+			preprocessed_line_count="$((preprocessed_line_count+list_line_count))"
+		done
 	done
+
 	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human "${preprocessed_line_count}") entries."
 	:
 }
