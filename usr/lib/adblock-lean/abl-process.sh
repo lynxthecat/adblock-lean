@@ -12,7 +12,6 @@ PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 
 SCHEDULE_DIR="${ABL_DIR}/schedule"
 DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
-DL_JOBS_REG_FILE="${SCHEDULE_DIR}/dl_jobs_running"
 
 IDLE_TIMEOUT_S=300 # 5 minutes
 PROCESSING_TIMEOUT_S=900 # 15 minutes
@@ -73,23 +72,26 @@ handle_schedule_fatal()
 # 2 - job URL
 reg_dl_job_url()
 {
-	${SED_CMD} -i "/^${1}=/d;\$a\\\n${1}=${2}" "${DL_JOBS_REG_FILE}"
+	printf '%s\n' "${2}" > "${SCHEDULE_DIR}/url_${1}"
 }
 
 # 1 - var name for output
 # 2 - job PID
 get_dl_job_url()
 {
-	local line
+	get_url_failed()
+	{
+		reg_failure "get_dl_job_url: URL reg file '${reg_file}' ${1}."
+	}
+
+	local line reg_file="${SCHEDULE_DIR}/url_${2}"
 	unset "${1}"
-	while read -r line
-	do
-		case "${line}" in "${2}="*)
-			eval "${1}"='${line##*=}'
-			return 0
-		esac
-	done < "${DL_JOBS_REG_FILE}"
-	return 1
+	[ -f "${reg_file}" ] || { get_url_failed "not found"; return 1; }
+	read -r line < "${reg_file}" || { get_url_failed "could not be read"; return 1; }
+	[ -n "${line}" ] || { get_url_failed "is empty"; return 1; }
+
+	eval "${1}"='${line##*=}'
+	:
 }
 
 # get current job PID
@@ -234,8 +236,7 @@ schedule_download_jobs()
 
 	local list_type list_types="${1}" list_format list_url list_num
 	unset DL_PIDS
-	rm -f "${DL_JOBS_REG_FILE}"
-	printf '\n' > "${DL_JOBS_REG_FILE}" || finalize_scheduler 1
+	rm -f "${SCHEDULE_DIR}"/url_*
 	for list_type in ${list_types}
 	do
 		for list_format in raw dnsmasq
@@ -359,9 +360,9 @@ schedule_processing_jobs()
 			set -- ${file##*/}
 			IFS="${DEFAULT_IFS}"
 			local list_type="${1}" list_origin="${2}" list_format="${3}" list_num="${4}" dl_pid="${5}"
+			[ -n "${dl_pid}" ] && { get_dl_job_url dl_url "${dl_pid}" || finalize_scheduler 1; }
 			schedule_job PROCESS "${list_num}" "${list_type}" "${list_origin}" "${list_format}" "${file}" "${dl_pid}" ||
 				finalize_scheduler 1
-			get_dl_job_url dl_url "${dl_pid}"
 			set_a_arr_el PROCESS_JOBS_URLS "${!}=${dl_url}"
 			add2list files_processed "${file}"
 		done
@@ -528,7 +529,7 @@ process_list_part()
 		local)
 			list_path="$(readlink -f "${list_file}")" ;;
 		downloaded)
-			get_dl_job_url list_url "${dl_pid}"
+			get_dl_job_url list_url "${dl_pid}" || finalize_job 1
 			list_path="${list_url}"
 			dl_retry="${list_file##*-}"
 	esac
@@ -676,12 +677,9 @@ gen_list_parts()
 	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
 	# clean up before processing
-	for list_type in allowlist blocklist blocklist_ipv4
-	do
-		rm -f "${ABL_DIR}/${list_type}"*
-	done
+	rm -rf "${PROCESSED_PARTS_DIR}" "${TO_PROCESS_DIR}" "${SCHEDULE_DIR}"
 
-	local file dl_scheduler_pid process_scheduler_pid allowlist_line_count list_line_count list_types
+	local file dl_scheduler_pid process_scheduler_pid list_line_count list_types
 
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" &&
