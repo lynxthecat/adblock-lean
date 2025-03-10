@@ -311,20 +311,26 @@ schedule_processing_jobs()
 	}
 
 	# 1 - var name for output
-	# 2 - find -name expression
+	# extra args - paths with optional patterns
 	find_files_to_process()
 	{
-		local f
-		unset "${1}"
-		f="$(find "${TO_PROCESS_DIR}" \( -type l -o -type p \) \( -name ${2} \) | grep .)" || return 1
-		subtract_a_from_b "${files_processed}" "${f}" "${1}"
-		eval "[ -n \"\${${1}}\" ]"
+		local f var_name="${1}" to_process=
+		shift
+		unset "${var_name}"
+		# shellcheck disable=SC2048
+		for f in ${*}
+		do
+			[ -e "${f}" ] || continue
+			add2list to_process "${f}"
+		done
+		subtract_a_from_b "${files_processed}" "${to_process}" "${var_name}"
+		eval "[ -n \"\${${var_name}}\" ]"
 	}
 
-	local IFS dl_url file files_to_process processing_time_s=0 list_type list_types="${1}" files_processed='' find_names=
+	local dl_url file files_to_process processing_time_s=0 list_type list_types="${1}" files_processed='' find_names=
 	for list_type in ${list_types}
 	do
-		add2list find_names "${list_type}-*" " -o -name "
+		add2list find_names "${TO_PROCESS_DIR}/${list_type}-*" " "
 	done
 
 	while :
@@ -346,7 +352,7 @@ schedule_processing_jobs()
 			find_files_to_process files_to_process "${find_names}"
 		done
 
-		IFS="${_NL_}"
+		local IFS="${_NL_}"
 		for file in ${files_to_process}
 		do
 			IFS="-"
