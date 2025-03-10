@@ -122,7 +122,6 @@ schedule_job()
 		[ -n "${running_jobs_pids}" ] ||
 			{ reg_failure "\$running_jobs_cnt=${running_jobs_cnt} but no registered jobs PIDs."; return 1; }
 
-print_msg -yellow "Waiting for ${job_type} jobs vacancy (running PIDS: ${running_jobs_pids})..."
 		wait -n ${running_jobs_pids}
 		running_jobs_cnt=$((running_jobs_cnt-1))
 		handle_done_jobs "${job_type}" || return 1
@@ -193,7 +192,6 @@ print_msg -red "Cleaning up after ${file_suffix}"
 		done_job_rv="${done_job_file##*_}"
 		subtract_a_from_b "${done_pid}" "${job_pids}" job_pids " "
 		eval "${job_type}_PIDS"='${job_pids}'
-print_msg -yellow "${job_type} job (PID ${done_pid}) completed with code ${done_job_rv}."
 		if [ "${done_job_rv}" != 0 ]
 		then
 			get_a_arr_val "${job_type}_JOBS_URLS" "${done_pid}" job_url
@@ -217,9 +215,7 @@ handle_running_jobs()
 	local IFS="${DEFAULT_IFS}"
 	for job_pid in ${job_pids}
 	do
-print_msg -yellow "Waiting for ${1} job ${job_pid} to finish..."
 		wait "${job_pid}"
-print_msg -yellow "${1} job ${job_pid} completed..."
 		handle_done_jobs "${1}" "${job_pid}" || return 1
 	done
 	:
@@ -347,7 +343,6 @@ schedule_processing_jobs()
 		do
 			[ "${idle_time_s}" -lt "${IDLE_TIMEOUT_S}" ] ||
 				finalize_scheduler 1 "Idle timeout (${IDLE_TIMEOUT_S} s): giving up on waiting for files to process."
-			print_msg -yellow "Waiting for files to process..."
 			sleep 1
 			idle_time_s=$((idle_time_s+1))
 			find_files_to_process files_to_process "${find_names}"
@@ -436,8 +431,6 @@ dl_list_part()
 	get_curr_job_pid curr_job_pid || return 1
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
-
-print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
 
 	while :
 	do
@@ -542,8 +535,6 @@ process_list_part()
 		list_part_line_count compress_part='' min_list_part_line_count='' \
 		list_part_size_B='' list_part_size_KB='' val_entry_regex
 
-
-print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}, path: ${list_path}."
 	log_msg "Processing ${list_origin} ${list_format} ${list_type} part from ${list_path}."
 
 	[ -e "${list_file}" ] || finalize_job 1 "${me}: list file '${list_file}' not found."
@@ -728,11 +719,9 @@ gen_list_parts()
 			schedule_processing_jobs "${list_types}" &
 			process_scheduler_pid=${!}
 
-print_msg -yellow "Waiting for ${list_types} PROCESS scheduler..."
 			wait "${process_scheduler_pid}" || return 1
 
 			[ -n "${dl_list_types}" ] && {
-print_msg -yellow "Waiting for ${list_types} DL scheduler..."
 				wait "${dl_scheduler_pid}" || return 1
 			}
 		fi
