@@ -5,7 +5,7 @@
 # silence shellcheck warnings
 : "${use_compression:=}" "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}"
 : "${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" "${local_allowlist_path:=}"
-
+: "${blue:=}" "${n_c:=}"
 
 TO_PROCESS_DIR="${ABL_DIR}/to_process"
 PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
@@ -15,6 +15,19 @@ DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
 
 IDLE_TIMEOUT_S=300 # 5 minutes
 PROCESSING_TIMEOUT_S=900 # 15 minutes
+
+
+# UTILITY FUNCTIONS
+
+try_gzip()
+{
+	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
+}
+
+try_gunzip()
+{
+	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
+}
 
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
 # output via optional variable with name $3
@@ -68,13 +81,6 @@ handle_schedule_fatal()
 	return 1
 }
 
-# 1 - job PID
-# 2 - job URL
-reg_dl_job_url()
-{
-	printf '%s\n' "${2}" > "${SCHEDULE_DIR}/url_${1}"
-}
-
 # 1 - var name for output
 # 2 - job PID
 get_dl_job_url()
@@ -110,34 +116,27 @@ get_curr_job_pid()
 # the rest of the args passed as-is to workers
 schedule_job()
 {
-	local running_jobs_cnt threads job_type="${1}" running_jobs_pids
+	local job_type="${1}"
 	shift
-	eval "running_jobs_cnt=\"\${${job_type}_running_jobs_cnt:-0}\" \
-		threads=\"\${${job_type}_THREADS}\""
 
 	# wait for job vacancy
-	while [ "${running_jobs_cnt}" -ge "${threads}" ] && [ ! -f "${SCHEDULE_DIR}/fatal" ]
+	handle_done_jobs "${job_type}"
+	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_THREADS}" ]
 	do
-		eval "running_jobs_pids=\"\${${job_type}_PIDS}\""
-		[ -n "${running_jobs_pids}" ] ||
-			{ reg_failure "\$running_jobs_cnt=${running_jobs_cnt} but no registered jobs PIDs."; return 1; }
+		[ -n "${RUNNING_PIDS}" ] ||
+			{ reg_failure "\$RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT} but no registered jobs PIDs."; return 1; }
 
-print_msg -yellow "Waiting for ${job_type} jobs vacancy (running PIDS: ${running_jobs_pids})..."
-		wait -n ${running_jobs_pids}
-		running_jobs_cnt=$((running_jobs_cnt-1))
+		wait -n ${RUNNING_PIDS}
 		handle_done_jobs "${job_type}" || return 1
 	done
 
-	eval "${job_type}_running_jobs_cnt"='$((running_jobs_cnt+1))'
-
-	handle_schedule_fatal || return 1
-
+	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
 	case "${job_type}" in
 		DL) dl_list_part "${@}" & ;;
 		PROCESS) process_list_part "${@}" &
 	esac
 
-	add2list "${job_type}_PIDS" "${!}" " "
+	add2list RUNNING_PIDS "${!}" " "
 
 	:
 }
@@ -162,10 +161,27 @@ reg_done_job()
 }
 
 # 1 - job type (DL|PROCESS)
+# 2 - job PID
+# 3 - path (URL for download, file path for local)
+# 4 - return code
+handle_process_failure()
+{
+	local job_type_print
+	case "${1}" in
+		DL) job_type_print=Download ;;
+		PROCESS) job_type_print=Processing
+	esac
+	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${4}."
+	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
+	log_msg "Skipping file and continuing."
+	:
+}
+
+# 1 - job type (DL|PROCESS)
 # 2 (optional) - only handle job with pid $2
 handle_done_jobs()
 {
-	local job_type="${1}" done_job_file done_job_rv done_pid_tmp done_pid job_pids job_url suffix=
+	local job_type="${1}" done_job_file done_job_rv done_pid_tmp done_pid job_url suffix=
 	[ -n "${2}" ] && suffix="${2}_"
 
 	handle_schedule_fatal || return 1
@@ -176,14 +192,12 @@ handle_done_jobs()
 	do
 		[ -s "${failed_dl_file}" ] || continue
 		file_suffix="${failed_dl_file##*_}"
-print_msg -red "Cleaning up after ${file_suffix}"
 		rm -f "${failed_dl_file}"\
 			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}" \
 			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}.gz" \
 			"${ABL_DIR}/"*"-${file_suffix}"
 	done
 
-	eval "job_pids=\"\${${job_type}_PIDS}\""
 	for done_job_file in "${SCHEDULE_DIR}/done_${job_type}_${suffix}"*
 	do
 		[ -e "${done_job_file}" ] || break
@@ -191,9 +205,8 @@ print_msg -red "Cleaning up after ${file_suffix}"
 		done_pid_tmp="${done_job_file%_*}"
 		done_pid="${done_pid_tmp##*_}"
 		done_job_rv="${done_job_file##*_}"
-		subtract_a_from_b "${done_pid}" "${job_pids}" job_pids " "
-		eval "${job_type}_PIDS"='${job_pids}'
-print_msg -yellow "${job_type} job (PID ${done_pid}) completed with code ${done_job_rv}."
+		subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
+		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 		if [ "${done_job_rv}" != 0 ]
 		then
 			get_a_arr_val "${job_type}_JOBS_URLS" "${done_pid}" job_url
@@ -206,21 +219,41 @@ print_msg -yellow "${job_type} job (PID ${done_pid}) completed with code ${done_
 # 1 - job type (DL|PROCESS)
 handle_running_jobs()
 {
-	local job_pids job_pid
+	local job_pid
 
 	# handle errors in previously finished jobs
 	handle_done_jobs "${1}" || return 1
 
-	eval "job_pids=\"\${${1}_PIDS}\""
-
 	# wait for jobs to finish and handle errors
 	local IFS="${DEFAULT_IFS}"
-	for job_pid in ${job_pids}
+	for job_pid in ${RUNNING_PIDS}
 	do
-print_msg -yellow "Waiting for ${1} job ${job_pid} to finish..."
 		wait "${job_pid}"
-print_msg -yellow "${1} job ${job_pid} completed..."
 		handle_done_jobs "${1}" "${job_pid}" || return 1
+	done
+	:
+}
+
+schedule_local_jobs()
+{
+	local list_types="${1}" local_list_path
+	for list_type in ${list_types}
+	do
+		list_num=0
+		if [ "${list_type}" != blocklist_ipv4 ]
+		then
+			eval "local_list_path=\"\${local_${list_type}_path}\""
+			if [ ! -f "${local_list_path}" ]
+			then
+				log_msg -blue "" "No local ${list_type} identified."
+			elif [ ! -s "${local_list_path}" ]
+			then
+				log_msg -warn "" "Local ${list_type} file is empty."
+			else
+				log_msg -blue "" "Scheduling processing for the local ${list_type}."
+				ln -sf "${local_list_path}" "${TO_PROCESS_DIR}/${list_type}-local-raw-${list_num}"
+			fi
+		fi
 	done
 	:
 }
@@ -235,7 +268,10 @@ schedule_download_jobs()
 	}
 
 	local list_type list_types="${1}" list_format list_url list_num
-	unset DL_PIDS
+	RUNNING_PIDS=
+	RUNNING_JOBS_CNT=0
+	MAX_THREADS="${DL_THREADS}"
+
 	rm -f "${SCHEDULE_DIR}"/url_*
 	for list_type in ${list_types}
 	do
@@ -279,30 +315,6 @@ schedule_download_jobs()
 	finalize_scheduler ${?}
 }
 
-schedule_local_jobs()
-{
-	local list_types="${1}" local_list_path
-	for list_type in ${list_types}
-	do
-		list_num=0
-		if [ "${list_type}" != blocklist_ipv4 ]
-		then
-			eval "local_list_path=\"\${local_${list_type}_path}\""
-			if [ ! -f "${local_list_path}" ]
-			then
-				log_msg -blue "" "No local ${list_type} identified."
-			elif [ ! -s "${local_list_path}" ]
-			then
-				log_msg -warn "" "Local ${list_type} file is empty."
-			else
-				log_msg -blue "" "Scheduling processing for the local ${list_type}."
-				ln -sf "${local_list_path}" "${TO_PROCESS_DIR}/${list_type}-local-raw-${list_num}"
-			fi
-		fi
-	done
-	:
-}
-
 schedule_processing_jobs()
 {
 	finalize_scheduler()
@@ -334,6 +346,10 @@ schedule_processing_jobs()
 		add2list find_names "${TO_PROCESS_DIR}/${list_type}-*" " "
 	done
 
+	RUNNING_PIDS=
+	RUNNING_JOBS_CNT=0
+	MAX_THREADS="${PROCESS_THREADS}"
+
 	while :
 	do
 		get_elapsed_time_s processing_time_s "${INITIAL_UPTIME_S}"
@@ -347,7 +363,6 @@ schedule_processing_jobs()
 		do
 			[ "${idle_time_s}" -lt "${IDLE_TIMEOUT_S}" ] ||
 				finalize_scheduler 1 "Idle timeout (${IDLE_TIMEOUT_S} s): giving up on waiting for files to process."
-			print_msg -yellow "Waiting for files to process..."
 			sleep 1
 			idle_time_s=$((idle_time_s+1))
 			find_files_to_process files_to_process "${find_names}"
@@ -371,41 +386,6 @@ schedule_processing_jobs()
 
 	handle_running_jobs PROCESS
 	finalize_scheduler ${?}
-}
-
-# 1 - job type (DL|PROCESS)
-# 2 - job PID
-# 3 - path (URL for download, file path for local)
-# 4 - return code
-handle_process_failure()
-{
-	local job_type_print
-	case "${1}" in
-		DL) job_type_print=Download ;;
-		PROCESS) job_type_print=Processing
-	esac
-	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${4}."
-	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-	log_msg "Skipping file and continuing."
-	:
-}
-
-try_mkfifo()
-{
-	[ -f "${1}" ] && { reg_failure "fifo file '${1}' already exists."; return 1; }
-	mkfifo "${1}" || { reg_failure "Failed to create fifo file '${1}'."; return 1; }
-	:
-}
-
-
-try_gzip()
-{
-	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
-}
-
-try_gunzip()
-{
-	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
 }
 
 # 1 - URL
@@ -437,7 +417,7 @@ dl_list_part()
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
 
-print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
+	printf '%s\n' "${list_url}" > "${SCHEDULE_DIR}/url_${curr_job_pid}"
 
 	while :
 	do
@@ -449,11 +429,13 @@ print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
 
 		rm_ucl_err_file
 
-		log_msg "Downloading ${list_format} ${list_type} part from ${list_url}."
-		reg_dl_job_url "${curr_job_pid}" "${list_url}"
-		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}" dl_failed_file="${SCHEDULE_DIR}/failed_${curr_job_pid}-${retry}"
+		log_msg "Downloading ${list_format} ${list_type} part from ${blue}${list_url}${n_c}"
+		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}"
+			dl_failed_file="${SCHEDULE_DIR}/failed_${curr_job_pid}-${retry}"
 		rm -f "${dl_failed_file}"
-		try_mkfifo "${fifo_file}" || finalize_job 1
+
+		[ -f "${fifo_file}" ] && finalize_job 1 "fifo file '${fifo_file}' already exists."
+		mkfifo "${fifo_file}" || finalize_job 1 "Failed to create fifo file '${fifo_file}'."
 
 		{ uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" || printf fail > "${dl_failed_file}"; } |
 			{ cat 1> "${fifo_file}"; head -c1 1> "${dl_failed_file}"; cat &> /dev/null; }
@@ -463,7 +445,7 @@ print_msg -yellow "Starting DL job, PID ${curr_job_pid}."
 		then
 			rm -f "${dl_failed_file}"
 			rm_ucl_err_file
-			log_msg -green "Successfully downloaded list part from URL '${list_url}'."
+			log_msg -green "Successfully downloaded list part from ${blue}${list_url}${n_c}"
 			finalize_job 0
 		fi
 
@@ -542,9 +524,7 @@ process_list_part()
 		list_part_line_count compress_part='' min_list_part_line_count='' \
 		list_part_size_B='' list_part_size_KB='' val_entry_regex
 
-
-print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}, path: ${list_path}."
-	log_msg "Processing ${list_origin} ${list_format} ${list_type} part from ${list_path}."
+	log_msg "Processing ${list_format} ${list_type} part from ${blue}${list_path}${n_c}"
 
 	[ -e "${list_file}" ] || finalize_job 1 "${me}: list file '${list_file}' not found."
 
@@ -624,7 +604,7 @@ print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}, path: ${list_path}
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
 		rm -f "${dest_file}"
-		reg_failure "Size of ${list_origin} ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
+		reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
 		finalize_job 2
 	fi
@@ -651,7 +631,7 @@ print_msg -yellow "Starting PROCESS job, PID ${curr_job_pid}, path: ${list_path}
 
 	local part=
 	[ "${list_origin}" = downloaded ] && part=" part"
-	log_msg "Successfully processed ${list_origin} ${list_type}${part} from ${list_path} (size: ${list_part_size_human}, lines: $(int2human "${list_part_line_count}"))."
+	log_msg -green "Successfully processed list${part} from ${blue}${list_path}${n_c} (size: ${list_part_size_human}, lines: $(int2human "${list_part_line_count}"))."
 	finalize_job 0
 }
 
@@ -728,11 +708,9 @@ gen_list_parts()
 			schedule_processing_jobs "${list_types}" &
 			process_scheduler_pid=${!}
 
-print_msg -yellow "Waiting for ${list_types} PROCESS scheduler..."
 			wait "${process_scheduler_pid}" || return 1
 
 			[ -n "${dl_list_types}" ] && {
-print_msg -yellow "Waiting for ${list_types} DL scheduler..."
 				wait "${dl_scheduler_pid}" || return 1
 			}
 		fi
@@ -1158,7 +1136,7 @@ import_blocklist_file()
 	if [ -n "${final_compress}" ]
 	then
 		printf '%s\n' "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.abl-extract_blocklist\"" > "${DNSMASQ_CONF_D}"/abl-conf-script &&
-		printf '%s\n%s\n' "busybox gunzip -c ${DNSMASQ_CONF_D}/.abl-blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.abl-extract_blocklist ||
+		printf '%s\n%s\n' "busybox zcat ${DNSMASQ_CONF_D}/.abl-blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.abl-extract_blocklist ||
 			{ reg_failure "Failed to create conf-script for dnsmasq."; return 1; }
 		compressed=" compressed"
 	fi
