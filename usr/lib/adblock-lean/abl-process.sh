@@ -16,6 +16,19 @@ DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
 IDLE_TIMEOUT_S=300 # 5 minutes
 PROCESSING_TIMEOUT_S=900 # 15 minutes
 
+
+# UTILITY FUNCTIONS
+
+try_gzip()
+{
+	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
+}
+
+try_gunzip()
+{
+	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
+}
+
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
 # output via optional variable with name $3
 # returns status 0 if the result is null, 1 if not
@@ -66,13 +79,6 @@ handle_schedule_fatal()
 	: "${fatal_pid:=unknown}"
 	reg_failure "${fatal_type} job with pid '${fatal_pid}' reported fatal error."
 	return 1
-}
-
-# 1 - job PID
-# 2 - job URL
-reg_dl_job_url()
-{
-	printf '%s\n' "${2}" > "${SCHEDULE_DIR}/url_${1}"
 }
 
 # 1 - var name for output
@@ -161,6 +167,23 @@ reg_done_job()
 }
 
 # 1 - job type (DL|PROCESS)
+# 2 - job PID
+# 3 - path (URL for download, file path for local)
+# 4 - return code
+handle_process_failure()
+{
+	local job_type_print
+	case "${1}" in
+		DL) job_type_print=Download ;;
+		PROCESS) job_type_print=Processing
+	esac
+	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${4}."
+	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
+	log_msg "Skipping file and continuing."
+	:
+}
+
+# 1 - job type (DL|PROCESS)
 # 2 (optional) - only handle job with pid $2
 handle_done_jobs()
 {
@@ -175,7 +198,6 @@ handle_done_jobs()
 	do
 		[ -s "${failed_dl_file}" ] || continue
 		file_suffix="${failed_dl_file##*_}"
-print_msg -red "Cleaning up after ${file_suffix}"
 		rm -f "${failed_dl_file}"\
 			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}" \
 			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}.gz" \
@@ -217,6 +239,30 @@ handle_running_jobs()
 	do
 		wait "${job_pid}"
 		handle_done_jobs "${1}" "${job_pid}" || return 1
+	done
+	:
+}
+
+schedule_local_jobs()
+{
+	local list_types="${1}" local_list_path
+	for list_type in ${list_types}
+	do
+		list_num=0
+		if [ "${list_type}" != blocklist_ipv4 ]
+		then
+			eval "local_list_path=\"\${local_${list_type}_path}\""
+			if [ ! -f "${local_list_path}" ]
+			then
+				log_msg -blue "" "No local ${list_type} identified."
+			elif [ ! -s "${local_list_path}" ]
+			then
+				log_msg -warn "" "Local ${list_type} file is empty."
+			else
+				log_msg -blue "" "Scheduling processing for the local ${list_type}."
+				ln -sf "${local_list_path}" "${TO_PROCESS_DIR}/${list_type}-local-raw-${list_num}"
+			fi
+		fi
 	done
 	:
 }
@@ -273,30 +319,6 @@ schedule_download_jobs()
 
 	handle_running_jobs DL
 	finalize_scheduler ${?}
-}
-
-schedule_local_jobs()
-{
-	local list_types="${1}" local_list_path
-	for list_type in ${list_types}
-	do
-		list_num=0
-		if [ "${list_type}" != blocklist_ipv4 ]
-		then
-			eval "local_list_path=\"\${local_${list_type}_path}\""
-			if [ ! -f "${local_list_path}" ]
-			then
-				log_msg -blue "" "No local ${list_type} identified."
-			elif [ ! -s "${local_list_path}" ]
-			then
-				log_msg -warn "" "Local ${list_type} file is empty."
-			else
-				log_msg -blue "" "Scheduling processing for the local ${list_type}."
-				ln -sf "${local_list_path}" "${TO_PROCESS_DIR}/${list_type}-local-raw-${list_num}"
-			fi
-		fi
-	done
-	:
 }
 
 schedule_processing_jobs()
@@ -368,41 +390,6 @@ schedule_processing_jobs()
 	finalize_scheduler ${?}
 }
 
-# 1 - job type (DL|PROCESS)
-# 2 - job PID
-# 3 - path (URL for download, file path for local)
-# 4 - return code
-handle_process_failure()
-{
-	local job_type_print
-	case "${1}" in
-		DL) job_type_print=Download ;;
-		PROCESS) job_type_print=Processing
-	esac
-	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${4}."
-	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-	log_msg "Skipping file and continuing."
-	:
-}
-
-try_mkfifo()
-{
-	[ -f "${1}" ] && { reg_failure "fifo file '${1}' already exists."; return 1; }
-	mkfifo "${1}" || { reg_failure "Failed to create fifo file '${1}'."; return 1; }
-	:
-}
-
-
-try_gzip()
-{
-	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
-}
-
-try_gunzip()
-{
-	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
-}
-
 # 1 - URL
 # 2 - list type (allowlist|blocklist|blocklist_ipv4)
 # 3 - list format (dnsmasq|raw)
@@ -432,6 +419,8 @@ dl_list_part()
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
 
+	printf '%s\n' "${list_url}" > "${SCHEDULE_DIR}/url_${curr_job_pid}"
+
 	while :
 	do
 		retry=$((retry + 1))
@@ -443,10 +432,12 @@ dl_list_part()
 		rm_ucl_err_file
 
 		log_msg "Downloading ${list_format} ${list_type} part from ${blue}${list_url}${n_c}"
-		reg_dl_job_url "${curr_job_pid}" "${list_url}"
-		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}" dl_failed_file="${SCHEDULE_DIR}/failed_${curr_job_pid}-${retry}"
+		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}"
+			dl_failed_file="${SCHEDULE_DIR}/failed_${curr_job_pid}-${retry}"
 		rm -f "${dl_failed_file}"
-		try_mkfifo "${fifo_file}" || finalize_job 1
+
+		[ -f "${fifo_file}" ] && finalize_job 1 "fifo file '${fifo_file}' already exists."
+		mkfifo "${fifo_file}" || finalize_job 1 "Failed to create fifo file '${fifo_file}'."
 
 		{ uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" || printf fail > "${dl_failed_file}"; } |
 			{ cat 1> "${fifo_file}"; head -c1 1> "${dl_failed_file}"; cat &> /dev/null; }
