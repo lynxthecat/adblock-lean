@@ -120,20 +120,17 @@ schedule_job()
 	shift
 
 	# wait for job vacancy
-	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_THREADS}" ] && [ ! -f "${SCHEDULE_DIR}/fatal" ]
+	handle_done_jobs "${job_type}"
+	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_THREADS}" ]
 	do
 		[ -n "${RUNNING_PIDS}" ] ||
 			{ reg_failure "\$RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT} but no registered jobs PIDs."; return 1; }
 
 		wait -n ${RUNNING_PIDS}
-		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 		handle_done_jobs "${job_type}" || return 1
 	done
 
 	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
-
-	handle_schedule_fatal || return 1
-
 	case "${job_type}" in
 		DL) dl_list_part "${@}" & ;;
 		PROCESS) process_list_part "${@}" &
@@ -209,6 +206,7 @@ handle_done_jobs()
 		done_pid="${done_pid_tmp##*_}"
 		done_job_rv="${done_job_file##*_}"
 		subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
+		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 		if [ "${done_job_rv}" != 0 ]
 		then
 			get_a_arr_val "${job_type}_JOBS_URLS" "${done_pid}" job_url
