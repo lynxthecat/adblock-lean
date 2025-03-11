@@ -80,7 +80,7 @@ adblock-lean custom commands:
 	uninstall                uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 # silence shellcheck warnings
-: "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}" "${purple}" "${TAB}" "${CR_LF}"
+: "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}" "${purple}" "${green}" "${TAB}" "${CR_LF}"
 : "${AWK_CMD}" "${SORT_CMD}"
 : "${luci_log}" "${luci_pid_action}" "${luci_errors}" "${luci_dnsmasq_status}"
 : "${luci_good_line_count}" "${luci_update_status}" "${luci_pkgs_install_failed}" "${luci_cron_job_creation_failed}"
