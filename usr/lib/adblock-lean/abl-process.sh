@@ -116,24 +116,21 @@ get_curr_job_pid()
 # the rest of the args passed as-is to workers
 schedule_job()
 {
-	local running_jobs_cnt threads job_type="${1}" running_jobs_pids
+	local job_type="${1}"
 	shift
-	eval "running_jobs_cnt=\"\${${job_type}_running_jobs_cnt:-0}\" \
-		threads=\"\${${job_type}_THREADS}\""
 
 	# wait for job vacancy
-	while [ "${running_jobs_cnt}" -ge "${threads}" ] && [ ! -f "${SCHEDULE_DIR}/fatal" ]
+	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_THREADS}" ] && [ ! -f "${SCHEDULE_DIR}/fatal" ]
 	do
-		eval "running_jobs_pids=\"\${${job_type}_PIDS}\""
-		[ -n "${running_jobs_pids}" ] ||
-			{ reg_failure "\$running_jobs_cnt=${running_jobs_cnt} but no registered jobs PIDs."; return 1; }
+		[ -n "${RUNNING_PIDS}" ] ||
+			{ reg_failure "\$RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT} but no registered jobs PIDs."; return 1; }
 
-		wait -n ${running_jobs_pids}
-		running_jobs_cnt=$((running_jobs_cnt-1))
+		wait -n ${RUNNING_PIDS}
+		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 		handle_done_jobs "${job_type}" || return 1
 	done
 
-	eval "${job_type}_running_jobs_cnt"='$((running_jobs_cnt+1))'
+	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
 
 	handle_schedule_fatal || return 1
 
@@ -142,7 +139,7 @@ schedule_job()
 		PROCESS) process_list_part "${@}" &
 	esac
 
-	add2list "${job_type}_PIDS" "${!}" " "
+	add2list RUNNING_PIDS "${!}" " "
 
 	:
 }
@@ -187,7 +184,7 @@ handle_process_failure()
 # 2 (optional) - only handle job with pid $2
 handle_done_jobs()
 {
-	local job_type="${1}" done_job_file done_job_rv done_pid_tmp done_pid job_pids job_url suffix=
+	local job_type="${1}" done_job_file done_job_rv done_pid_tmp done_pid job_url suffix=
 	[ -n "${2}" ] && suffix="${2}_"
 
 	handle_schedule_fatal || return 1
@@ -204,7 +201,6 @@ handle_done_jobs()
 			"${ABL_DIR}/"*"-${file_suffix}"
 	done
 
-	eval "job_pids=\"\${${job_type}_PIDS}\""
 	for done_job_file in "${SCHEDULE_DIR}/done_${job_type}_${suffix}"*
 	do
 		[ -e "${done_job_file}" ] || break
@@ -212,8 +208,7 @@ handle_done_jobs()
 		done_pid_tmp="${done_job_file%_*}"
 		done_pid="${done_pid_tmp##*_}"
 		done_job_rv="${done_job_file##*_}"
-		subtract_a_from_b "${done_pid}" "${job_pids}" job_pids " "
-		eval "${job_type}_PIDS"='${job_pids}'
+		subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
 		if [ "${done_job_rv}" != 0 ]
 		then
 			get_a_arr_val "${job_type}_JOBS_URLS" "${done_pid}" job_url
@@ -226,16 +221,14 @@ handle_done_jobs()
 # 1 - job type (DL|PROCESS)
 handle_running_jobs()
 {
-	local job_pids job_pid
+	local job_pid
 
 	# handle errors in previously finished jobs
 	handle_done_jobs "${1}" || return 1
 
-	eval "job_pids=\"\${${1}_PIDS}\""
-
 	# wait for jobs to finish and handle errors
 	local IFS="${DEFAULT_IFS}"
-	for job_pid in ${job_pids}
+	for job_pid in ${RUNNING_PIDS}
 	do
 		wait "${job_pid}"
 		handle_done_jobs "${1}" "${job_pid}" || return 1
@@ -277,7 +270,10 @@ schedule_download_jobs()
 	}
 
 	local list_type list_types="${1}" list_format list_url list_num
-	unset DL_PIDS
+	RUNNING_PIDS=
+	RUNNING_JOBS_CNT=0
+	MAX_THREADS="${DL_THREADS}"
+
 	rm -f "${SCHEDULE_DIR}"/url_*
 	for list_type in ${list_types}
 	do
@@ -351,6 +347,10 @@ schedule_processing_jobs()
 	do
 		add2list find_names "${TO_PROCESS_DIR}/${list_type}-*" " "
 	done
+
+	RUNNING_PIDS=
+	RUNNING_JOBS_CNT=0
+	MAX_THREADS="${PROCESS_THREADS}"
 
 	while :
 	do
