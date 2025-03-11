@@ -5,7 +5,7 @@
 # silence shellcheck warnings
 : "${use_compression:=}" "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}"
 : "${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" "${local_allowlist_path:=}"
-
+: "${blue:=}" "${n_c:=}"
 
 TO_PROCESS_DIR="${ABL_DIR}/to_process"
 PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
@@ -1138,7 +1138,7 @@ import_blocklist_file()
 	if [ -n "${final_compress}" ]
 	then
 		printf '%s\n' "conf-script=\"busybox sh ${DNSMASQ_CONF_D}/.abl-extract_blocklist\"" > "${DNSMASQ_CONF_D}"/abl-conf-script &&
-		printf '%s\n%s\n' "busybox gunzip -c ${DNSMASQ_CONF_D}/.abl-blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.abl-extract_blocklist ||
+		printf '%s\n%s\n' "busybox zcat ${DNSMASQ_CONF_D}/.abl-blocklist.gz" "exit 0" > "${DNSMASQ_CONF_D}"/.abl-extract_blocklist ||
 			{ reg_failure "Failed to create conf-script for dnsmasq."; return 1; }
 		compressed=" compressed"
 	fi
