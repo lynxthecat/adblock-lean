@@ -19,6 +19,19 @@ PROCESSING_TIMEOUT_S=900 # 15 minutes
 
 # UTILITY FUNCTIONS
 
+# 1: (optional) '-[color]'
+# prints each argument into a separate line
+print_timed_msg()
+{
+	local m curr_time color=
+	case "${1}" in -blue|-red|-green|-purple|-yellow) eval "color=\"\${${1#-}}\""; shift; esac
+	get_elapsed_time_s curr_time "${INITIAL_UPTIME_S}"
+	for m in "${@}"
+	do
+		printf '%s\n' "[ ${curr_time} ] ${color}${m}${n_c}" > "$MSGS_DEST"
+	done
+}
+
 try_gzip()
 {
 	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
@@ -119,11 +132,14 @@ schedule_job()
 	local job_type="${1}"
 	shift
 
+print_timed_msg -yellow "Scheduling $job_type job (running jobs: $RUNNING_JOBS_CNT)"
+
 	handle_done_jobs "${job_type}" || return 1
 
 	# wait for job vacancy
 	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_THREADS}" ]
 	do
+print_timed_msg -yellow "Waiting for $job_type vacancy (running jobs: $RUNNING_JOBS_CNT)"
 		[ -n "${RUNNING_PIDS}" ] ||
 			{ reg_failure "\$RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT} but no registered jobs PIDs."; return 1; }
 
@@ -206,6 +222,7 @@ handle_done_jobs()
 		rm -f "${done_job_file}"
 		done_pid_tmp="${done_job_file%_*}"
 		done_pid="${done_pid_tmp##*_}"
+print_timed_msg -yellow "$job_type job $done_pid completed."
 		done_job_rv="${done_job_file##*_}"
 		subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
 		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
@@ -421,6 +438,8 @@ dl_list_part()
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
 
+print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
+
 	printf '%s\n' "${list_url}" > "${SCHEDULE_DIR}/url_${curr_job_pid}"
 
 	while :
@@ -510,6 +529,8 @@ process_list_part()
 		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
 		*) finalize_job 1 "${me}: Invalid list type '${list_type}'"
 	esac
+
+print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 
 	case "${list_origin}" in
 		local)
