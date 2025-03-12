@@ -72,7 +72,7 @@ get_elapsed_time_s()
 
 handle_schedule_fatal()
 {
-	[ -f "${SCHEDULE_DIR}/fatal" ] || return 0
+	[ -f "${SCHEDULE_DIR}/nonfatal" ] && return 0
 	local fatal_type fatal_pid
 	read -r fatal_type fatal_pid < "${SCHEDULE_DIR}/fatal"
 	: "${fatal_type:=unknown}"
@@ -155,6 +155,7 @@ reg_done_job()
 			then
 				fatal_pars="${1} ${2}"
 			fi
+			rm -f "${SCHEDULE_DIR}/nonfatal"
 			printf '%s\n' "${fatal_pars}" > "${SCHEDULE_DIR}/fatal" ;;
 		2)
 			[ "${1}" = PROCESS ] && touch "${SCHEDULE_DIR}/cancel_${dl_pid}" # signal to DL scheduler
@@ -678,6 +679,8 @@ gen_list_parts()
 	fi
 
 	set +m # disable job complete notification
+
+	touch "${SCHEDULE_DIR}/nonfatal" || return 1 # serves as flag that no fatal error occured
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	for list_types in allowlist "blocklist blocklist_ipv4"
