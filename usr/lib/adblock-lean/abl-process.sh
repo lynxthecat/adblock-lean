@@ -19,6 +19,19 @@ PROCESSING_TIMEOUT_S=900 # 15 minutes
 
 # UTILITY FUNCTIONS
 
+# 1: (optional) '-[color]'
+# prints each argument into a separate line
+print_timed_msg()
+{
+	local m curr_time color=
+	case "${1}" in -blue|-red|-green|-purple|-yellow) eval "color=\"\${${1#-}}\""; shift; esac
+	get_elapsed_time_s curr_time "${INITIAL_UPTIME_S}"
+	for m in "${@}"
+	do
+		printf '%s\n' "[ ${curr_time} ] ${color}${m}${n_c}" > "$MSGS_DEST"
+	done
+}
+
 try_gzip()
 {
 	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
@@ -72,7 +85,7 @@ get_elapsed_time_s()
 
 handle_schedule_fatal()
 {
-	[ -f "${SCHEDULE_DIR}/fatal" ] || return 0
+	[ -f "${SCHEDULE_DIR}/nonfatal" ] && return 0
 	local fatal_type fatal_pid
 	read -r fatal_type fatal_pid < "${SCHEDULE_DIR}/fatal"
 	: "${fatal_type:=unknown}"
@@ -119,14 +132,18 @@ schedule_job()
 	local job_type="${1}"
 	shift
 
+print_timed_msg -yellow "Scheduling $job_type job (running jobs: $RUNNING_JOBS_CNT)"
+
+	handle_done_jobs "${job_type}" || return 1
+
 	# wait for job vacancy
-	handle_done_jobs "${job_type}"
 	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_THREADS}" ]
 	do
+print_timed_msg -yellow "Waiting for $job_type vacancy (running jobs: $RUNNING_JOBS_CNT)"
 		[ -n "${RUNNING_PIDS}" ] ||
 			{ reg_failure "\$RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT} but no registered jobs PIDs."; return 1; }
 
-		wait -n ${RUNNING_PIDS}
+		wait -n ${RUNNING_PIDS} # wait for any one of the PIDs to finish
 		handle_done_jobs "${job_type}" || return 1
 	done
 
@@ -154,9 +171,10 @@ reg_done_job()
 			then
 				fatal_pars="${1} ${2}"
 			fi
+			rm -f "${SCHEDULE_DIR}/nonfatal"
 			printf '%s\n' "${fatal_pars}" > "${SCHEDULE_DIR}/fatal" ;;
 		2)
-			[ "${1}" = PROCESS ] && touch "${SCHEDULE_DIR}/cancel_${dl_pid}"
+			[ "${1}" = PROCESS ] && touch "${SCHEDULE_DIR}/cancel_${dl_pid}" # signal to DL scheduler
 	esac
 }
 
@@ -204,6 +222,7 @@ handle_done_jobs()
 		rm -f "${done_job_file}"
 		done_pid_tmp="${done_job_file%_*}"
 		done_pid="${done_pid_tmp##*_}"
+print_timed_msg -yellow "$job_type job $done_pid completed."
 		done_job_rv="${done_job_file##*_}"
 		subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
 		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
@@ -371,12 +390,14 @@ schedule_processing_jobs()
 		local IFS="${_NL_}"
 		for file in ${files_to_process}
 		do
+			# parse the filename to get list info
 			IFS="-"
 			set -- ${file##*/}
 			IFS="${DEFAULT_IFS}"
 			local list_type="${1}" list_origin="${2}" list_format="${3}" list_num="${4}" dl_pid="${5}"
+
 			[ -n "${dl_pid}" ] && { get_dl_job_url dl_url "${dl_pid}" || finalize_scheduler 1; }
-			schedule_job PROCESS "${list_num}" "${list_type}" "${list_origin}" "${list_format}" "${file}" "${dl_pid}" ||
+			schedule_job PROCESS "${list_num}" "${list_type}" "${list_origin}" "${list_format}" "${file}" "${dl_pid}" "${dl_url}" ||
 				finalize_scheduler 1
 			set_a_arr_el PROCESS_JOBS_URLS "${!}=${dl_url}"
 			add2list files_processed "${file}"
@@ -416,6 +437,8 @@ dl_list_part()
 	get_curr_job_pid curr_job_pid || return 1
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
 	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
+
+print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 
 	printf '%s\n' "${list_url}" > "${SCHEDULE_DIR}/url_${curr_job_pid}"
 
@@ -470,7 +493,7 @@ dl_list_part()
 # 4 - list format (dnsmasq|raw)
 # 5 - symlink path (for local lists) or fifo path (for downloaded lists)
 # 6 - (optional): download PID
-# 7 - (optional): download retry
+# 7 - (optional): download URL
 #
 # return codes:
 # 0 - Success
@@ -492,7 +515,7 @@ process_list_part()
 		rm -f "${rogue_el_file}"
 	}
 
-	local list_num="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_file="${5}" dl_pid="${6}"
+	local list_num="${1}" list_type="${2}" list_origin="${3}" list_format="${4}" list_file="${5}" dl_pid="${6}" list_url="${7}"
 	local curr_job_pid me="process_list_part"
 	get_curr_job_pid curr_job_pid || finalize_job 1
 	local list_path val_entry_regex dl_retry=
@@ -507,11 +530,12 @@ process_list_part()
 		*) finalize_job 1 "${me}: Invalid list type '${list_type}'"
 	esac
 
+print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
+
 	case "${list_origin}" in
 		local)
 			list_path="$(readlink -f "${list_file}")" ;;
 		downloaded)
-			get_dl_job_url list_url "${dl_pid}" || finalize_job 1
 			list_path="${list_url}"
 			dl_retry="${list_file##*-}"
 	esac
@@ -676,6 +700,8 @@ gen_list_parts()
 	fi
 
 	set +m # disable job complete notification
+
+	touch "${SCHEDULE_DIR}/nonfatal" || return 1 # serves as flag that no fatal error occured
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	for list_types in allowlist "blocklist blocklist_ipv4"
