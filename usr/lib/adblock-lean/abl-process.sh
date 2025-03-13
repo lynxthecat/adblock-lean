@@ -34,12 +34,12 @@ print_timed_msg()
 
 try_gzip()
 {
-	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
+	busybox gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
 }
 
 try_gunzip()
 {
-	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
+	busybox gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
 }
 
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
@@ -612,7 +612,7 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 	# compress parts
 	if [ -n "${compress_part}" ]
 	then
-		gzip
+		busybox gzip
 	else
 		cat
 	fi > "${dest_file}"
@@ -840,7 +840,7 @@ generate_and_process_blocklist_file()
 	print_list_parts()
 	{
 		local find_name="${1}-*" find_cmd="cat"
-		[ "${use_compression}" = 1 ] && { find_name="${1}-*.gz" find_cmd="gunzip -c"; }
+		[ "${use_compression}" = 1 ] && { find_name="${1}-*.gz" find_cmd="busybox zcat"; }
 		find "${ABL_DIR}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
 		printf ''
 	}
@@ -955,7 +955,7 @@ generate_and_process_blocklist_file()
 	{ head -c "${max_blocklist_file_size_B}"; head -c 1 > "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } |
 	if  [ -n "${final_compress}" ]
 	then
-		gzip
+		busybox gzip
 	else
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
@@ -974,7 +974,7 @@ generate_and_process_blocklist_file()
 	reg_action -blue "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
 	if  [ -n "${final_compress}" ]
 	then
-		gunzip -fc "${out_f}"
+		busybox zcat -f "${out_f}"
 	else
 		cat "${out_f}"
 	fi |
@@ -1285,7 +1285,7 @@ get_active_entries_cnt()
 
 	if [ -f "${DNSMASQ_CONF_D}"/.abl-blocklist.gz ]
 	then
-		gunzip -c "${DNSMASQ_CONF_D}"/.abl-blocklist.gz
+		busybox zcat "${DNSMASQ_CONF_D}"/.abl-blocklist.gz
 	elif [ -f "${DNSMASQ_CONF_D}"/abl-blocklist ]
 	then
 		cat "${DNSMASQ_CONF_D}/abl-blocklist"
