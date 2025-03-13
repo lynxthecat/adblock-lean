@@ -759,18 +759,21 @@ gen_list_parts()
 			get_processed_lines_cnt list_line_count "${list_type}"
 			if [ "${list_line_count}" = 0 ]
 			then
-				[ "${list_type}" = blocklist ] && {
-					[ "${whitelist_mode}" = 0 ] && return 1
-					log_msg -yellow "Whitelist mode is on - accepting empty blocklist."
-				}
+				case "${list_type}" in
+					blocklist)
+						[ "${whitelist_mode}" = 0 ] && return 1
+						log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
+					allowlist)
+						log_msg "Not using any allowlist for blocklist processing."
+				esac
 			elif [ "${list_type}" = blocklist_ipv4 ]
 			then
 				use_blocklist_ipv4=1
 			elif [ "${list_type}" = allowlist ]
 			then
+				log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 				use_allowlist=1
 			fi
-			[ -n "${use_allowlist}" ] || log_msg "Not using any allowlist for blocklist processing."
 			preprocessed_line_count="$((preprocessed_line_count+list_line_count))"
 		done
 	done
