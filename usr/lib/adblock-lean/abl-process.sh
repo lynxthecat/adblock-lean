@@ -525,7 +525,7 @@ process_list_part()
 	done
 
 	case "${list_type}" in
-		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+|(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
+		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
 		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
 		*) finalize_job 1 "${me}: Invalid list type '${list_type}'"
 	esac
@@ -546,7 +546,7 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 		list_part_size_file="${ABL_DIR}/size_${list_id}" \
 		list_part_line_cnt_file="${ABL_DIR}/linecnt_${list_id}" \
 		list_part_line_count compress_part='' min_list_part_line_count='' \
-		list_part_size_B='' list_part_size_KB='' val_entry_regex
+		list_part_size_B='' list_part_size_KB=''
 
 	log_msg "Processing ${list_format} ${list_type} part from ${blue}${list_path}${n_c}"
 
@@ -607,7 +607,7 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 	fi |
 
 	# check lists for rogue elements
-	tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${rogue_el_file}") |
+	tee >($SED_CMD -nE "/${val_entry_regex}/d;p;:1 n;b1" > "${rogue_el_file}") |
 
 	# compress parts
 	if [ -n "${compress_part}" ]
