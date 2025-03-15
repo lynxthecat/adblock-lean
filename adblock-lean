@@ -277,7 +277,11 @@ write_log_file()
 cleanup_and_exit()
 {
 	trap - INT TERM EXIT
-	[ -n "${CLEANUP_REQ}" ] && rm -rf "${ABL_DIR}"
+	if [ -n "${CLEANUP_REQ}" ]
+	then
+		[ -n "${PROCESS_SCHEDULER_PID}${DL_SCHEDULER_PID}" ] && kill_pids_recursive "${PROCESS_SCHEDULER_PID} ${DL_SCHEDULER_PID}"
+		rm -rf "${ABL_DIR}"
+	fi
 	[ -n "${LOCK_REQ}" ] && rm_lock
 	local recent_log=
 	[ -n "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ] && read -rd '' recent_log < "${LOG_FILE}"
