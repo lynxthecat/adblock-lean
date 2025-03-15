@@ -466,7 +466,7 @@ kill_abl_pids()
 	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} 's/\s+.*//' | tr '\n' ' ')" "${$}"
 }
 
-# kills specified pid's
+# kills specified pid's and their offspring
 # 1 - whitespace-separated starting list of pid's
 # 2 - pid's to exclude
 kill_pids_recursive()
@@ -493,7 +493,7 @@ kill_pids_recursive()
 		done
 	}
 
-	local initial_pids='' exclude_pids="${2}" pid max_pid_scan_depth=10
+	local initial_pids='' exclude_pids="${2}" pid max_pid_scan_depth=10 max_k_attempts=10
 
 	# compile a list of initial pids and recursively child pids
 	for pid in ${1}
@@ -512,7 +512,7 @@ kill_pids_recursive()
 	while :
 	do
 		k_attempt=$((k_attempt+1))
-		[ ${k_attempt} -gt 10 ] && return 1
+		[ ${k_attempt} -le ${max_k_attempts} ] || break
 
 		for pid in ${running_pids}
 		do
@@ -531,6 +531,7 @@ kill_pids_recursive()
 
 		sleep 1
 	done
+	kill -9 ${running_pids} 2>/dev/null
 	:
 }
 
