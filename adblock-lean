@@ -60,6 +60,9 @@ ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 
 ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
 
+DL_SCHEDULER_PID=
+PROCESS_SCHEDULER_PID=
+
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instance gen_config upd_cron_job print_log update uninstall"
@@ -456,23 +459,73 @@ log_success()
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
-	local _killed _p _pid child_pid IFS="${_NL_}" k_attempt=0
+	local pgrep_ptrn="(/etc/rc.common /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)"
+	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} 's/\s+.*//' | tr '\n' ' ')" "${$}"
+}
+
+# kills specified pid's
+# 1 - whitespace-separated starting list of pid's
+# 2 - pid's to exclude
+kill_pids_recursive()
+{
+	# recursively add child pid's of pid $2 to whitespace-separated list stored in var $1
+	# 1 - var name for output
+	# 2 - pid
+	add_child_pids()
+	{
+		local pid_scan_depth pid prev_pids child_pids
+		: "${pid_scan_depth:=0}"
+		pid_scan_depth=$((pid_scan_depth+1))
+		[ "${pid_scan_depth}" -lt "${max_pid_scan_depth}" ] || return 0
+
+		child_pids="$(pgrep -P "${2}")" || return 0
+
+		eval "prev_pids=\"\${${1}}\""
+
+		local IFS="${_NL_}"
+		for pid in ${child_pids}
+		do
+			is_included "${pid}" "${prev_pids}" " " || eval "${1}=\"\${${1}}\${pid} \""
+			add_child_pids "${1}" "${pid}"
+		done
+	}
+
+	local initial_pids='' exclude_pids="${2}" pid max_pid_scan_depth=10
+
+	# compile a list of initial pids and recursively child pids
+	for pid in ${1}
+	do
+		case "${pid}" in *[!0-9]*) continue; esac
+		is_included "${pid}" "${exclude_pids}" " " && continue
+
+		initial_pids="${initial_pids}${pid} "
+		add_child_pids initial_pids "${pid}"
+	done
+	[ -n "${initial_pids}" ] || return 0
+
+	kill ${initial_pids} 2>/dev/null
+
+	local running_pids="${initial_pids}" k_attempt=0
 	while :
 	do
 		k_attempt=$((k_attempt+1))
-		_killed=
-		for _p in $(pgrep -fa "(/etc/rc.common /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)")
+		[ ${k_attempt} -gt 10 ] && return 1
+
+		for pid in ${running_pids}
 		do
-			_pid="${_p%% *}"
-			case ${_pid} in "${$}"|*[!0-9]*) continue; esac
-			kill "${_pid}" 2>/dev/null
-			for child_pid in $(pgrep -P "${_pid}")
-			do
-				kill "${child_pid}" 2>/dev/null
-			done
-			_killed=1
+			add_child_pids running_pids "${pid}"
 		done
-		[ -z "${_killed}" ] || [ ${k_attempt} -gt 10 ] && break
+
+		kill ${running_pids} 2>/dev/null
+
+		local alive_pids=''
+		for pid in ${running_pids}
+		do
+			[ -d "/proc/${pid}" ] && alive_pids="${alive_pids}${pid} "
+		done
+		running_pids="${alive_pids}"
+		[ -n "${running_pids}" ] || return 0
+
 		sleep 1
 	done
 	:
