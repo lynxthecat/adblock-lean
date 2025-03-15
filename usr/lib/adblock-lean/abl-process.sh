@@ -683,8 +683,7 @@ gen_list_parts()
 	# clean up before processing
 	rm -rf "${PROCESSED_PARTS_DIR}" "${TO_PROCESS_DIR}" "${SCHEDULE_DIR}"
 
-	local file dl_scheduler_pid process_scheduler_pid list_line_count list_types
-
+	local file list_line_count list_types
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" &&
 	try_mkdir -p "${TO_PROCESS_DIR}" || return 1
@@ -727,17 +726,17 @@ gen_list_parts()
 		then
 			[ -n "${dl_list_types}" ] && {
 				schedule_download_jobs "${list_types}" &
-				dl_scheduler_pid=${!}
+				DL_SCHEDULER_PID=${!}
 			}
 			[ -n "${local_list_types}" ] && schedule_local_jobs "${list_types}" # synchronous
 
 			schedule_processing_jobs "${list_types}" &
-			process_scheduler_pid=${!}
+			PROCESS_SCHEDULER_PID=${!}
 
-			wait "${process_scheduler_pid}" || return 1
+			wait "${PROCESS_SCHEDULER_PID}" || return 1
 
 			[ -n "${dl_list_types}" ] && {
-				wait "${dl_scheduler_pid}" || return 1
+				wait "${DL_SCHEDULER_PID}" || return 1
 			}
 		fi
 
