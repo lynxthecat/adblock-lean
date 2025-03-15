@@ -34,12 +34,12 @@ print_timed_msg()
 
 try_gzip()
 {
-	gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
+	busybox gzip -f "${1}" || { rm -f "${1}.gz"; reg_failure "Failed to compress '${1}'."; return 1; }
 }
 
 try_gunzip()
 {
-	gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
+	busybox gunzip -f "${1}" || { rm -f "${1%.gz}"; reg_failure "Failed to extract '${1}'."; return 1; }
 }
 
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
@@ -525,7 +525,7 @@ process_list_part()
 	done
 
 	case "${list_type}" in
-		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+|(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
+		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
 		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
 		*) finalize_job 1 "${me}: Invalid list type '${list_type}'"
 	esac
@@ -546,7 +546,7 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 		list_part_size_file="${ABL_DIR}/size_${list_id}" \
 		list_part_line_cnt_file="${ABL_DIR}/linecnt_${list_id}" \
 		list_part_line_count compress_part='' min_list_part_line_count='' \
-		list_part_size_B='' list_part_size_KB='' val_entry_regex
+		list_part_size_B='' list_part_size_KB=''
 
 	log_msg "Processing ${list_format} ${list_type} part from ${blue}${list_path}${n_c}"
 
@@ -607,12 +607,12 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 	fi |
 
 	# check lists for rogue elements
-	tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${rogue_el_file}") |
+	tee >($SED_CMD -nE "/${val_entry_regex}/d;p;:1 n;b1" > "${rogue_el_file}") |
 
 	# compress parts
 	if [ -n "${compress_part}" ]
 	then
-		gzip
+		busybox gzip
 	else
 		cat
 	fi > "${dest_file}"
@@ -683,8 +683,7 @@ gen_list_parts()
 	# clean up before processing
 	rm -rf "${PROCESSED_PARTS_DIR}" "${TO_PROCESS_DIR}" "${SCHEDULE_DIR}"
 
-	local file dl_scheduler_pid process_scheduler_pid list_line_count list_types
-
+	local file list_line_count list_types
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" &&
 	try_mkdir -p "${TO_PROCESS_DIR}" || return 1
@@ -727,17 +726,17 @@ gen_list_parts()
 		then
 			[ -n "${dl_list_types}" ] && {
 				schedule_download_jobs "${list_types}" &
-				dl_scheduler_pid=${!}
+				DL_SCHEDULER_PID=${!}
 			}
 			[ -n "${local_list_types}" ] && schedule_local_jobs "${list_types}" # synchronous
 
 			schedule_processing_jobs "${list_types}" &
-			process_scheduler_pid=${!}
+			PROCESS_SCHEDULER_PID=${!}
 
-			wait "${process_scheduler_pid}" || return 1
+			wait "${PROCESS_SCHEDULER_PID}" || return 1
 
 			[ -n "${dl_list_types}" ] && {
-				wait "${dl_scheduler_pid}" || return 1
+				wait "${DL_SCHEDULER_PID}" || return 1
 			}
 		fi
 
@@ -759,18 +758,21 @@ gen_list_parts()
 			get_processed_lines_cnt list_line_count "${list_type}"
 			if [ "${list_line_count}" = 0 ]
 			then
-				[ "${list_type}" = blocklist ] && {
-					[ "${whitelist_mode}" = 0 ] && return 1
-					log_msg -yellow "Whitelist mode is on - accepting empty blocklist."
-				}
+				case "${list_type}" in
+					blocklist)
+						[ "${whitelist_mode}" = 0 ] && return 1
+						log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
+					allowlist)
+						log_msg "Not using any allowlist for blocklist processing."
+				esac
 			elif [ "${list_type}" = blocklist_ipv4 ]
 			then
 				use_blocklist_ipv4=1
 			elif [ "${list_type}" = allowlist ]
 			then
+				log_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 				use_allowlist=1
 			fi
-			[ -n "${use_allowlist}" ] || log_msg "Not using any allowlist for blocklist processing."
 			preprocessed_line_count="$((preprocessed_line_count+list_line_count))"
 		done
 	done
@@ -837,7 +839,7 @@ generate_and_process_blocklist_file()
 	print_list_parts()
 	{
 		local find_name="${1}-*" find_cmd="cat"
-		[ "${use_compression}" = 1 ] && { find_name="${1}-*.gz" find_cmd="gunzip -c"; }
+		[ "${use_compression}" = 1 ] && { find_name="${1}-*.gz" find_cmd="busybox zcat"; }
 		find "${ABL_DIR}" -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
 		printf ''
 	}
@@ -952,7 +954,7 @@ generate_and_process_blocklist_file()
 	{ head -c "${max_blocklist_file_size_B}"; head -c 1 > "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } |
 	if  [ -n "${final_compress}" ]
 	then
-		gzip
+		busybox gzip
 	else
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
@@ -971,7 +973,7 @@ generate_and_process_blocklist_file()
 	reg_action -blue "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
 	if  [ -n "${final_compress}" ]
 	then
-		gunzip -fc "${out_f}"
+		busybox zcat -f "${out_f}"
 	else
 		cat "${out_f}"
 	fi |
@@ -1282,7 +1284,7 @@ get_active_entries_cnt()
 
 	if [ -f "${DNSMASQ_CONF_D}"/.abl-blocklist.gz ]
 	then
-		gunzip -c "${DNSMASQ_CONF_D}"/.abl-blocklist.gz
+		busybox zcat "${DNSMASQ_CONF_D}"/.abl-blocklist.gz
 	elif [ -f "${DNSMASQ_CONF_D}"/abl-blocklist ]
 	then
 		cat "${DNSMASQ_CONF_D}/abl-blocklist"
