@@ -508,6 +508,7 @@ print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 # 0 - Success
 # 1 - Fatal error (stop processing)
 # 2 - Bad List
+# 3 - Possibly failed download
 process_list_part()
 {
 	finalize_job()
@@ -659,7 +660,7 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
 		rm -f "${dest_file}"
-		finalize_job 2 "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
+		finalize_job 3 "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
 	fi
 
 	local part=
