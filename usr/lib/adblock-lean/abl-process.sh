@@ -470,7 +470,6 @@ print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 		if [ "${dl_completed}" = 1 ]
 		then
 			rm -f "${dl_failed_file}"
-			rm_ucl_err_file
 
 			# wait for confirmation of successful processing
 			local sig=
@@ -680,7 +679,14 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
-		finalize_job 3 "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
+		reg_failure "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
+		for file in "${ABL_DIR}/ucl_err_"*"-${dl_pid}"
+		do
+			[ -e "${file}" ] || break
+			log_msg "uclient-fetch log: '$(cat "${file}")'."
+			break
+		done
+		finalize_job 3
 	fi
 
 	local part=
