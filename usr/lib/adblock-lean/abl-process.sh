@@ -161,27 +161,27 @@ print_timed_msg -yellow "Waiting for $job_type vacancy (running jobs: $RUNNING_J
 # 1 - job type (DL|PROCESS)
 # 2 - pid
 # 3 - return code
+# 4 - DL thread PID
 reg_done_job()
 {
-	[ -n "${2}" ] && touch "${SCHEDULE_DIR}/done_${1}_${2}_${3}"
-	case "${3}" in
-		1)
-			local fatal_pars=
-			if [ -n "${1}" ] && [ -n "${2}" ]
-			then
-				fatal_pars="${1} ${2}"
-			fi
-			rm -f "${SCHEDULE_DIR}/nonfatal"
-			printf '%s\n' "${fatal_pars}" > "${SCHEDULE_DIR}/fatal" ;;
-		2)
-			[ "${1}" = PROCESS ] && touch "${SCHEDULE_DIR}/cancel_${dl_pid}" # signal to DL scheduler
-	esac
+	[ -n "${2}" ] && touch "${SCHEDULE_DIR}/done_${1}_${2}_${3}_${4}"
+	if [ "${3}" = 1 ]
+	then
+		local fatal_pars=
+		if [ -n "${1}" ] && [ -n "${2}" ]
+		then
+			fatal_pars="${1} ${2}"
+		fi
+		rm -f "${SCHEDULE_DIR}/nonfatal"
+		printf '%s\n' "${fatal_pars}" > "${SCHEDULE_DIR}/fatal"
+	fi
 }
 
 # 1 - job type (DL|PROCESS)
 # 2 - job PID
 # 3 - path (URL for download, file path for local)
-# 4 - return code
+# 4 - PID of the DL thread
+# 5 - return code
 handle_process_failure()
 {
 	local job_type_print
@@ -189,7 +189,11 @@ handle_process_failure()
 		DL) job_type_print=Download ;;
 		PROCESS) job_type_print=Processing
 	esac
-	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${4}."
+
+	[ -f "${SCHEDULE_DIR}/dl_failed_${4}" ] && return 0
+	touch "${SCHEDULE_DIR}/dl_failed_${4}"
+
+	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${5}."
 	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
 	log_msg "Skipping file and continuing."
 	:
@@ -199,37 +203,38 @@ handle_process_failure()
 # 2 (optional) - only handle job with pid $2
 handle_done_jobs()
 {
-	local job_type="${1}" done_job_file done_job_rv done_pid_tmp done_pid job_url suffix=
+	local job_type="${1}" done_job_file done_job_rv done_pid done_dl_pid job_url suffix=
 	[ -n "${2}" ] && suffix="${2}_"
 
 	handle_schedule_fatal || return 1
 
 	# clean up processed files related to failed downloads
-	local failed_dl_file file_suffix
+	local failed_dl_file failed_suffix
 	for failed_dl_file in "${SCHEDULE_DIR}/failed_"*
 	do
 		[ -s "${failed_dl_file}" ] || continue
-		file_suffix="${failed_dl_file##*_}"
+		failed_suffix="${failed_dl_file##*_}"
 		rm -f "${failed_dl_file}"\
-			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}" \
-			"${PROCESSED_PARTS_DIR}/"*"-${file_suffix}.gz" \
-			"${ABL_DIR}/"*"-${file_suffix}"
+			"${PROCESSED_PARTS_DIR}/"*"-${failed_suffix}" \
+			"${PROCESSED_PARTS_DIR}/"*"-${failed_suffix}.gz" \
+			"${ABL_DIR}/"*"-${failed_suffix}"
 	done
 
 	for done_job_file in "${SCHEDULE_DIR}/done_${job_type}_${suffix}"*
 	do
 		[ -e "${done_job_file}" ] || break
 		rm -f "${done_job_file}"
-		done_pid_tmp="${done_job_file%_*}"
-		done_pid="${done_pid_tmp##*_}"
+		local done_filename="${done_job_file##*/}" IFS=_
+		set -- ${done_filename}
+		IFS="${DEFAULT_IFS}"
+		done_pid="${3}" done_job_rv="${4}" done_dl_pid="${5}"
 print_timed_msg -yellow "$job_type job $done_pid completed."
-		done_job_rv="${done_job_file##*_}"
 		subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
 		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 		if [ "${done_job_rv}" != 0 ]
 		then
 			get_a_arr_val "${job_type}_JOBS_URLS" "${done_pid}" job_url
-			handle_process_failure "${job_type}" "${done_pid}" "${job_url}" "${done_job_rv}" || return 1
+			handle_process_failure "${job_type}" "${done_pid}" "${job_url}" "${done_dl_pid}" "${done_job_rv}" || return 1
 		fi
 	done
 	:
@@ -423,7 +428,7 @@ dl_list_part()
 	finalize_job()
 	{
 		[ -n "${2}" ] && reg_failure "${2}"
-		reg_done_job DL "${curr_job_pid}" "${1}"
+		reg_done_job DL "${curr_job_pid}" "${1}" "${curr_job_pid}"
 		exit "${1}"
 	}
 
@@ -432,17 +437,12 @@ dl_list_part()
 		rm -f "${ucl_err_file}"
 	}
 
-	local me=dl_list_part dl_completed='' retry=0 \
+	local me=dl_list_part dl_completed='' retry=1 \
 		list_url="${1}" list_type="${2}" list_format="${3}" list_num="${4}" curr_job_pid
 	get_curr_job_pid curr_job_pid || return 1
 	local list_id="${list_type}-downloaded-${list_format}-${list_num}"
 	local job_id="${list_id}-${curr_job_pid}"
 	local ucl_err_file="${ABL_DIR}/ucl_err_${job_id}"
-
-	if [ -f "${list_id}_retry" ]
-	then
-		read -r retry < "${list_id}_retry"
-	fi
 
 print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 
@@ -450,12 +450,6 @@ print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 
 	while :
 	do
-		retry=$((retry + 1))
-		if [ "${retry}" -ge "${max_download_retries}" ]
-		then
-			finalize_job 2 "${max_download_retries} download attempts failed for URL '${list_url}'."
-		fi
-
 		rm_ucl_err_file
 
 		log_msg "Downloading ${list_format} ${list_type} part from ${blue}${list_url}${n_c}"
@@ -469,31 +463,50 @@ print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 		{ uclient-fetch "${list_url}" -O- --timeout=3 2> "${ucl_err_file}" || printf fail > "${dl_failed_file}"; } |
 			{ cat 1> "${fifo_file}"; head -c1 1> "${dl_failed_file}"; cat &> /dev/null; }
 
+		[ -s "${dl_failed_file}" ] && finalize_job 2 # file too big
+
 		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
-		if [ "${dl_completed}" = 1 ] && [ ! -s "${dl_failed_file}" ]
+
+		if [ "${dl_completed}" = 1 ]
 		then
 			rm -f "${dl_failed_file}"
 			rm_ucl_err_file
-			log_msg -green "Successfully downloaded list part from ${blue}${list_url}${n_c}"
-			finalize_job 0
+
+			# wait for confirmation of successful processing
+			local sig=
+			trap "sig=OK; printf '' >&3" USR1
+			trap "sig=RETRY; printf '' >&3" USR2
+			trap "sig=QUIT; printf '' >&3" INT
+			exec 3<> <(:)
+			read -r _ <&3
+
+			case "${sig}" in
+				OK)
+					log_msg -green "Successfully downloaded list part from ${blue}${list_url}${n_c}"
+					finalize_job 0 ;;
+				QUIT) finalize_job 2 "Received SIGINT." ;;
+				RETRY) ;;
+				*) finalize_job 1 "Download thread (PID ${curr_job_pid}) received unexpected signal '${sig}'."
+			esac
 		fi
-
-		[ -s "${dl_failed_file}" ] && finalize_job 2 "Looks like the list from ${list_url} is too big."
-
-		sleep 1
-		[ -f "${SCHEDULE_DIR}/cancel_${curr_job_pid}" ] && finalize_job 2 # obey cancel signal from the processing thread
 
 		reg_failure "Failed to download list part from URL '${list_url}'."
 		[ -f "${ucl_err_file}" ] && [ -z "${dl_completed}" ] &&
 			reg_failure "uclient-fetch errors: '$(cat "${ucl_err_file}")'."
 		rm_ucl_err_file
 
+		retry=$((retry + 1))
+		if [ "${retry}" -gt "${max_download_retries}" ]
+		then
+			finalize_job 2 "${max_download_retries} download attempts failed for URL '${list_url}'."
+		fi
+
 		reg_action -blue "Sleeping for 5 seconds after failed download attempt." || finalize_job 1
 		sleep 5
 
 		continue
 	done
-	finalize_job 0
+	finalize_job 1
 }
 
 # 1 - list number
@@ -514,9 +527,19 @@ process_list_part()
 	finalize_job()
 	{
 		rm -f "${list_file}"
+		if [ "${1}" != 0 ]
+		then
+			rm -f "${dest_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
+		fi
 		[ -n "${2}" ] && reg_failure "${2}"
-		[ "${1}" != 0 ] && rm -f "${list_part_size_file}" "${list_part_line_cnt_file}"
-		reg_done_job PROCESS "${curr_job_pid}" "${1}"
+		local sig=
+		case "${1}" in
+			0) sig=USR1 ;;
+			1|2) sig=INT ;;
+			3) sig=USR2
+		esac
+		kill -s "${sig}" "${dl_pid}" 2>/dev/null # signal process result to the DL thread
+		reg_done_job PROCESS "${curr_job_pid}" "${1}" "${dl_pid}"
 		exit "${1}"
 	}
 
@@ -637,7 +660,6 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 
 	if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
 	then
-		rm -f "${dest_file}"
 		reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 		log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
 		finalize_job 2
@@ -645,7 +667,6 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 
 	if read -r rogue_element < "${rogue_el_file}"
 	then
-		rm -f "${dest_file}"
 		rm_rogue_el_file
 		case "${rogue_element}" in
 			*"${CR_LF}"*)
@@ -659,7 +680,6 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 
 	if [ "${list_origin}" = downloaded ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
 	then
-		rm -f "${dest_file}"
 		finalize_job 3 "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
 	fi
 
