@@ -432,11 +432,17 @@ dl_list_part()
 		rm -f "${ucl_err_file}"
 	}
 
-	local me=dl_list_part dl_completed='' retry=0
-	local list_url="${1}" list_type="${2}" list_format="${3}" list_num="${4}" curr_job_pid
+	local me=dl_list_part dl_completed='' retry=0 \
+		list_url="${1}" list_type="${2}" list_format="${3}" list_num="${4}" curr_job_pid
 	get_curr_job_pid curr_job_pid || return 1
-	local list_id="${list_type}-downloaded-${list_format}-${list_num}-${curr_job_pid}"
-	local ucl_err_file="${ABL_DIR}/ucl_err_${list_id}"
+	local list_id="${list_type}-downloaded-${list_format}-${list_num}"
+	local job_id="${list_id}-${curr_job_pid}"
+	local ucl_err_file="${ABL_DIR}/ucl_err_${job_id}"
+
+	if [ -f "${list_id}_retry" ]
+	then
+		read -r retry < "${list_id}_retry"
+	fi
 
 print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 
@@ -453,7 +459,7 @@ print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 		rm_ucl_err_file
 
 		log_msg "Downloading ${list_format} ${list_type} part from ${blue}${list_url}${n_c}"
-		local fifo_file="${TO_PROCESS_DIR}/${list_id}-${retry}"
+		local fifo_file="${TO_PROCESS_DIR}/${job_id}-${retry}"
 			dl_failed_file="${SCHEDULE_DIR}/failed_${curr_job_pid}-${retry}"
 		rm -f "${dl_failed_file}"
 
@@ -472,6 +478,8 @@ print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 			finalize_job 0
 		fi
 
+		[ -s "${dl_failed_file}" ] && finalize_job 2 "Looks like the list from ${list_url} is too big."
+
 		sleep 1
 		[ -f "${SCHEDULE_DIR}/cancel_${curr_job_pid}" ] && finalize_job 2 # obey cancel signal from the processing thread
 
@@ -482,6 +490,7 @@ print_timed_msg -yellow "Starting DL job (PID: $curr_job_pid)"
 
 		reg_action -blue "Sleeping for 5 seconds after failed download attempt." || finalize_job 1
 		sleep 5
+
 		continue
 	done
 	finalize_job 0
@@ -540,11 +549,11 @@ print_timed_msg -yellow "Starting PROCESS job (PID: $curr_job_pid)"
 			dl_retry="${list_file##*-}"
 	esac
 
-	local list_id="${list_type}-${list_origin}-${list_format}-${list_num}-${curr_job_pid}-${dl_pid}-${dl_retry}"
-	local dest_file="${PROCESSED_PARTS_DIR}/${list_id}" \
-		rogue_el_file="${ABL_DIR}/rogue_el_${list_id}" \
-		list_part_size_file="${ABL_DIR}/size_${list_id}" \
-		list_part_line_cnt_file="${ABL_DIR}/linecnt_${list_id}" \
+	local job_id="${list_type}-${list_origin}-${list_format}-${list_num}-${curr_job_pid}-${dl_pid}-${dl_retry}"
+	local dest_file="${PROCESSED_PARTS_DIR}/${job_id}" \
+		rogue_el_file="${ABL_DIR}/rogue_el_${job_id}" \
+		list_part_size_file="${ABL_DIR}/size_${job_id}" \
+		list_part_line_cnt_file="${ABL_DIR}/linecnt_${job_id}" \
 		list_part_line_count compress_part='' min_list_part_line_count='' \
 		list_part_size_B='' list_part_size_KB=''
 
