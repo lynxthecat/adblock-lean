@@ -167,28 +167,6 @@ reg_done_job()
 }
 
 # 1 - job type (DL|PROCESS)
-# 2 - job PID
-# 3 - path (URL for download, file path for local)
-# 4 - PID of the DL thread
-# 5 - return code
-handle_process_failure()
-{
-	local job_type_print
-	case "${1}" in
-		DL) job_type_print=Download ;;
-		PROCESS) job_type_print=Processing
-	esac
-
-	[ -f "${SCHEDULE_DIR}/dl_failed_${4}" ] && return 0
-	touch "${SCHEDULE_DIR}/dl_failed_${4}"
-
-	reg_failure "${job_type_print} job (PID ${2}) for list '${3}' returned code ${5}."
-	[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-	log_msg "Skipping file and continuing."
-	:
-}
-
-# 1 - job type (DL|PROCESS)
 # 2 (optional) - only handle job with pid $2
 handle_done_jobs()
 {
