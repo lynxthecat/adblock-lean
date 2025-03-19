@@ -280,7 +280,11 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	if [ -n "${CLEANUP_REQ}" ]
 	then
-		[ -n "${PROCESS_SCHEDULER_PID}${DL_SCHEDULER_PID}" ] && kill_pids_recursive "${PROCESS_SCHEDULER_PID} ${DL_SCHEDULER_PID}"
+		[ -n "${SCHEDULER_PID}" ] &&
+		{
+			log_msg -warn "Killing unfinished processing scheduler (PID: ${SCHEDULER_PID}) and its jobs.";
+			kill_pids_recursive "${SCHEDULER_PID}"
+		}
 		rm -rf "${ABL_DIR}"
 	fi
 	[ -n "${LOCK_REQ}" ] && rm_lock
