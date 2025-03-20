@@ -244,7 +244,7 @@ schedule_jobs()
 
 			for list_url in ${list_urls}
 			do
-				list_part_line_count=0
+				part_line_count=0
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" || finalize_scheduler 1
 				export "JOB_URL_${!}"="${list_url}"
 			done
@@ -301,7 +301,7 @@ process_list_part()
 		[ -n "${curr_job_pid}" ] && touch "${SCHEDULE_DIR}/done_${curr_job_pid}_${1}"
 		case "${1}" in
 			0)
-				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} ($(int2human "${list_part_line_count}") lines, $(bytes2human "${list_part_size_B}"))." ;;
+				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, $(bytes2human "${part_size_B}"))." ;;
 			*)
 				rm -f "${dest_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
 				if [ "${1}" = 1 ]
@@ -355,19 +355,18 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		rogue_el_file="${ABL_DIR}/rogue_el_${job_id}" \
 		list_part_size_file="${ABL_DIR}/size_${job_id}" \
 		list_part_line_cnt_file="${ABL_DIR}/linecnt_${job_id}" \
-		list_part_line_count compress_part='' min_list_part_line_count='' \
-		list_part_size_B='' list_part_size_KB='' retry=1
+		part_line_count line_count_human compress_part='' min_line_count='' min_line_count_human \
+		part_size_B='' part_size_KB='' retry=1
 
 	case ${list_type} in
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
 	esac
-	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
+	eval "min_line_count=\"\${min_${list_type}_part_line_count}\""
 
 	while :
 	do
 		rm_rogue_el_file
 		rm -f "${list_part_size_file}" "${list_part_line_cnt_file}"
-
 
 		# Download or cat the list
 		local fetch_cmd lines_cnt_low='' dl_completed=''
@@ -438,11 +437,11 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			cat
 		fi > "${dest_file}"
 
-		[ -f "${list_part_size_file}" ] && read -r list_part_size_B _ < "${list_part_size_file}" || finalize_job 1
+		[ -f "${list_part_size_file}" ] && read -r part_size_B _ < "${list_part_size_file}" || finalize_job 1
 		rm -f "${list_part_size_file}"
-		: "${list_part_size_B:=0}"
-		list_part_size_KB=$((list_part_size_B/1024))
-		if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
+		: "${part_size_B:=0}"
+		part_size_KB=$((part_size_B/1024))
+		if [ "${part_size_KB}" -ge "${max_file_part_size_KB}" ]
 		then
 			reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
@@ -472,12 +471,15 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			finalize_job 2
 		fi
 
-		[ -f "${list_part_line_cnt_file}" ] && read -r list_part_line_count _ < "${list_part_line_cnt_file}"
-		: "${list_part_line_count:=0}"
-		if [ "${list_origin}" = DL ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
+		[ -f "${list_part_line_cnt_file}" ] && read -r part_line_count _ < "${list_part_line_cnt_file}"
+		: "${part_line_count:=0}"
+		int2human line_count_human "${part_line_count}"
+
+		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
 		then
 			lines_cnt_low=1
-			reg_failure "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
+			int2human min_line_count_human "${min_line_count}"
+			reg_failure "Line count in downloaded ${list_type} part from '${list_path}' is ${line_count_human}, which is less than configured minimum: ${min_line_count_human}."
 		fi
 
 		if [ "${list_origin}" = DL ] && { [ -z "${dl_completed}" ] || [ -n "${lines_cnt_low}" ]; }
@@ -503,7 +505,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 
 gen_list_parts()
 {
-	local list_type preprocessed_line_count=0
+	local list_type preprocessed_line_count=0 preprocessed_line_count_human
 
 	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
@@ -600,7 +602,8 @@ gen_list_parts()
 		done
 	done
 
-	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human "${preprocessed_line_count}") entries."
+	int2human preprocessed_line_count_human "${preprocessed_line_count}"
+	log_msg -green "" "Successfully generated preprocessed blocklist file with ${preprocessed_line_count_human} entries."
 	:
 }
 
@@ -812,7 +815,8 @@ generate_and_process_blocklist_file()
 
 	rm -f "${ABL_DIR}/dnsmasq_err"
 
-	local blocklist_entries_cnt blocklist_ipv4_entries_cnt allowlist_entries_cnt final_list_size_B final_entries_cnt
+	local blocklist_entries_cnt blocklist_ipv4_entries_cnt allowlist_entries_cnt final_list_size_B \
+		final_entries_cnt final_entries_cnt_human min_good_line_count_human
 
 	for list_type in blocklist blocklist_ipv4 allowlist
 	do
@@ -820,13 +824,15 @@ generate_and_process_blocklist_file()
 	done
 
 	final_entries_cnt=$(( blocklist_entries_cnt + blocklist_ipv4_entries_cnt + allowlist_entries_cnt ))
+	int2human final_entries_cnt_human "${final_entries_cnt}"
 
 	read_list_stats final_list_size_B "${ABL_DIR}/final_list_bytes"
 	final_list_size_human="$(bytes2human "${final_list_size_B}")"
 
 	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
 	then
-		reg_failure "Entries count ($(int2human "${final_entries_cnt}")) is below the minimum value set in config ($(int2human "${min_good_line_count}"))."
+		int2human min_good_line_count_human "${min_good_line_count}"
+		reg_failure "Entries count (${final_entries_cnt_human}) is below the minimum value set in config (${min_good_line_count_human})."
 		return 1
 	fi
 
@@ -851,7 +857,7 @@ generate_and_process_blocklist_file()
 	fi
 
 	log_msg -green "" "Active blocklist check passed with the new blocklist file."
-	log_success "New blocklist installed with entries count: $(int2human "${final_entries_cnt}")."
+	log_success "New blocklist installed with entries count: ${final_entries_cnt_human}."
 	rm -f "${ABL_DIR}/prev_blocklist"*
 
 	:
