@@ -528,6 +528,9 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
+	reg_action -blue "Starting download and processing of blocklist parts (max parallel jobs: ${PROCESS_THREADS})."
+	print_msg ""
+
 	set +m # disable job complete notification
 
 	touch "${SCHEDULE_DIR}/nonfatal" || return 1 # serves as flag that no fatal error occured
