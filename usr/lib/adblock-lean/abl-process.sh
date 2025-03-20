@@ -44,16 +44,16 @@ try_gunzip()
 # returns status 0 if the result is null, 1 if not
 subtract_a_from_b() {
 	sab_out="${3:-___dummy}"
-	case "$2" in '') unset "$sab_out"; return 0; esac
-	case "$1" in '') eval "$sab_out"='$2'; [ ! "$2" ]; return; esac
-	_fs_su="${4:-"${_NL_}"}"
-	rv_su=0 _subt=
-	local IFS="$_fs_su"
-	for e in $2; do
-		is_included "$e" "$1" "$_fs_su" || { add2list _subt "$e" "$_fs_su"; rv_su=1; }
+	case "${2}" in '') unset "${sab_out}"; return 0; esac
+	case "${1}" in '') eval "${sab_out}"='${2}'; [ ! "${2}" ]; return; esac
+	local _fs_su="${4:-"${_NL_}"}"
+	local e rv_su=0 _subt=
+	local IFS="${_fs_su}"
+	for e in ${2}; do
+		is_included "${e}" "${1}" "${_fs_su}" || { add2list _subt "${e}" "${_fs_su}"; rv_su=1; }
 	done
-	eval "$sab_out"='$_subt'
-	return $rv_su
+	eval "${sab_out}"='$_subt'
+	return ${rv_su}
 }
 
 # 1 - var name for output
