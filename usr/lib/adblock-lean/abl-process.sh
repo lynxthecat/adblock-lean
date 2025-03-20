@@ -317,16 +317,6 @@ process_list_part()
 		exit "${1}"
 	}
 
-	rm_ucl_err_file()
-	{
-		rm -f "${ucl_err_file}"
-	}
-
-	rm_rogue_el_file()
-	{
-		rm -f "${rogue_el_file}"
-	}
-
 	# shellcheck disable=SC2317
 	dl_list()
 	{
@@ -366,14 +356,14 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 
 	while :
 	do
-		rm_rogue_el_file
+		rm -f "${rogue_el_file}"
 		rm -f "${list_part_size_file}" "${list_part_line_cnt_file}"
 
 		# Download or cat the list
 		local fetch_cmd lines_cnt_low='' dl_completed=''
 		case "${list_origin}" in
 			DL)
-				rm_ucl_err_file
+				rm -f "${ucl_err_file}"
 				fetch_cmd=dl_list ;;
 			LOCAL) fetch_cmd="cat"
 		esac
@@ -454,7 +444,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		if [ -s "${rogue_el_file}" ]
 		then
 			read -r -n512 rogue_element < "${rogue_el_file}"
-			rm_rogue_el_file
+			rm -f "${rogue_el_file}"
 			local rogue_el_print
 			if [ -n "${rogue_element}" ]
 			then
@@ -487,9 +477,9 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		then
 			reg_failure "Failed to download list part from URL '${list_url}'."
 			[ -s "${ucl_err_file}" ] && reg_failure "uclient-fetch errors: '$(cat "${ucl_err_file}")'."
-			rm_ucl_err_file
+			rm -f "${ucl_err_file}"
 		else
-			rm_ucl_err_file
+			rm -f "${ucl_err_file}"
 			finalize_job 0
 		fi
 
