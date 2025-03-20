@@ -1162,7 +1162,7 @@ reload()
 # 4 - adblock-lean is stopped
 status()
 {
-	local run_state version active_entries_cnt=0 dnsmasq_status=''
+	local run_state version active_entries_cnt=0 active_entries_cnt_human dnsmasq_status=''
 	init_command status || exit 1
 	check_lock
 	case ${?} in
@@ -1197,7 +1197,8 @@ status()
 			active_entries_cnt="$(get_active_entries_cnt)" && [ "${active_entries_cnt}" != 0 ] ||
 				{ reg_failure "No entries found in the blocklist file."; run_state=1; }
 			luci_good_line_count=${active_entries_cnt}
-			log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human "${active_entries_cnt}")."
+			int2human active_entries_cnt_human "${active_entries_cnt}"
+			log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: ${active_entries_cnt_human}."
 			log_msg -green "adblock-lean is active."
 			gen_stats -noexit
 		else
