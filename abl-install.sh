@@ -135,6 +135,7 @@ log_msg()
 
 	for m in ${msgs}
 	do
+		IFS="${DEFAULT_IFS}"
 		case "${m}" in
 			dummy) echo ;;
 			*)
@@ -464,7 +465,7 @@ log_msg "" "adblock-lean ${REF} has been installed."
 
 if [ -n "${DO_DIALOGS}" ]
 then
-	if [ -n "${IS_UPDATE}" ]
+	if [ -n "${IS_UPDATE}" ] && [ -s "${ABL_CONFIG_FILE}" ]
 	then
 		print_msg "" "Start adblock-lean now? (y|n)"
 		pick_opt "y|n"

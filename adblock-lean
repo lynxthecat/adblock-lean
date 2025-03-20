@@ -60,8 +60,7 @@ ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 
 ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
 
-DL_SCHEDULER_PID=
-PROCESS_SCHEDULER_PID=
+SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -254,6 +253,7 @@ log_msg()
 
 	for m in ${msgs}
 	do
+		IFS="${DEFAULT_IFS}"
 		case "${m}" in
 			dummy) echo ;;
 			*)
@@ -279,7 +279,7 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	if [ -n "${CLEANUP_REQ}" ]
 	then
-		[ -n "${SCHEDULER_PID}" ] &&
+		[ -n "${SCHEDULER_PID}" ] && [ ! -f "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}" ] &&
 		{
 			log_msg -warn "Killing unfinished processing jobs."
 			kill_pids_recursive "${SCHEDULER_PID}"
@@ -492,6 +492,7 @@ kill_pids_recursive()
 		local IFS="${_NL_}"
 		for pid in ${child_pids}
 		do
+			IFS="${DEFAULT_IFS}"
 			is_included "${pid}" "${prev_pids}" " " || eval "${1}=\"\${${1}}\${pid} \""
 			add_child_pids "${1}" "${pid}"
 		done
@@ -1131,11 +1132,11 @@ stop()
 	[ -n "${DNSMASQ_CONF_D}" ] ||
 	{
 		reg_failure "Failed to get DNSMASQ_CONF_D from config. Can not delete the blocklist from dnsmasq config directory."
-		exit 1
+		stop_rc=1
 	}
 
 	log_msg "Removing any adblock-lean blocklist files in dnsmasq config directories."
-	clean_dnsmasq_dir || exit 1
+	clean_dnsmasq_dir || stop_rc=1
 	restart_dnsmasq -nostop || stop_rc=1
 	log_msg -purple "" "Stopped adblock-lean."
 	[ -n "$noexit" ] && return "${stop_rc}"
