@@ -128,7 +128,7 @@ print_timed_msg -yellow "Job $done_pid completed."
 
 		if [ "${done_job_rv}" != 0 ]
 		then
-			get_a_arr_val JOBS_URLS "${done_pid}" job_url
+			eval "job_url=\"\${JOB_URL_${done_pid}}\""
 
 			[ -f "${SCHEDULE_DIR}/dl_failed_${done_dl_pid}" ] && return 0
 			touch "${SCHEDULE_DIR}/dl_failed_${done_dl_pid}"
@@ -238,7 +238,7 @@ schedule_jobs()
 			do
 				list_part_line_count=0
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" || finalize_scheduler 1
-				set_a_arr_el JOBS_URLS "${!}=${list_url}"
+				export "JOB_URL_${!}"='${list_url}'
 			done
 		done
 
@@ -256,7 +256,7 @@ schedule_jobs()
 			else
 				log_msg -blue "" "Scheduling processing for the local ${list_type}."
 				schedule_job LOCAL "${local_list_path}" "${list_type}" raw
-				set_a_arr_el JOBS_URLS "${!}=${local_list_path}"
+				export "JOB_URL_${!}"='${local_list_path}'
 			fi
 		fi
 	done
