@@ -493,6 +493,7 @@ kill_pids_recursive()
 		local IFS="${_NL_}"
 		for pid in ${child_pids}
 		do
+			IFS="${DEFAULT_IFS}"
 			is_included "${pid}" "${prev_pids}" " " || eval "${1}=\"\${${1}}\${pid} \""
 			add_child_pids "${1}" "${pid}"
 		done

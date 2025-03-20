@@ -715,7 +715,8 @@ parse_config()
 	local IFS="${_NL_}"
 	for entry in ${curr_config}
 	do
-		case ${entry} in
+		IFS="${DEFAULT_IFS}"
+		case "${entry}" in
 			*"${CR_LF}"*)
 				reg_failure "Config file contains Windows-format (CR LF) newlines. Convert the config file to Unix-format (LF) newlines."
 				return 1 ;;
@@ -841,6 +842,7 @@ load_config()
 			local IFS="${_NL_}"
 			for fix in ${conf_fixes}
 			do
+				IFS="${DEFAULT_IFS}"
 				[ -z "${fix}" ] && continue
 				cnt=$((cnt+1))
 				print_msg "${cnt}. ${fix}"
