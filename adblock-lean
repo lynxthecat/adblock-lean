@@ -44,7 +44,7 @@ ABL_PID_DIR=/tmp/adblock-lean
 ABL_UPD_DIR="/var/run/adblock-lean-update"
 
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
-ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh ${ABL_LIB_DIR}/abl-arrays.sh"
+ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh"
 ABL_EXTRA_FILES="" # may be useful in the future
 
 ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
@@ -281,7 +281,7 @@ cleanup_and_exit()
 	then
 		[ -n "${SCHEDULER_PID}" ] &&
 		{
-			log_msg -warn "Killing unfinished processing scheduler (PID: ${SCHEDULER_PID}) and its jobs.";
+			log_msg -warn "Killing unfinished processing jobs."
 			kill_pids_recursive "${SCHEDULER_PID}"
 		}
 		rm -rf "${ABL_DIR}"
@@ -1162,7 +1162,7 @@ reload()
 # 4 - adblock-lean is stopped
 status()
 {
-	local run_state version active_entries_cnt=0 dnsmasq_status=''
+	local run_state version active_entries_cnt=0 active_entries_cnt_human dnsmasq_status=''
 	init_command status || exit 1
 	check_lock
 	case ${?} in
@@ -1197,7 +1197,8 @@ status()
 			active_entries_cnt="$(get_active_entries_cnt)" && [ "${active_entries_cnt}" != 0 ] ||
 				{ reg_failure "No entries found in the blocklist file."; run_state=1; }
 			luci_good_line_count=${active_entries_cnt}
-			log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: $(int2human "${active_entries_cnt}")."
+			int2human active_entries_cnt_human "${active_entries_cnt}"
+			log_msg "The dnsmasq check passed and the presently installed blocklist has entries count: ${active_entries_cnt_human}."
 			log_msg -green "adblock-lean is active."
 			gen_stats -noexit
 		else

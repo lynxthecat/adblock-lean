@@ -10,7 +10,6 @@
 PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 
 SCHEDULE_DIR="${ABL_DIR}/schedule"
-DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
 
 PROCESSING_TIMEOUT_S=900 # 15 minutes
 
@@ -95,24 +94,32 @@ get_curr_job_pid()
 
 handle_fatal()
 {
-	[ -f "${SCHEDULE_DIR}/nonfatal" ] && return 0
-
 	local fatal_pid fatal_path
-	[ ! -s "${SCHEDULE_DIR}/fatal" ] || ! read -r fatal_pid fatal_path < "${SCHEDULE_DIR}/fatal" ||
-		[ -f "${SCHEDULE_DIR}/dl_failed_${fatal_pid}" ] && return 1
-	: "${fatal_pid:=unknown}"
-	: "${fatal_path:=unknown}"
-	reg_failure "job with pid '${fatal_pid}' (path: '${fatal_path}') reported fatal error."
-	return 1
+	if [ -s "${SCHEDULE_DIR}/fatal" ] && read -r fatal_pid fatal_path < "${SCHEDULE_DIR}/fatal" &&
+			[ ! -f "${SCHEDULE_DIR}/fail_reported_${fatal_pid}" ] && [ ! -f "${SCHEDULE_DIR}/fatal_reported" ]
+	then
+		touch "${SCHEDULE_DIR}/fatal_reported" "${SCHEDULE_DIR}/fail_reported_${fatal_pid}"
+		: "${fatal_pid:=unknown}"
+		: "${fatal_path:=unknown}"
+		reg_failure "job with pid '${fatal_pid}' (list path: '${fatal_path}') reported fatal error."
+	fi
+
+	[ -n "${SCHEDULER_PID}" ] &&
+	{
+		log_msg "Stopping unfinished jobs."
+		kill_pids_recursive "${SCHEDULER_PID}"
+	}
+	rm -rf "${ABL_DIR}"
+	exit 1
 }
 
 # 1 (optional) - only handle job with pid $1
 handle_done_jobs()
 {
-	local done_job_file done_job_rv done_pid done_dl_pid job_url suffix=
+	local done_job_file done_job_rv done_pid done_path suffix=
 	[ -n "${1}" ] && suffix="${1}_"
 
-	handle_fatal || cleanup_and_exit 1
+	[ -f "${SCHEDULE_DIR}/nonfatal" ] || handle_fatal
 
 	for done_job_file in "${SCHEDULE_DIR}/done_${suffix}"*
 	do
@@ -128,12 +135,14 @@ print_timed_msg -yellow "Job $done_pid completed."
 
 		if [ "${done_job_rv}" != 0 ]
 		then
-			get_a_arr_val JOBS_URLS "${done_pid}" job_url
+			[ "${done_job_rv}" = 1 ] && handle_fatal
 
-			[ -f "${SCHEDULE_DIR}/dl_failed_${done_dl_pid}" ] && return 0
-			touch "${SCHEDULE_DIR}/dl_failed_${done_dl_pid}"
+			eval "done_path=\"\${JOB_URL_${done_pid}}\""
 
-			reg_failure "Processing job (PID ${done_pid}) for list '${job_url}' returned code ${done_job_rv}."
+			[ -f "${SCHEDULE_DIR}/fail_reported_${done_pid}" ] && return 0
+			touch "${SCHEDULE_DIR}/fail_reported_${done_pid}"
+
+			reg_failure "Processing job (PID ${done_pid}) for list '${done_path}' returned error code '${done_job_rv}'."
 			[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
 			log_msg "Skipping file and continuing."
 		fi
@@ -180,14 +189,14 @@ scheduler_timeout_watchdog()
 	while :
 	do
 		[ -f "${SCHEDULE_DIR}/scheduler_done_${1}" ] && exit 0
-		handle_fatal || cleanup_and_exit 1
+		[ -f "${SCHEDULE_DIR}/nonfatal" ] || handle_fatal
 		[ "${sched_time_s}" -lt "${PROCESSING_TIMEOUT_S}" ] ||
 		{
-			reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${1}): stopping unfinished processing."
-			cleanup_and_exit 1
+			reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${1})."
+			handle_fatal
 		}
-		sched_time_s=$((sched_time_s+1))
-		sleep 1
+		sched_time_s=$((sched_time_s+5))
+		sleep 5
 	done
 }
 
@@ -196,14 +205,13 @@ schedule_jobs()
 {
 	finalize_scheduler()
 	{
-		rm -f "${DL_IN_PROGRESS_FILE}"
 		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] && kill_pids_recursive "${RUNNING_PIDS}"
-		touch "${SCHEDULE_DIR}/scheduler_done_${scheduler_pid}"
+		touch "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}"
 		exit "${1}"
 	}
 
-	local list_type list_types="${1}" list_format list_url scheduler_pid
-	get_curr_job_pid scheduler_pid
+	local list_type list_types="${1}" list_format list_url SCHEDULER_PID
+	get_curr_job_pid SCHEDULER_PID || finalize_scheduler 1
 	RUNNING_PIDS=
 	RUNNING_JOBS_CNT=0
 
@@ -236,9 +244,9 @@ schedule_jobs()
 
 			for list_url in ${list_urls}
 			do
-				list_part_line_count=0
+				part_line_count=0
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" || finalize_scheduler 1
-				set_a_arr_el JOBS_URLS "${!}=${list_url}"
+				export "JOB_URL_${!}"="${list_url}"
 			done
 		done
 
@@ -256,7 +264,7 @@ schedule_jobs()
 			else
 				log_msg -blue "" "Scheduling processing for the local ${list_type}."
 				schedule_job LOCAL "${local_list_path}" "${list_type}" raw
-				set_a_arr_el JOBS_URLS "${!}=${local_list_path}"
+				export "JOB_URL_${!}"="${local_list_path}"
 			fi
 		fi
 	done
@@ -293,9 +301,7 @@ process_list_part()
 		[ -n "${curr_job_pid}" ] && touch "${SCHEDULE_DIR}/done_${curr_job_pid}_${1}"
 		case "${1}" in
 			0)
-				local part=
-				[ "${list_origin}" = DL ] && part=" part"
-				log_msg -green "Successfully processed list${part} from ${blue}${list_path}${n_c} (size: $(bytes2human "${list_part_size_B}"), lines: $(int2human "${list_part_line_count}"))." ;;
+				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, $(bytes2human "${part_size_B}"))." ;;
 			*)
 				rm -f "${dest_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
 				if [ "${1}" = 1 ]
@@ -349,19 +355,18 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		rogue_el_file="${ABL_DIR}/rogue_el_${job_id}" \
 		list_part_size_file="${ABL_DIR}/size_${job_id}" \
 		list_part_line_cnt_file="${ABL_DIR}/linecnt_${job_id}" \
-		list_part_line_count compress_part='' min_list_part_line_count='' \
-		list_part_size_B='' list_part_size_KB='' retry=1
+		part_line_count line_count_human compress_part='' min_line_count='' min_line_count_human \
+		part_size_B='' part_size_KB='' retry=1
 
 	case ${list_type} in
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
 	esac
-	eval "min_list_part_line_count=\"\${min_${list_type}_part_line_count}\""
+	eval "min_line_count=\"\${min_${list_type}_part_line_count}\""
 
 	while :
 	do
 		rm_rogue_el_file
 		rm -f "${list_part_size_file}" "${list_part_line_cnt_file}"
-
 
 		# Download or cat the list
 		local fetch_cmd lines_cnt_low='' dl_completed=''
@@ -372,7 +377,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			LOCAL) fetch_cmd="cat"
 		esac
 
-		log_msg "Processing ${list_format} ${list_type} from ${blue}${list_path}${n_c}"
+		log_msg "Processing ${list_format} ${list_type}: ${blue}${list_path}${n_c}"
 
 		${fetch_cmd} "${list_path}" |
 		# limit size
@@ -422,7 +427,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		fi |
 
 		# check lists for rogue elements
-		tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${rogue_el_file}") |
+		tee >($SED_CMD -nE "/${val_entry_regex}/d;p;:1 n;b1" > "${rogue_el_file}") |
 
 		# compress parts
 		if [ -n "${compress_part}" ]
@@ -432,11 +437,11 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			cat
 		fi > "${dest_file}"
 
-		[ -f "${list_part_size_file}" ] && read -r list_part_size_B _ < "${list_part_size_file}" || finalize_job 1
+		[ -f "${list_part_size_file}" ] && read -r part_size_B _ < "${list_part_size_file}" || finalize_job 1
 		rm -f "${list_part_size_file}"
-		: "${list_part_size_B:=0}"
-		list_part_size_KB=$((list_part_size_B/1024))
-		if [ "${list_part_size_KB}" -ge "${max_file_part_size_KB}" ]
+		: "${part_size_B:=0}"
+		part_size_KB=$((part_size_B/1024))
+		if [ "${part_size_KB}" -ge "${max_file_part_size_KB}" ]
 		then
 			reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
@@ -466,12 +471,15 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			finalize_job 2
 		fi
 
-		[ -f "${list_part_line_cnt_file}" ] && read -r list_part_line_count _ < "${list_part_line_cnt_file}"
-		: "${list_part_line_count:=0}"
-		if [ "${list_origin}" = DL ] && [ "${list_part_line_count}" -lt "${min_list_part_line_count}" ]
+		[ -f "${list_part_line_cnt_file}" ] && read -r part_line_count _ < "${list_part_line_cnt_file}"
+		: "${part_line_count:=0}"
+		int2human line_count_human "${part_line_count}"
+
+		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
 		then
 			lines_cnt_low=1
-			reg_failure "Line count in downloaded ${list_type} part from '${list_path}' is $(int2human "${list_part_line_count}"), which is less than configured minimum: $(int2human "${min_list_part_line_count}")."
+			int2human min_line_count_human "${min_line_count}"
+			reg_failure "Line count in downloaded ${list_type} part from '${list_path}' is ${line_count_human}, which is less than configured minimum: ${min_line_count_human}."
 		fi
 
 		if [ "${list_origin}" = DL ] && { [ -z "${dl_completed}" ] || [ -n "${lines_cnt_low}" ]; }
@@ -497,7 +505,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 
 gen_list_parts()
 {
-	local list_type preprocessed_line_count=0
+	local list_type preprocessed_line_count=0 preprocessed_line_count_human
 
 	[ -z "${blocklist_urls}${dnsmasq_blocklist_urls}" ] && log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
@@ -533,7 +541,6 @@ gen_list_parts()
 			if eval "[ -n \"\${${list_type}_urls}\${dnsmasq_${list_type}_urls}\" ]"
 			then
 				schedule_req=1
-				touch "${DL_IN_PROGRESS_FILE}" || return 1
 			fi
 			if eval "[ -f \"\${local_${list_type}_path}\" ]"
 			then
@@ -546,9 +553,8 @@ gen_list_parts()
 			schedule_jobs "${list_types}" &
 			SCHEDULER_PID=${!}
 
-			echo "Waiting for scheduler..." >&2
 			scheduler_timeout_watchdog "${SCHEDULER_PID}" &
-			wait "${SCHEDULER_PID}" || return 1
+			wait "${SCHEDULER_PID}" || { SCHEDULER_PID=''; return 1; }
 			SCHEDULER_PID=''
 		fi
 
@@ -596,7 +602,8 @@ gen_list_parts()
 		done
 	done
 
-	log_msg -green "" "Successfully generated preprocessed blocklist file with $(int2human "${preprocessed_line_count}") entries."
+	int2human preprocessed_line_count_human "${preprocessed_line_count}"
+	log_msg -green "" "Successfully generated preprocessed blocklist file with ${preprocessed_line_count_human} entries."
 	:
 }
 
@@ -808,7 +815,8 @@ generate_and_process_blocklist_file()
 
 	rm -f "${ABL_DIR}/dnsmasq_err"
 
-	local blocklist_entries_cnt blocklist_ipv4_entries_cnt allowlist_entries_cnt final_list_size_B final_entries_cnt
+	local blocklist_entries_cnt blocklist_ipv4_entries_cnt allowlist_entries_cnt final_list_size_B \
+		final_entries_cnt final_entries_cnt_human min_good_line_count_human
 
 	for list_type in blocklist blocklist_ipv4 allowlist
 	do
@@ -816,13 +824,15 @@ generate_and_process_blocklist_file()
 	done
 
 	final_entries_cnt=$(( blocklist_entries_cnt + blocklist_ipv4_entries_cnt + allowlist_entries_cnt ))
+	int2human final_entries_cnt_human "${final_entries_cnt}"
 
 	read_list_stats final_list_size_B "${ABL_DIR}/final_list_bytes"
 	final_list_size_human="$(bytes2human "${final_list_size_B}")"
 
 	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
 	then
-		reg_failure "Entries count ($(int2human "${final_entries_cnt}")) is below the minimum value set in config ($(int2human "${min_good_line_count}"))."
+		int2human min_good_line_count_human "${min_good_line_count}"
+		reg_failure "Entries count (${final_entries_cnt_human}) is below the minimum value set in config (${min_good_line_count_human})."
 		return 1
 	fi
 
@@ -847,7 +857,7 @@ generate_and_process_blocklist_file()
 	fi
 
 	log_msg -green "" "Active blocklist check passed with the new blocklist file."
-	log_success "New blocklist installed with entries count: $(int2human "${final_entries_cnt}")."
+	log_success "New blocklist installed with entries count: ${final_entries_cnt_human}."
 	rm -f "${ABL_DIR}/prev_blocklist"*
 
 	:
