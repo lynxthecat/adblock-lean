@@ -186,8 +186,8 @@ scheduler_timeout_watchdog()
 			reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${1}): stopping unfinished processing."
 			cleanup_and_exit 1
 		}
-		sched_time_s=$((sched_time_s+1))
-		sleep 1
+		sched_time_s=$((sched_time_s+5))
+		sleep 5
 	done
 }
 
@@ -546,7 +546,6 @@ gen_list_parts()
 			schedule_jobs "${list_types}" &
 			SCHEDULER_PID=${!}
 
-			echo "Waiting for scheduler..." >&2
 			scheduler_timeout_watchdog "${SCHEDULER_PID}" &
 			wait "${SCHEDULER_PID}" || return 1
 			SCHEDULER_PID=''
