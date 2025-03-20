@@ -10,7 +10,6 @@
 PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 
 SCHEDULE_DIR="${ABL_DIR}/schedule"
-DL_IN_PROGRESS_FILE="${SCHEDULE_DIR}/dl_in_progress"
 
 PROCESSING_TIMEOUT_S=900 # 15 minutes
 
@@ -95,24 +94,32 @@ get_curr_job_pid()
 
 handle_fatal()
 {
-	[ -f "${SCHEDULE_DIR}/nonfatal" ] && return 0
-
 	local fatal_pid fatal_path
-	[ ! -s "${SCHEDULE_DIR}/fatal" ] || ! read -r fatal_pid fatal_path < "${SCHEDULE_DIR}/fatal" ||
-		[ -f "${SCHEDULE_DIR}/dl_failed_${fatal_pid}" ] && return 1
-	: "${fatal_pid:=unknown}"
-	: "${fatal_path:=unknown}"
-	reg_failure "job with pid '${fatal_pid}' (path: '${fatal_path}') reported fatal error."
-	return 1
+	if [ -s "${SCHEDULE_DIR}/fatal" ] && read -r fatal_pid fatal_path < "${SCHEDULE_DIR}/fatal" &&
+			[ ! -f "${SCHEDULE_DIR}/fail_reported_${fatal_pid}" ] && [ ! -f "${SCHEDULE_DIR}/fatal_reported" ]
+	then
+		touch "${SCHEDULE_DIR}/fatal_reported" "${SCHEDULE_DIR}/fail_reported_${fatal_pid}"
+		: "${fatal_pid:=unknown}"
+		: "${fatal_path:=unknown}"
+		reg_failure "job with pid '${fatal_pid}' (list path: '${fatal_path}') reported fatal error."
+	fi
+
+	[ -n "${SCHEDULER_PID}" ] &&
+	{
+		log_msg "Stopping unfinished jobs."
+		kill_pids_recursive "${SCHEDULER_PID}"
+	}
+	rm -rf "${ABL_DIR}"
+	exit 1
 }
 
 # 1 (optional) - only handle job with pid $1
 handle_done_jobs()
 {
-	local done_job_file done_job_rv done_pid done_dl_pid job_url suffix=
+	local done_job_file done_job_rv done_pid done_path suffix=
 	[ -n "${1}" ] && suffix="${1}_"
 
-	handle_fatal || cleanup_and_exit 1
+	[ -f "${SCHEDULE_DIR}/nonfatal" ] || handle_fatal
 
 	for done_job_file in "${SCHEDULE_DIR}/done_${suffix}"*
 	do
@@ -128,12 +135,14 @@ print_timed_msg -yellow "Job $done_pid completed."
 
 		if [ "${done_job_rv}" != 0 ]
 		then
-			eval "job_url=\"\${JOB_URL_${done_pid}}\""
+			[ "${done_job_rv}" = 1 ] && handle_fatal
 
-			[ -f "${SCHEDULE_DIR}/dl_failed_${done_dl_pid}" ] && return 0
-			touch "${SCHEDULE_DIR}/dl_failed_${done_dl_pid}"
+			eval "done_path=\"\${JOB_URL_${done_pid}}\""
 
-			reg_failure "Processing job (PID ${done_pid}) for list '${job_url}' returned code ${done_job_rv}."
+			[ -f "${SCHEDULE_DIR}/fail_reported_${done_pid}" ] && return 0
+			touch "${SCHEDULE_DIR}/fail_reported_${done_pid}"
+
+			reg_failure "Processing job (PID ${done_pid}) for list '${done_path}' returned error code '${done_job_rv}'."
 			[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
 			log_msg "Skipping file and continuing."
 		fi
@@ -180,11 +189,11 @@ scheduler_timeout_watchdog()
 	while :
 	do
 		[ -f "${SCHEDULE_DIR}/scheduler_done_${1}" ] && exit 0
-		handle_fatal || cleanup_and_exit 1
+		[ -f "${SCHEDULE_DIR}/nonfatal" ] || handle_fatal
 		[ "${sched_time_s}" -lt "${PROCESSING_TIMEOUT_S}" ] ||
 		{
-			reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${1}): stopping unfinished processing."
-			cleanup_and_exit 1
+			reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${1})."
+			handle_fatal
 		}
 		sched_time_s=$((sched_time_s+5))
 		sleep 5
@@ -196,14 +205,13 @@ schedule_jobs()
 {
 	finalize_scheduler()
 	{
-		rm -f "${DL_IN_PROGRESS_FILE}"
 		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] && kill_pids_recursive "${RUNNING_PIDS}"
-		touch "${SCHEDULE_DIR}/scheduler_done_${scheduler_pid}"
+		touch "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}"
 		exit "${1}"
 	}
 
-	local list_type list_types="${1}" list_format list_url scheduler_pid
-	get_curr_job_pid scheduler_pid
+	local list_type list_types="${1}" list_format list_url SCHEDULER_PID
+	get_curr_job_pid SCHEDULER_PID || finalize_scheduler 1
 	RUNNING_PIDS=
 	RUNNING_JOBS_CNT=0
 
@@ -293,9 +301,7 @@ process_list_part()
 		[ -n "${curr_job_pid}" ] && touch "${SCHEDULE_DIR}/done_${curr_job_pid}_${1}"
 		case "${1}" in
 			0)
-				local part=
-				[ "${list_origin}" = DL ] && part=" part"
-				log_msg -green "Successfully processed list${part} from ${blue}${list_path}${n_c} (size: $(bytes2human "${list_part_size_B}"), lines: $(int2human "${list_part_line_count}"))." ;;
+				log_msg -green "Successfully processed list from ${blue}${list_path}${n_c} ($(int2human "${list_part_line_count}") lines, $(bytes2human "${list_part_size_B}"))." ;;
 			*)
 				rm -f "${dest_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
 				if [ "${1}" = 1 ]
@@ -533,7 +539,6 @@ gen_list_parts()
 			if eval "[ -n \"\${${list_type}_urls}\${dnsmasq_${list_type}_urls}\" ]"
 			then
 				schedule_req=1
-				touch "${DL_IN_PROGRESS_FILE}" || return 1
 			fi
 			if eval "[ -f \"\${local_${list_type}_path}\" ]"
 			then
@@ -547,7 +552,7 @@ gen_list_parts()
 			SCHEDULER_PID=${!}
 
 			scheduler_timeout_watchdog "${SCHEDULER_PID}" &
-			wait "${SCHEDULER_PID}" || return 1
+			wait "${SCHEDULER_PID}" || { SCHEDULER_PID=''; return 1; }
 			SCHEDULER_PID=''
 		fi
 
