@@ -705,7 +705,7 @@ parse_config()
 	def_config_format="$(printf %s "${def_config}" | get_config_format)"
 	luci_def_config_format=${def_config_format}
 
-	local IFS=$'\n'
+	local IFS="${_NL_}"
 	for entry in ${curr_config}
 	do
 		case ${entry} in
@@ -831,7 +831,7 @@ load_config()
 		then
 			print_msg "" "${blue}Perform following automatic changes?${n_c}"
 			cnt=0
-			local IFS=$'\n'
+			local IFS="${_NL_}"
 			for fix in ${conf_fixes}
 			do
 				[ -z "${fix}" ] && continue
@@ -860,8 +860,7 @@ fix_config()
 
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
-		IFS=$'\n'
-		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" | while read -r line
+		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" | while IFS="${_NL_}" read -r line
 		do
 			case ${line} in
 				\#*|'') printf '%s\n' "${line}"; continue ;;
@@ -1260,6 +1259,7 @@ clean_dnsmasq_dir()
 
 	for dir in ${ALL_CONF_DIRS}
 	do
+		IFS="${DEFAULT_IFS}"
 		rm -f "${dir}"/.abl-blocklist.gz "${dir}"/abl-blocklist \
 			"${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
 	done
@@ -1303,7 +1303,7 @@ get_dnsmasq_instance_ns()
 # ALL_CONF_DIRS, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
 # ${instance}_INDEX, ${instance}_RUNNING
 get_dnsmasq_instances() {
-	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt IFS_OLD i s f dir
+	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt i s f dir
 	DNSMASQ_INSTANCES=
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -blue "Checking dnsmasq instances."
@@ -1346,10 +1346,9 @@ get_dnsmasq_instances() {
 		json_select ..
 		json_select ..
 
-		IFS_OLD="$IFS"
 		IFS="${_NL_}"
 		set -- ${l1_conf_files}
-		IFS="${IFS_OLD}"
+		IFS="${DEFAULT_IFS}"
 
 		# get ifaces for instance
 		ifaces="$(${AWK_CMD} -F= '/^\s*interface=/ {if (!seen[$2]++) {ifaces = ifaces $2 ", "} } END {print ifaces}' "$@")"
@@ -1365,7 +1364,7 @@ get_dnsmasq_instances() {
 
 		IFS="${_NL_}"
 		set -- ${conf_dirs}
-		IFS="${IFS_OLD}"
+		IFS="${DEFAULT_IFS}"
 		for dir in "${@}"
 		do
 			add2list ALL_CONF_DIRS "${dir}"

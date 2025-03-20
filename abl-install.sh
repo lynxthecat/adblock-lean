@@ -135,6 +135,7 @@ log_msg()
 
 	for m in ${msgs}
 	do
+		IFS="${DEFAULT_IFS}"
 		case "${m}" in
 			dummy) echo ;;
 			*)
