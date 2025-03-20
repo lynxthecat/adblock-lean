@@ -1133,11 +1133,11 @@ stop()
 	[ -n "${DNSMASQ_CONF_D}" ] ||
 	{
 		reg_failure "Failed to get DNSMASQ_CONF_D from config. Can not delete the blocklist from dnsmasq config directory."
-		exit 1
+		stop_rc=1
 	}
 
 	log_msg "Removing any adblock-lean blocklist files in dnsmasq config directories."
-	clean_dnsmasq_dir || exit 1
+	clean_dnsmasq_dir || stop_rc=1
 	restart_dnsmasq -nostop || stop_rc=1
 	log_msg -purple "" "Stopped adblock-lean."
 	[ -n "$noexit" ] && return "${stop_rc}"
