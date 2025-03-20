@@ -422,7 +422,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		fi |
 
 		# check lists for rogue elements
-		tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${rogue_el_file}") |
+		tee >($SED_CMD -nE "/${val_entry_regex}/d;p;:1 n;b1" > "${rogue_el_file}") |
 
 		# compress parts
 		if [ -n "${compress_part}" ]
