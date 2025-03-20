@@ -164,7 +164,7 @@ print_timed_msg -yellow "Scheduling $list_origin job (running jobs: $RUNNING_JOB
 	handle_done_jobs || return 1
 
 	# wait for job vacancy
-	while [ "${RUNNING_JOBS_CNT}" -ge "${PROCESS_THREADS}" ]
+	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_PARALLEL_JOBS}" ]
 	do
 print_timed_msg -yellow "Waiting for vacancy (running jobs: $RUNNING_JOBS_CNT, running PIDS: $RUNNING_PIDS)"
 		[ -n "${RUNNING_PIDS}" ] ||
@@ -528,7 +528,7 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
-	reg_action -blue "Starting download and processing of blocklist parts (max parallel jobs: ${PROCESS_THREADS})."
+	reg_action -blue "Starting download and processing of blocklist parts (max parallel jobs: ${MAX_PARALLEL_JOBS})."
 	print_msg ""
 
 	set +m # disable job complete notification

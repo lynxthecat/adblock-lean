@@ -481,9 +481,8 @@ print_def_config()
 	# Start delay in seconds when service is started from system boot
 	boot_start_delay_s="120" @ integer
 
-	# Number of parallel download and processing threads
-	DL_THREADS="1" @ integer
-	PROCESS_THREADS="1" @ integer
+	# Maximal count of download and processing jobs run in parallel
+	MAX_PARALLEL_JOBS="1" @ integer
 
 	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
