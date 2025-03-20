@@ -104,7 +104,7 @@ handle_fatal()
 		reg_failure "job with pid '${fatal_pid}' (list path: '${fatal_path}') reported fatal error."
 	fi
 
-	[ -n "${SCHEDULER_PID}" ] &&
+	[ -n "${SCHEDULER_PID}" ] && [ ! -f "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}" ] &&
 	{
 		log_msg "Stopping unfinished jobs."
 		kill_pids_recursive "${SCHEDULER_PID}"
@@ -186,6 +186,7 @@ print_timed_msg -yellow "Waiting for vacancy (running jobs: $RUNNING_JOBS_CNT, r
 scheduler_timeout_watchdog()
 {
 	local sched_time_s=0
+	trap 'exit 0' HUP
 	while :
 	do
 		[ -f "${SCHEDULE_DIR}/scheduler_done_${1}" ] && exit 0
@@ -554,7 +555,9 @@ gen_list_parts()
 			SCHEDULER_PID=${!}
 
 			scheduler_timeout_watchdog "${SCHEDULER_PID}" &
-			wait "${SCHEDULER_PID}" || { SCHEDULER_PID=''; return 1; }
+			WATCHDOG_PID=${!}
+			wait "${SCHEDULER_PID}" || { kill -s HUP "${WATCHDOG_PID}"; SCHEDULER_PID=''; return 1; }
+			kill -s HUP "${WATCHDOG_PID}"
 			SCHEDULER_PID=''
 		fi
 
