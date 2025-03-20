@@ -44,7 +44,7 @@ ABL_PID_DIR=/tmp/adblock-lean
 ABL_UPD_DIR="/var/run/adblock-lean-update"
 
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
-ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh ${ABL_LIB_DIR}/abl-arrays.sh"
+ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh"
 ABL_EXTRA_FILES="" # may be useful in the future
 
 ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
