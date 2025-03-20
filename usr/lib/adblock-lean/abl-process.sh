@@ -43,7 +43,7 @@ process_list_part()
 	done
 
 	case "${list_type}" in
-		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+|(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
+		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
 		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
 		*) reg_failure "${me}: Invalid list type '${list_type}'"; return 1
 	esac
@@ -109,7 +109,7 @@ process_list_part()
 	fi |
 
 	# check lists for rogue elements
-	tee >($SED_CMD -nE "\~${val_entry_regex}~d;p;:1 n;b1" > "${ABL_DIR}/rogue_element") |
+	tee >($SED_CMD -nE "/${val_entry_regex}/d;p;:1 n;b1" > "${ABL_DIR}/rogue_element") |
 
 	# compress parts
 	if [ -n "${compress_part}" ]

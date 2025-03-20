@@ -249,6 +249,7 @@ log_msg()
 
 	for m in ${msgs}
 	do
+		IFS="${DEFAULT_IFS}"
 		case "${m}" in
 			dummy) echo ;;
 			*)
@@ -453,7 +454,7 @@ log_success()
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
-	local _killed _p _pid child_pid IFS=$'\n' k_attempt=0
+	local _killed _p _pid child_pid IFS="${_NL_}" k_attempt=0
 	while :
 	do
 		k_attempt=$((k_attempt+1))
