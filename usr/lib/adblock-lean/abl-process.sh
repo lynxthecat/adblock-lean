@@ -301,7 +301,7 @@ process_list_part()
 		[ -n "${curr_job_pid}" ] && touch "${SCHEDULE_DIR}/done_${curr_job_pid}_${1}"
 		case "${1}" in
 			0)
-				log_msg -green "Successfully processed list from ${blue}${list_path}${n_c} ($(int2human "${list_part_line_count}") lines, $(bytes2human "${list_part_size_B}"))." ;;
+				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} ($(int2human "${list_part_line_count}") lines, $(bytes2human "${list_part_size_B}"))." ;;
 			*)
 				rm -f "${dest_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
 				if [ "${1}" = 1 ]
@@ -378,7 +378,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			LOCAL) fetch_cmd="cat"
 		esac
 
-		log_msg "Processing ${list_format} ${list_type} from ${blue}${list_path}${n_c}"
+		log_msg "Processing ${list_format} ${list_type}: ${blue}${list_path}${n_c}"
 
 		${fetch_cmd} "${list_path}" |
 		# limit size
