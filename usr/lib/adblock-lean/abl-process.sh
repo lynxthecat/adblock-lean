@@ -238,7 +238,7 @@ schedule_jobs()
 			do
 				list_part_line_count=0
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" || finalize_scheduler 1
-				export "JOB_URL_${!}"='${list_url}'
+				export "JOB_URL_${!}"="${list_url}"
 			done
 		done
 
@@ -256,7 +256,7 @@ schedule_jobs()
 			else
 				log_msg -blue "" "Scheduling processing for the local ${list_type}."
 				schedule_job LOCAL "${local_list_path}" "${list_type}" raw
-				export "JOB_URL_${!}"='${local_list_path}'
+				export "JOB_URL_${!}"="${local_list_path}"
 			fi
 		fi
 	done
