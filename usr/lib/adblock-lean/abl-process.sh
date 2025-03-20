@@ -459,7 +459,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 						"This file needs to be converted to Unix newline format (LF)." ;;
 				*) log_msg -warn "${rogue_el_print} identified in ${list_type} file from: ${list_path}."
 			esac
-			finalize_job 2
+			finalize_job 3
 		fi
 
 		[ -f "${list_part_line_cnt_file}" ] && read -r part_line_count _ < "${list_part_line_cnt_file}"
