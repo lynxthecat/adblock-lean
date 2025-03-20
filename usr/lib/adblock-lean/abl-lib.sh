@@ -63,12 +63,15 @@ bytes2human()
 	printf "%s.%${fp}d %s\n" "$i" "$d" "$S"
 }
 
+# 1 - var name for output
+# 2 - uint
 int2human() {
-	case "$1" in ''|*[!0-9]*)
-		reg_failure "int2human: Invalid unsigned integer '$1'."
+	case "${2}" in ''|*[!0-9]*)
+		reg_failure "int2human: Invalid unsigned integer '${2}'."
+		eval "${1}="
 		return 1
 	esac
-	local in_num="${1#"${1%%[!0]*}"}" out_num=
+	local in_num="${2#"${2%%[!0]*}"}" out_num=
 	while :
 	do
 		case "$in_num" in 
@@ -78,7 +81,7 @@ int2human() {
 			*) break
 		esac
 	done
-	printf %s "${in_num:-0}${out_num}"
+	eval "${1}"='${in_num:-0}${out_num}'
 }
 
 
