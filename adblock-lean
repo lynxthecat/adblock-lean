@@ -60,8 +60,7 @@ ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 
 ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
 
-DL_SCHEDULER_PID=
-PROCESS_SCHEDULER_PID=
+SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
