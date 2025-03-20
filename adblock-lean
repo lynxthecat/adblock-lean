@@ -282,7 +282,7 @@ cleanup_and_exit()
 	then
 		[ -n "${SCHEDULER_PID}" ] &&
 		{
-			log_msg -warn "Killing unfinished processing scheduler (PID: ${SCHEDULER_PID}) and its jobs.";
+			log_msg -warn "Killing unfinished processing scheduler and its jobs.";
 			kill_pids_recursive "${SCHEDULER_PID}"
 		}
 		rm -rf "${ABL_DIR}"
