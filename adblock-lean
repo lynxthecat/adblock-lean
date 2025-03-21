@@ -279,6 +279,7 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	if [ -n "${CLEANUP_REQ}" ]
 	then
+		[ -n "${WATCHDOG_PID}" ] && kill -9 "${WATCHDOG_PID}" 2>/dev/null
 		[ -n "${SCHEDULER_PID}" ] && [ ! -f "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}" ] &&
 		{
 			log_msg -warn "Killing unfinished processing jobs."
