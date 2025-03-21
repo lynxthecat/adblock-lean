@@ -186,7 +186,6 @@ print_timed_msg -yellow "Waiting for vacancy (running jobs: $RUNNING_JOBS_CNT, r
 scheduler_timeout_watchdog()
 {
 	local sched_time_s=0
-	trap 'exit 0' HUP
 	while :
 	do
 		[ -f "${SCHEDULE_DIR}/scheduler_done_${1}" ] && exit 0
@@ -549,9 +548,11 @@ gen_list_parts()
 
 			scheduler_timeout_watchdog "${SCHEDULER_PID}" &
 			WATCHDOG_PID=${!}
-			wait "${SCHEDULER_PID}" || { kill -s HUP "${WATCHDOG_PID}"; SCHEDULER_PID=''; return 1; }
-			kill -s HUP "${WATCHDOG_PID}"
-			SCHEDULER_PID=''
+			wait "${SCHEDULER_PID}"
+			local sched_rv=${?}			
+			kill -9 "${WATCHDOG_PID}"
+			SCHEDULER_PID=
+			[ ${sched_rv} = 0 ] || return ${sched_rv}
 		fi
 
 		if [ "${list_types}" = allowlist ]
