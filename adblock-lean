@@ -279,12 +279,9 @@ cleanup_and_exit()
 	trap - INT TERM EXIT
 	if [ -n "${CLEANUP_REQ}" ]
 	then
+		[ "${1}" != 0 ] && print_msg "" "Cleaning up..."
 		[ -n "${WATCHDOG_PID}" ] && kill -9 "${WATCHDOG_PID}" 2>/dev/null
-		[ -n "${SCHEDULER_PID}" ] && [ ! -f "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}" ] &&
-		{
-			log_msg -warn "Killing unfinished processing jobs."
-			kill_pids_recursive "${SCHEDULER_PID}"
-		}
+		[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}"
 		rm -rf "${ABL_DIR}"
 	fi
 	[ -n "${LOCK_REQ}" ] && rm_lock
@@ -467,8 +464,8 @@ log_success()
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
-	local pgrep_ptrn="(/etc/rc.common /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)"
-	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} 's/\s+.*//' | tr '\n' ' ')" "${$}"
+	local pgrep_ptrn="((/etc/rc.common|sh|/bin/sh) /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)"
+	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E 's/\s+.*//' | tr '\n' ' ')" "${$}"
 }
 
 # kills specified pid's and their offspring
@@ -512,8 +509,7 @@ kill_pids_recursive()
 	done
 	[ -n "${initial_pids}" ] || return 0
 
-	kill ${initial_pids} 2>/dev/null
-
+	kill "${initial_pids}" 2>/dev/null
 	local running_pids="${initial_pids}" k_attempt=0
 	while :
 	do
@@ -525,7 +521,7 @@ kill_pids_recursive()
 			add_child_pids running_pids "${pid}"
 		done
 
-		kill ${running_pids} 2>/dev/null
+		kill "${running_pids}" 2>/dev/null
 
 		local alive_pids=''
 		for pid in ${running_pids}
@@ -537,7 +533,7 @@ kill_pids_recursive()
 
 		sleep 1
 	done
-	kill -9 ${running_pids} 2>/dev/null
+	kill -9 "${running_pids}" 2>/dev/null
 	:
 }
 
