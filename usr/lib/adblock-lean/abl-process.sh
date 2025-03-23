@@ -92,24 +92,19 @@ get_curr_job_pid()
 	eval "${1}=\"${__pid}\""
 }
 
+# 1 - PID of the job throwing the fatal error
+# 2 - list path
 handle_fatal()
 {
-	local fatal_pid fatal_path
-	if [ -s "${SCHEDULE_DIR}/fatal" ] && read -r fatal_pid fatal_path < "${SCHEDULE_DIR}/fatal" &&
-			[ ! -f "${SCHEDULE_DIR}/fail_reported_${fatal_pid}" ] && [ ! -f "${SCHEDULE_DIR}/fatal_reported" ]
+	local fatal_pid="${1}" fatal_path="${2}"
+	if [ -n "${fatal_pid}" ]
 	then
-		touch "${SCHEDULE_DIR}/fatal_reported" "${SCHEDULE_DIR}/fail_reported_${fatal_pid}"
-		: "${fatal_pid:=unknown}"
 		: "${fatal_path:=unknown}"
-		reg_failure "job with pid '${fatal_pid}' (list path: '${fatal_path}') reported fatal error."
+		reg_failure "Processing job for list '${fatal_path}' reported fatal error."
 	fi
 
-	[ -n "${SCHEDULER_PID}" ] && [ ! -f "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}" ] &&
-	{
-		log_msg "Stopping unfinished jobs."
-		kill_pids_recursive "${SCHEDULER_PID}"
-	}
-	rm -rf "${ABL_DIR}"
+	[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}"
+
 	exit 1
 }
 
@@ -118,8 +113,6 @@ handle_done_jobs()
 {
 	local done_job_file done_job_rv done_pid done_path suffix=
 	[ -n "${1}" ] && suffix="${1}_"
-
-	[ -f "${SCHEDULE_DIR}/nonfatal" ] || handle_fatal
 
 	for done_job_file in "${SCHEDULE_DIR}/done_${suffix}"*
 	do
@@ -135,12 +128,10 @@ print_timed_msg -yellow "Job $done_pid completed."
 
 		if [ "${done_job_rv}" != 0 ]
 		then
-			[ "${done_job_rv}" = 1 ] && handle_fatal
-
 			eval "done_path=\"\${JOB_URL_${done_pid}}\""
 
 			[ -f "${SCHEDULE_DIR}/fail_reported_${done_pid}" ] && return 0
-			touch "${SCHEDULE_DIR}/fail_reported_${done_pid}"
+			touch "${SCHEDULE_DIR}/fail_reported_${done_pid}" 2>/dev/null
 
 			reg_failure "Processing job (PID ${done_pid}) for list '${done_path}' returned error code '${done_job_rv}'."
 			[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
@@ -188,8 +179,7 @@ scheduler_timeout_watchdog()
 	local sched_time_s=0
 	while :
 	do
-		[ -f "${SCHEDULE_DIR}/scheduler_done_${1}" ] && exit 0
-		[ -f "${SCHEDULE_DIR}/nonfatal" ] || handle_fatal
+		[ -d "/proc/${1}" ] || exit 0
 		[ "${sched_time_s}" -lt "${PROCESSING_TIMEOUT_S}" ] ||
 		{
 			reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${1})."
@@ -205,15 +195,23 @@ schedule_jobs()
 {
 	finalize_scheduler()
 	{
-		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] && kill_pids_recursive "${RUNNING_PIDS}"
-		touch "${SCHEDULE_DIR}/scheduler_done_${SCHEDULER_PID}"
+		trap ':' USR1
+		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] &&
+		{
+			log_msg "" "Stopping unfinished jobs (${RUNNING_PIDS})."
+			kill "${RUNNING_PIDS}" 2>/dev/null
+			rm -rf "${PROCESSED_PARTS_DIR}"
+		}
 		exit "${1}"
 	}
 
 	local list_type list_types="${1}" list_format list_url SCHEDULER_PID
 	get_curr_job_pid SCHEDULER_PID || finalize_scheduler 1
+print_timed_msg -yellow "Starting scheduler (PID: ${SCHEDULER_PID})."
 	RUNNING_PIDS=
 	RUNNING_JOBS_CNT=0
+
+	trap 'finalize_scheduler 1' USR1
 
 	for list_type in ${list_types}
 	do
@@ -263,7 +261,7 @@ schedule_jobs()
 				log_msg -warn "" "Local ${list_type} file is empty."
 			else
 				log_msg -blue "" "Scheduling processing for the local ${list_type}."
-				schedule_job LOCAL "${local_list_path}" "${list_type}" raw
+				schedule_job LOCAL "${local_list_path}" "${list_type}" raw || finalize_scheduler 1
 				export "JOB_URL_${!}"="${local_list_path}"
 			fi
 		fi
@@ -304,12 +302,7 @@ process_list_part()
 				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, $(bytes2human "${part_size_B}"))." ;;
 			*)
 				rm -f "${dest_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
-				if [ "${1}" = 1 ]
-				then
-					rm -f "${SCHEDULE_DIR}/nonfatal"
-					[ ! -f "${SCHEDULE_DIR}/fatal" ] && [ -n "${curr_job_pid}" ] &&
-						printf '%s\n' "${curr_job_pid} ${list_path}" > "${SCHEDULE_DIR}/fatal"
-				fi
+				[ "${1}" = 1 ] && handle_fatal "${curr_job_pid}" "${list_path}"
 		esac
 
 		[ -n "${2}" ] && reg_failure "process_list_part: ${2}"
@@ -521,8 +514,6 @@ gen_list_parts()
 	print_msg ""
 
 	set +m # disable job complete notification
-
-	touch "${SCHEDULE_DIR}/nonfatal" || return 1 # serves as flag that no fatal error occured
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	for list_types in allowlist "blocklist blocklist_ipv4"
@@ -1029,7 +1020,7 @@ check_active_blocklist()
 		done
 	done
 
-	log_msg "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
+	log_msg "" "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
 	reg_action -blue "Testing adblocking."
 
 	for i in $(seq 1 15)
