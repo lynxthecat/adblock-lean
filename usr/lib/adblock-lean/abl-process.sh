@@ -59,10 +59,14 @@ subtract_a_from_b() {
 # 1 - var name for output
 get_uptime_s()
 {
-	local uptime
-	read -r uptime _ < /proc/uptime
-	uptime="${uptime%.*}"
-	eval "${1}"='${uptime:-0}'
+	local __uptime
+	read -r __uptime _ < /proc/uptime &&
+	__uptime="${__uptime%.*}" &&
+	case "${__uptime}" in
+		''|*[!0-9]*) false ;;
+		*) :
+	esac || { reg_failure "Failed to get uptime from /proc/uptime."; eval "${1}"=0; return 1; }
+	eval "${1}"='${__uptime:-0}'
 }
 
 # To use, first get initial uptime: 'get_uptime_s INITIAL_UPTIME_S'
@@ -73,7 +77,7 @@ get_uptime_s()
 get_elapsed_time_s()
 {
 	local uptime_s
-	get_uptime_s uptime_s
+	get_uptime_s uptime_s || return 1
 	eval "${1}"=$(( uptime_s-${2:-uptime_s} ))
 }
 
@@ -100,7 +104,7 @@ handle_fatal()
 	if [ -n "${fatal_pid}" ]
 	then
 		: "${fatal_path:=unknown}"
-		reg_failure "Processing job for list '${fatal_path}' reported fatal error."
+		reg_failure "Processing job (PID: ${fatal_pid}) for list '${fatal_path}' reported fatal error."
 	fi
 
 	[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}"
@@ -108,37 +112,45 @@ handle_fatal()
 	exit 1
 }
 
-# 1 (optional) - only handle job with pid $1
-handle_done_jobs()
+# 1 - job PID
+# 2 - job return code
+handle_done_job()
 {
-	local done_job_file done_job_rv done_pid done_path suffix=
-	[ -n "${1}" ] && suffix="${1}_"
+	local done_pid="${1}" done_job_rv="${2}" done_path me=handle_done_job
+	[ -n "${done_pid}" ] || { reg_failure "${me}: received empty string for PID."; return 1; }
+	[ -n "${done_job_rv}" ] || { reg_failure "${me}: received empty string instead of return code for job ${done_pid}."; return 1; }
 
-	for done_job_file in "${SCHEDULE_DIR}/done_${suffix}"*
-	do
-		[ -e "${done_job_file}" ] || break
-		rm -f "${done_job_file}"
-		local done_filename="${done_job_file##*/}" IFS=_
-		set -- ${done_filename}
-		IFS="${DEFAULT_IFS}"
-		done_pid="${2}" done_job_rv="${3}"
 print_timed_msg -yellow "Job $done_pid completed."
-		subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
-		RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
+	subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
+	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 
-		if [ "${done_job_rv}" != 0 ]
-		then
-			eval "done_path=\"\${JOB_URL_${done_pid}}\""
+	if [ "${done_job_rv}" != 0 ]
+	then
+		eval "done_path=\"\${JOB_URL_${done_pid}}\""
 
-			[ -f "${SCHEDULE_DIR}/fail_reported_${done_pid}" ] && return 0
-			touch "${SCHEDULE_DIR}/fail_reported_${done_pid}" 2>/dev/null
+		[ -f "${SCHEDULE_DIR}/fail_reported_${done_pid}" ] && return 0
+		touch "${SCHEDULE_DIR}/fail_reported_${done_pid}" 2>/dev/null
 
-			reg_failure "Processing job (PID ${done_pid}) for list '${done_path}' returned error code '${done_job_rv}'."
-			[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-			log_msg "Skipping file and continuing."
-		fi
-	done
+		reg_failure "Processing job (PID ${done_pid}) for list '${done_path}' returned error code '${done_job_rv}'."
+		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
+		log_msg "Skipping file and continuing."
+	fi
 	:
+}
+
+# 1 - var name to output remaining time
+check_for_timeout()
+{
+	local ct_elapsed_time_s ct_remaining_time_s
+	eval "${1}"=0
+	get_elapsed_time_s ct_elapsed_time_s "${INITIAL_UPTIME_S}" || return 1
+	ct_remaining_time_s=$((PROCESSING_TIMEOUT_S-ct_elapsed_time_s))
+	[ "${ct_remaining_time_s}" -gt 0 ] ||
+	{
+		reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${SCHEDULER_PID})."
+		return 1
+	}
+	eval "${1}"='${ct_remaining_time_s}'
 }
 
 # 1 - list origin (DL|LOCAL)
@@ -152,18 +164,20 @@ schedule_job()
 
 print_timed_msg -yellow "Scheduling $list_origin job (running jobs: $RUNNING_JOBS_CNT)"
 
-	handle_done_jobs || return 1
-
 	# wait for job vacancy
-	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_PARALLEL_JOBS}" ]
-	do
-print_timed_msg -yellow "Waiting for vacancy (running jobs: $RUNNING_JOBS_CNT, running PIDS: $RUNNING_PIDS)"
-		[ -n "${RUNNING_PIDS}" ] ||
-			{ reg_failure "\$RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT} but no registered jobs PIDs."; return 1; }
+	local remaining_time_s done_pid done_rv
+	check_for_timeout remaining_time_s || return 1
+	[ "${RUNNING_JOBS_CNT}" -ge "${MAX_PARALLEL_JOBS}" ] &&
+		print_timed_msg -yellow "Waiting for vacancy (running jobs: $RUNNING_JOBS_CNT, running PIDS: $RUNNING_PIDS)"
 
-		wait -n ${RUNNING_PIDS} # wait for any one of the PIDs to finish
-		handle_done_jobs || return 1
+	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_PARALLEL_JOBS}" ] && [ -e "${SCHED_CB_FIFO}" ] &&
+		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
+	do
+		check_for_timeout remaining_time_s || return 1
+		handle_done_job "${done_pid}" "${done_rv}" || return 1
+print_timed_msg -yellow "Vacancy available (running jobs: $RUNNING_JOBS_CNT)"
 	done
+	check_for_timeout remaining_time_s || return 1
 
 	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
 	process_list_part "${@}" &
@@ -171,23 +185,6 @@ print_timed_msg -yellow "Waiting for vacancy (running jobs: $RUNNING_JOBS_CNT, r
 	add2list RUNNING_PIDS "${!}" " "
 
 	:
-}
-
-# 1 - scheduler PID
-scheduler_timeout_watchdog()
-{
-	local sched_time_s=0
-	while :
-	do
-		[ -d "/proc/${1}" ] || exit 0
-		[ "${sched_time_s}" -lt "${PROCESSING_TIMEOUT_S}" ] ||
-		{
-			reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${1})."
-			handle_fatal
-		}
-		sched_time_s=$((sched_time_s+5))
-		sleep 5
-	done
 }
 
 # 1 - list types (allowlist|blocklist|blocklist_ipv4)
@@ -198,10 +195,11 @@ schedule_jobs()
 		trap ':' USR1
 		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] &&
 		{
-			log_msg "" "Stopping unfinished jobs (${RUNNING_PIDS})."
+			log_msg "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
 			kill "${RUNNING_PIDS}" 2>/dev/null
-			rm -rf "${PROCESSED_PARTS_DIR}"
+			rm -rf "${PROCESSED_PARTS_DIR}" 2>/dev/null
 		}
+		rm -f "${SCHED_CB_FIFO}"
 		exit "${1}"
 	}
 
@@ -212,6 +210,10 @@ print_timed_msg -yellow "Starting scheduler (PID: ${SCHEDULER_PID})."
 	RUNNING_JOBS_CNT=0
 
 	trap 'finalize_scheduler 1' USR1
+
+	local SCHED_CB_FIFO="${SCHEDULE_DIR}/scheduler_callback_${SCHEDULER_PID}"
+	mkfifo "${SCHED_CB_FIFO}" || finalize_scheduler 1
+	exec 3<>"${SCHED_CB_FIFO}"
 
 	for list_type in ${list_types}
 	do
@@ -267,18 +269,20 @@ print_timed_msg -yellow "Starting scheduler (PID: ${SCHEDULER_PID})."
 		fi
 	done
 
-	# handle errors in previously finished jobs
-	handle_done_jobs || finalize_scheduler 1
-
 	# wait for jobs to finish and handle errors
-	local job_pid
-	for job_pid in ${RUNNING_PIDS}
+	local remaining_time_s done_pid done_rv
+	check_for_timeout remaining_time_s || return 1
+	while [ "${RUNNING_JOBS_CNT}" -gt 0 ] && [ -e "${SCHED_CB_FIFO}" ] &&
+		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
 	do
-		wait "${job_pid}"
-		handle_done_jobs "${job_pid}" || finalize_scheduler 1
+		check_for_timeout remaining_time_s || finalize_scheduler 1
+		handle_done_job "${done_pid}" "${done_rv}" || finalize_scheduler 1
 	done
+	check_for_timeout remaining_time_s || finalize_scheduler 1
+	[ "${RUNNING_JOBS_CNT}" = 0 ] ||
+		{ reg_failure "Not all jobs are done: \${RUNNING_JOBS_CNT}=${RUNNING_JOBS_CNT}"; finalize_scheduler 1; }
 
-	finalize_scheduler ${?}
+	finalize_scheduler 0
 }
 
 # 1 - list origin (DL|LOCAL)
@@ -296,7 +300,6 @@ process_list_part()
 {
 	finalize_job()
 	{
-		[ -n "${curr_job_pid}" ] && touch "${SCHEDULE_DIR}/done_${curr_job_pid}_${1}"
 		case "${1}" in
 			0)
 				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, $(bytes2human "${part_size_B}"))." ;;
@@ -305,6 +308,7 @@ process_list_part()
 				[ "${1}" = 1 ] && handle_fatal "${curr_job_pid}" "${list_path}"
 		esac
 
+		printf '%s\n' "${curr_job_pid} ${1}" > "${SCHED_CB_FIFO}"
 		[ -n "${2}" ] && reg_failure "process_list_part: ${2}"
 		exit "${1}"
 	}
@@ -468,7 +472,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		if [ "${list_origin}" = DL ] && { [ -z "${dl_completed}" ] || [ -n "${lines_cnt_low}" ]; }
 		then
 			reg_failure "Failed to download list part from URL '${list_url}'."
-			[ -s "${ucl_err_file}" ] && reg_failure "uclient-fetch errors: '$(cat "${ucl_err_file}")'."
+			[ -s "${ucl_err_file}" ] && log_msg "uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
 			rm -f "${ucl_err_file}"
 		else
 			rm -f "${ucl_err_file}"
@@ -537,11 +541,8 @@ gen_list_parts()
 			schedule_jobs "${list_types}" &
 			SCHEDULER_PID=${!}
 
-			scheduler_timeout_watchdog "${SCHEDULER_PID}" &
-			WATCHDOG_PID=${!}
 			wait "${SCHEDULER_PID}"
 			local sched_rv=${?}			
-			kill -9 "${WATCHDOG_PID}"
 			SCHEDULER_PID=
 			[ ${sched_rv} = 0 ] || return ${sched_rv}
 		fi
@@ -701,7 +702,7 @@ generate_and_process_blocklist_file()
 		restart_dnsmasq || exit 1
 	fi
 
-	get_uptime_s INITIAL_UPTIME_S
+	get_uptime_s INITIAL_UPTIME_S || return 1
 
 	if ! gen_list_parts
 	then
@@ -845,7 +846,7 @@ generate_and_process_blocklist_file()
 	fi
 
 	log_msg -green "" "Active blocklist check passed with the new blocklist file."
-	log_success "New blocklist installed with entries count: ${final_entries_cnt_human}."
+	log_success "${green}New blocklist installed with entries count: ${blue}${final_entries_cnt_human}${n_c}."
 	rm -f "${ABL_DIR}/prev_blocklist"*
 
 	:
