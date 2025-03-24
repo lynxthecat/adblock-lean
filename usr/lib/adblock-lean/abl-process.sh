@@ -12,6 +12,7 @@ PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 SCHEDULE_DIR="${ABL_DIR}/schedule"
 
 PROCESSING_TIMEOUT_S=900 # 15 minutes
+IDLE_TIMEOUT_S=300 # 5 minutes
 
 
 # UTILITY FUNCTIONS
@@ -76,9 +77,9 @@ get_uptime_s()
 # 2 - initial uptime in seconds
 get_elapsed_time_s()
 {
-	local uptime_s
-	get_uptime_s uptime_s || return 1
-	eval "${1}"=$(( uptime_s-${2:-uptime_s} ))
+	local ge_uptime_s
+	get_uptime_s ge_uptime_s || return 1
+	eval "${1}"=$(( ge_uptime_s-${2:-ge_uptime_s} ))
 }
 
 
@@ -138,18 +139,35 @@ print_timed_msg -yellow "Job $done_pid completed."
 	:
 }
 
+# sets var named $1 to remaining time based on $PROCESSING_TIMEOUT_S or to $IDLE_TIMEOUT_S, whichever is lower
+# if timeout is hit, returns 1
 # 1 - var name to output remaining time
 check_for_timeout()
 {
-	local ct_elapsed_time_s ct_remaining_time_s
+	local ct_curr_time_s ct_total_time_s ct_remaining_time_s
 	eval "${1}"=0
-	get_elapsed_time_s ct_elapsed_time_s "${INITIAL_UPTIME_S}" || return 1
-	ct_remaining_time_s=$((PROCESSING_TIMEOUT_S-ct_elapsed_time_s))
+
+	get_uptime_s ct_curr_time_s || return 1
+	ct_total_time_s=$((INITIAL_UPTIME_S-ct_curr_time_s))
+
+	ct_remaining_time_s=$((PROCESSING_TIMEOUT_S-ct_total_time_s))
 	[ "${ct_remaining_time_s}" -gt 0 ] ||
 	{
 		reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${SCHEDULER_PID})."
 		return 1
 	}
+
+	case "$(( IDLE_TIMEOUT_S - (ct_curr_time_s-${CT_PREV_TIME_S:-${INITIAL_UPTIME_S}}) ))" in
+		0|-*)
+			reg_failure "Idle timeout (${IDLE_TIMEOUT_S} s) for scheduler (PID: ${SCHEDULER_PID})."
+			return 1
+	esac
+
+	case $((IDLE_TIMEOUT_S-ct_remaining_time_s)) in
+		-*) ct_remaining_time_s="${IDLE_TIMEOUT_S}"
+	esac
+
+	CT_PREV_TIME_S=${ct_curr_time_s}
 	eval "${1}"='${ct_remaining_time_s}'
 }
 
