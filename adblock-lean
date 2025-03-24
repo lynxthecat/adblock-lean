@@ -255,7 +255,7 @@ log_msg()
 	do
 		IFS="${DEFAULT_IFS}"
 		case "${m}" in
-			dummy) echo ;;
+			dummy) printf '\n' ;;
 			*)
 				print_msg ${color} "${m}"
 				logger -t adblock-lean -p user."${err_l}" "${m}"
