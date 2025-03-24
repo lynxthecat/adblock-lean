@@ -129,9 +129,6 @@ print_timed_msg -yellow "Job $done_pid completed."
 	then
 		eval "done_path=\"\${JOB_URL_${done_pid}}\""
 
-		[ -f "${SCHEDULE_DIR}/fail_reported_${done_pid}" ] && return 0
-		touch "${SCHEDULE_DIR}/fail_reported_${done_pid}" 2>/dev/null
-
 		reg_failure "Processing job (PID ${done_pid}) for list '${done_path}' returned error code '${done_job_rv}'."
 		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
 		log_msg "Skipping file and continuing."
@@ -318,6 +315,7 @@ process_list_part()
 {
 	finalize_job()
 	{
+		[ -n "${2}" ] && reg_failure "process_list_part: ${2}"
 		case "${1}" in
 			0)
 				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, $(bytes2human "${part_size_B}"))." ;;
@@ -327,7 +325,6 @@ process_list_part()
 		esac
 
 		printf '%s\n' "${curr_job_pid} ${1}" > "${SCHED_CB_FIFO}"
-		[ -n "${2}" ] && reg_failure "process_list_part: ${2}"
 		exit "${1}"
 	}
 
@@ -341,7 +338,7 @@ process_list_part()
 
 	get_curr_job_pid curr_job_pid || return 1
 
-print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
+print_timed_msg -yellow "Starting job (PID: $curr_job_pid, path: '$list_path')"
 
 	for v in 1 2 3 4; do
 		eval "[ -z \"\${${v}}\" ]" && finalize_job 1 "Missing argument ${v}."
@@ -442,8 +439,15 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			cat
 		fi > "${dest_file}"
 
-		[ -f "${list_part_size_file}" ] && read -r part_size_B _ < "${list_part_size_file}" || finalize_job 1
+		if [ ! -f "${list_part_size_file}" ] || ! read -r part_size_B _ < "${list_part_size_file}"
+		then
+print_msg -purple "Processing job (PID ${curr_job_pid}) is waiting for the list size file."
+			sleep 1
+			[ -f "${list_part_size_file}" ] && read -r part_size_B _ < "${list_part_size_file}" ||
+				finalize_job 1 "Processing job (PID ${curr_job_pid}) could not find the list size file."
+		fi
 		rm -f "${list_part_size_file}"
+
 		: "${part_size_B:=0}"
 		part_size_KB=$((part_size_B/1024))
 		if [ "${part_size_KB}" -ge "${max_file_part_size_KB}" ]
@@ -476,7 +480,12 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			finalize_job 3
 		fi
 
-		[ -f "${list_part_line_cnt_file}" ] && read -r part_line_count _ < "${list_part_line_cnt_file}"
+		if [ ! -f "${list_part_line_cnt_file}" ] || ! read -r part_line_count _ < "${list_part_line_cnt_file}"
+		then
+print_msg -purple "Processing job (PID ${curr_job_pid}) is waiting for the line count file."
+			sleep 1
+			[ -f "${list_part_line_cnt_file}" ] && read -r part_line_count _ < "${list_part_line_cnt_file}"
+		fi
 		: "${part_line_count:=0}"
 		int2human line_count_human "${part_line_count}"
 
@@ -503,7 +512,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 			finalize_job 2 "${max_download_retries} download attempts failed for URL '${list_url}'."
 		fi
 
-		reg_action -blue "Sleeping for 5 seconds after failed download attempt." || finalize_job 1
+		reg_action -blue "Processing job for URL '${list_url}' is sleeping for 5 seconds after failed download attempt." || finalize_job 1 "Failed to register action."
 		sleep 5 &
 		local sleep_pid=${!}
 		wait ${sleep_pid}
