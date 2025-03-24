@@ -489,7 +489,7 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 
 		if [ "${list_origin}" = DL ] && { [ -z "${dl_completed}" ] || [ -n "${lines_cnt_low}" ]; }
 		then
-			reg_failure "Failed to download list part from URL '${list_url}'."
+			reg_failure "Failed download attempt for URL '${list_url}'."
 			[ -s "${ucl_err_file}" ] && log_msg "uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
 			rm -f "${ucl_err_file}"
 		else
