@@ -280,7 +280,6 @@ cleanup_and_exit()
 	if [ -n "${CLEANUP_REQ}" ]
 	then
 		[ "${1}" != 0 ] && print_msg "" "Cleaning up..."
-		[ -n "${WATCHDOG_PID}" ] && kill -9 "${WATCHDOG_PID}" 2>/dev/null
 		[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}"
 		rm -rf "${ABL_DIR}"
 	fi
