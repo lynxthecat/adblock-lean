@@ -504,7 +504,9 @@ print_timed_msg -yellow "Starting processing job (PID: $curr_job_pid)"
 		fi
 
 		reg_action -blue "Sleeping for 5 seconds after failed download attempt." || finalize_job 1
-		sleep 5
+		sleep 5 &
+		local sleep_pid=${!}
+		wait ${sleep_pid}
 	done
 }
 
