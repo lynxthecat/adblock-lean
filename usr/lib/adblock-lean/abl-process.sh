@@ -121,7 +121,6 @@ handle_done_job()
 	[ -n "${done_pid}" ] || { reg_failure "${me}: received empty string for PID."; return 1; }
 	[ -n "${done_job_rv}" ] || { reg_failure "${me}: received empty string instead of return code for job ${done_pid}."; return 1; }
 
-print_timed_msg -yellow "Job $done_pid completed."
 	subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
 	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 
@@ -177,20 +176,15 @@ schedule_job()
 {
 	local list_origin="${1}" list_path="${2}" list_type="${3}" list_format="${4}"
 
-print_timed_msg -yellow "Scheduling $list_origin job (running jobs: $RUNNING_JOBS_CNT)"
-
 	# wait for job vacancy
 	local remaining_time_s done_pid done_rv
 	check_for_timeout remaining_time_s || return 1
-	[ "${RUNNING_JOBS_CNT}" -ge "${MAX_PARALLEL_JOBS}" ] &&
-		print_timed_msg -yellow "Waiting for vacancy (running jobs: $RUNNING_JOBS_CNT, running PIDS: $RUNNING_PIDS)"
 
 	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_PARALLEL_JOBS}" ] && [ -e "${SCHED_CB_FIFO}" ] &&
 		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
 	do
 		check_for_timeout remaining_time_s || return 1
 		handle_done_job "${done_pid}" "${done_rv}" || return 1
-print_timed_msg -yellow "Vacancy available (running jobs: $RUNNING_JOBS_CNT)"
 	done
 	check_for_timeout remaining_time_s || return 1
 
@@ -220,7 +214,7 @@ schedule_jobs()
 
 	local list_type list_types="${1}" list_format list_url SCHEDULER_PID
 	get_curr_job_pid SCHEDULER_PID || finalize_scheduler 1
-print_timed_msg -yellow "Starting scheduler (PID: ${SCHEDULER_PID})."
+
 	RUNNING_PIDS=
 	RUNNING_JOBS_CNT=0
 
@@ -338,8 +332,6 @@ process_list_part()
 
 	get_curr_job_pid curr_job_pid || return 1
 
-print_timed_msg -yellow "Starting job (PID: $curr_job_pid, path: '$list_path')"
-
 	for v in 1 2 3 4; do
 		eval "[ -z \"\${${v}}\" ]" && finalize_job 1 "Missing argument ${v}."
 	done
@@ -441,7 +433,6 @@ print_timed_msg -yellow "Starting job (PID: $curr_job_pid, path: '$list_path')"
 
 		if [ ! -f "${list_part_size_file}" ] || ! read -r part_size_B _ < "${list_part_size_file}"
 		then
-print_msg -purple "Processing job (PID ${curr_job_pid}) is waiting for the list size file."
 			sleep 1
 			[ -f "${list_part_size_file}" ] && read -r part_size_B _ < "${list_part_size_file}" ||
 				finalize_job 1 "Processing job (PID ${curr_job_pid}) could not find the list size file."
@@ -482,7 +473,6 @@ print_msg -purple "Processing job (PID ${curr_job_pid}) is waiting for the list 
 
 		if [ ! -f "${list_part_line_cnt_file}" ] || ! read -r part_line_count _ < "${list_part_line_cnt_file}"
 		then
-print_msg -purple "Processing job (PID ${curr_job_pid}) is waiting for the line count file."
 			sleep 1
 			[ -f "${list_part_line_cnt_file}" ] && read -r part_line_count _ < "${list_part_line_cnt_file}"
 		fi
