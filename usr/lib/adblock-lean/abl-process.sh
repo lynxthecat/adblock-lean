@@ -491,7 +491,7 @@ process_list_part()
 			finalize_job 2 "${max_download_retries} download attempts failed for URL '${list_url}'."
 		fi
 
-		log_msg -blue "Processing job for URL '${list_url}' is sleeping for 5 seconds after failed download attempt." || finalize_job 1 "Failed to register action."
+		log_msg -yellow "Processing job for URL '${list_url}' is sleeping for 5 seconds after failed download attempt." || finalize_job 1 "Failed to register action."
 		sleep 5 &
 		local sleep_pid=${!}
 		wait ${sleep_pid}
