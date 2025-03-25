@@ -371,17 +371,27 @@ check_lock()
 	unset LOCK_PID PID_ABL_CMD
 	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
 	[ ! -f "${PID_FILE}" ] && return 0
-	if IFS=" " read -r LOCK_PID PID_ABL_CMD < "${PID_FILE}"
-	then
-		case "${LOCK_PID}" in
-			"${$}") return 3 ;;
-			*[!0-9]*) reg_failure "pid file '${PID_FILE}' contains unexpected string '${LOCK_PID}'."; return 1 ;;
-			*) kill -0 "${LOCK_PID}" 2>/dev/null && return 2
-		esac
-	else
+
+	local read_failed='' read_attempt=0
+	while :
+	do
+		IFS=" " read -r LOCK_PID PID_ABL_CMD < "${PID_FILE}" && break
+		read_attempt=$((read_attempt+1))
+		[ "${read_attempt}" -le 3 ] || { read_failed=1; break; }
+		sleep 1
+	done
+
+	[ -n "${read_failed}" ] &&
+	{
 		reg_failure "Failed to read the pid file '${PID_FILE}'."
 		return 1
-	fi
+	}
+
+	case "${LOCK_PID}" in
+		"${$}") return 3 ;;
+		*[!0-9]*) reg_failure "pid file '${PID_FILE}' contains unexpected string '${LOCK_PID}'."; return 1 ;;
+		*) kill -0 "${LOCK_PID}" 2>/dev/null && return 2
+	esac
 
 	log_msg -warn "Detected stale pid file '${PID_FILE}' for PID ${LOCK_PID}. Removing."
 	rm_lock || return 1
