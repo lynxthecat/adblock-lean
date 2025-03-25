@@ -51,6 +51,7 @@ ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
 CONFIG_FORMAT=v7
 
 PID_FILE="${ABL_PID_DIR}/adblock-lean.pid"
+ACTION_FILE="${ABL_PID_DIR}/adblock-lean.action"
 
 ABL_UPDATE_LOG_FILE=/var/log/abl_update.log
 ABL_SESSION_LOG_FILE=/var/log/abl_session.log
@@ -159,7 +160,7 @@ try_mkdir()
 # output via $REPLY
 pick_opt()
 {
-	update_pid_action "Waiting for user input in console" || return 1
+	update_action_file "Waiting for user input in console" || return 1
 	while :
 	do
 		printf %s "$1: " 1>${MSGS_DEST}
@@ -328,9 +329,6 @@ restart_dnsmasq()
 	:
 }
 
-# args:
-# 1 - (optional) -f to skip check for existing lock
-# 1/2 - action to write to the pid file
 #
 # return codes:
 # 0 - success
@@ -338,26 +336,20 @@ restart_dnsmasq()
 # 254 - lock file already exists
 mk_lock()
 {
-	local me="mk_lock"
-	if [ "${1}" != '-f' ]
-	then
-		check_lock
-		case ${?} in
-			1) return 1 ;;
-			2)
-				report_pid_action
-				log_msg -yellow "Refusing to open another instance."
-				return 254
-		esac
-	else
-		shift
-	fi
+	local me=mk_lock
+	check_lock
+	case ${?} in
+		1) return 1 ;;
+		2)
+			report_curr_action -log
+			log_msg -yellow "Refusing to open another instance."
+			return 254
+	esac
 
-	[ -z "${1%.}" ] && { reg_failure "${me}: pid action is unspecified."; return 1; }
 	[ -z "${PID_FILE}" ] && { reg_failure "${me}: \${PID_FILE} variable is unset."; return 1; }
 
 	try_mkdir -p "${ABL_PID_DIR}" || return 1
-	printf '%s\n' "${$} ${1%.}" > "${PID_FILE}" || { reg_failure "${me}: Failed to write to pid file '${PID_FILE}'."; return 1; }
+	printf '%s\n' "${$}" > "${PID_FILE}" || { reg_failure "${me}: Failed to write to pid file '${PID_FILE}'."; return 1; }
 	:
 }
 
@@ -368,14 +360,14 @@ mk_lock()
 # 3 - lock file belongs to current PID
 check_lock()
 {
-	unset LOCK_PID PID_ABL_CMD
+	unset LOCK_PID
 	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
 	[ ! -f "${PID_FILE}" ] && return 0
 
 	local read_failed='' read_attempt=0
 	while :
 	do
-		IFS=" " read -r LOCK_PID PID_ABL_CMD < "${PID_FILE}" && break
+		IFS="" read -r LOCK_PID < "${PID_FILE}" && break
 		read_attempt=$((read_attempt+1))
 		[ "${read_attempt}" -le 3 ] || { read_failed=1; break; }
 		sleep 1
@@ -389,7 +381,7 @@ check_lock()
 
 	case "${LOCK_PID}" in
 		"${$}") return 3 ;;
-		*[!0-9]*) reg_failure "pid file '${PID_FILE}' contains unexpected string '${LOCK_PID}'."; return 1 ;;
+		*[!0-9]*) reg_failure "pid file '${PID_FILE}' contains unexpected string '${LOCK_PID}'."; unset LOCK_PID; return 1 ;;
 		*) kill -0 "${LOCK_PID}" 2>/dev/null && return 2
 	esac
 
@@ -409,24 +401,40 @@ rm_lock()
 
 # updates the pid file with a new action
 # 1 - new action
-update_pid_action() {
-	check_lock
-	case ${?} in
-		3) ;;
-		1) return 1 ;;
-		2) reg_failure "update_pid_action(): pid file '${PID_FILE}' has unexpected pid '${LOCK_PID}'."; return 1 ;;
-		0) return 0
-	esac
-	mk_lock -f "${1}"
-	return ${?}
+update_action_file() {
+	local me="update_action_file"
+	[ -z "${1%.}" ] && { reg_failure "${me}: action is unspecified."; return 1; }
+
+	{
+		printf '%s\n' "${1%.}" > "${ACTION_FILE}" || reg_failure "${me}: Failed to write to action file '${ACTION_FILE}'."
+	} & # runs asynchronously
+	:
 }
 
-report_pid_action()
+# 1 (optional): '-log' to log current action as well
+report_curr_action()
 {
-	local reported_pid="unknown PID"
-	[ -n "${LOCK_PID}" ] && reported_pid="PID ${LOCK_PID}"
+	[ "${MSGS_DEST}" = "/dev/null" ] && [ "${1}" != "-log" ] && return 0
+	local reported_pid report_cmd=print_msg
+	[ -n "${ACTION_FILE}" ] || { reg_failure "\$ACTION_FILE var is unset."; return 1; }
+	[ -f "${ACTION_FILE}" ] || return 0
+	if [ -z "${LOCK_PID}" ]
+	then
+		check_lock
+		case ${?} in
+			0) return 0 ;;
+			1) return 1 ;;
+			2|3) ;;
+		esac
+	fi
+	reported_pid="${LOCK_PID:-unknown}"
+
+	IFS="" read -r PID_ABL_CMD < "${ACTION_FILE}"
 	: "${PID_ABL_CMD:="unknown action"}"
-	print_msg "adblock-lean (${reported_pid}) is performing action '${PID_ABL_CMD}'."
+
+	[ "${1}" = -log ] && report_cmd=log_msg
+
+	${report_cmd} "adblock-lean (PID: ${reported_pid}) is performing action '${PID_ABL_CMD}'."
 	luci_pid_action=${PID_ABL_CMD}
 	:
 }
@@ -449,7 +457,7 @@ reg_action()
 	[ -z "${nolog}" ] && log_msg "" ${color} "${msg% }"
 	if [ -n "${LOCK_REQ}" ]
 	then
-		update_pid_action "${msg% }" || return 1
+		update_action_file "${msg% }" || return 1
 	fi
 	:
 }
@@ -738,7 +746,8 @@ init_command()
 	# make lock if needed
 	if [ -n "${LOCK_REQ}" ]
 	then
-		mk_lock "${ABL_CMD}" || { local rv=${?}; unset LOCK_REQ CLEANUP_REQ; exit ${rv}; }
+		mk_lock || { local rv=${?}; unset LOCK_REQ CLEANUP_REQ; exit ${rv}; }
+		update_action_file "${ABL_CMD}"
 	fi
 
 	# enable writing session log if we have the lock
@@ -1175,7 +1184,7 @@ status()
 	case ${?} in
 		1) exit 1 ;;
 		2)
-			report_pid_action
+			report_curr_action
 			exit 2
 	esac
 	get_abl_run_state
