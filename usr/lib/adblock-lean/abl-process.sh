@@ -223,7 +223,7 @@ schedule_jobs()
 			eval "list_urls=\"\${${d}${list_type}_urls}\""
 			[ -z "${list_urls}" ] && continue
 
-			reg_action -blue "Starting ${list_format} ${list_type} part(s) download." || finalize_scheduler 1
+			log_msg -blue "Starting ${list_format} ${list_type} part(s) download." || finalize_scheduler 1
 
 			invalid_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
 				log_msg -warn "" "Invalid URLs detected:" "${invalid_urls}"
@@ -491,7 +491,7 @@ process_list_part()
 			finalize_job 2 "${max_download_retries} download attempts failed for URL '${list_url}'."
 		fi
 
-		reg_action -blue "Processing job for URL '${list_url}' is sleeping for 5 seconds after failed download attempt." || finalize_job 1 "Failed to register action."
+		log_msg -blue "Processing job for URL '${list_url}' is sleeping for 5 seconds after failed download attempt." || finalize_job 1 "Failed to register action."
 		sleep 5 &
 		local sleep_pid=${!}
 		wait ${sleep_pid}
