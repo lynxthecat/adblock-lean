@@ -678,7 +678,7 @@ init_command()
 		status) libs_req=1 work_dir_req=1 config_req=1 ;;
 		upd_cron_job) libs_req=1 config_req=1 ;;
 		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
-		boot) libs_req=1 config_req=1 ;;
+		boot) libs_req=1 config_req=1 LOCK_REQ=1 ;;
 		pause) libs_req=1 work_dir_req=1 config_req=1 LOCK_REQ=1 ;;
 		start|resume) libs_req=1 work_dir_req=1 config_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
@@ -1070,7 +1070,7 @@ gen_stats()
 boot()
 {
 	init_command boot || exit 1
-	log_msg -purple "Sleeping for ${boot_start_delay_s} seconds."
+	reg_action -purple "Sleeping for ${boot_start_delay_s} seconds."
 	sleep "${boot_start_delay_s}"
 	start "$@"
 }
