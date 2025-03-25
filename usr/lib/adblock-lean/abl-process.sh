@@ -5,7 +5,7 @@
 # silence shellcheck warnings
 : "${use_compression:=}" "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}"
 : "${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" "${local_allowlist_path:=}"
-: "${blue:=}" "${n_c:=}"
+: "${blue:=}" "${green:=}" "${n_c:=}"
 
 PROCESSED_PARTS_DIR="${ABL_DIR}/list_parts"
 
@@ -16,19 +16,6 @@ IDLE_TIMEOUT_S=300 # 5 minutes
 
 
 # UTILITY FUNCTIONS
-
-# 1: (optional) '-[color]'
-# prints each argument into a separate line
-print_timed_msg()
-{
-	local m curr_time color=
-	case "${1}" in -blue|-red|-green|-purple|-yellow) eval "color=\"\${${1#-}}\""; shift; esac
-	get_elapsed_time_s curr_time "${INITIAL_UPTIME_S}"
-	for m in "${@}"
-	do
-		printf '%s\n' "[ ${curr_time} ] ${color}${m}${n_c}" > "$MSGS_DEST"
-	done
-}
 
 try_gzip()
 {
@@ -130,7 +117,7 @@ handle_done_job()
 
 		reg_failure "Processing job (PID ${done_pid}) for list '${done_path}' returned error code '${done_job_rv}'."
 		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-		log_msg "Skipping file and continuing."
+		log_msg -yellow "Skipping file and continuing."
 	fi
 	:
 }
@@ -266,12 +253,11 @@ schedule_jobs()
 			eval "local_list_path=\"\${local_${list_type}_path}\""
 			if [ ! -f "${local_list_path}" ]
 			then
-				log_msg -blue "" "No local ${list_type} identified."
+				log_msg "No local ${list_type} identified."
 			elif [ ! -s "${local_list_path}" ]
 			then
 				log_msg -warn "" "Local ${list_type} file is empty."
 			else
-				log_msg -blue "" "Scheduling processing for the local ${list_type}."
 				schedule_job LOCAL "${local_list_path}" "${list_type}" raw || finalize_scheduler 1
 				export "JOB_URL_${!}"="${local_list_path}"
 			fi
@@ -1021,7 +1007,7 @@ check_active_blocklist()
 {
 	reg_action -blue "Checking active blocklist." || return 1
 
-	local family ip instance_ns def_ns ns_ips='' ns_ips_sp='' lookup_ok=
+	local family ip instance_ns def_ns ns_ips='' ns_ips_sp=''
 
 	check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || return 1
 	get_dnsmasq_instance_ns "${DNSMASQ_INSTANCE}"
@@ -1043,20 +1029,14 @@ check_active_blocklist()
 	log_msg "" "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
 	reg_action -blue "Testing adblocking."
 
-	for i in $(seq 1 15)
-	do
-		try_lookup_domain "adblocklean-test123.info" "${ns_ips}" -n && { lookup_ok=1; break; }
-		sleep 1
-	done
-
-	[ -n "${lookup_ok}" ] ||
+	try_lookup_domain "adblocklean-test123.info" "${ns_ips}" 15 -n ||
 		{ reg_failure "Lookup of the bogus test domain failed with new blocklist."; return 4; }
 
 	reg_action -blue "Testing DNS resolution."
 	for domain in ${test_domains}
 	do
-		try_lookup_domain "${domain}" "${ns_ips}" ||
-			{ local rv=${?}; reg_failure "Lookup of test domain '${domain}' failed with new blocklist."; return ${rv}; }
+		try_lookup_domain "${domain}" "${ns_ips}" 5 ||
+			{ reg_failure "Lookup of test domain '${domain}' failed with new blocklist."; return 1; }
 	done
 
 	:
@@ -1080,24 +1060,33 @@ test_url_domains()
 
 	for dom in $(printf %s "${domains}" | $SORT_CMD -u)
 	do
-		try_lookup_domain "${dom}" "127.0.0.1" || { reg_failure "Lookup of '${dom}' failed."; return 1; }
+		try_lookup_domain "${dom}" "127.0.0.1" 2 || { reg_failure "Lookup of '${dom}' failed."; return 1; }
 	done
 	:
 }
 
 # 1 - domain
 # 2 - nameservers
-# 3 - (optional) '-n': don't check if result is 127.0.0.1 or 0.0.0.0
+# 3 - max attempts
+# 4 - (optional) '-n': don't check if result is 127.0.0.1 or 0.0.0.0
 try_lookup_domain()
 {
-	local ns_res ip lookup_ok=
-	for ip in ${2}
+	local ns_res ip lookup_ok='' i=0
+
+	while :
 	do
-		ns_res="$(nslookup "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break; }
+		for ip in ${2}
+		do
+			ns_res="$(nslookup "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break 2; }
+		done
+		i=$((i+1))
+		[ "${i}" -gt "${3}" ] && break
+		sleep 1
 	done
+
 	[ -n "${lookup_ok}" ] || return 2
 
-	[ "${3}" = '-n' ] && return 0
+	[ "${4}" = '-n' ] && return 0
 
 	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^(Address: *0\.0\.0\.0|Address: *127\.0\.0\.1)$' &&
 		{ reg_failure "Lookup of '${1}' resulted in 0.0.0.0 or 127.0.0.1."; return 3; }
