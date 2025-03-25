@@ -522,7 +522,7 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
-	reg_action -blue "Starting download and processing of blocklist parts (max parallel jobs: ${MAX_PARALLEL_JOBS})."
+	reg_action -blue "Downloading and processing blocklist parts (max parallel jobs: ${MAX_PARALLEL_JOBS})."
 	print_msg ""
 
 	set +m # disable job complete notification
