@@ -93,6 +93,8 @@ handle_fatal()
 	then
 		: "${fatal_path:=unknown}"
 		reg_failure "Processing job (PID: ${fatal_pid}) for list '${fatal_path}' reported fatal error."
+	else
+		reg_failure "Fatal error reported by unknown processing job."
 	fi
 
 	[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}"
@@ -208,8 +210,8 @@ schedule_jobs()
 	trap 'finalize_scheduler 1' USR1
 
 	local SCHED_CB_FIFO="${SCHEDULE_DIR}/scheduler_callback_${SCHEDULER_PID}"
-	mkfifo "${SCHED_CB_FIFO}" || finalize_scheduler 1
-	exec 3<>"${SCHED_CB_FIFO}"
+	mkfifo "${SCHED_CB_FIFO}" &&
+	exec 3<>"${SCHED_CB_FIFO}" || { reg_failure "Failed to create FIFO '${SCHED_CB_FIFO}'."; finalize_scheduler 1; }
 
 	for list_type in ${list_types}
 	do
@@ -316,7 +318,7 @@ process_list_part()
 
 	local list_origin="${1}" list_path="${2}" list_type="${3}" list_format="${4}" curr_job_pid
 
-	get_curr_job_pid curr_job_pid || return 1
+	get_curr_job_pid curr_job_pid || finalize_job 1
 
 	for v in 1 2 3 4; do
 		eval "[ -z \"\${${v}}\" ]" && finalize_job 1 "Missing argument ${v}."
@@ -354,7 +356,8 @@ process_list_part()
 			DL)
 				rm -f "${ucl_err_file}"
 				fetch_cmd=dl_list ;;
-			LOCAL) fetch_cmd="cat"
+			LOCAL) fetch_cmd="cat" ;;
+			*) reg_failure "Invalid list origin '${list_origin}'."; finalize_job 1
 		esac
 
 		log_msg "Processing ${list_format} ${list_type}: ${blue}${list_path}${n_c}"
