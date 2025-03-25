@@ -223,7 +223,7 @@ schedule_jobs()
 			eval "list_urls=\"\${${d}${list_type}_urls}\""
 			[ -z "${list_urls}" ] && continue
 
-			log_msg -blue "Starting ${list_format} ${list_type} part(s) download."
+			log_msg -blue "" "Starting ${list_format} ${list_type} part(s) download."
 
 			invalid_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
 				log_msg -warn "" "Invalid URLs detected:" "${invalid_urls}"
