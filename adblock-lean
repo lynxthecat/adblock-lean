@@ -853,7 +853,7 @@ update_version()
 abl_post_update_1()
 {
 	# fix incorrect rc.d symlink from older versions
-	[ -f /etc/rc.d/K4adblock-lean ] && mv /etc/rc.d/K4adblock-lean /etc/rc.d/K${START}adblock-lean
+	[ -f /etc/rc.d/K4adblock-lean ] || [ -f /etc/rc.d/k99adblock-lean ] && mv /etc/rc.d/K*adblock-lean /etc/rc.d/K${STOP}adblock-lean
 
 	# @temp_workaround - remove a few months from now
 	# when upgrading from older versions, fetch and install latest release
