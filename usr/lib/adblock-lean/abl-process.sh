@@ -31,7 +31,7 @@ try_gunzip()
 # output via optional variable with name $3
 # returns status 0 if the result is null, 1 if not
 subtract_a_from_b() {
-	sab_out="${3:-___dummy}"
+	local sab_out="${3:-___dummy}"
 	case "${2}" in '') unset "${sab_out}"; return 0; esac
 	case "${1}" in '') eval "${sab_out}"='${2}'; [ ! "${2}" ]; return; esac
 	local _fs_su="${4:-"${_NL_}"}"
