@@ -135,7 +135,7 @@ do_setup()
 
 		installed_pkgs="$(get_installed_pkgs "${recomm_pkgs_regex}")" || return 1
 
-		echo
+		echo > "${MSGS_DEST}"
 		for util in ${RECOMMENDED_UTILS}
 		do
 			case "${installed_pkgs}" in
@@ -205,7 +205,7 @@ do_setup()
 			then
 				if [ -z "${free_space_B}" ] || [ -z "${utils_size_B}" ] || [ "${free_space_B}" -gt ${utils_size_B} ]
 				then
-					echo
+					echo > "${MSGS_DEST}"
 					$PKG_MANAGER update && $PKG_INSTALL_CMD ${pkgs2install% } && return 0
 					reg_failure "Failed to automatically install packages. You can install them manually later."
 					return 1
@@ -297,7 +297,7 @@ do_setup()
 		print_msg "" "${purple}Setup is complete.${n_c}" "" "Start adblock-lean now?"
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" != y ] && return 0
-		echo
+		echo > "${MSGS_DEST}"
 		start
 	fi
 	:
@@ -980,7 +980,7 @@ report_utils()
 {
 	local util awk_inst_tip='' sed_inst_tip='' sort_inst_tip=''
 
-	printf '\n'
+	printf '\n' > "${MSGS_DEST}"
 
 	for util in ${RECOMMENDED_UTILS}
 	do
