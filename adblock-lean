@@ -270,7 +270,7 @@ log_msg()
 # 2 - err level
 write_log_file()
 {
-	[ -n "${LOG_FILE}" ] && { printf '['; date +'%b %d %Y, %H:%M:%S' | tr -d '\n'; printf '] %s\n' "${2:-info}: ${1}"; } >> "${LOG_FILE}"
+	[ -n "${LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${2:-info}: ${1}" >> "${LOG_FILE}"
 }
 
 # exit with code ${1}
