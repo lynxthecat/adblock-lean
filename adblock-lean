@@ -442,6 +442,7 @@ update_action_file() {
 	[ -z "${1%.}" ] && { reg_failure "${me}: action is unspecified."; return 1; }
 
 	{
+		try_mkdir -p "${ABL_PID_DIR}" &&
 		printf '%s\n' "${1%.}" > "${ACTION_FILE}" || reg_failure "${me}: Failed to write to action file '${ACTION_FILE}'."
 	} & # runs asynchronously
 	:
