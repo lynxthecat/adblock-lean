@@ -304,7 +304,7 @@ process_list_part()
 			0)
 				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, $(bytes2human "${part_size_B}"))." ;;
 			*)
-				rm -f "${dest_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
+				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] && handle_fatal "${curr_job_pid}" "${list_path}"
 		esac
 
@@ -337,9 +337,8 @@ process_list_part()
 	local dest_file="${PROCESSED_PARTS_DIR}/${job_id}" \
 		ucl_err_file="${ABL_DIR}/ucl_err_${job_id}" \
 		rogue_el_file="${ABL_DIR}/rogue_el_${job_id}" \
-		list_part_size_file="${ABL_DIR}/size_${job_id}" \
-		list_part_line_cnt_file="${ABL_DIR}/linecnt_${job_id}" \
-		part_line_count line_count_human compress_part='' min_line_count='' min_line_count_human \
+		list_stats_file="${ABL_DIR}/stats_${job_id}" \
+		part_line_count='' line_count_human compress_part='' min_line_count='' min_line_count_human \
 		part_size_B='' part_size_KB='' retry=1
 
 	case ${list_type} in
@@ -349,7 +348,7 @@ process_list_part()
 
 	while :
 	do
-		rm -f "${rogue_el_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
+		rm -f "${rogue_el_file}" "${list_stats_file}"
 
 		# Download or cat the list
 		local fetch_cmd lines_cnt_low='' dl_completed=''
@@ -366,9 +365,6 @@ process_list_part()
 		${fetch_cmd} "${list_path}" |
 		# limit size
 		{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
-
-		# Count bytes
-		tee >(wc -c > "${list_part_size_file}") |
 
 		# Remove comment lines and trailing comments, remove whitespaces
 		$SED_CMD 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
@@ -387,8 +383,8 @@ process_list_part()
 			cat
 		fi |
 
-		# Count entries
-		tee >(wc -w > "${list_part_line_cnt_file}") |
+		# Count bytes and entries
+		tee >(wc -wc > "${list_stats_file}") |
 
 		# Convert to lowercase
 		case "${list_type}" in allowlist|blocklist) tr 'A-Z' 'a-z' ;; *) cat; esac |
@@ -421,7 +417,7 @@ process_list_part()
 			cat
 		fi > "${dest_file}"
 
-		read_str_from_file -v "part_size_B" -f "${list_part_size_file}" -a 2 -D "list size" || finalize_job 1
+		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
 		: "${part_size_B:=0}"
 		part_size_KB=$((part_size_B/1024))
 		if [ "${part_size_KB}" -ge "${max_file_part_size_KB}" ]
@@ -453,7 +449,6 @@ process_list_part()
 			finalize_job 3
 		fi
 
-		read_str_from_file -v "part_line_count" -f "${list_part_line_cnt_file}" -a 2 -D "line count" -V 0
 		int2human line_count_human "${part_line_count}"
 
 		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
@@ -558,10 +553,10 @@ gen_list_parts()
 		do
 			# count lines for current list type
 			local file part_line_count=0 list_line_count=0
-			for file in "${ABL_DIR}/linecnt_${list_type}-"*
+			for file in "${ABL_DIR}/stats_${list_type}-"*
 			do
 				[ -e "${file}" ] || break
-				read_str_from_file -v "part_line_count" -f "${file}" -a 1 -V 0
+				read_str_from_file -v "part_line_count _" -f "${file}" -a 1 -V 0 || return 1
 				list_line_count=$((list_line_count+part_line_count))
 			done
 
