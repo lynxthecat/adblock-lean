@@ -139,7 +139,7 @@ add2list() {
 	:
 }
 
-# reads first line from file
+# reads first line from file into variables
 # Args:
 # -v <out_var_name>
 # -f <file_path>
@@ -151,15 +151,15 @@ add2list() {
 # Optional: '-V <"[default_val]">'
 read_str_from_file()
 {
-	local me=read_str_from_file rs_del_file='' rs_quiet='' rs_num_bytes='' rs_outvar='' rs_file='' \
-		rs_file_desc='' rs_file_desc_pr='' rs_def_val='' rs_read_failed='' rs_attempts=1 rs_attempt
+	local me=read_str_from_file rs_del_file='' rs_quiet='' rs_num_bytes='' rs_outvars='' rs_file='' \
+		rs_file_desc='' rs_file_desc_pr='' rs_def_val='' rs_read_failed='' rs_attempts=1 rs_attempt rs_var
 	while getopts ":dqn:v:f:a:D:V:" opt
 	do
 		case "${opt}" in
 			d) rs_del_file=1 ;;
 			q) rs_quiet=1 ;;
 			n) rs_num_bytes=-n${OPTARG} ;;
-			v) rs_outvar=${OPTARG} ;;
+			v) rs_outvars=${OPTARG} ;;
 			f) rs_file=${OPTARG} ;;
 			a) rs_attempts=${OPTARG} ;;
 			D) rs_file_desc=${OPTARG} ;;
@@ -168,12 +168,19 @@ read_str_from_file()
 		esac
 	done
 
-	[ -n "${rs_outvar}" ] && [ -n "${rs_file}" ] || { reg_failure "${me}: missing args"; return 1; }
+	[ -n "${rs_outvars}" ] && [ -n "${rs_file}" ] || { reg_failure "${me}: missing args"; return 1; }
 
 	rs_attempt=0
 	while :
 	do
-		[ -f "${rs_file}" ] && IFS="" read -r ${rs_num_bytes?} "${rs_outvar?}" < "${rs_file}" && eval "[ -n \"\${${rs_outvar}}\" ]" && break
+		[ -f "${rs_file}" ] && read -r ${rs_num_bytes?} ${rs_outvars?} < "${rs_file}" &&
+		{
+			for rs_var in ${rs_outvars}
+			do
+				case "${rs_var}" in _) continue; esac
+				eval "[ -n \"\${${rs_var}}\" ]" && break 2
+			done
+		}
 		rs_attempt=$((rs_attempt+1))
 		[ "${rs_attempt}" -le "${rs_attempts}" ] || { rs_read_failed=1; break; }
 		sleep 1
@@ -184,7 +191,14 @@ read_str_from_file()
 
 	[ -n "${rs_file_desc}" ] && rs_file_desc_pr="${rs_file_desc} "
 	[ -n "${rs_quiet}" ] || reg_failure "Failed to read ${rs_file_desc_pr}file '${rs_file}'."
-	eval "${rs_outvar}=\"${rs_def_val}\""
+	[ -n "${rs_def_val}" ] &&
+	{
+		for rs_var in ${rs_outvars}
+		do
+			case "${rs_var}" in _) continue; esac
+			eval "${rs_var}=\"${rs_def_val}\""
+		done
+	}
 	return 1
 }
 
