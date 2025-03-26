@@ -1107,7 +1107,7 @@ get_active_entries_cnt()
 	fi |
 	$SED_CMD -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
 
-	read_str_from_file -d cnt "/tmp/abl_entries_cnt" 2 "entries count"
+	read_str_from_file -d -v cnt -f "/tmp/abl_entries_cnt" -a 2 -D "entries count"
 	case "${cnt}" in *[!0-9]*|'') printf 0; return 1; esac
 	local d i=0 IFS="${DEFAULT_IFS}"
 	if [ "${whitelist_mode}" = 1 ]
