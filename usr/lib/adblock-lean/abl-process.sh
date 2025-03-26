@@ -14,6 +14,8 @@ SCHEDULE_DIR="${ABL_DIR}/schedule"
 PROCESSING_TIMEOUT_S=900 # 15 minutes
 IDLE_TIMEOUT_S=300 # 5 minutes
 
+ABL_TEST_DOMAIN="adblocklean-test123.info"
+
 
 # UTILITY FUNCTIONS
 
@@ -752,7 +754,7 @@ generate_and_process_blocklist_file()
 		fi
 
 		# add the blocklist test entry
-		printf '%s\n' "address=/adblocklean-test123.info/#"
+		printf '%s\n' "address=/${ABL_TEST_DOMAIN}/#"
 	} |
 
 	# count bytes
@@ -1017,7 +1019,7 @@ check_active_blocklist()
 	log_msg "" "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
 	reg_action -blue "Testing adblocking."
 
-	try_lookup_domain "adblocklean-test123.info" "${ns_ips}" 15 -n ||
+	try_lookup_domain "${ABL_TEST_DOMAIN}" "${ns_ips}" 15 -n ||
 		{ reg_failure "Lookup of the bogus test domain failed with new blocklist."; return 4; }
 
 	reg_action -blue "Testing DNS resolution."
@@ -1083,7 +1085,7 @@ try_lookup_domain()
 
 get_active_entries_cnt()
 {
-	local cnt entry_type allow_opt='' list_prefix list_prefixes=
+	local cnt entry_type list_prefix list_prefixes=
 
 	# 'blocklist_ipv4' prefix doesn't need to be added for counting
 	for entry_type in blocklist allowlist
@@ -1091,10 +1093,11 @@ get_active_entries_cnt()
 		eval "[ ! \"\${${entry_type}_urls}\" ] && [ ! -s \"\${local_${entry_type}_path}\" ]" && continue
 		case ${entry_type} in
 			blocklist) list_prefix=local ;;
-			allowlist) list_prefix=server allow_opt="#"
+			allowlist) list_prefix=server
 		esac
-		list_prefixes="${list_prefixes}${list_prefix}|"
+		add2list list_prefixes "${list_prefix}" "|"
 	done
+	[ "${whitelist_mode}" = 1 ] && [ -n "${test_domains}" ] && add2list list_prefixes "server" "|"
 
 	if [ -f "${DNSMASQ_CONF_D}"/.abl-blocklist.gz ]
 	then
@@ -1105,20 +1108,13 @@ get_active_entries_cnt()
 	else
 		printf ''
 	fi |
-	$SED_CMD -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
+	$SED_CMD -E "s~^(${list_prefixes})=/~~;/${ABL_TEST_DOMAIN}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w > "/tmp/abl_entries_cnt"
 
 	read_str_from_file -d -v cnt -f "/tmp/abl_entries_cnt" -a 2 -D "entries count"
+
+	[ "${whitelist_mode}" = 1 ] && cnt=$((cnt-26)) # ignore alphabet entries
+
 	case "${cnt}" in *[!0-9]*|'') printf 0; return 1; esac
-	local d i=0 IFS="${DEFAULT_IFS}"
-	if [ "${whitelist_mode}" = 1 ]
-	then
-		i=1
-		for d in ${test_domains}
-		do
-			i=$((i+1))
-		done
-	fi
-	[ "${cnt}" -lt $((2+i)) ] && { printf 0; return 1; }
-	printf %s "$((cnt-2-i))"
+	printf %s "${cnt}"
 	:
 }
