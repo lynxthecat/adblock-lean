@@ -139,6 +139,55 @@ add2list() {
 	:
 }
 
+# reads first line from file
+# Args:
+# -v <out_var_name>
+# -f <file_path>
+# Optional: '-a <attempts_num>'
+# Optional: '-d' to delete the file after reading
+# Optional: '-q' to quiet error message
+# Optional: '-n X' to limit number of bytes read
+# Optional: '-D <"[file_desc]">'
+# Optional: '-V <"[default_val]">'
+read_str_from_file()
+{
+	local me=read_str_from_file rs_del_file='' rs_quiet='' rs_num_bytes='' rs_outvar='' rs_file='' \
+		rs_file_desc='' rs_file_desc_pr='' rs_def_val='' rs_read_failed='' rs_attempts=1 rs_attempt
+	while getopts ":dqn:v:f:a:D:V:" opt
+	do
+		case "${opt}" in
+			d) rs_del_file=1 ;;
+			q) rs_quiet=1 ;;
+			n) rs_num_bytes=-n${OPTARG} ;;
+			v) rs_outvar=${OPTARG} ;;
+			f) rs_file=${OPTARG} ;;
+			a) rs_attempts=${OPTARG} ;;
+			D) rs_file_desc=${OPTARG} ;;
+			V) rs_def_val=${OPTARG} ;;
+			*) reg_failure "${me}: unexpected option '${opt}'."; return 1;
+		esac
+	done
+
+	[ -n "${rs_outvar}" ] && [ -n "${rs_file}" ] || { reg_failure "${me}: missing args"; return 1; }
+
+	rs_attempt=0
+	while :
+	do
+		[ -f "${rs_file}" ] && IFS="" read -r ${rs_num_bytes?} "${rs_outvar?}" < "${rs_file}" && eval "[ -n \"\${${rs_outvar}}\" ]" && break
+		rs_attempt=$((rs_attempt+1))
+		[ "${rs_attempt}" -le "${rs_attempts}" ] || { rs_read_failed=1; break; }
+		sleep 1
+	done
+
+	[ -n "${rs_del_file}" ] && rm -f "${rs_file}"
+	[ -z "${rs_read_failed}" ] && return 0
+
+	[ -n "${rs_file_desc}" ] && rs_file_desc_pr="${rs_file_desc} "
+	[ -n "${rs_quiet}" ] || reg_failure "Failed to read ${rs_file_desc_pr}file '${rs_file}'."
+	eval "${rs_outvar}=\"${rs_def_val}\""
+	return 1
+}
+
 get_md5()
 {
 	md5sum "${1}" | cut -d' ' -f1
@@ -364,20 +413,7 @@ check_lock()
 	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
 	[ ! -f "${PID_FILE}" ] && return 0
 
-	local read_failed='' read_attempt=0
-	while :
-	do
-		IFS="" read -r LOCK_PID < "${PID_FILE}" && break
-		read_attempt=$((read_attempt+1))
-		[ "${read_attempt}" -le 3 ] || { read_failed=1; break; }
-		sleep 1
-	done
-
-	[ -n "${read_failed}" ] &&
-	{
-		reg_failure "Failed to read the pid file '${PID_FILE}'."
-		return 1
-	}
+	read_str_from_file -v LOCK_PID -f "${PID_FILE}" -a 3 -D PID || return 1
 
 	case "${LOCK_PID}" in
 		"${$}") return 3 ;;
@@ -429,8 +465,7 @@ report_curr_action()
 	fi
 	reported_pid="${LOCK_PID:-unknown}"
 
-	IFS="" read -r PID_ABL_CMD < "${ACTION_FILE}"
-	: "${PID_ABL_CMD:="unknown action"}"
+	read_str_from_file -v PID_ABL_CMD -f "${ACTION_FILE}" -a 2 -D action -V "unknown action"
 
 	[ "${1}" = -log ] && report_cmd=log_msg
 
@@ -936,11 +971,7 @@ install_abl_files()
 	local dist_dir="${1}" version="${2}"
 
 	# read new files list
-	read -r new_files < "${dist_dir}/inst_files" ||
-	{
-		reg_failure "Failed to read file '${dist_dir}/inst_files'."
-		return 1
-	}
+	read_str_from_file -d -v new_files -f "${dist_dir}/inst_files" -a 2 || return 1
 
 	# compile current files list
 	curr_files="${ABL_SERVICE_PATH}"

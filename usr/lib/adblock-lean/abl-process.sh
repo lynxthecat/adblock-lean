@@ -347,8 +347,7 @@ process_list_part()
 
 	while :
 	do
-		rm -f "${rogue_el_file}"
-		rm -f "${list_part_size_file}" "${list_part_line_cnt_file}"
+		rm -f "${rogue_el_file}" "${list_part_size_file}" "${list_part_line_cnt_file}"
 
 		# Download or cat the list
 		local fetch_cmd lines_cnt_low='' dl_completed=''
@@ -420,14 +419,7 @@ process_list_part()
 			cat
 		fi > "${dest_file}"
 
-		if [ ! -f "${list_part_size_file}" ] || ! read -r part_size_B _ < "${list_part_size_file}"
-		then
-			sleep 1
-			[ -f "${list_part_size_file}" ] && read -r part_size_B _ < "${list_part_size_file}" ||
-				finalize_job 1 "Processing job (PID ${curr_job_pid}) could not find the list size file."
-		fi
-		rm -f "${list_part_size_file}"
-
+		read_str_from_file -v "part_size_B" -f "${list_part_size_file}" -a 2 -D "list size" || finalize_job 1
 		: "${part_size_B:=0}"
 		part_size_KB=$((part_size_B/1024))
 		if [ "${part_size_KB}" -ge "${max_file_part_size_KB}" ]
@@ -441,8 +433,7 @@ process_list_part()
 
 		if [ -s "${rogue_el_file}" ]
 		then
-			read -r -n512 rogue_element < "${rogue_el_file}"
-			rm -f "${rogue_el_file}"
+			read_str_from_file -d -n 512 -v "rogue_element" -f "${rogue_el_file}" -a 2 -D "rogue element"
 			local rogue_el_print
 			if [ -n "${rogue_element}" ]
 			then
@@ -460,12 +451,7 @@ process_list_part()
 			finalize_job 3
 		fi
 
-		if [ ! -f "${list_part_line_cnt_file}" ] || ! read -r part_line_count _ < "${list_part_line_cnt_file}"
-		then
-			sleep 1
-			[ -f "${list_part_line_cnt_file}" ] && read -r part_line_count _ < "${list_part_line_cnt_file}"
-		fi
-		: "${part_line_count:=0}"
+		read_str_from_file -v "part_line_count" -f "${list_part_line_cnt_file}" -a 2 -D "line count" -V 0
 		int2human line_count_human "${part_line_count}"
 
 		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
@@ -573,8 +559,7 @@ gen_list_parts()
 			for file in "${ABL_DIR}/linecnt_${list_type}-"*
 			do
 				[ -e "${file}" ] || break
-				read -r part_line_count < "${file}"
-				: "${part_line_count:=0}"
+				read_str_from_file -v "part_line_count" -f "${file}" -a 1 -V 0
 				list_line_count=$((list_line_count+part_line_count))
 			done
 
@@ -1122,8 +1107,7 @@ get_active_entries_cnt()
 	fi |
 	$SED_CMD -E "s~^(${list_prefixes%|})\=/~~;" | tr "/${allow_opt}" '\n' | wc -w > "/tmp/abl_entries_cnt"
 
-	read -r cnt _ < "/tmp/abl_entries_cnt" || cnt=0
-	rm -f "/tmp/abl_entries_cnt"
+	read_str_from_file -d cnt "/tmp/abl_entries_cnt" 2 "entries count"
 	case "${cnt}" in *[!0-9]*|'') printf 0; return 1; esac
 	local d i=0 IFS="${DEFAULT_IFS}"
 	if [ "${whitelist_mode}" = 1 ]
