@@ -437,7 +437,8 @@ rm_lock()
 
 # updates the pid file with a new action
 # 1 - new action
-update_action_file() {
+update_action_file()
+{
 	local me="update_action_file"
 	[ -z "${1%.}" ] && { reg_failure "${me}: action is unspecified."; return 1; }
 
