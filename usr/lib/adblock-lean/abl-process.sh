@@ -171,7 +171,7 @@ schedule_job()
 	local remaining_time_s done_pid done_rv
 	check_for_timeout remaining_time_s || return 1
 
-	while [ "${RUNNING_JOBS_CNT}" -ge "${MAX_PARALLEL_JOBS}" ] && [ -e "${SCHED_CB_FIFO}" ] &&
+	while [ "${RUNNING_JOBS_CNT}" -ge "${PARALLEL_JOBS}" ] && [ -e "${SCHED_CB_FIFO}" ] &&
 		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
 	do
 		check_for_timeout remaining_time_s || return 1
@@ -505,7 +505,28 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
-	reg_action -blue "Downloading and processing blocklist parts (max parallel jobs: ${MAX_PARALLEL_JOBS})."
+	case "${MAX_PARALLEL_JOBS}" in
+		auto)
+			local cpu_cnt
+			cpu_cnt="$(grep -c '^processor\s*:' /proc/cpuinfo)"
+			case "${cpu_cnt}" in
+				''|*[!0-9]*|0)
+					log_msg "Failed to detect CPU core count. Parallel processing will be disabled."
+					PARALLEL_JOBS=1 ;;
+				*)
+					# cap PARALLEL_JOBS to 4 in 'auto' mode
+					if [ ${cpu_cnt} -ge 4 ]
+					then
+						PARALLEL_JOBS=${cpu_cnt}
+					else
+						PARALLEL_JOBS=${cpu_cnt}
+					fi
+			esac ;;
+		*)
+			PARALLEL_JOBS="${MAX_PARALLEL_JOBS}"
+	esac
+
+	reg_action -blue "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
 	print_msg ""
 
 	set +m # disable job complete notification
