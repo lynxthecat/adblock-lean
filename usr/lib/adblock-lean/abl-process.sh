@@ -701,13 +701,29 @@ generate_and_process_blocklist_file()
 		esac
 	fi
 
-	if [ "${initial_dnsmasq_restart}" != 1 ]
+	if [ "${unload_blocklist_before_update}" = auto ]
 	then
-		reg_action -blue "Testing connectivity." || exit 1
-		test_url_domains || initial_dnsmasq_restart=1
+		local totalmem
+		read -r _ totalmem _ < /proc/meminfo
+		case "${totalmem}" in
+			''|*[!0-9]*) unload_blocklist_before_update=1 ;;
+			*)
+				if [ "${totalmem}" -ge 410000 ]
+				then
+					unload_blocklist_before_update=0
+				else
+					unload_blocklist_before_update=1
+				fi
+		esac
 	fi
 
-	if [ "${initial_dnsmasq_restart}" = 1 ]
+	if [ "${unload_blocklist_before_update}" != 1 ]
+	then
+		reg_action -blue "Testing connectivity." || exit 1
+		test_url_domains || unload_blocklist_before_update=1
+	fi
+
+	if [ "${unload_blocklist_before_update}" = 1 ]
 	then
 		clean_dnsmasq_dir
 		restart_dnsmasq || exit 1
