@@ -704,21 +704,21 @@ parse_config()
 
 		{
 			# handle double or missing =
-			if ($0 !~ /^[^=]+=[^=]+$/) {
+			if ( $0 !~ /^[^=]+=[^=]+([ \t]+(#.*){0,1})*$/ ) {
 				print $0 > A"/bad_entry"
 				rv=254
 				exit
 			}
 
 			# key must be non-empty and alphanumeric
-			if ($1 !~ /^[a-zA-Z0-9_]+$/) {
+			if ( $1 !~ /^[a-zA-Z0-9_]+$/ ) {
 				print $0 > A"/bad_entry"
 				rv=254
 				exit
 			}
 
 			# line must have exactly 2 double-quotes after = and no characters before #
-			if ($0 !~ /^[^"]+="[^"]*"([ \t](#.*))*$/) {
+			if ( $0 !~ /^[^"]+="[^"]*"([ \t]+(#[^"]*){0,1}){0,1}$/ ) {
 				print $0 > A"/bad_entry"
 				rv=253
 				exit
