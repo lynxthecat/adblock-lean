@@ -515,9 +515,9 @@ gen_list_parts()
 					PARALLEL_JOBS=1 ;;
 				*)
 					# cap PARALLEL_JOBS to 4 in 'auto' mode
-					if [ ${cpu_cnt} -ge 4 ]
+					if [ "${cpu_cnt}" -ge 4 ]
 					then
-						PARALLEL_JOBS=${cpu_cnt}
+						PARALLEL_JOBS=4
 					else
 						PARALLEL_JOBS=${cpu_cnt}
 					fi
