@@ -474,15 +474,15 @@ print_def_config()
 	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
 	use_compression="1" @ 0|1
 
-	# restart dnsmasq if previous blocklist was extracted and before generation of
-	# new blocklist thereby to free up memory during generaiton of new blocklist - enable (1) or disable (0)
-	initial_dnsmasq_restart="0" @ 0|1
+	# unload previous blocklist form memory and restart dnsmasq before generation of
+	# new blocklist in order to free up memory during generation of new blocklist - 'auto' or enable (1) or disable (0)
+	unload_blocklist_before_update="auto" @ auto|0|1
 
 	# Start delay in seconds when service is started from system boot
 	boot_start_delay_s="120" @ integer
 
-	# Maximal count of download and processing jobs run in parallel
-	MAX_PARALLEL_JOBS="1" @ integer
+	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
+	MAX_PARALLEL_JOBS="auto" @ auto|integer
 
 	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
@@ -613,76 +613,19 @@ mk_def_preset()
 # sets ${missing_keys}, ${conf_fixes}, ${bad_value_keys}
 # and variables for luci:
 # *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
-# *_legacy_entries *_bad_conf_format *_conf_fixes *_bad_value_keys
+# *_bad_conf_format *_conf_fixes *_bad_value_keys
 # shellcheck disable=SC2317,SC2034
 parse_config()
 {
-	inval_e()
-	{
-		IFS="${DEFAULT_IFS}"
-		reg_failure "Invalid entry '$entry' in config."
-	}
-
 	add_conf_fix() { conf_fixes="${conf_fixes}${1}"$'\n'; }
 
-	# Following 3 functions are needed to minimize ugly hacks and tinkering inside eval
-	parse_entry()
-	{
-		val=${entry#"${key}="}
-
-		# Following 'case' is a temporary solution to allow easy config migration - remove a few months from now (Aug 2024)
-		case "${entry}" in
-			"compress_blocklist="?" #"*|"initial_dnsmasq_restart="?" #"*)
-				legacy_entries="${legacy_entries}${entry}"$'\n'
-				test_keys="${test_keys%%"${key}|"*}${test_keys#*"${key}|"}"
-				val=${val%% *}
-				return 0
-		esac
-
-		case "${val}" in
-			*\"*\"*\"*) inval_e; return 1 ;; # do not allow more than 2 double-quote marks
-			\"*\"*)
-				local tmp_val="${val##*\"}" # remove value enclosed in double-quotes
-				case "${tmp_val%%\#*}" in # do not allow characters between 2nd double-quote and in-line comment
-					'') ;;
-					*[!\ ${TAB}]*) inval_e; return 1
-				esac
-				;;
-			*\"*\"*) inval_e; return 1 ;; # double quote mark must be the first character
-			*\"*) inval_e; return 1 ;; # do not allow 1 double-quote mark
-			*"#"*) inval_e; return 1 ;; # do not allow in-line comments without double-quote marks
-			*) legacy_entries="${legacy_entries}${entry}"$'\n'
-		esac
-		val=${val#\"}
-		val=${val%\"*} # throw away everything after the 2nd double-quote mark
-		test_keys="${test_keys%%"${key}|"*}${test_keys#*"${key}|"}" # remove current key from test_keys
-	}
-
-	add_unexp_entry()
-	{
-		unexp_keys="${unexp_keys}${key} "
-		unexp_entries="${unexp_entries}${entry}"$'\n'
-	}
-
-	check_val()
-	{
-		eval "case \"${val}\" in
-			${valid_values}) return 0
-			esac"
-
-		bad_val_entries="${bad_val_entries}${entry} (should be $(print_def_config -d | \
-			$SED_CMD -n "/^[ \t]*${key}[ \t]*=/{s/^.*@[ \t]*//;s/[ \t]//g;s/|/ or /g;s/''/empty string/;s/integer/non-negative integer/;p;q;}"))"$'\n'
-		bad_value_keys="${bad_value_keys}${key}|"
-		return 1
-	}
-
-	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' legacy_entries='' \
-		test_keys entry key val bad_val_entries='' corrected_entries='' valid_values all_valid_values \
+	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' \
+		entry key val bad_val_entries='' corrected_entries='' valid_values all_valid_values \
 		sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
 
 	unset curr_config_format def_config_format bad_value_keys \
 		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
-		luci_legacy_entries luci_bad_conf_format luci_conf_fixes preset
+		luci_bad_conf_format luci_conf_fixes preset
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
 
@@ -691,19 +634,19 @@ parse_config()
 	# extract entries from default config
 	def_config="$(print_def_config)" || return 1
 
-	# extract valid values from default config
-	local sed_valid_vals_expr="/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; /\"/d; s/[ \t]//g; s/^/val_/; s/=string/=*/; \
-		s/=integer/=*[!0-9]*|'') ;; */; s/=/=\"/; s/$/\"/"
-	all_valid_values="$(print_def_config -d | $SED_CMD "${sed_conf_san_exp};${sed_valid_vals_expr}")"
-	# assign 'val_*' variables
-	eval "${all_valid_values}" || { reg_failure "Failed to assign config parameters to variables."; return 1; }
-
-	# extract keys from default config, convert to '|' separated list
-	# 'dummy|' is needed to avoid errors in eval
-	test_keys="dummy|$(printf '%s\n' "${def_config}" | $SED_CMD "${sed_conf_san_exp};"'s/=.*//' | tr '\n' '|')"
-
 	# read and sanitize current config
 	curr_config="$($SED_CMD "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
+
+	local bad_newline=
+	case "${curr_config}" in
+		*"${CR_LF}"*) bad_newline="Windows-format (CR_LF)" ;;
+		*"${CR}"*) bad_newline="MacOS-format (CR)" ;;
+	esac
+	[ -n "${bad_newline}" ] &&
+	{
+		reg_failure "Config file contains ${bad_newline} newlines. Convert the config file to Unix-format (LF) newlines."
+		return 1
+	}
 
 	# get config versions
 	curr_config_format="$(get_config_format "${1}")"
@@ -711,68 +654,164 @@ parse_config()
 	def_config_format="$(printf %s "${def_config}" | get_config_format)"
 	luci_def_config_format=${def_config_format}
 
-	local IFS="${_NL_}"
-	for entry in ${curr_config}
-	do
-		IFS="${DEFAULT_IFS}"
-		case "${entry}" in
-			*"${CR_LF}"*)
-				reg_failure "Config file contains Windows-format (CR LF) newlines. Convert the config file to Unix-format (LF) newlines."
-				return 1 ;;
-			*?=*) ;;
-			*) { inval_e; return 1; } ;;
+	local parse_res valid_lines def_lines
+	# extract valid values from default config
+	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp};/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; s/[ \t]//g")"
+	# extract default values from default config
+	def_lines="$(print_def_config | ${SED_CMD} "${sed_conf_san_exp}")"
+	# parse config
+	local bad_entry_file="${ABL_DIR}/bad_entry"
+	parse_res="$(
+		printf '%s\n' "${curr_config}" |
+		${AWK_CMD} -F"=" -v V="${valid_lines}" -v D="${def_lines}" -v A="${ABL_DIR}" '
+		# return codes: 0=OK, 1=awk error, 253=check double-quotes, 254=Invalid entry detected
+		BEGIN{
+			rv=0
+			split(V,val_lines,"\n")
+			for (ind in val_lines) {
+				line=val_lines[ind]
+				key=line
+				sub(/=.*/,"",key)
+				val_values=line
+				sub(/.*=/,"",val_values)
+
+				# make entry-specific validation regex array
+				val_regex=val_values
+				sub(/integer/,"[0-9]+",val_regex)
+				sub(/string/,".*",val_regex)
+				val_regex_arr[key]=val_regex
+
+				# make printable entry-specific valid values array
+				val_print=val_values
+				sub(/integer/,"non-negative integer",val_print)
+				sub(/\|/," or ", val_print)
+				val_print_arr[key]=val_print
+			}
+
+			# make default entries array
+			split(D,def_lines,"\n")
+			for (ind in def_lines) {
+				line=def_lines[ind]
+				key=line
+				val=line
+				sub(/=.*/,"",key)
+				sub(/.*=/,"",val)
+				sub(/"/,"",val)
+				sub(/".*/,"",val)
+				def_arr[key]=val
+			}
+		}
+
+		{
+			# handle double or missing =
+			if ($0 !~ /^[^=]+=[^=]+$/) {
+				print $0 > A"/bad_entry"
+				rv=254
+				exit
+			}
+
+			# key must be non-empty and alphanumeric
+			if ($1 !~ /^[a-zA-Z0-9_]+$/) {
+				print $0 > A"/bad_entry"
+				rv=254
+				exit
+			}
+
+			# line must have exactly 2 double-quotes after = and no characters before #
+			if ($0 !~ /^[^"]+="[^"]*"([ \t](#.*))*$/) {
+				print $0 > A"/bad_entry"
+				rv=253
+				exit
+			}
+
+			# handle unexpected keys
+			if ($1 in def_arr) {} else {
+				unexp_keys=unexp_keys $1 " "
+				print $0 >> A"/unexp_entries"
+				next
+			}
+
+			# register key
+			config_keys[$1]
+
+			# remove in-line comments and preceding spaces
+			sub(/[ \t]*#.*/,"",$2)
+
+			# handle unexpected values
+			val=$2
+			gsub(/"/,"",val)
+			regex="^(" val_regex_arr[$1] ")$"
+			if (val !~ regex) {
+				bad_val_keys=bad_val_keys $1 " "
+				print $1 "=" $2 " (should be " val_print_arr[$1] ")" >> A"/bad_val_entries"
+				print $1 "=\"" def_arr[$1] "\"" >> A"/corrected_entries"
+				next
+			}
+
+			print $1 "=\"" val "\""
+		}
+		END{
+			if (rv != 0) {exit rv}
+			for (key in def_arr) {
+				if (key in config_keys) {} else {
+					print key "=\"" def_arr[key] "\"" >> A"/missing_entries"
+					missing_keys=missing_keys key " "
+				}
+			}
+			print "missing_keys=\"" missing_keys "\" " \
+				"unexp_keys=\"" unexp_keys "\" " \
+				"bad_value_keys=\"" bad_val_keys "\" "
+			exit rv
+		}'
+	)" 2> "${bad_entry_file}" ||
+	{
+		local awk_rv=${?} err_print=''
+		[ -s "${bad_entry_file}" ] && err_print="$(cat "${bad_entry_file}")"
+		case "${awk_rv}" in
+			253|254) ;;
+			*)
+				[ -n "${err_print}" ] && err_print=" Errors:${_NL_}${err_print}${_NL_}"
+				reg_failure "Failed to parse config.${err_print}"
+				return 1
 		esac
-		key="${entry%%=*}"
-		case "${key}" in *[!A-Za-z0-9_]*) inval_e; return 1; esac
-		# check if the key is in the default keys list, assign value to var if so
-		eval "case \"${key}\" in
-				${test_keys%|})
-					parse_entry || return 1
-					valid_values=\"\${val_${key}}\"
-					[ -z \"\${valid_values}\" ] && { reg_failure \"Config key '${key}' has no assigned valid values.\"; return 1; }
-					check_val && ${key}"='${val}'" ;;
-				*) add_unexp_entry
-			esac"
-	done
 
-	IFS="${DEFAULT_IFS}"
+		[ -n "${err_print}" ] && err_print=": '${err_print}'"
+		case "${awk_rv}" in
+			253) reg_failure "Invalid entry in config (check double-quotes)${err_print}." ;;
+			254) reg_failure "Invalid entry in config${err_print}."
+		esac
+		return 1
+	}
 
-	if [ -n "${unexp_entries}" ]
+	eval "${parse_res}" || return 1
+
+	if [ -n "${unexp_keys}" ]
 	then
 		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
+		unexp_entries="$(cat "${ABL_DIR}/unexp_entries")"
 		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
 		luci_unexp_keys=${unexp_keys% }
 		luci_unexp_entries=${unexp_entries%$'\n'}
 	fi
 
-	test_keys=${test_keys#dummy|}
-	if [ -n "${test_keys}" ]
+	if [ -n "${missing_keys}" ]
 	then
-		missing_entries="$(printf %s "${def_config}" | grep -E "^(${test_keys%|})=")"
-		missing_keys="$(printf %s "${test_keys}" | tr '|' ' ')"
 		reg_failure "Missing keys in config: '${missing_keys% }'."
-		print_msg "Corresponding default config entries:" "${missing_entries}"
+		missing_entries="$(cat "${ABL_DIR}/missing_entries")"
+		print_msg "Corresponding default config entries:" "${missing_entries%$'\n'}"
 		add_conf_fix "Re-add missing config entries with default values"
 		luci_missing_keys=${missing_keys% }
-		luci_missing_entries=${missing_entries}
-	fi
-
-	if [ -n "${legacy_entries}" ]
-	then
-		reg_failure "Detected config entries in legacy format (missing double-quotes)."
-		print_msg "The following config entries must be converted to the new config format:" "${legacy_entries%$'\n'}"
-		add_conf_fix "Convert legacy config entries to the new format"
-		luci_legacy_entries=${legacy_entries%$'\n'}
+		luci_missing_entries=${missing_entries%$'\n'}
 	fi
 
 	if [ -n "${bad_value_keys}" ]
 	then
-		corrected_entries="$(printf %s "${def_config}" | grep -E "^(${bad_value_keys%|})=")"
-		bad_value_keys="$(printf %s "${bad_value_keys}" | tr '|' ' ')"
 		reg_failure "Detected config entries with unexpected values."
+		bad_val_entries="$(cat "${ABL_DIR}/bad_val_entries")"
+		corrected_entries="$(cat "${ABL_DIR}/corrected_entries")"
 		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
-			"Corresponding default config entries:" "${corrected_entries}"
+			"Corresponding default config entries:" "${corrected_entries%$'\n'}"
 		add_conf_fix "Replace unexpected values with defaults"
 		luci_bad_val_entries=${bad_val_entries%$'\n'}
 		luci_corrected_entries=${corrected_entries%$'\n'}
