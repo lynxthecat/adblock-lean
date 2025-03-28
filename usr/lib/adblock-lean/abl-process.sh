@@ -701,6 +701,12 @@ generate_and_process_blocklist_file()
 		esac
 	fi
 
+	get_abl_run_state
+	case ${?} in
+		1) unload_blocklist_before_update=1 ;;
+		4) unload_blocklist_before_update=0 ;;
+	esac
+
 	if [ "${unload_blocklist_before_update}" = auto ]
 	then
 		local totalmem
