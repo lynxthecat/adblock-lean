@@ -607,7 +607,7 @@ gen_list_parts()
 	:
 }
 
-generate_and_process_blocklist_file()
+gen_and_process_blocklist()
 {
 	convert_entries()
 	{

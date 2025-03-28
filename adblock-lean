@@ -1161,7 +1161,7 @@ start()
 	try_export_existing_blocklist
 	[ ${?} = 1 ] && exit 1
 
-	if ! generate_and_process_blocklist_file
+	if ! gen_and_process_blocklist
 	then
 		reg_failure "Failed to generate new blocklist."
 		restore_saved_blocklist || stop 1
