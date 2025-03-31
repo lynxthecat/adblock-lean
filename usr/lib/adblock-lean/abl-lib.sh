@@ -607,8 +607,9 @@ mk_def_preset()
 #
 # return codes:
 # 0 - Success
-# 1 - Error
+# 1 - Config error with no automatic fix
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
+# 3 - Internal parser error
 #
 # sets ${missing_keys}, ${conf_fixes}, ${bad_value_keys}
 # and variables for luci:
@@ -779,13 +780,13 @@ parse_config()
 		[ -n "${err_print}" ] &&
 			case "${awk_rv}" in
 				253|254) err_print=": '${err_print}'" ;;
-				*) err_print=" Errors:${_NL_}${err_print}"
+				*) err_print=" ${err_print}"
 			esac
 
 		case "${awk_rv}" in
 			253) reg_failure "Invalid entry in config (check double-quotes)${err_print}." ;;
 			254) reg_failure "Invalid entry in config${err_print}." ;;
-			*) reg_failure "Failed to parse config.${err_print}${_NL_}"
+			*) reg_failure "Failed to parse config.${err_print}"; return 3
 		esac
 
 		return 1
@@ -825,7 +826,7 @@ parse_config()
 		luci_corrected_entries=${corrected_entries%$'\n'}
 	fi
 
-	if [ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ]
+	if [ -z "${conf_fixes}" ]
 	then
 		case "${curr_config_format}" in
 			*[!0-9]*|'')
@@ -851,7 +852,7 @@ parse_config()
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt parse_res url_conv_req
+	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
 	local DO_DIALOGS=
@@ -868,16 +869,18 @@ load_config()
 
 	# validate config and assign to variables
 	parse_config "${ABL_CONFIG_FILE}"
-	parse_res=${?}
-	[ ${parse_res} = 1 ] && { log_msg "${tip_msg}"; return 1; }
+	case ${?} in
+		0) return 0 ;;
+		1) log_msg "${tip_msg}"; return 1 ;; # config error with no automatic fix
+		2) ;; # config error(s) with automatic fix
+		3) return 1 # internal parser error
+	esac
 
-	[ ${parse_res} = 0 ] && [ -z "${url_conv_req}" ] && return 0
-
-	# if not in interactive console, return error
+	# if not in interactive console and force-fix not set, return error
 	[ -z "${DO_DIALOGS}" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
 
 	# sanity check
-	[ -z "${conf_fixes}" ] && [ -z "${url_conv_req}" ] && { reg_failure "Failed to parse config."; return 1; }
+	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
 
 	if [ -n "${DO_DIALOGS}" ] && [ "${1}" != '-f' ]
 	then
