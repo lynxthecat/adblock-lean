@@ -628,12 +628,12 @@ parse_config()
 		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_conf_format luci_conf_fixes preset
 
-	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 1; }
+	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 3; }
 
 	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
 
 	# extract entries from default config
-	def_config="$(print_def_config)" || return 1
+	def_config="$(print_def_config)" || return 3
 
 	# read and sanitize current config
 	curr_config="$($SED_CMD "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
@@ -792,7 +792,12 @@ parse_config()
 		return 1
 	}
 
-	eval "${parse_vars}" || return 1
+	eval "${parse_vars}" 2> "${parser_error_file}" && [ ! -s "${parser_error_file}" ] ||
+	{
+		[ -s "${parser_error_file}" ] && err_print=" Errors: $(cat "${parser_error_file}")"
+		reg_failure "Failed to parse config.${err_print}"
+		return 3
+	}
 
 	if [ -n "${unexp_keys}" ]
 	then
