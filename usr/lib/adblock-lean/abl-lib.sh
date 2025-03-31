@@ -654,13 +654,13 @@ parse_config()
 	def_config_format="$(printf %s "${def_config}" | get_config_format)"
 	luci_def_config_format=${def_config_format}
 
-	local parse_res valid_lines def_lines_arr
+	local parse_vars valid_lines def_lines_arr
 	# extract valid values from default config
 	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
 	local parser_error_file="${ABL_DIR}/parser_error"
 	rm -f "${parser_error_file}" "${ABL_DIR}/unexp_entries" "${ABL_DIR}/bad_val_entries" "${ABL_DIR}/missing_entries"
-	parse_res="$(
+	parse_vars="$(
 		printf '%s\n' "${curr_config}" |
 		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v A="${ABL_DIR}" '
 		# return codes: 0=OK, 1=awk or default config error, 253=check double-quotes, 254=Invalid entry detected
@@ -791,7 +791,7 @@ parse_config()
 		return 1
 	}
 
-	eval "${parse_res}" || return 1
+	eval "${parse_vars}" || return 1
 
 	if [ -n "${unexp_keys}" ]
 	then
