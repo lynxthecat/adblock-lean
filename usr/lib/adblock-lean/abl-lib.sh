@@ -621,7 +621,7 @@ parse_config()
 
 	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' \
 		entry key val bad_val_entries='' corrected_entries='' valid_values all_valid_values \
-		sed_conf_san_exp='/^[ \t]*#.*$/d; s/^[ \t]*//; s/[ \t]*$//; /^$/d'
+		sed_conf_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d'
 
 	unset curr_config_format def_config_format bad_value_keys \
 		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
@@ -654,54 +654,61 @@ parse_config()
 	def_config_format="$(printf %s "${def_config}" | get_config_format)"
 	luci_def_config_format=${def_config_format}
 
-	local parse_res valid_lines def_lines
+	local parse_res valid_lines def_lines_arr
 	# extract valid values from default config
-	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp};/^[^@]*$/d; s/=.*@[ \t]*/=/; /=[ \t]*$/d; s/[ \t]//g")"
-	# extract default values from default config
-	def_lines="$(print_def_config | ${SED_CMD} "${sed_conf_san_exp}")"
+	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
-	local bad_entry_file="${ABL_DIR}/bad_entry"
+	local parser_error_file="${ABL_DIR}/parser_error"
 	parse_res="$(
 		printf '%s\n' "${curr_config}" |
-		${AWK_CMD} -F"=" -v V="${valid_lines}" -v D="${def_lines}" -v A="${ABL_DIR}" '
-		# return codes: 0=OK, 1=awk error, 253=check double-quotes, 254=Invalid entry detected
+		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v A="${ABL_DIR}" '
+		# return codes: 0=OK, 1=awk or default config error, 253=check double-quotes, 254=Invalid entry detected
+
+		# make default config arrays: def_arr, valid_values_regex_arr, valid_values_print_arr
 		BEGIN{
 			rv=0
-			split(V,val_lines,"\n")
-			for (ind in val_lines) {
-				line=val_lines[ind]
-				key=line
-				sub(/=.*/,"",key)
-				val_values=line
-				sub(/.*=/,"",val_values)
+			missing[1]="key"
+			missing[3]="allowed values"
+
+			# create def_lines_arr
+			split(V,def_lines_arr,"\n")
+			for (ind in def_lines_arr) {
+				# validate default config line
+				sub(/[ \t]+@/,"@",def_lines_arr[ind])
+				sub(/@[ \t]+/,"@",def_lines_arr[ind])
+				n=split(def_lines_arr[ind],def_line_parts,"[=@]")
+				if (n!=3) {print "Internal error in default config: invalid line " q line_ind q "." > "/dev/stderr"; rv=1; exit}
+				for (i in def_line_parts) {
+					if (i==2){continue} # ignore empty default value
+					if (! def_line_parts[i]) {
+						print "Internal error in default config: line " q def_lines_arr[ind] q " is missing the " missing[i] "." > "/dev/stderr"
+						rv=1
+						exit
+					}
+				}
+
+				key=def_line_parts[1]
+				def_val=def_line_parts[2]
+				valid_values=def_line_parts[3]
+
+				# create cleaned up def_arr
+				def_arr[key]=def_val
 
 				# make entry-specific validation regex array
-				val_regex=val_values
+				val_regex=valid_values
 				sub(/integer/,"[0-9]+",val_regex)
 				sub(/string/,".*",val_regex)
-				val_regex_arr[key]=val_regex
+				valid_values_regex_arr[key]=val_regex
 
 				# make printable entry-specific valid values array
-				val_print=val_values
+				val_print=valid_values
 				sub(/integer/,"non-negative integer",val_print)
-				sub(/\|/," or ", val_print)
-				val_print_arr[key]=val_print
-			}
-
-			# make default entries array
-			split(D,def_lines,"\n")
-			for (ind in def_lines) {
-				line=def_lines[ind]
-				key=line
-				val=line
-				sub(/=.*/,"",key)
-				sub(/.*=/,"",val)
-				sub(/"/,"",val)
-				sub(/".*/,"",val)
-				def_arr[key]=val
+				gsub(/\|/," or ", val_print)
+				valid_values_print_arr[key]=val_print
 			}
 		}
 
+		# process user config
 		{
 			# handle double or missing =
 			if ( $0 !~ /^[^=]+=[^=]+([ \t]+(#.*){0,1})*$/ ) {
@@ -740,10 +747,10 @@ parse_config()
 			# handle unexpected values
 			val=$2
 			gsub(/"/,"",val)
-			regex="^(" val_regex_arr[$1] ")$"
+			regex="^(" valid_values_regex_arr[$1] ")$"
 			if (val !~ regex) {
 				bad_val_keys=bad_val_keys $1 " "
-				print $1 "=" $2 " (should be " val_print_arr[$1] ")" >> A"/bad_val_entries"
+				print $1 "=" $2 " (should be " valid_values_print_arr[$1] ")" >> A"/bad_val_entries"
 				print $1 "=\"" def_arr[$1] "\"" >> A"/corrected_entries"
 				next
 			}
@@ -763,10 +770,10 @@ parse_config()
 				"bad_value_keys=\"" bad_val_keys "\" "
 			exit rv
 		}'
-	)" 2> "${bad_entry_file}" ||
+	)" 2> "${parser_error_file}" ||
 	{
 		local awk_rv=${?} err_print=''
-		[ -s "${bad_entry_file}" ] && err_print="$(cat "${bad_entry_file}")"
+		[ -s "${parser_error_file}" ] && err_print="$(cat "${parser_error_file}")"
 		case "${awk_rv}" in
 			253|254) ;;
 			*)
