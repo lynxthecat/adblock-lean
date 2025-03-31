@@ -751,7 +751,7 @@ parse_config()
 			if (val !~ regex) {
 				bad_val_keys=bad_val_keys $1 " "
 				print $1 "=" $2 " (should be " valid_values_print_arr[$1] ")" >> A"/bad_val_entries"
-				print $1 "=\"" def_arr[$1] "\"" >> A"/corrected_entries"
+				print $1 "=" def_arr[$1] >> A"/corrected_entries"
 				next
 			}
 
@@ -761,7 +761,7 @@ parse_config()
 			if (rv != 0) {exit rv}
 			for (key in def_arr) {
 				if (key in config_keys) {} else {
-					print key "=\"" def_arr[key] "\"" >> A"/missing_entries"
+					print key "=" def_arr[key] >> A"/missing_entries"
 					missing_keys=missing_keys key " "
 				}
 			}
