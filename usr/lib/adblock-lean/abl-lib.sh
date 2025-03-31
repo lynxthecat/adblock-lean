@@ -659,6 +659,7 @@ parse_config()
 	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
 	local parser_error_file="${ABL_DIR}/parser_error"
+	rm -f "${parser_error_file}" "${ABL_DIR}/unexp_entries" "${ABL_DIR}/bad_val_entries" "${ABL_DIR}/missing_entries"
 	parse_res="$(
 		printf '%s\n' "${curr_config}" |
 		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v A="${ABL_DIR}" '
@@ -712,21 +713,21 @@ parse_config()
 		{
 			# handle double or missing =
 			if ( $0 !~ /^[^=]+=[^=]+([ \t]+(#.*){0,1})*$/ ) {
-				print $0 > A"/bad_entry"
+				print $0 > "/dev/stderr"
 				rv=254
 				exit
 			}
 
 			# key must be non-empty and alphanumeric
 			if ( $1 !~ /^[a-zA-Z0-9_]+$/ ) {
-				print $0 > A"/bad_entry"
+				print $0 > "/dev/stderr"
 				rv=254
 				exit
 			}
 
 			# line must have exactly 2 double-quotes after = and no characters before #
 			if ( $0 !~ /^[^"]+="[^"]*"([ \t]+(#[^"]*){0,1}){0,1}$/ ) {
-				print $0 > A"/bad_entry"
+				print $0 > "/dev/stderr"
 				rv=253
 				exit
 			}
