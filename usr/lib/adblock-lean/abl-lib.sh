@@ -679,7 +679,7 @@ parse_config()
 				sub(/[ \t]+@/,"@",def_lines_arr[ind])
 				sub(/@[ \t]+/,"@",def_lines_arr[ind])
 				n=split(def_lines_arr[ind],def_line_parts,"[=@]")
-				if (n!=3) {print "Internal error in default config: invalid line " q line_ind q "." > "/dev/stderr"; rv=1; exit}
+				if (n!=3) {print "Internal error in default config: invalid line " q def_lines_arr[ind] q "." > "/dev/stderr"; rv=1; exit}
 				for (i in def_line_parts) {
 					if (i==2){continue} # ignore empty default value
 					if (! def_line_parts[i]) {
