@@ -774,19 +774,19 @@ parse_config()
 	{
 		local awk_rv=${?} err_print=''
 		[ -s "${parser_error_file}" ] && err_print="$(cat "${parser_error_file}")"
-		case "${awk_rv}" in
-			253|254) ;;
-			*)
-				[ -n "${err_print}" ] && err_print=" Errors:${_NL_}${err_print}${_NL_}"
-				reg_failure "Failed to parse config.${err_print}"
-				return 1
-		esac
 
-		[ -n "${err_print}" ] && err_print=": '${err_print}'"
+		[ -n "${err_print}" ] &&
+			case "${awk_rv}" in
+				253|254) err_print=": '${err_print}'" ;;
+				*) err_print=" Errors:${_NL_}${err_print}"
+			esac
+
 		case "${awk_rv}" in
 			253) reg_failure "Invalid entry in config (check double-quotes)${err_print}." ;;
-			254) reg_failure "Invalid entry in config${err_print}."
+			254) reg_failure "Invalid entry in config${err_print}." ;;
+			*) reg_failure "Failed to parse config.${err_print}${_NL_}"
 		esac
+
 		return 1
 	}
 
