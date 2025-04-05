@@ -417,6 +417,7 @@ mk_lock()
 	:
 }
 
+# assigns lock pid to $LOCK_PID
 # return codes:
 # 0 - no lock
 # 1 - error
@@ -447,6 +448,7 @@ rm_lock()
 	then
 		rm -f "${PID_FILE}" || { reg_failure "Failed to delete the pid file '${PID_FILE}'."; return 1; }
 	fi
+	LOCK_PID=
 	:
 }
 
@@ -535,6 +537,7 @@ kill_abl_pids()
 {
 	local pgrep_ptrn="((/etc/rc.common|sh|/bin/sh) /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)"
 	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E 's/\s+.*//' | tr '\n' ' ')" "${$}"
+	:
 }
 
 # kills specified pid's and their offspring
@@ -722,11 +725,10 @@ rm_cron_job()
 
 
 ### Commands init
-
 init_command()
 {
 	ABL_CMD="${1}"
-	local config_req='' work_dir_req='' kill_req='' init_action_msg=''
+	local config_req='' work_dir_req='' init_action_msg=''
 
 	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
 	luci_sourced=
@@ -756,7 +758,15 @@ init_command()
 		stop)
 			init_action_msg="Stopping adblock-lean."
 			reg_action -purple "${init_action_msg}" || exit 1
-			libs_req=1 kill_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+
+			source_libs || exit 1
+			kill_abl_pids
+			check_lock
+			case ${?} in
+				1) exit 1 ;;
+				2) reg_failure "Failed to kill running adblock-lean processes."; exit 1
+			esac
+			CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instance)
 			libs_req=1 LOCK_REQ=1
 			[ "${action}" = select_dnsmasq_instance ] && config_req=1 # require config when called directly
@@ -777,20 +787,6 @@ init_command()
 	then
 		detect_pkg_manager
 		report_utils
-	fi
-
-	# kill pids if needed
-	if [ -n "${kill_req}" ]
-	then
-		kill_abl_pids
-		check_lock
-		case ${?} in
-			1) exit 1 ;;
-			2)
-				reg_failure "Failed to kill running adblock-lean processes."
-				unset LOCK_REQ CLEANUP_REQ
-				exit 1
-		esac
 	fi
 
 	# register lock status at init
@@ -1528,7 +1524,6 @@ disable()
 	fi
 	return "$rv"
 }
-
 
 set_ansi
 
