@@ -670,6 +670,7 @@ parse_config()
 		BEGIN{
 			rv=0
 			missing[1]="key"
+			missing[2]="value"
 			missing[3]="allowed values"
 
 			# create def_lines_arr
@@ -681,7 +682,6 @@ parse_config()
 				n=split(def_lines_arr[ind],def_line_parts,"[=@]")
 				if (n!=3) {print "Internal error in default config: invalid line " q def_lines_arr[ind] q "." > "/dev/stderr"; rv=1; exit}
 				for (i in def_line_parts) {
-					if (i==2){continue} # ignore empty default value
 					if (! def_line_parts[i]) {
 						print "Internal error in default config: line " q def_lines_arr[ind] q " is missing the " missing[i] "." > "/dev/stderr"
 						rv=1
