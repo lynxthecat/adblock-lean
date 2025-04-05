@@ -182,7 +182,7 @@ schedule_job()
 	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
 	process_list_part "${@}" &
 
-	add2list RUNNING_PIDS "${!}" " "
+	RUNNING_PIDS="${RUNNING_PIDS}${!} "
 
 	:
 }
@@ -196,7 +196,7 @@ schedule_jobs()
 		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] &&
 		{
 			log_msg "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
-			kill "${RUNNING_PIDS}" 2>/dev/null
+			kill_pids_recursive "${RUNNING_PIDS}"
 			rm -rf "${PROCESSED_PARTS_DIR}" 2>/dev/null
 		}
 		rm -f "${SCHED_CB_FIFO}"
@@ -528,8 +528,6 @@ gen_list_parts()
 
 	reg_action -blue "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
 	print_msg ""
-
-	set +m # disable job complete notification
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	for list_types in allowlist "blocklist blocklist_ipv4"
