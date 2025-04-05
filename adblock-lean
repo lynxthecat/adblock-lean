@@ -469,7 +469,7 @@ update_action_file()
 # 1 (optional): '-log' to log current action as well
 report_curr_action()
 {
-	[ "${MSGS_DEST}" = "/dev/null" ] && [ "${1}" != "-log" ] && return 0
+	[ "${MSGS_DEST}" = "/dev/null" ] && [ -z "${luci_sourced}" ] && [ "${1}" != "-log" ] && return 0
 	local reported_pid report_cmd=print_msg
 	[ -n "${ACTION_FILE}" ] || { reg_failure "\$ACTION_FILE var is unset."; return 1; }
 	[ -f "${ACTION_FILE}" ] || return 0
