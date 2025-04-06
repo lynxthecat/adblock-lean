@@ -536,7 +536,7 @@ log_success()
 kill_abl_pids()
 {
 	local pgrep_ptrn="((/etc/rc.common|sh|/bin/sh) /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)"
-	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | grep -v "[ \t]stop$" | ${SED_CMD} -E 's/\s+.*//' | tr '\n' ' ')" "${$}"
+	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E '/\sstop$/d;s/\s+.*//' | tr '\n' ' ')" "${$}"
 	:
 }
 
@@ -555,7 +555,13 @@ kill_pids_recursive()
 		pid_scan_depth=$((pid_scan_depth+1))
 		[ "${pid_scan_depth}" -lt "${max_pid_scan_depth}" ] || return 0
 
-		child_pids="$(pgrep -P "${2}")" || return 0
+		child_pids="$(
+			pgrep -faP "${2}" |
+			# exclude the dnsmasq processes and service calls from results
+			${SED_CMD} -E "
+			/^[0-9]+\s+((\/usr\/sbin\/|\/sbin\/service\s|(\/bin\/sh\s+(\/sbin\/service\s+|\/etc\/rc.common\s+\/etc\/init.d\/)))*dnsmasq|\/sin/ujail)\s/d;
+			s/\s.*//"
+		)" || return 0
 
 		eval "prev_pids=\"\${${1}}\""
 
