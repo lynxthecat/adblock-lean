@@ -536,7 +536,16 @@ log_success()
 kill_abl_pids()
 {
 	local pgrep_ptrn="(^((sh|/bin/sh)\s+){0,1}(/etc/rc.common\s+){0,1}/etc/(rc.d/S${START}|init.d/)|luci\.)adblock-lean"
-	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E '/\sstop$/d;s/\s+.*//' | tr '\n' ' ')" "${$}"
+	local abl_pids
+	check_lock
+	if [ ${?} = 2 ]
+	then
+		abl_pids="${LOCK_PID}"
+	else
+		abl_pids="$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E "/\sstop$/d;s/\s+.*//;/^${$}$/d" | tr '\n' ' ')"
+	fi
+
+	[ -n "${abl_pids}" ] && kill_pids_recursive "${abl_pids}"
 	:
 }
 
