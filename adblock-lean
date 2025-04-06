@@ -535,7 +535,7 @@ log_success()
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
-	local pgrep_ptrn="((/etc/rc.common|sh|/bin/sh) /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)"
+	local pgrep_ptrn="(^((sh|/bin/sh)\s+){0,1}(/etc/rc.common\s+){0,1}/etc/(rc.d/S${START}|init.d/)|luci\.)adblock-lean"
 	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E '/\sstop$/d;s/\s+.*//' | tr '\n' ' ')" "${$}"
 	:
 }
