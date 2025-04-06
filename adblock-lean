@@ -567,9 +567,9 @@ kill_pids_recursive()
 		child_pids="$(
 			pgrep -faP "${2}" |
 			# exclude the dnsmasq processes and service calls from results
-			${SED_CMD} -E "
-			/^[0-9]+\s+((\/usr\/sbin\/|\/sbin\/service\s|(\/bin\/sh\s+(\/sbin\/service\s+|\/etc\/rc.common\s+\/etc\/init.d\/)))*dnsmasq|\/sin/ujail)\s/d;
-			s/\s.*//"
+			${SED_CMD} -E \
+				'/(^[0-9]+\s+((sh|\/bin\/sh)\s+){0,1}(\/sbin\/service\s+|\/etc\/rc.common\s+\/etc\/init.d\/){0,1}(\/usr\/sbin\/|\/sbin\/service\s){0,1}dnsmasq|\/sbin\/ujail)\s/d;
+				s/\s.*//'
 		)" || return 0
 
 		eval "prev_pids=\"\${${1}}\""
