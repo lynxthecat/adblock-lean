@@ -429,7 +429,7 @@ check_lock()
 	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
 	[ ! -f "${PID_FILE}" ] && return 0
 
-	read_str_from_file -v LOCK_PID -f "${PID_FILE}" -a 3 -D PID || return 1
+	read_str_from_file -v "LOCK_PID _" -f "${PID_FILE}" -a 3 -D PID || return 1
 
 	case "${LOCK_PID}" in
 		"${$}") return 3 ;;
