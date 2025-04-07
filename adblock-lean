@@ -1422,7 +1422,14 @@ update()
 		try_mkdir -p "${dist_dir}" || { upd_failed; return 1; }
 		cp -rT "${SIM_PATH}" "${dist_dir}"
 	else
-		: "${version:=latest}"
+		get_abl_version "${ABL_SERVICE_PATH}" _ upd_channel
+		local def_version
+		case "${upd_channel}" in
+			release) def_version=latest ;;
+			snapshot) def_version=snapshot ;;
+			*) def_version=latest
+		esac
+		: "${version:="${def_version}"}"
 		get_gh_ref_data "${version}" ref tarball_url upd_channel &&
 		fetch_abl_dist dist_dir "${tarball_url}" "${ref}" || { upd_failed; return 1; }
 	fi
