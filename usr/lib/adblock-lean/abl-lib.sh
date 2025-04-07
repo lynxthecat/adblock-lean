@@ -1119,6 +1119,7 @@ check_blocklist_compression_support()
 check_for_updates()
 {
 	local ref='' tarball_url='' curr_ver='' upd_channel='' no_upd=''
+	unset UPD_AVAIL UPD_DIRECTIONS
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in
 		release) ref=latest ;;
@@ -1148,8 +1149,12 @@ check_for_updates()
 		log_msg "The locally installed adblock-lean is the latest version."
 		return 0
 	else
-		log_msg -yellow "The locally installed adblock-lean seems to be outdated (installed: '${curr_ver}', latest: '${ref}'.)."
-		log_msg "Consider running: 'service adblock-lean update' to update it to the latest version."
+		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${ref}'.)"
+		UPD_DIRECTIONS="Consider running: 'service adblock-lean update' to update it to the latest version."
+		UPD_AVAIL_MSG="adblock-lean update is available ${upd_details}"
+		: "${UPD_AVAIL_MSG}" # silence shellcheck warning
+		log_msg -yellow "The locally installed adblock-lean seems to be outdated ${upd_details}."
+		log_msg "${UPD_DIRECTIONS}"
 		return 1
 	fi
 }
