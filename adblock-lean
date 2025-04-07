@@ -352,11 +352,18 @@ cleanup_and_exit()
 	local recent_log=
 	[ -n "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ] && read -rd '' recent_log < "${LOG_FILE}"
 	luci_log="${recent_log}"
+
+	# execute custom script actions
 	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_util report_failure
 	then
 		[ -n "${recent_log}" ] && failure_msg="${failure_msg}${_NL_}${_NL_}Session log:${_NL_}${recent_log}"
 		report_failure "${failure_msg}"
 	fi
+	if [ -n "${UPD_AVAIL_MSG}" ] && check_util report_update
+	then
+		report_update "${UPD_AVAIL_MSG}${_NL_}${UPD_DIRECTIONS}"
+	fi
+
 	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
 	exit "${1}"
 }
