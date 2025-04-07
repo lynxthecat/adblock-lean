@@ -558,6 +558,8 @@ kill_abl_pids()
 	local i=0
 	while [ -f "${PID_FILE}" ] && [ ${i} -lt 10 ]
 	do
+		check_lock
+		[ ${?} != 2 ] && break
 		sleep 1
 		i=$((i+1))
 	done
