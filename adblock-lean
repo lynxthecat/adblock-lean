@@ -345,7 +345,7 @@ cleanup_and_exit()
 	if [ -n "${CLEANUP_REQ}" ]
 	then
 		[ "${1}" != 0 ] && print_msg "" "Cleaning up..."
-		[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}"
+		[ -n "${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}" 2>/dev/null
 		rm -rf "${ABL_DIR}"
 	fi
 	[ -n "${LOCK_REQ}" ] && rm_lock
@@ -535,8 +535,26 @@ log_success()
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
-	local pgrep_ptrn="((/etc/rc.common|sh|/bin/sh) /etc/(rc.d/S${START}adblock-lean|init.d/adblock-lean)|luci.adblock-lean)"
-	kill_pids_recursive "$(pgrep -fa "${pgrep_ptrn}" | grep -v "[ \t]stop$" | ${SED_CMD} -E 's/\s+.*//' | tr '\n' ' ')" "${$}"
+	local abl_pids
+	check_lock
+	if [ ${?} = 2 ]
+	then
+		kill "${LOCK_PID}" 2>/dev/null
+	else
+		# if PID file doesn't exist, check for running abl processes just in case
+		local pgrep_ptrn="(^((sh|/bin/sh)\s+){0,1}(/etc/rc.common\s+){0,1}/etc/(rc.d/S${START}|init.d/)|luci\.)adblock-lean"
+		abl_pids="$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E "/\sstop$/d;s/\s+.*//;/^${$}$/d" | tr '\n' ' ')"
+		[ -n "${abl_pids}" ] && kill_pids_recursive "${abl_pids}"
+	fi
+
+	# wait for adblock-lean instance to exit
+	local i=0
+	while [ -f "${PID_FILE}" ] && [ ${i} -lt 10 ]
+	do
+		sleep 1
+		i=$((i+1))
+	done
+
 	:
 }
 
@@ -555,7 +573,13 @@ kill_pids_recursive()
 		pid_scan_depth=$((pid_scan_depth+1))
 		[ "${pid_scan_depth}" -lt "${max_pid_scan_depth}" ] || return 0
 
-		child_pids="$(pgrep -P "${2}")" || return 0
+		child_pids="$(
+			pgrep -faP "${2}" |
+			# exclude the dnsmasq processes and service calls from results
+			${SED_CMD} -E \
+				'/(^[0-9]+\s+((sh|\/bin\/sh)\s+){0,1}(\/sbin\/service\s+|\/etc\/rc.common\s+\/etc\/init.d\/){0,1}(\/usr\/sbin\/|\/sbin\/service\s){0,1}dnsmasq|\/sbin\/ujail)\s/d;
+				s/\s.*//'
+		)" || return 0
 
 		eval "prev_pids=\"\${${1}}\""
 
