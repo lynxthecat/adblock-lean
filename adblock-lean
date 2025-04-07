@@ -348,6 +348,13 @@ cleanup_and_exit()
 		[ -n "${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}" 2>/dev/null
 		rm -rf "${ABL_DIR}"
 	fi
+
+	if [ -n "${FAIL_STOP_REQ}" ]
+	then
+		ABL_NOTRAPS=1 stop "${1}" -noexit
+		rm -rf "${ABL_DIR}"
+	fi
+
 	[ -n "${LOCK_REQ}" ] && rm_lock
 	local recent_log=
 	[ -n "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ] && read -rd '' recent_log < "${LOG_FILE}"
@@ -770,12 +777,15 @@ init_command()
 	DO_DIALOGS=
 	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
-	if [ -n "${UPD_SOURCED}" ]
+	if [ -z "${ABL_NOTRAPS}" ]
 	then
-		trap 'exit 1' INT TERM
-	else
-		trap 'cleanup_and_exit 1' INT TERM
-		trap 'cleanup_and_exit ${?}' EXIT
+		if [ -n "${UPD_SOURCED}" ]
+		then
+			trap 'exit 1' INT TERM
+		else
+			trap 'cleanup_and_exit 1' INT TERM
+			trap 'cleanup_and_exit ${?}' EXIT
+		fi
 	fi
 
 	# set requirements
@@ -1190,14 +1200,17 @@ start()
 	try_export_existing_blocklist
 	[ ${?} = 1 ] && exit 1
 
+	FAIL_STOP_REQ=1
 	if ! gen_and_process_blocklist
 	then
 		reg_failure "Failed to generate new blocklist."
 		restore_saved_blocklist || stop 1
 		check_active_blocklist || { reg_failure "Active blocklist check failed with previous blocklist file."; stop 1; }
 		log_msg -green "Previous blocklist restored and dnsmasq check passed."
+		FAIL_STOP_REQ=
 		exit 1
 	fi
+	FAIL_STOP_REQ=
 
 	check_for_updates
 	exit 0
@@ -1319,9 +1332,11 @@ pause()
 		3) log_msg -err "adblock-lean is already paused."; exit 1 ;;
 		4) log_msg -err "adblock-lean is currently stopped."; exit 1;
 	esac
+	FAIL_STOP_REQ=1
 	reg_action -purple "Pausing adblock-lean." || exit 1
 	try_export_existing_blocklist || exit 1
 	restart_dnsmasq || exit 1
+	FAIL_STOP_REQ=
 	log_msg -purple "adblock-lean is now paused."
 	exit 0
 }
@@ -1338,7 +1353,9 @@ resume()
 	esac
 
 	reg_action -purple "Resuming adblock-lean." || exit 1
+	FAIL_STOP_REQ=1
 	restore_saved_blocklist || stop 1
+	FAIL_STOP_REQ=
 	log_msg -purple "adblock-lean is now resumed."
 	exit 0
 }
