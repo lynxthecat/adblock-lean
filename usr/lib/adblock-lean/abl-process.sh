@@ -338,8 +338,9 @@ process_list_part()
 		ucl_err_file="${ABL_DIR}/ucl_err_${job_id}" \
 		rogue_el_file="${ABL_DIR}/rogue_el_${job_id}" \
 		list_stats_file="${ABL_DIR}/stats_${job_id}" \
+		size_exceeded_file="${ABL_DIR}/size_exceeded_${job_id}" \
 		part_line_count='' line_count_human compress_part='' min_line_count='' min_line_count_human \
-		part_size_B='' part_size_KB='' retry=1
+		part_size_B='' retry=1
 
 	case ${list_type} in
 		blocklist|blocklist_ipv4) [ "${use_compression}" = 1 ] && { dest_file="${dest_file}.gz"; compress_part=1; }
@@ -348,14 +349,12 @@ process_list_part()
 
 	while :
 	do
-		rm -f "${rogue_el_file}" "${list_stats_file}"
+		rm -f "${rogue_el_file}" "${list_stats_file}" "${size_exceeded_file}" "${ucl_err_file}"
 
 		# Download or cat the list
 		local fetch_cmd lines_cnt_low='' dl_completed=''
 		case "${list_origin}" in
-			DL)
-				rm -f "${ucl_err_file}"
-				fetch_cmd=dl_list ;;
+			DL) fetch_cmd=dl_list ;;
 			LOCAL) fetch_cmd="cat" ;;
 			*) reg_failure "Invalid list origin '${list_origin}'."; finalize_job 1
 		esac
@@ -364,7 +363,7 @@ process_list_part()
 
 		${fetch_cmd} "${list_path}" |
 		# limit size
-		{ head -c "${max_file_part_size_KB}k"; cat 1>/dev/null; } |
+		{ head -c "${max_file_part_size_KB}k"; grep . 1>/dev/null && touch "${size_exceeded_file}"; } |
 
 		# Remove comment lines and trailing comments, remove whitespaces
 		$SED_CMD 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
@@ -418,9 +417,7 @@ process_list_part()
 		fi > "${dest_file}"
 
 		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
-		: "${part_size_B:=0}"
-		part_size_KB=$((part_size_B/1024))
-		if [ "${part_size_KB}" -ge "${max_file_part_size_KB}" ]
+		if [ -f "${size_exceeded_file}" ]
 		then
 			reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
