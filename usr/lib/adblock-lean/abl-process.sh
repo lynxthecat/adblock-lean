@@ -363,7 +363,7 @@ process_list_part()
 
 		${fetch_cmd} "${list_path}" |
 		# limit size
-		{ head -c "${max_file_part_size_KB}k"; grep . 1>/dev/null && touch "${size_exceeded_file}"; } |
+		{ head -c "${max_file_part_size_KB}k"; read -rn1 -d '' && { touch "${size_exceeded_file}"; cat 1>/dev/null; }; } |
 
 		# Remove comment lines and trailing comments, remove whitespaces
 		$SED_CMD 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
@@ -794,7 +794,7 @@ gen_and_process_blocklist()
 	tee >(wc -c > "${ABL_DIR}/final_list_bytes") |
 
 	# limit size
-	{ head -c "${max_blocklist_file_size_B}"; grep . 1>/dev/null && touch "${ABL_DIR}/abl-too-big.tmp"; } |
+	{ head -c "${max_blocklist_file_size_B}"; read -rn1 -d '' && { touch "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; }; } |
 	if  [ -n "${final_compress}" ]
 	then
 		busybox gzip
