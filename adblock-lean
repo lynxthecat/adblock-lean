@@ -1231,7 +1231,7 @@ stop()
 	done
 	msg="${msg% }"
 
-	init_command stop || exit 1
+	init_command stop || { FAIL_STOP_REQ=''; exit 1; }
 
 	# get DNSMASQ_CONF_D without calling load_config()
 	[ -f "${ABL_CONFIG_FILE}" ] &&
@@ -1247,6 +1247,7 @@ stop()
 	restart_dnsmasq -nostop || stop_rc=1
 	log_msg -purple "" "Stopped adblock-lean."
 	[ -n "$noexit" ] && return "${stop_rc}"
+	FAIL_STOP_REQ=
 	exit "${stop_rc}"
 }
 
