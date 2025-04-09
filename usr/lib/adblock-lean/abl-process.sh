@@ -794,7 +794,7 @@ gen_and_process_blocklist()
 	tee >(wc -c > "${ABL_DIR}/final_list_bytes") |
 
 	# limit size
-	{ head -c "${max_blocklist_file_size_B}"; head -c 1 > "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } |
+	{ head -c "${max_blocklist_file_size_B}"; grep . 1>/dev/null && touch "${ABL_DIR}/abl-too-big.tmp"; } |
 	if  [ -n "${final_compress}" ]
 	then
 		busybox gzip
@@ -802,7 +802,7 @@ gen_and_process_blocklist()
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
 
-	if [ -s "${ABL_DIR}/abl-too-big.tmp" ]; then
+	if [ -f "${ABL_DIR}/abl-too-big.tmp" ]; then
 		rm -f "${out_f}"
 		reg_failure "Final uncompressed blocklist exceeded ${max_blocklist_file_size_KB} kiB set in max_blocklist_file_size_KB config option!"
 		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
