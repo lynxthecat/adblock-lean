@@ -363,7 +363,7 @@ process_list_part()
 
 		${fetch_cmd} "${list_path}" |
 		# limit size
-		{ head -c "${max_file_part_size_KB}k"; grep . 1>/dev/null && touch "${size_exceeded_file}"; } |
+		{ head -c "${max_file_part_size_KB}k"; read -rn1 -d '' && { touch "${size_exceeded_file}"; cat 1>/dev/null; }; } |
 
 		# Remove comment lines and trailing comments, remove whitespaces
 		$SED_CMD 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
@@ -794,7 +794,7 @@ gen_and_process_blocklist()
 	tee >(wc -c > "${ABL_DIR}/final_list_bytes") |
 
 	# limit size
-	{ head -c "${max_blocklist_file_size_B}"; head -c 1 > "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } |
+	{ head -c "${max_blocklist_file_size_B}"; read -rn1 -d '' && { touch "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; }; } |
 	if  [ -n "${final_compress}" ]
 	then
 		busybox gzip
@@ -802,7 +802,7 @@ gen_and_process_blocklist()
 		cat
 	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
 
-	if [ -s "${ABL_DIR}/abl-too-big.tmp" ]; then
+	if [ -f "${ABL_DIR}/abl-too-big.tmp" ]; then
 		rm -f "${out_f}"
 		reg_failure "Final uncompressed blocklist exceeded ${max_blocklist_file_size_KB} kiB set in max_blocklist_file_size_KB config option!"
 		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
