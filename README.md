@@ -1,6 +1,6 @@
 # ⚔ adblock-lean
 
-adblock-lean provides powerful and ultra-efficient adblocking on OpenWrt. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This facilitates the use of very large blocklists even for low spec, low performance devices.
+adblock-lean is a set and forget, powerful and ultra-efficient adblocking solution for OpenWrt that **does not require any external dependencies** or introduce unecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
 
 If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
@@ -10,16 +10,16 @@ adblock-lean includes the following features:
 
 - support multiple blocklist files downloaded from user-specified urls
 - support local blocklist
-- same for downloaded and local allowlists
-- support whitelist mode
+- support multiple allowlist files downloaded from user-specified urls
+- support local allowlist
+- supports blocklist compression by leveraging the new conf-script functionality of dnsmasq
 - removal of domains found in the allowlist from the blocklist files
 - combining all downloaded and local lists into one final blocklist file
 - check that each individual blocklist and allowlist file does not exceed configurable maximum size
 - check that the total blocklist size does not exceeed configurable maximum file size
 - check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
-- check that line count in blocklist file does not exceed configurable minimum (default: 100,000)
+- check that line count in blocklist file exceeds configurable minimum (default: 100,000)
 - save a compressed copy of the previous blocklist file, then load the new combined blocklist file into dnsmasq
-- supports blocklist compression by leveraging the new conf-script functionality of dnsmasq
 - perform checks on restarted dnsmasq with new blocklist file
 - revert to previous blocklist file if checks fail
 - if checks on previous blocklist file also fail then revert to not using any blocklist file
@@ -124,6 +124,17 @@ opkg update
 opkg install nano
 nano /etc/adblock-lean/config
 ```
+
+## Local Blocklist and Allowlist
+adblock-lean supports the use of a local blocklist or allowlist to supplement and/or override the downloaded blocklists and allowlists. 
+
+Simply add domains (e.g. example.com) seperated by newlines in `/etc/adblock-lean/blocklist` or `/etc/adblock-lean/allowlist` (these paths are configurable in the config). 
+
+The following features are supported:
+
+- allow a subdomain of a blocked domain;
+- allow a perfectly matched domain from the blocklist; and 
+- allow a higher level domain when subdomains are blocked (allow example.com when ads.example.com and tracking.example.com are in the blocklist).
 
 ### Automatic blocklist updates
 Automatic blocklist updates can be enabled via a cron job. When enabled, adblock-lean will run according to schedule specified in the config file, with a delay of random number of minutes (0-60).
