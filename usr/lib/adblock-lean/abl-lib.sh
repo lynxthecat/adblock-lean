@@ -327,6 +327,24 @@ mk_preset_arrays()
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
 gen_preset()
 {
+	# rounds down to reasonable number of digits, based on the input number of digits
+	# 1 - var for I/O
+	reasonable_round()
+	{
+		local input res shift_digits
+		eval "input=\"\${${1}}\""
+		shift_digits=$(( ${#input}-2 ))
+		case "${shift_digits}" in
+			-*|'')
+				shift_digits=0
+				shifted="${input}" ;; # shell doesn't handle ${var:0:-0} correctly
+			*)	shifted=${input:0:-${shift_digits}}
+		esac
+		res="$(( shifted * 10**shift_digits ))"
+		eval "${1}"='${res}'
+		: "${res}"
+	}
+
 	local val field mem tgt_lines_cnt_k lim_coeff final_entry_size_B source_entry_size_B
 
 	eval "mem=\"\${${1}_mem}\" tgt_lines_cnt_k=\"\${${1}_cnt}\" lim_coeff=\"\${${1}_coeff:-1}\" blocklist_urls=\"\${${1}_urls}\""
@@ -341,13 +359,15 @@ gen_preset()
 	min_good_line_count=$((tgt_lines_cnt_k*1000/3/10000*10000))
 
 	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
-	max_blocklist_file_size_KB=$(( ((tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024)/1000*1000 ))
+	max_blocklist_file_size_KB=$(( (tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024 ))
+	reasonable_round max_blocklist_file_size_KB
 
 	case "${1}" in
 		mini) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
 		*)
 			# target_lines_cnt * source_entry_size_B * lim_coeff * 1.1
-			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1100*source_entry_size_B*lim_coeff)/1024)/1000*1000 ))
+			max_file_part_size_KB=$(( (tgt_lines_cnt_k*1100*source_entry_size_B*lim_coeff)/1024 ))
+			reasonable_round max_file_part_size_KB
 	esac
 
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
