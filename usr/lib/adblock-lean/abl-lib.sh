@@ -346,8 +346,8 @@ gen_preset()
 	case "${1}" in
 		mini) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
 		*)
-			# target_lines_cnt * source_entry_size_B * lim_coeff
-			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1000*source_entry_size_B*lim_coeff)/1024)/1000*1000 ))
+			# target_lines_cnt * source_entry_size_B * lim_coeff * 1.1
+			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1100*source_entry_size_B*lim_coeff)/1024)/1000*1000 ))
 	esac
 
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
