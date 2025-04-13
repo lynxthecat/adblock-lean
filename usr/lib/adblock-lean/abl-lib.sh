@@ -317,9 +317,9 @@ mk_preset_arrays()
 	medium_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt" \
 		medium_cnt=450 medium_mem=256
 	large_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
-		large_cnt=1000 large_mem=512
+		large_cnt=1200 large_mem=512
 	large_relaxed_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
-		large_relaxed_cnt=1000 large_relaxed_mem=1024 large_relaxed_coeff=2
+		large_relaxed_cnt=1200 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 
 # 1 - mini|small|medium|large|large_relaxed
