@@ -355,8 +355,9 @@ gen_preset()
 	final_entry_size_B=20 # assumption
 	source_entry_size_B=20 # assumption for raw domains format. dnsmasq source format not used by default
 
-	# target_lines_cnt / 3
-	min_good_line_count=$((tgt_lines_cnt_k*1000/3/10000*10000))
+	# target_lines_cnt / 3.5
+	min_good_line_count=$((tgt_lines_cnt_k*10000/35))
+	reasonable_round min_good_line_count
 
 	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
 	max_blocklist_file_size_KB=$(( (tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024 ))
