@@ -317,9 +317,9 @@ mk_preset_arrays()
 	medium_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt" \
 		medium_cnt=450 medium_mem=256
 	large_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
-		large_cnt=1000 large_mem=512
+		large_cnt=1200 large_mem=512
 	large_relaxed_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
-		large_relaxed_cnt=1000 large_relaxed_mem=1024 large_relaxed_coeff=2
+		large_relaxed_cnt=1200 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 
 # 1 - mini|small|medium|large|large_relaxed
@@ -327,6 +327,24 @@ mk_preset_arrays()
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
 gen_preset()
 {
+	# rounds down to reasonable number of digits, based on the input number of digits
+	# 1 - var for I/O
+	reasonable_round()
+	{
+		local input res shift_digits
+		eval "input=\"\${${1}}\""
+		shift_digits=$(( ${#input}-2 ))
+		case "${shift_digits}" in
+			-*|'')
+				shift_digits=0
+				shifted="${input}" ;; # shell doesn't handle ${var:0:-0} correctly
+			*)	shifted=${input:0:-${shift_digits}}
+		esac
+		res="$(( shifted * 10**shift_digits ))"
+		eval "${1}"='${res}'
+		: "${res}"
+	}
+
 	local val field mem tgt_lines_cnt_k lim_coeff final_entry_size_B source_entry_size_B
 
 	eval "mem=\"\${${1}_mem}\" tgt_lines_cnt_k=\"\${${1}_cnt}\" lim_coeff=\"\${${1}_coeff:-1}\" blocklist_urls=\"\${${1}_urls}\""
@@ -337,17 +355,20 @@ gen_preset()
 	final_entry_size_B=20 # assumption
 	source_entry_size_B=20 # assumption for raw domains format. dnsmasq source format not used by default
 
-	# target_lines_cnt / 3
-	min_good_line_count=$((tgt_lines_cnt_k*1000/3/10000*10000))
+	# target_lines_cnt / 3.5
+	min_good_line_count=$((tgt_lines_cnt_k*10000/35))
+	reasonable_round min_good_line_count
 
 	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
-	max_blocklist_file_size_KB=$(( ((tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024)/1000*1000 ))
+	max_blocklist_file_size_KB=$(( (tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024 ))
+	reasonable_round max_blocklist_file_size_KB
 
 	case "${1}" in
 		mini) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
 		*)
-			# target_lines_cnt * source_entry_size_B * lim_coeff
-			max_file_part_size_KB=$(( ((tgt_lines_cnt_k*1000*source_entry_size_B*lim_coeff)/1024)/1000*1000 ))
+			# target_lines_cnt * source_entry_size_B * lim_coeff * 1.03
+			max_file_part_size_KB=$(( (tgt_lines_cnt_k*1030*source_entry_size_B*lim_coeff)/1024 ))
+			reasonable_round max_file_part_size_KB
 	esac
 
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
