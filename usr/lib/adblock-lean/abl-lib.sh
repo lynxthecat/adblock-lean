@@ -680,11 +680,12 @@ parse_config()
 	# extract valid values from default config
 	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
-	local parser_error_file="${ABL_DIR}/parser_error"
-	rm -f "${parser_error_file}" "${ABL_DIR}/unexp_entries" "${ABL_DIR}/bad_val_entries" "${ABL_DIR}/missing_entries"
+	local parser_error_file="${ABL_CONF_STAGING_DIR}/parser_error"
+	rm -f "${parser_error_file}" "${ABL_CONF_STAGING_DIR}/unexp_entries" \
+		"${ABL_CONF_STAGING_DIR}/bad_val_entries" "${ABL_CONF_STAGING_DIR}/missing_entries"
 	parse_vars="$(
 		printf '%s\n' "${curr_config}" |
-		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v A="${ABL_DIR}" '
+		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v A="${ABL_CONF_STAGING_DIR}" '
 		# return codes: 0=OK, 1=awk or default config error, 253=check double-quotes, 254=Invalid entry detected
 
 		# make default config arrays: def_arr, valid_values_regex_arr, valid_values_print_arr
@@ -823,7 +824,7 @@ parse_config()
 	if [ -n "${unexp_keys}" ]
 	then
 		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
-		unexp_entries="$(cat "${ABL_DIR}/unexp_entries")"
+		unexp_entries="$(cat "${ABL_CONF_STAGING_DIR}/unexp_entries")"
 		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
 		luci_unexp_keys=${unexp_keys% }
@@ -833,7 +834,7 @@ parse_config()
 	if [ -n "${missing_keys}" ]
 	then
 		reg_failure "Missing keys in config: '${missing_keys% }'."
-		missing_entries="$(cat "${ABL_DIR}/missing_entries")"
+		missing_entries="$(cat "${ABL_CONF_STAGING_DIR}/missing_entries")"
 		print_msg "Corresponding default config entries:" "${missing_entries%$'\n'}"
 		add_conf_fix "Re-add missing config entries with default values"
 		luci_missing_keys=${missing_keys% }
@@ -843,8 +844,8 @@ parse_config()
 	if [ -n "${bad_value_keys}" ]
 	then
 		reg_failure "Detected config entries with unexpected values."
-		bad_val_entries="$(cat "${ABL_DIR}/bad_val_entries")"
-		corrected_entries="$(cat "${ABL_DIR}/corrected_entries")"
+		bad_val_entries="$(cat "${ABL_CONF_STAGING_DIR}/bad_val_entries")"
+		corrected_entries="$(cat "${ABL_CONF_STAGING_DIR}/corrected_entries")"
 		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
 			"Corresponding default config entries:" "${corrected_entries%$'\n'}"
 		add_conf_fix "Replace unexpected values with defaults"
@@ -893,7 +894,7 @@ load_config()
 
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
 
-	mkdir -p "${ABL_DIR}"
+	try_mkdir -p "${ABL_CONF_STAGING_DIR}" || return 1
 
 	# validate config and assign to variables
 	parse_config "${ABL_CONFIG_FILE}"
@@ -984,7 +985,7 @@ fix_config()
 # 1 - new config file contents
 write_config()
 {
-	local tmp_config="${ABL_DIR}/write-config.tmp" missing_keys conf_fixes
+	local tmp_config="${ABL_CONF_STAGING_DIR}/write-config.tmp" missing_keys conf_fixes
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
@@ -994,7 +995,7 @@ write_config()
 		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
 	fi
 
-	try_mkdir -p "${ABL_DIR}" || return 1
+	try_mkdir -p "${ABL_CONF_STAGING_DIR}" || return 1
 	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
@@ -1003,7 +1004,6 @@ write_config()
 	try_mkdir -p "${ABL_CONFIG_DIR}" ||
 		{
 			rm -f "${tmp_config}"
-			reg_failure "Failed to create directory '${ABL_CONFIG_DIR}'."
 			return 1
 		}
 	try_mv "${tmp_config}" "${ABL_CONFIG_FILE}" ||
