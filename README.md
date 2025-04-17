@@ -210,8 +210,9 @@ Default config can be generated using: `service adblock-lean gen_config`.
 |`max_blocklist_file_size_KB`         | Maximim size in KB of combined, processed blocklist                                           |
 |`deduplication`                      | Whether to perform sorting and deduplication of entries                                       |
 |`use_compression`                    | Compress while processing, and final blocklists. Reduces memory usage. 1/0 to enable/disable  |
-|`initial_dnsmasq_restart`            | Initial dnsmasq restart to free up memory. 1/0 to enable/disable                              |
+|`unload_blocklist_before_update`     | Unload current blocklist before update to save memory. 'auto' or 1/0 to enable/disable.       |
 |`boot_start_delay_s`                 | Start delay in seconds when service is started from system boot                               |
+|`MAX_PARALLEL_JOBS`                  | Max count of download and processing jobs to run in parallel. 'auto' sets this automatically  |
 |`custom_script`                      | Path to custom user script to execute on success on failure                                   |
 |`cron_schedule`                      | Crontab schedule for automatic blocklist updates or `disable`                                 |
 |`DNSMASQ_INSTANCE`                   | Name of the dnsmasq instance to attach to. Normally set automatically by the `setup` command  |
