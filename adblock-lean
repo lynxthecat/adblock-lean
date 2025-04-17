@@ -42,6 +42,7 @@ ABL_LIB_DIR=/usr/lib/adblock-lean
 ABL_CONFIG_DIR=/etc/adblock-lean
 ABL_PID_DIR=/tmp/adblock-lean
 ABL_UPD_DIR="/var/run/adblock-lean-update"
+ABL_CONF_STAGING_DIR="/tmp/abl-conf-staging"
 
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
 ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh ${ABL_LIB_DIR}/abl-process.sh"
@@ -346,13 +347,16 @@ cleanup_and_exit()
 	then
 		[ "${1}" != 0 ] && print_msg "" "Cleaning up..."
 		[ -n "${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}" 2>/dev/null
+		rm -rf "${ABL_DIR}"
 	fi
 
 	if [ -n "${FAIL_STOP_REQ}" ]
 	then
 		ABL_NOTRAPS=1 stop "${1}" -noexit
+		rm -rf "${ABL_DIR}"
 	fi
-	rm -rf "${ABL_DIR}"
+
+	rm -rf "${ABL_CONF_STAGING_DIR}"
 
 	[ -n "${LOCK_REQ}" ] && rm_lock
 	local recent_log=
@@ -457,10 +461,8 @@ check_lock()
 
 rm_lock()
 {
-	if [ -f "${PID_FILE}" ]
-	then
-		rm -f "${PID_FILE}" || { reg_failure "Failed to delete the pid file '${PID_FILE}'."; return 1; }
-	fi
+	rm -f "${PID_FILE}" || { reg_failure "Failed to delete the pid file '${PID_FILE}'."; return 1; }
+	rm -rf "${ABL_PID_DIR}"
 	LOCK_PID=
 	:
 }
