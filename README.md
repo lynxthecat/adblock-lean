@@ -1,6 +1,6 @@
 # ⚔ adblock-lean
 
-adblock-lean is a set and forget, powerful and ultra-efficient adblocking solution for OpenWrt that **does not require any external dependencies** or introduce unecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
+adblock-lean is a low maintenance (almost set and forget), powerful and ultra-efficient adblocking solution for OpenWrt that **does not mandate any external dependencies** or introduce unecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
 
 If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
@@ -8,11 +8,11 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 
 adblock-lean includes the following features:
 
-- support multiple blocklist files downloaded from user-specified urls
-- support local blocklist
-- support multiple allowlist files downloaded from user-specified urls
-- support local allowlist
-- supports blocklist compression by leveraging the new conf-script functionality of dnsmasq
+- supports multiple blocklist files downloaded from user-specified urls
+- supports local blocklist
+- supports multiple allowlist files downloaded from user-specified urls
+- supports local allowlist
+- supports blocklist compression (which significantly reduces memory consumption) by leveraging the new conf-script functionality of dnsmasq
 - removal of domains found in the allowlist from the blocklist files
 - combining all downloaded and local lists into one final blocklist file
 - check that each individual blocklist and allowlist file does not exceed configurable maximum size
