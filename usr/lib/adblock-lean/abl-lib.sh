@@ -1516,6 +1516,13 @@ check_dnsmasq_instance()
 		}
 	}
 
+	# check if config section exists in /etc/config/dhcp
+	uci show "dhcp.${1}" &>/dev/null ||
+	{
+		reg_failure "dnsmasq instance '${1}' is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
+		return 1
+	}
+
 	eval "dnsmasq_conf_dirs=\"\${${1}_CONF_DIRS}\""
 	is_included "${DNSMASQ_CONF_D}" "${dnsmasq_conf_dirs}" ||
 	{
