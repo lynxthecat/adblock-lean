@@ -893,6 +893,8 @@ load_config()
 
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
 
+	mkdir -p "${ABL_DIR}"
+
 	# validate config and assign to variables
 	parse_config "${ABL_CONFIG_FILE}"
 	case ${?} in
