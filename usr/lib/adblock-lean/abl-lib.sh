@@ -893,6 +893,8 @@ load_config()
 
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
 
+	mkdir -p "${ABL_DIR}"
+
 	# validate config and assign to variables
 	parse_config "${ABL_CONFIG_FILE}"
 	case ${?} in
@@ -1512,6 +1514,13 @@ check_dnsmasq_instance()
 			reg_failure "dnsmasq instance '${1}' is misconfigured or not running. ${please_run}"
 			return 1
 		}
+	}
+
+	# check if config section exists in /etc/config/dhcp
+	uci show "dhcp.${1}" &>/dev/null ||
+	{
+		reg_failure "dnsmasq instance '${1}' is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
+		return 1
 	}
 
 	eval "dnsmasq_conf_dirs=\"\${${1}_CONF_DIRS}\""
