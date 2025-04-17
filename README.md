@@ -9,6 +9,8 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 - [Installation on OpenWrt](#installation-on-openWrt)
 - [Usage](#usage)
 - [Basic configuration](#basic-configuration)
+- [Supported formats](#supported-formats)
+- [Adding new lists](#adding-new-lists)
 - [Advanced configuration](#advanced-configuration)
 - [Whitelist mode](#whitelist-mode)
 - [User-configurable calls on success or failure](#user-configurable-calls-on-success-or-failure)
@@ -164,20 +166,19 @@ cron_schedule="disable"
 
 adblock-lean supports 2 blocklist/allowlist formats: **raw format** and **dnsmasq format**. Raw-format lists have the benefit of smaller file size dowload, improved processing speed and reduced ram usage. Hence built-in presets include lists in the raw format.
 
-The default Hagezi lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. oisd lists are supported as well.
-
 - Hagezi **raw domains-formatted lists** can be found [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard). **NOTE** that the file names of correct lists have the `-onlydomains` suffix.
 - Visual example of raw ```blocklist_urls``` [Hagezi light raw](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt).
 - Visual example of dnsmasq formmatted ```dnsmasq_blocklist_urls``` [Hagezi light dnsmasq](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt).
-
-- The base **download URLs** for Hagezi list are `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/` for raw-formatted lists, `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/` for dnsmasq-formatted lists.
-- **When adding a new Hagezi list URL**, use the list name (for example: `popupads-onlydomains.txt`) and prepend the **download URL** to it (for example: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt`)
-
 - oisd raw domains-formatted lists can be found [here](https://oisd.nl/setup/adblock-lean). **NOTE** that the correct lists are **only** the ones named `domainswild2` (note the `2`).
-- oisd dnsmasq-formatted lists can be found at the same URL, except you would be looking for lists named `dnsmasq2`.
-- **When adding a new oisd list URL**, use URLs copied directly from the oisd webpage
 
-Any other raw or dnsmasq format lists of your choice can also be configured and used.
+## Adding new lists
+
+The default Hagezi lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. oisd lists are supported as well.
+
+- The **base download URLs** for Hagezi list are `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/` for **raw-formatted lists**, `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/` for **dnsmasq-formatted** lists.
+- **When adding a new Hagezi list URL**, use the list name (all available lists are [here](https://github.com/hagezi/dns-blocklists)) (for example: `popupads-onlydomains.txt`) and prepend the **download URL** to it (for example: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt`). When adding a **raw-formatted** Hagezi list, **make sure that the list name has the `-onlydomains` suffix**.
+- **When adding a new oisd list URL** use one of the URLs listed on the [oisd page](https://oisd.nl/setup/adblock-lean). For **raw-formatted** lists, look for URLs named **domainswild2** (note the **2**), for **dnsmasq-formatted** lists look for URLs named **dnsmasq2** (note the **2**).
+- Any other raw or dnsmasq format lists of your choice can also be configured and used, but make sure it conforms to [supported formats](#supported-formats).
 
 ## Advanced configuration
 
