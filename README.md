@@ -219,7 +219,7 @@ Default config can be generated using: `service adblock-lean gen_config`.
 |`DNSMASQ_CONF_D`                     | Conf-dir used by the dnsmasq instance. Normally set automatically by the `setup` command      |
 |`DNSMASQ_INDEX`                      | Index of the dnsmasq instance. Normally set automatically by the `setup` command              |
 
-For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
+For devices with low memory capacity (less than 512MiB), the option `unload_blocklist_before_update`, when set to `auto`, will cause previous blocklist to be unloaded before downloading and processing a new one, in order to free up memory. For other cases of memory scarcity, consider setting this option to `1`.
 
 ### Selection of blocklists and associated parameters
 
