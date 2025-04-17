@@ -4,6 +4,20 @@ adblock-lean provides powerful and ultra-efficient adblocking on OpenWrt. It is 
 
 If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
+## Table of contents
+- [Features](#features)
+- [Installation on OpenWrt](#installation-on-openWrt)
+- [Usage](#usage)
+- [Basic configuration](#basic-configuration)
+- [Advanced configuration](#advanced-configuration)
+- [Whitelist mode](#whitelist-mode)
+- [User-configurable calls on success or failure](#user-configurable-calls-on-success-or-failure)
+- [Checking status of adblock-lean](#checking-status-of-adblock-lean)
+- [Testing advert blocking](#testing-advert-blocking)
+- [Preserve adblock-lean files and config across OpenWrt upgrades](#preserve-adblock-lean-files-and-config-across-openwrt-upgrades)
+- [adblock-lean version updates](#adblock-lean-version-updates)
+- [Uninstalling](#uninstalling)
+
 ## Features
 
 adblock-lean includes the following features:
@@ -201,7 +215,7 @@ Each configuration option is internally documented with comments in `/etc/adbloc
 
 For devices with low free memory, consider enabling the `initial_dnsmasq_restart` option to free up memory for use during the memory-intensive blocklist generation process by additionally restarting dnsmasq with no blocklist prior to the generation of the new blocklist. This option is disabled by default to prevent both the associated: dnsmasq downtime; and the temporary running of dnsmasq with no blocklist.
 
-## Selection of blocklists and associated parameters
+### Selection of blocklists and associated parameters
 
 An important factor in selecting blocklist(s) is how much free memory is available for blocklist use. It is the responsibility of the user to ensure that there is sufficient free memory to prevent an out of memory situation.
 
