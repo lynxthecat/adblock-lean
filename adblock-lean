@@ -461,10 +461,8 @@ check_lock()
 
 rm_lock()
 {
-	if [ -f "${PID_FILE}" ]
-	then
-		rm -f "${PID_FILE}" || { reg_failure "Failed to delete the pid file '${PID_FILE}'."; return 1; }
-	fi
+	rm -f "${PID_FILE}" || { reg_failure "Failed to delete the pid file '${PID_FILE}'."; return 1; }
+	rm -rf "${ABL_PID_DIR}"
 	LOCK_PID=
 	:
 }
