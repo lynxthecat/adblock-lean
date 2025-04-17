@@ -346,14 +346,13 @@ cleanup_and_exit()
 	then
 		[ "${1}" != 0 ] && print_msg "" "Cleaning up..."
 		[ -n "${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}" 2>/dev/null
-		rm -rf "${ABL_DIR}"
 	fi
 
 	if [ -n "${FAIL_STOP_REQ}" ]
 	then
 		ABL_NOTRAPS=1 stop "${1}" -noexit
-		rm -rf "${ABL_DIR}"
 	fi
+	rm -rf "${ABL_DIR}"
 
 	[ -n "${LOCK_REQ}" ] && rm_lock
 	local recent_log=
