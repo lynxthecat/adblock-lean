@@ -166,9 +166,8 @@ cron_schedule="disable"
 
 adblock-lean supports 2 blocklist/allowlist formats: **raw format** and **dnsmasq format**. Raw-format lists have the benefit of smaller file size dowload, improved processing speed and reduced ram usage. Hence built-in presets include lists in the raw format.
 
-- Visual example of raw ```blocklist_urls``` [Hagezi light raw](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt).
-- Visual example of dnsmasq formmatted ```dnsmasq_blocklist_urls``` [Hagezi light dnsmasq](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt).
-- oisd raw domains-formatted lists can be found [here](https://oisd.nl/setup/adblock-lean). **NOTE** that the correct lists are **only** the ones named `domainswild2` (note the `2`).
+- [Visual example](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt) of **raw-format list**
+- [Visual example](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt) of **dnsmasq-formmat list**
 
 ## Adding new lists
 
