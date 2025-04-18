@@ -166,19 +166,35 @@ cron_schedule="disable"
 
 adblock-lean supports 2 blocklist/allowlist formats: **raw format** and **dnsmasq format**. Raw-format lists have the benefit of smaller file size dowload, improved processing speed and reduced ram usage. Hence built-in presets include lists in the raw format.
 
-- Hagezi **raw domains-formatted lists** can be found [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard). **NOTE** that the file names of correct lists have the `-onlydomains` suffix.
 - Visual example of raw ```blocklist_urls``` [Hagezi light raw](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt).
 - Visual example of dnsmasq formmatted ```dnsmasq_blocklist_urls``` [Hagezi light dnsmasq](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt).
 - oisd raw domains-formatted lists can be found [here](https://oisd.nl/setup/adblock-lean). **NOTE** that the correct lists are **only** the ones named `domainswild2` (note the `2`).
 
 ## Adding new lists
 
-The default Hagezi lists [hagezi](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. oisd lists are supported as well.
+The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. oisd lists are supported as well.
 
-- The **base download URLs** for Hagezi list are `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/` for **raw-formatted lists**, `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/` for **dnsmasq-formatted** lists.
-- **When adding a new Hagezi list URL**, use the list name (all available lists are [here](https://github.com/hagezi/dns-blocklists)) (for example: `popupads-onlydomains.txt`) and prepend the **download URL** to it (for example: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt`). When adding a **raw-formatted** Hagezi list, **make sure that the list name has the `-onlydomains` suffix**.
-- **When adding a new oisd list URL** use one of the URLs listed on the [oisd page](https://oisd.nl/setup/adblock-lean). For **raw-formatted** lists, look for URLs named **domainswild2** (note the **2**), for **dnsmasq-formatted** lists look for URLs named **dnsmasq2** (note the **2**).
-- Any other raw or dnsmasq format lists of your choice can also be configured and used, but make sure it conforms to [supported formats](#supported-formats).
+### Adding a new **Hagezi** list
+1. Decide on the source list format first (**raw** or **dnsmasq**)
+2. Add a **raw-formatted list** (recommended):
+   - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/`
+   - Add the **list name** to the **base download URL**. The list name must have the **-onlydomains** suffix. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard).
+   - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt`
+3. **OR** add a **dnsmasq-formatted list**:
+   - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/`
+   - Add the **list name** to the **base download URL**. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/dnsmasq).
+   - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/popupads.txt`
+
+### Adding a new **oisd** list
+1. Decide on the source list format (**raw** or **dnsmasq**)
+2. Visit the [oisd page](https://oisd.nl/setup/adblock-lean)
+3. Add a **raw-formatted list** (recommended):
+   - Look for URLs named **domainswild2** (note the **2**) and use any of them
+4. **OR** add a **dnsmasq-formatted list**:
+   - Look for URLs named **dnsmasq2** (note the **2**) and use any of them
+
+### Adding another list
+- Any other raw or dnsmasq format lists of your choice can be used, but make sure it conforms to [supported formats](#supported-formats).
 
 ## Advanced configuration
 
