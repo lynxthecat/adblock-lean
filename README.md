@@ -164,14 +164,14 @@ cron_schedule="disable"
 
 ## Supported formats
 
-adblock-lean supports 2 blocklist/allowlist formats: **raw format** and **dnsmasq format**. Raw-format lists have the benefit of smaller file size dowload, improved processing speed and reduced ram usage. Hence built-in presets include lists in the raw format.
+adblock-lean supports two blocklist/allowlist formats: **raw format** and **dnsmasq format**. Raw-format lists have the benefit of smaller file size dowload, improved processing speed and reduced ram usage. Hence built-in presets include lists in the raw format.
 
 - [Visual example](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt) of **raw-format list**
 - [Visual example](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt) of **dnsmasq-formmat list**
 
 ## Adding new lists
 
-The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as many _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other "crap"_ as possible, all while breaking as few websites as possible. oisd lists are supported as well.
+The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as much as possible in respect of: _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other undesirable content_, all while breaking as few websites as possible. oisd lists are supported as well.
 
 ### Adding a new **Hagezi** list
 1. Decide on the source list format first (**raw** or **dnsmasq**)
