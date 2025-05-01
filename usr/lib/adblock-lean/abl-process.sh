@@ -874,7 +874,10 @@ gen_and_process_blocklist()
 	fi
 
 	log_msg -green "" "Active blocklist check passed with the new blocklist file."
-	log_success "${green}New blocklist installed with entries count: ${blue}${final_entries_cnt_human}${n_c}."
+
+	print_msg "${green}New blocklist installed with entries count: ${blue}${final_entries_cnt_human}${n_c}."
+	reg_success "New blocklist installed with entries count: ${final_entries_cnt_human}."
+
 	rm -f "${ABL_DIR}/prev_blocklist"*
 
 	:

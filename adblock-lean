@@ -538,9 +538,8 @@ reg_failure()
 	luci_errors="${failure_msg}"
 }
 
-log_success()
+reg_success()
 {
-	log_msg "${1}"
 	if [ -n "${custom_scr_sourced}" ] && check_util report_success
 	then
 		report_success "${1}"
