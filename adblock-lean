@@ -93,9 +93,14 @@ adblock-lean custom commands:
 
 ### UTILITY FUNCTIONS
 
+# 1 (optional): '-f' to only check for functions
 check_util()
 {
-	command -v "${1}" 1>/dev/null
+	local check_func=
+	[ "${1}" = '-f' ] && { check_func=1; shift; }
+	command -v "${1}" 1>/dev/null && {
+		[ -z "${check_func}" ] || [ "$(type "${1}" 2>/dev/null | head -n1)" = "${1} is a function" ]
+	}
 }
 
 # sets global variables for colors, tab delimiter and cr_lf
@@ -364,12 +369,12 @@ cleanup_and_exit()
 	luci_log="${recent_log}"
 
 	# execute custom script actions
-	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_util report_failure
+	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_util -f report_failure
 	then
 		[ -n "${recent_log}" ] && failure_msg="${failure_msg}${_NL_}${_NL_}Session log:${_NL_}${recent_log}"
 		report_failure "${failure_msg}"
 	fi
-	if [ -n "${UPD_AVAIL_MSG}" ] && check_util report_update
+	if [ -n "${UPD_AVAIL_MSG}" ] && check_util -f report_update
 	then
 		report_update "${UPD_AVAIL_MSG}${_NL_}${UPD_DIRECTIONS}"
 	fi
@@ -540,7 +545,7 @@ reg_failure()
 
 reg_success()
 {
-	if [ -n "${custom_scr_sourced}" ] && check_util report_success
+	if [ -n "${custom_scr_sourced}" ] && check_util -f report_success
 	then
 		report_success "${1}"
 	fi
