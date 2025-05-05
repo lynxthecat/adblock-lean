@@ -303,15 +303,16 @@ print_msg()
 }
 
 # logs each message argument separately and prints to a separate line
-# optional arguments: '-err', '-warn', '-[color]'
+# optional arguments: '-noprint', '-err', '-warn', '-[color]'
 log_msg()
 {
-	local m msgs='' msgs_prefix='' _arg err_l=info color=
+	local m msgs='' msgs_prefix='' _arg err_l=info color='' noprint=''
 
 	local IFS="${DEFAULT_IFS}"
 	for _arg in "$@"
 	do
 		case "${_arg}" in
+			"-noprint") noprint=1 ;;
 			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
 			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
@@ -328,7 +329,7 @@ log_msg()
 		case "${m}" in
 			dummy) printf '\n' > "${MSGS_DEST}" ;;
 			*)
-				print_msg ${color} "${m}"
+				[ -z "${noprint}" ] && print_msg ${color} "${m}"
 				logger -t adblock-lean -p user."${err_l}" "${m}"
 				write_log_file "${m}" "${err_l}"
 		esac
