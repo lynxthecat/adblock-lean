@@ -93,6 +93,11 @@ adblock-lean custom commands:
 
 ### UTILITY FUNCTIONS
 
+check_func()
+{
+	[ "$(type "${1}" 2>/dev/null | head -n1)" = "${1} is a function" ]
+}
+
 check_util()
 {
 	command -v "${1}" 1>/dev/null
@@ -228,12 +233,12 @@ pick_opt()
 	update_action_file "Waiting for user input in console" || return 1
 	while :
 	do
-		printf %s "$1: " 1>${MSGS_DEST}
+		printf %s "$1: "
 		read -r REPLY
-		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1" 1>${MSGS_DEST}; continue; esac
+		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1"; continue; esac
 		eval "case \"$REPLY\" in 
 				$1) return 0 ;;
-				*) printf '\n%s\n\n' \"Please enter $1\" 1>${MSGS_DEST}
+				*) printf '\n%s\n\n' \"Please enter $1\"
 			esac"
 	done
 }
@@ -298,15 +303,16 @@ print_msg()
 }
 
 # logs each message argument separately and prints to a separate line
-# optional arguments: '-err', '-warn', '-[color]'
+# optional arguments: '-noprint', '-err', '-warn', '-[color]'
 log_msg()
 {
-	local m msgs='' msgs_prefix='' _arg err_l=info color=
+	local m msgs='' msgs_prefix='' _arg err_l=info color='' noprint=''
 
 	local IFS="${DEFAULT_IFS}"
 	for _arg in "$@"
 	do
 		case "${_arg}" in
+			"-noprint") noprint=1 ;;
 			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
 			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
@@ -323,7 +329,7 @@ log_msg()
 		case "${m}" in
 			dummy) printf '\n' > "${MSGS_DEST}" ;;
 			*)
-				print_msg ${color} "${m}"
+				[ -z "${noprint}" ] && print_msg ${color} "${m}"
 				logger -t adblock-lean -p user."${err_l}" "${m}"
 				write_log_file "${m}" "${err_l}"
 		esac
@@ -364,12 +370,12 @@ cleanup_and_exit()
 	luci_log="${recent_log}"
 
 	# execute custom script actions
-	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_util report_failure
+	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_failure
 	then
 		[ -n "${recent_log}" ] && failure_msg="${failure_msg}${_NL_}${_NL_}Session log:${_NL_}${recent_log}"
 		report_failure "${failure_msg}"
 	fi
-	if [ -n "${UPD_AVAIL_MSG}" ] && check_util report_update
+	if [ -n "${UPD_AVAIL_MSG}" ] && check_func report_update
 	then
 		report_update "${UPD_AVAIL_MSG}${_NL_}${UPD_DIRECTIONS}"
 	fi
@@ -538,10 +544,9 @@ reg_failure()
 	luci_errors="${failure_msg}"
 }
 
-log_success()
+reg_success()
 {
-	log_msg "${1}"
-	if [ -n "${custom_scr_sourced}" ] && check_util report_success
+	if [ -n "${custom_scr_sourced}" ] && check_func report_success
 	then
 		report_success "${1}"
 	fi
@@ -773,7 +778,7 @@ init_command()
 
 	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
 	luci_sourced=
-	check_util "abl_luci_exit" && luci_sourced=1
+	check_func "abl_luci_exit" && luci_sourced=1
 
 	DO_DIALOGS=
 	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
@@ -979,8 +984,8 @@ abl_post_update_1()
 				unset -f clean_dnsmasq_dir restart_dnsmasq
 				unset action ABL_CMD
 				. "${ABL_SERVICE_PATH}"
-				check_util clean_dnsmasq_dir && clean_dnsmasq_dir &&
-				check_util restart_dnsmasq && restart_dnsmasq
+				check_func clean_dnsmasq_dir && clean_dnsmasq_dir &&
+				check_func restart_dnsmasq && restart_dnsmasq
 			)
 		fi
 		POST_UPDATE_1_DONE=1
@@ -1064,8 +1069,7 @@ install_abl_files()
 			log_msg "File '${file}' did not change - not updating."
 		else
 			log_msg "Copying file '${file##*/}'."
-			{ [ -d "${file%/*}" ] || try_mkdir -p "${file%/*}"; } &&
-				cp "${preinst_path}" "${file}" ||
+			try_mkdir -p "${file%/*}" && cp "${preinst_path}" "${file}" ||
 			{
 				reg_failure "Failed to copy file '${file##*/}'."
 				return 1
@@ -1380,7 +1384,7 @@ update()
 		[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
 		[ -n "${fail_msg}" ] && reg_failure "${fail_msg}"
 		reg_failure "Failed to update adblock-lean."
-		rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
+		rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 	}
 
 	failsafe_log()
@@ -1411,7 +1415,7 @@ update()
 
 	[ -z "${force_update}" ] && stop -noexit
 
-	rm -rf "${ABL_UPD_DIR}"
+	rm -rf "${ABL_UPD_DIR:-???}"
 	try_mkdir -p "${ABL_UPD_DIR}" || { upd_failed; return 1; }
 
 	if [ -n "${SIM_PATH}" ]
@@ -1454,7 +1458,7 @@ update()
 		. "${dist_dir}/adblock-lean" || { failsafe_log "Error: Failed to source the downloaded script."; exit 1; }
 
 		# call abl_post_update_1() in new version
-		check_util abl_post_update_1 && abl_post_update_1
+		check_func abl_post_update_1 && abl_post_update_1
 
 		printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}" > "${curr_dist_dir}/inst_files"
 
@@ -1462,11 +1466,11 @@ update()
 		then
 			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 			# load config and call abl_post_update_2() in new version
-			if { ! check_util source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}"; } &&
-					check_util load_config
+			if { ! check_func source_libs || source_libs "${curr_dist_dir}${ABL_LIB_DIR}" "${curr_dist_dir}"; } &&
+					check_func load_config
 			then
 				load_config
-				check_util abl_post_update_2 && abl_post_update_2
+				check_func abl_post_update_2 && abl_post_update_2
 			else
 				failsafe_log "Please run 'service adblock-lean start' to initialize the new config."
 			fi
@@ -1475,7 +1479,7 @@ update()
 	) 1>/dev/null || { upd_failed "Failed to source the new version of adblock-lean. Update is cancelled."; return 1; }
 
 	install_abl_files "${dist_dir}" "${upd_channel}_${ref}" || { upd_failed; return 1; }
-	rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
+	rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 
 	# shellcheck disable=SC2031
 	[ -n "${UPD_SOURCED}" ] && return 0
@@ -1522,7 +1526,7 @@ uninstall()
 	if [ "${REPLY}" = y ]
 	then
 		log_msg -purple "" "Deleting the config directory."
-		rm -rf "${ABL_CONFIG_DIR}" || reg_failure "Failed to delete the config directory '${ABL_CONFIG_DIR}'."
+		rm -rf "${ABL_CONFIG_DIR:-???}"
 	fi
 
 	local i="-1" addnmount_deleted=1
@@ -1607,10 +1611,10 @@ fi
 
 # shellcheck source=/dev/null
 # this is needed when running via 'sh /etc/init.d/adblock-lean'
-check_util config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
+check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
 
 # detect when sourced from update() in older versions
-check_util failsafe_log 1>/dev/null && UPD_SOURCED=1
+check_func failsafe_log 1>/dev/null && UPD_SOURCED=1
 
 case "${ABL_CMD}" in
 	enable|disable|uninstall|update|setup) ${ABL_CMD} "${@}"; exit ${?} ;;
