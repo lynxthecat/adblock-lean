@@ -1069,8 +1069,7 @@ install_abl_files()
 			log_msg "File '${file}' did not change - not updating."
 		else
 			log_msg "Copying file '${file##*/}'."
-			{ [ -d "${file%/*}" ] || try_mkdir -p "${file%/*}"; } &&
-				cp "${preinst_path}" "${file}" ||
+			try_mkdir -p "${file%/*}" && cp "${preinst_path}" "${file}" ||
 			{
 				reg_failure "Failed to copy file '${file##*/}'."
 				return 1
@@ -1385,7 +1384,7 @@ update()
 		[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
 		[ -n "${fail_msg}" ] && reg_failure "${fail_msg}"
 		reg_failure "Failed to update adblock-lean."
-		rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
+		rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 	}
 
 	failsafe_log()
@@ -1416,7 +1415,7 @@ update()
 
 	[ -z "${force_update}" ] && stop -noexit
 
-	rm -rf "${ABL_UPD_DIR}"
+	rm -rf "${ABL_UPD_DIR:-???}"
 	try_mkdir -p "${ABL_UPD_DIR}" || { upd_failed; return 1; }
 
 	if [ -n "${SIM_PATH}" ]
@@ -1480,7 +1479,7 @@ update()
 	) 1>/dev/null || { upd_failed "Failed to source the new version of adblock-lean. Update is cancelled."; return 1; }
 
 	install_abl_files "${dist_dir}" "${upd_channel}_${ref}" || { upd_failed; return 1; }
-	rm -rf "${ABL_UPD_DIR}" "${ABL_PID_DIR}" "${UCL_ERR_FILE}"
+	rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 
 	# shellcheck disable=SC2031
 	[ -n "${UPD_SOURCED}" ] && return 0
@@ -1527,7 +1526,7 @@ uninstall()
 	if [ "${REPLY}" = y ]
 	then
 		log_msg -purple "" "Deleting the config directory."
-		rm -rf "${ABL_CONFIG_DIR}" || reg_failure "Failed to delete the config directory '${ABL_CONFIG_DIR}'."
+		rm -rf "${ABL_CONFIG_DIR:-???}"
 	fi
 
 	local i="-1" addnmount_deleted=1
