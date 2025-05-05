@@ -653,6 +653,8 @@ parse_config()
 
 	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
 
+	try_mkdir -p "${ABL_CONF_STAGING_DIR}" || return 1
+
 	# extract entries from default config
 	def_config="$(print_def_config)" || return 3
 
@@ -893,8 +895,6 @@ load_config()
 	fi
 
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
-
-	try_mkdir -p "${ABL_CONF_STAGING_DIR}" || return 1
 
 	# validate config and assign to variables
 	parse_config "${ABL_CONFIG_FILE}"
