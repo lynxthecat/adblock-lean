@@ -302,7 +302,10 @@ process_list_part()
 		[ -n "${2}" ] && reg_failure "process_list_part: ${2}"
 		case "${1}" in
 			0)
-				log_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, $(bytes2human "${part_size_B}"))." ;;
+				local list_size_human
+				list_size_human="$(bytes2human "${part_size_B}")"
+				print_msg -green "Successfully processed list: ${blue}${list_path}${n_c} (${line_count_human} lines, ${list_size_human})."
+				log_msg -noprint "Successfully processed list: ${list_path} (${line_count_human} lines, ${list_size_human})." ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] && handle_fatal "${curr_job_pid}" "${list_path}"
@@ -359,7 +362,8 @@ process_list_part()
 			*) reg_failure "Invalid list origin '${list_origin}'."; finalize_job 1
 		esac
 
-		log_msg "Processing ${list_format} ${list_type}: ${blue}${list_path}${n_c}"
+		print_msg "Processing ${list_format} ${list_type}: ${blue}${list_path}${n_c}"
+		log_msg -noprint "Processing ${list_format} ${list_type}: ${list_path}"
 
 		${fetch_cmd} "${list_path}" |
 		# limit size
@@ -875,7 +879,7 @@ gen_and_process_blocklist()
 
 	log_msg -green "" "Active blocklist check passed with the new blocklist file."
 
-	print_msg "${green}New blocklist installed with entries count: ${blue}${final_entries_cnt_human}${n_c}."
+	print_msg -green "New blocklist installed with entries count: ${blue}${final_entries_cnt_human}${n_c}."
 	reg_success "New blocklist installed with entries count: ${final_entries_cnt_human}."
 
 	rm -f "${ABL_DIR}/prev_blocklist"*
