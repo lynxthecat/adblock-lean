@@ -139,7 +139,7 @@ do_setup()
 		for util in ${RECOMMENDED_UTILS}
 		do
 			case "${installed_pkgs}" in
-				*"${util}"*) log_msg "${green}GNU ${util} is already installed.${n_c}" ;;
+				*"${util}"*) log_msg -green "GNU ${util} is already installed." ;;
 				*)
 					add2list missing_utils "${util}" " "
 					add2list missing_utils_print "${blue}GNU ${util}${n_c}" ", "
@@ -228,10 +228,10 @@ do_setup()
 	# make the script executable
 	if [ ! -x "${ABL_SERVICE_PATH}" ]
 	then
-		log_msg "" "${purple}Making ${ABL_SERVICE_PATH} executable.${n_c}"
+		log_msg -purple "" "Making ${ABL_SERVICE_PATH} executable."
 		chmod +x "${ABL_SERVICE_PATH}" || { reg_failure "Failed to make '${ABL_SERVICE_PATH}' executable."; return 1; }
 	else
-		log_msg "" "${green}${ABL_SERVICE_PATH} is already executable.${n_c}"
+		log_msg -green "" "${ABL_SERVICE_PATH} is already executable."
 	fi
 
 	REPLY=n
@@ -915,7 +915,7 @@ load_config()
 	then
 		if [ -n "${conf_fixes}" ]
 		then
-			print_msg "" "${blue}Perform following automatic changes?${n_c}"
+			print_msg -blue "" "Perform following automatic changes?"
 			cnt=0
 			local IFS="${_NL_}"
 			for fix in ${conf_fixes}
