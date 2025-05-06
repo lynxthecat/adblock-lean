@@ -233,12 +233,12 @@ pick_opt()
 	update_action_file "Waiting for user input in console" || return 1
 	while :
 	do
-		printf %s "$1: "
+		printf %s "$1: " > "${MSGS_DEST}"
 		read -r REPLY
-		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1"; continue; esac
+		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1" > "${MSGS_DEST}"; continue; esac
 		eval "case \"$REPLY\" in 
 				$1) return 0 ;;
-				*) printf '\n%s\n\n' \"Please enter $1\"
+				*) printf '\n%s\n\n' \"Please enter $1\" > \"${MSGS_DEST}\"
 			esac"
 	done
 }
@@ -1517,7 +1517,7 @@ uninstall()
 
 	if [ -n "${DO_DIALOGS}" ]
 	then
-		print_msg "" "Delete the config directory ${ABL_CONFIG_DIR}?"
+		print_msg "" "Delete the config directory ${ABL_CONFIG_DIR}? (y|n)"
 		pick_opt "y|n"
 	else
 		REPLY="${luci_uninstall_rm_config:-n}"
