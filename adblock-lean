@@ -1156,7 +1156,7 @@ upd_cron_job()
 	cron_line="${cron_schedule} RANDOM_DELAY=1 ${ABL_CRON_CMD} 1>/dev/null"
 
 	#### Create new cron job
-	log_msg "Creating cron job with schedule '${blue}${cron_schedule}${n_c}'."
+	print_msg -blue "Creating cron job with schedule '${blue}${cron_schedule}${n_c}'."
 	printf '%s\n' "${curr_cron}${_NL_}${cron_line}" | $SED_CMD '/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	:
