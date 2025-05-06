@@ -505,10 +505,11 @@ print_def_config()
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
 	MAX_PARALLEL_JOBS="auto" @ auto|integer
 
-	# If a path to custom script is specified and that script defines functions 'report_success()' and 'report_failure()'',
+	# If a path to custom script is specified and that script defines functions
+	# 'report_success()', 'report_failure()' or 'report_update()',
 	# one of these functions will be executed when adblock-lean completes the execution of some commands,
-	# with the success or failure message passed in first argument
-	# report_success() is only executed upon completion of the 'start' command
+	# with corresponding message passed in first argument
+	# report_success() and report_update() are only executed upon completion of the 'start' command
 	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
 	custom_script="" @ string
 
