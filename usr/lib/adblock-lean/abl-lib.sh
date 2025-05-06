@@ -171,7 +171,7 @@ do_setup()
 				if [ -n "${DO_DIALOGS}" ]
 				then
 					eval "util_size_B=\"\${${util}_size_B}\""
-					print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}$(bytes2human "${util_size_B}")${n_c}."
+					print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}$(bytes2human "${util_size_B}")${n_c}. (y|n)"
 					pick_opt "y|n" || return 1
 				elif [ -n "${luci_install_packages}" ]
 				then
@@ -194,7 +194,7 @@ do_setup()
 			then
 				print_msg "" "Selected packages: ${blue}${pkgs2install% }${n_c}" \
 					"Total installed size: ${yellow}$(bytes2human ${utils_size_B})${n_c}." \
-					"Proceed with packages installation?"
+					"Proceed with packages installation? (y|n)"
 				pick_opt "y|n"
 			elif [ -n "${luci_install_packages}" ]
 			then
@@ -240,7 +240,7 @@ do_setup()
 	then
 		if [ -n "${DO_DIALOGS}" ]
 		then
-			print_msg "" "Existing config file found." "Generate [n]ew config or use [e]xisting config?"
+			print_msg "" "Existing config file found." "Generate [n]ew config or use [e]xisting config? (n|e)"
 			pick_opt 'n|e' || return 1
 		elif [ -n "${luci_use_old_config}" ]
 		then
@@ -294,7 +294,7 @@ do_setup()
 
 	if [ -n "${DO_DIALOGS}" ]
 	then
-		print_msg "" "${purple}Setup is complete.${n_c}" "" "Start adblock-lean now?"
+		print_msg "" "${purple}Setup is complete.${n_c}" "" "Start adblock-lean now? (y|n)"
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" != y ] && return 0
 		echo > "${MSGS_DEST}"
@@ -581,7 +581,7 @@ do_gen_config()
 			"A cron job can be created to enable automatic list updates." \
 			"The default schedule is '${blue}${def_schedule}${n_c}': ${def_schedule_desc}" \
 			"The cron job will run with an added random number of minutes." \
-			"" "Create cron job with default schedule for automatic list updates?" \
+			"" "Create cron job with default schedule for automatic list updates? (y|n)" \
 			"'n' will set the 'cron_schedule' setting to 'disable'. You can later create a cron job with a custom schedule as described in:" \
 			"https://github.com/lynxthecat/adblock-lean/blob/master/README.md"
 		pick_opt "y|n" || return 1
@@ -916,7 +916,7 @@ load_config()
 	then
 		if [ -n "${conf_fixes}" ]
 		then
-			print_msg -blue "" "Perform following automatic changes?"
+			print_msg -blue "" "Perform following automatic changes? (y|n)"
 			cnt=0
 			local IFS="${_NL_}"
 			for fix in ${conf_fixes}
@@ -970,7 +970,7 @@ fix_config()
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
 		[ -z "${DO_DIALOGS}" ] && return 1
-		log_msg "Proceed with suggested config changes?"
+		log_msg "Proceed with suggested config changes? (y|n)"
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" = n ] && return 1
 	else
@@ -992,7 +992,7 @@ write_config()
 
 	if [ -n "${DO_DIALOGS}" ] && [ -f "${ABL_CONFIG_FILE}" ]
 	then
-		print_msg "This will overwrite existing config. Proceed?"
+		print_msg "This will overwrite existing config. Proceed? (y|n)"
 		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
 	fi
 
