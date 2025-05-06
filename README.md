@@ -304,7 +304,7 @@ The resulting blocklist generated in whitelist mode will be typically much small
 
 ## User-configurable calls on success or failure
 
-adblock-lean supports specifying a custom script which defines the functions `report_success` and `report_failure` to be called on success or failure (can be used to eg send an email/SMS/msg)
+adblock-lean supports specifying a custom script which defines the functions `report_success`, `report_failure` and `report_update` to be called on success or failure, or when adblock-lean update is available (can be used to eg send an email/SMS/msg)
 
 **Example below for free Brevo (formerly sendinblue) email service, but use your favourite smtp/email/SMS etc method.**
 
@@ -327,7 +327,11 @@ report_failure()
 mailbody="${1}"
 mailsend -port 587 -smtp smtp-relay.brevo.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean blocklist update failed" -M "${mailbody}"
 }
-```
+report_update()
+{
+mailbody="${1}"
+mailsend -port 587 -smtp smtp-relay.brevo.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean update is available" -M "${mailbody}"
+}```
 
 - the Brevo password is supplied within their website, not the one created on sign-up.
 - If copy-pasting from Windows, avoid copy-pasting Windows-style newlines. To make sure, in Windows use a text editor which supports changing newline style (such as Notepad++) and make sure it is set to Unix (LF), rather than Windows (CR LF).
