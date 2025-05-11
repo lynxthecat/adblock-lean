@@ -1142,12 +1142,11 @@ check_blocklist_compression_support()
 # 3 - automatic updates check is disabled for current update channel
 check_for_updates()
 {
-	local ref='' tarball_url='' curr_ver='' upd_channel='' no_upd=''
+	local tarball_url='' curr_ver='' upd_ver='' upd_channel='' no_upd=''
 	unset UPD_AVAIL UPD_DIRECTIONS
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in
-		release) ref=latest ;;
-		snapshot) ref=snapshot ;;
+		release|latest|snapshot) ;;
 		tag|commit) no_upd="was installed from a specific Git ${upd_channel}" ;;
 		'') no_upd="update channel is unknown" ;;
 		*) no_upd="update channel is '${upd_channel}'" ;;
@@ -1156,7 +1155,7 @@ check_for_updates()
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
-	get_gh_ref_data "${ref}" ref tarball_url upd_channel
+	get_gh_ref "${upd_channel}" "" upd_ver tarball_url _
 	local gh_ref_rv=${?}
 	luci_tarball_url="${tarball_url}"
 
@@ -1168,12 +1167,12 @@ check_for_updates()
 		return 2
 	}
 
-	if [ "${ref}" = "${curr_ver}" ]
+	if [ "${upd_ver}" = "${curr_ver}" ]
 	then
 		log_msg "The locally installed adblock-lean is the latest version."
 		return 0
 	else
-		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${ref}'.)"
+		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${upd_ver}'.)"
 		UPD_DIRECTIONS="Consider running: 'service adblock-lean update' to update it to the latest version."
 		UPD_AVAIL_MSG="adblock-lean update is available ${upd_details}"
 		: "${UPD_AVAIL_MSG}" # silence shellcheck warning
