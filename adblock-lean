@@ -448,7 +448,7 @@ cleanup_and_exit()
 	luci_log="${recent_log}"
 
 	# execute custom script actions
-	if [ -z "${luci_sourced}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_failure
+	if [ -z "${ABL_LUCI_SOURCED}" ] && [ -n "${failure_msg}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_failure
 	then
 		[ -n "${recent_log}" ] && failure_msg="${failure_msg}${_NL_}${_NL_}Session log:${_NL_}${recent_log}"
 		report_failure "${failure_msg}"
@@ -458,7 +458,7 @@ cleanup_and_exit()
 		report_update "${UPD_AVAIL_MSG}${_NL_}${UPD_DIRECTIONS}"
 	fi
 
-	[ -n "${luci_sourced}" ] && abl_luci_exit "${1}"
+	[ -n "${ABL_LUCI_SOURCED}" ] && abl_luci_exit "${1}"
 	exit "${1}"
 }
 
@@ -568,7 +568,7 @@ update_action_file()
 # 1 (optional): '-log' to log current action as well
 report_curr_action()
 {
-	[ "${MSGS_DEST}" = "/dev/null" ] && [ -z "${luci_sourced}" ] && [ "${1}" != "-log" ] && return 0
+	[ "${MSGS_DEST}" = "/dev/null" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ "${1}" != "-log" ] && return 0
 	local reported_pid report_cmd=print_msg
 	[ -n "${ACTION_FILE}" ] || { reg_failure "\$ACTION_FILE var is unset."; return 1; }
 	[ -f "${ACTION_FILE}" ] || return 0
@@ -811,7 +811,21 @@ source_libs()
 	[ -n "${LIBS_SOURCED}" ] && return 0
 
 	local file libs_missing='' libs_source_failed=''
-	[ -n "${UPD_SOURCED}" ] || check_libs
+	if [ -z "${UPD_SOURCED}" ]
+	then
+		if [ ! -f "${ABL_FILES_REG_PATH}" ] && [ -f "${ABL_CONFIG_DIR}/md5_sums_req" ]
+		then
+			rm -f "${ABL_CONFIG_DIR}/md5_sums_req"
+			log_msg "Completing adblock-lean version upgrade."
+			# shellcheck source=/dev/null
+			update -f && clean_abl_env && . "${ABL_SERVICE_PATH}" || return 1
+			rm -f "${ABL_CONFIG_DIR}/md5_sums_req"
+			exit 0
+		fi
+		check_libs
+	else
+		:
+	fi
 	case ${?} in
 		0|3) ;;
 		*)
@@ -882,8 +896,7 @@ init_command()
 	local config_req='' work_dir_req='' init_action_msg=''
 
 	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
-	luci_sourced=
-	check_func abl_luci_exit && luci_sourced=1
+	check_func abl_luci_exit && ABL_LUCI_SOURCED=1
 
 	DO_DIALOGS=
 	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
@@ -1243,6 +1256,7 @@ abl_post_update_1()
 					/^\s*ABL_VERSION\s*=/{s/.*/ABL_VERSION=\"${fix_ver}\"/;}
 					/^\s*ABL_UPD_CHANNEL\s*=/{s/.*/ABL_UPD_CHANNEL=\"${fix_upd_channel}\"/;}" \
 						"${dist_dir}/adblock-lean"
+			touch "${ABL_CONFIG_DIR}/md5_sums_req"
 	esac
 
 	:
@@ -1597,8 +1611,6 @@ update()
 		upd_failed "update: unexpected argument '${1}'."
 	}
 
-	init_command update || { upd_failed; return 1; }
-
 	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
 		upd_channel='' req_upd_channel='' force_upd_channel='' force_update=''
 
@@ -1610,13 +1622,15 @@ update()
 			v) ver_str_arg=$OPTARG force_update=1 ;;
 			U) force_upd_channel=$OPTARG force_update=1 ;;
 			W) req_ver=$OPTARG force_update=1 ;;
-			f) force_update=1 ;;
+			f) force_update=1 libs_req='' ;;
 			i) IGNORE_CACHE=1 ;; # global var
 			*) unexp_arg "$OPTARG"; return 1
 		esac
 	done
 	shift $((OPTIND-1))
 	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
+
+	init_command update || { upd_failed; return 1; }
 
 	[ -z "${force_update}" ] && stop -noexit
 
@@ -1712,13 +1726,16 @@ update()
 	then
 		print_msg "" "Start adblock-lean now? (y|n)"
 		pick_opt "y|n"
-		if [ "${REPLY}" = y ]
-		then
-			clean_abl_env
-			# shellcheck source=/dev/null
-			. "${ABL_SERVICE_PATH}" || return 1
-			start
-		fi
+	else
+		REPLY=y
+	fi
+
+	if [ "${REPLY}" = y ]
+	then
+		clean_abl_env
+		# shellcheck source=/dev/null
+		. "${ABL_SERVICE_PATH}" || return 1
+		start
 	fi
 	:
 }
