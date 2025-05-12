@@ -187,6 +187,22 @@ reg_inst_failure()
 # 4 - old version format
 get_abl_version()
 {
+	get_ver_str()
+	{
+		local key_ptrn='' migr_ptrn=''
+		case "${1}" in
+			version)
+				key_ptrn="\\s*ABL_VERSION"
+				[ "${3}" = '-o' ] && migr_ptrn='s/^[^_]*_//;' ;;
+			upd_channel)
+				key_ptrn="\\s*ABL_UPD_CHANNEL"
+				[ "${3}" = '-o' ] && { key_ptrn="\\s*ABL_VERSION" migr_ptrn='s/_.*//;'; }
+		esac
+		[ "${3}" = '-o' ] && key_ptrn="\\s*#${key_ptrn}"
+
+		${SED_CMD} -n "/^${key_ptrn}=/{s/^${key_ptrn}=//;s/#.*$//;s/\"//g;${migr_ptrn}p;:1 n;b1;}" "${2}"
+	}
+
 	local gv_ver='' gv_upd_ch='' gv_rv=''
 	if [ -n "${2}${3}" ]
 	then
@@ -195,20 +211,20 @@ get_abl_version()
 	fi
 	# version format in v0.7.2 and later
 	if grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
-		gv_upd_ch="$(${SED_CMD} -n '/^\s*ABL_UPD_CHANNEL=/{s/^.*=//;s/#.*$//;s/"//g;p;:1 n;b1;}' "${1}" 2>/dev/null)" &&
-		gv_ver="$(${SED_CMD} -n '/^\s*ABL_VERSION=/{s/^.*=//;s/#.*$//;s/"//g;p;:1 n;b1;}' "${1}" 2>/dev/null)" &&
+		gv_upd_ch="$(get_ver_str upd_channel "${1}")" &&
+		gv_ver="$(get_ver_str version "${1}")" &&
 		[ -n "${gv_upd_ch}" ] && [ -n "${gv_ver}" ]
 	then
 		gv_rv=3
 	# version format in v0.6.0 - v0.7.1
 	elif grep -q '^\s*#\s*ABL_VERSION=' "${1}" &&	
-		gv_upd_ch="$(${SED_CMD} -n '/^\s*#\s*ABL_VERSION=/{s/^.*=//;s/#.*$//;s/"//g;s/_.*//;p;:1 n;b1;}' "${1}" 2>/dev/null)" &&
-		gv_ver="$(${SED_CMD} -n '/^\s*#\s*ABL_VERSION=/{s/^.*=//;s/#.*$//;s/"//g;s/^.*_//;p;:1 n;b1;}' "${1}" 2>/dev/null)" &&
+		gv_upd_ch="$(get_ver_str upd_channel "${1}" -o)" &&
+		gv_ver="$(get_ver_str version "${1}" -o)" &&
 		[ -n "${gv_upd_ch}" ] && [ -n "${gv_ver}" ]
 	then
 		gv_rv=4
 	else
-		gv_rv=2
+		gv_rv=1
 	fi
 	[ -n "${2}${3}" ] && eval "${2}"='${gv_ver}' "${3}"='${gv_upd_ch}'
 	return ${gv_rv}
