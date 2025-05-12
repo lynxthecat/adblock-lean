@@ -444,19 +444,22 @@ get_gh_ref()
 
 # Fetches and unpacks adblock-lean distribution
 # 1 - tarball url
+# 2 - distribution directory
 fetch_abl_dist()
 {
-	[ -n "${1}" ] || { reg_inst_failure "fetch URL not specified."; return 1; }
+	[ -n "${1}" ] && [ -n "${2}" ] || { reg_failure "fetch_abl_dist: missing arguments."; return 1; }
 
-	local fetch_rv extract_dir fetch_dir="${ABL_UPD_DIR}/fetch"
+	local tarball_url_fetch="${1}" dist_dir_fetch="${2}"
+
+	local fetch_rv extract_dir fetch_dir="${dist_dir_fetch}/fetch"
 	local  tarball="${fetch_dir}/remote_abl.tar.gz" ucl_err_file="${fetch_dir}/ucl_err" \
-		fetch_tarball_url="${1}"
+
 
 	rm -f "${ucl_err_file}" "${tarball}"
 	rm -rf "${fetch_dir}/lynxthecat-adblock-lean-"*
 	try_mkdir -p "${fetch_dir}" || return 1
 
-	uclient-fetch "${fetch_tarball_url}" -O "${tarball}" 2> "${ucl_err_file}" &&
+	uclient-fetch "${tarball_url_fetch}" -O "${tarball}" 2> "${ucl_err_file}" &&
 	grep -q "Download completed" "${ucl_err_file}" &&
 	tar -C "${fetch_dir}" -xzf "${tarball}" &&
 	extract_dir="$(find "${fetch_dir}/" -type d -name "lynxthecat-adblock-lean-*")" &&
@@ -469,10 +472,10 @@ fetch_abl_dist()
 	rm -f "${ucl_err_file}"
 
 	[ "${fetch_rv}" = 0 ] && {
-		mv "${extract_dir:-?}"/* "${dist_dir:-?}/" ||
-			{ rm -rf "${extract_dir:-?}"; reg_inst_failure "Failed to move files to dist dir."; return 1; }
+		mv "${extract_dir:-?}"/* "${dist_dir_fetch:-?}/" ||
+			{ rm -rf "${extract_dir:-?}"; reg_failure "Failed to move files to dist dir."; return 1; }
 	}
-	rm -rf "${extract_dir:-?}"
+	rm -rf "${extract_dir:-?}" "${fetch_dir:-?}"
 
 	return ${fetch_rv}
 }
@@ -480,7 +483,7 @@ fetch_abl_dist()
 clean_abl_env()
 {
 	unset ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT
-	unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs install_abl_files cleanup_and_exit
+	unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 }
 
 # Prints file list from adblock-lean service file
@@ -494,7 +497,7 @@ get_file_list()
 	if check_func print_file_list # v0.7.2 and later
 	then
 		print_file_list "${2}"
-	elif check_func install_abl_files
+	elif check_func install_abl_files # v0.6.0-v0.7.1
 	then
 		case "${2}" in
 			EXEC) printf '%s\n' "${ABL_SERVICE_PATH}" ;;
@@ -575,6 +578,7 @@ install_abl_files()
 
 		(
 			clean_abl_env
+			# shellcheck source=/dev/null
 			if . "${dist_dir}${ABL_SERVICE_PATH}" && check_func abl_post_update_1
 			then
 				abl_post_update_1
@@ -693,10 +697,11 @@ install_abl_files()
 	fi
 	IFS="${DEFAULT_IFS}"
 
-	if [ -n "${is_update}" ]
+	if [ -n "${is_update}" ] && grep -m1 -q '[ 	]*abl_post_update_2()' "${dist_dir}${ABL_SERVICE_PATH}"
 	then
 		(
 			clean_abl_env
+			# shellcheck source=/dev/null
 			if . "${dist_dir}${ABL_SERVICE_PATH}" && check_func abl_post_update_2
 			then
 				abl_post_update_2
@@ -708,8 +713,9 @@ install_abl_files()
 	then
 		(
 			clean_abl_env
-			failsafe_log "" "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
+			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 			# load config in new version
+			# shellcheck source=/dev/null
 			if  . "${ABL_SERVICE_PATH}" &&
 				{ ! check_func source_libs || source_libs; } &&
 				check_func load_config && load_config
@@ -802,7 +808,7 @@ fetch_and_install()
 	then
 		print_msg "Updating in simulation mode."
 		[ -d "${sim_path}" ] || fetch_failed "Update simulation directory '${sim_path}' does not exist."
-		[ -n "${ver_str_arg}" ] || fetch_failed "Specify new version string."}
+		[ -n "${ver_str_arg}" ] || fetch_failed "Specify new version string."
 		upd_ver="${ver_str_arg}"
 
 		[ -d "${sim_path}" ] || fetch_failed "Simulation source directory doesn't exist."
@@ -816,7 +822,7 @@ fetch_and_install()
 				upd_channel="${upd_channel%=*}=${upd_ver}"
 		esac
 		log_msg "" "Downloading adblock-lean, ${ver_type} '${upd_ver}' (update channel: '${upd_channel}')."
-		fetch_abl_dist "${tarball_url}" || fetch_failed
+		fetch_abl_dist "${tarball_url}" "${dist_dir}" || fetch_failed
 	fi
 
 	get_abl_version "${dist_dir}/adblock-lean"
@@ -824,6 +830,7 @@ fetch_and_install()
 		case "${?}" in
 			2)
 				# no version found - call install_abl_files() from this installer
+				rm -f "${ABL_FILES_REG_PATH}"
 				export pid_file="/tmp/adblock-lean/adblock-lean.pid" # for compatibility with older versions
 				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" "${ABL_SERVICE_PATH}" ;;
 			3)
@@ -831,16 +838,17 @@ fetch_and_install()
 				clean_abl_env
 				# shellcheck source=/dev/null
 				INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
-					reg_inst_failure "Failed to source fetched install script."
+					{ reg_inst_failure "Failed to source fetched install script."; exit 1; }
 				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" ;;
 			4)
 				# old version format - call install_abl_files() from fetched service file
+				rm -f "${ABL_FILES_REG_PATH}"
 				clean_abl_env
 				# shellcheck source=/dev/null
 				. "${dist_dir}/adblock-lean" ||
-					reg_inst_failure "Failed to source fetched install script."
+					{ reg_inst_failure "Failed to source fetched script."; exit 1; }
 				printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}" > "${dist_dir}/inst_files"
-				install_abl_files "${dist_dir}" "${upd_ver}_${upd_channel}" ;;
+				install_abl_files "${dist_dir}" "${upd_channel}_v${upd_ver}" ;;
 			*) reg_inst_failure "Failed to get version from fetched adblock-lean distribution."; exit 1 ;;
 		esac
 	) || exit 1

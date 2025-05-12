@@ -817,6 +817,7 @@ parse_config()
 		return 1
 	}
 
+	rm -f "${parser_error_file}"
 	eval "${parse_vars}" 2> "${parser_error_file}" && [ ! -s "${parser_error_file}" ] ||
 	{
 		[ -s "${parser_error_file}" ] && err_print=" Errors: $(cat "${parser_error_file}")"
@@ -863,9 +864,9 @@ parse_config()
 				log_msg -warn "" "Config format version is unknown or invalid."
 				add_conf_fix "Update config format version" ;;
 			*)
-				if [ "${curr_config_format}" -lt "${def_config_format}" ]
+				if [ "${curr_config_format}" != "${def_config_format}" ]
 				then
-					log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+					log_msg -yellow "" "Current config format version '${curr_config_format}' differs from default config version '${def_config_format}'."
 					add_conf_fix "Update config format version"
 				fi
 		esac
