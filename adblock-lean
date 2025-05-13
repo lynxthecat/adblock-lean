@@ -895,11 +895,8 @@ init_command()
 	ABL_CMD="${1}"
 	local config_req='' work_dir_req='' init_action_msg=''
 
-	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
-	check_func abl_luci_exit && ABL_LUCI_SOURCED=1
-
 	DO_DIALOGS=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ -z "${ABL_NOTRAPS}" ]
 	then
@@ -983,7 +980,9 @@ init_command()
 
 	if [ -n "${config_req}" ] && [ -z "${CONFIG_LOADED}" ]
 	then
-		load_config || { reg_failure "Failed to load config."; exit 1; }
+		local force_config_fix=
+		[ -n "${ABL_LUCI_SOURCED}" ] && force_config_fix='-f'
+		load_config ${force_config_fix} || { reg_failure "Failed to load config."; exit 1; }
 		CONFIG_LOADED=1
 	fi
 
@@ -1827,6 +1826,9 @@ disable()
 }
 
 set_ansi
+
+# $luci_skip_dialogs is set if sourced from external RPC script for luci
+[ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
 
 # test process substitution support
 printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test

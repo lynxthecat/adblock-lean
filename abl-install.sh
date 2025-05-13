@@ -38,8 +38,11 @@ then
 	fi
 fi
 
+# $luci_skip_dialogs is set if sourced from external RPC script for luci
+[ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
+
 DO_DIALOGS=
-[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 if sed --version 2>/dev/null | grep -qe '(GNU sed)'
 then
@@ -55,7 +58,7 @@ cleanup_and_exit()
 {
 	trap - INT TERM EXIT
 	rm -rf "${ABL_DIR}" "${ABL_PID_DIR}"
-	[ -n "${luci_sourced}" ] && abl_inst_luci_exit "${1}"
+	[ -n "${ABL_LUCI_SOURCED}" ] && abl_inst_luci_exit "${1}"
 	exit "${1}"
 }
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057
+# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057,SC3019
 # ABL_VERSION=dev
 
 # silence shellcheck warnings
@@ -887,7 +887,7 @@ load_config()
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
 	local DO_DIALOGS=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ ! -f "${ABL_CONFIG_FILE}" ]
 	then
@@ -929,9 +929,12 @@ load_config()
 			done
 			IFS="${DEFAULT_IFS}"
 			pick_opt "y|n" || return 1
-			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 		fi
+	else
+		REPLY=y
 	fi
+
+	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
 	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 	:
