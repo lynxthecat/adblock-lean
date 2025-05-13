@@ -1342,6 +1342,15 @@ clean_dnsmasq_dir()
 	# gather conf dirs of running instances
 	get_dnsmasq_instances
 	# gather conf dirs of configured instances
+
+	# this is needed when running via 'sh /etc/init.d/adblock-lean'
+	if [ -z "${ABL_LIB_FUNCTIONS_SOURCED}" ]
+	then
+		# shellcheck source=/dev/null
+		check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
+		ABL_LIB_FUNCTIONS_SOURCED=1
+	fi
+
 	config_load dhcp
 	config_foreach add_conf_dir dnsmasq
 	# gather conf dirs from /tmp/

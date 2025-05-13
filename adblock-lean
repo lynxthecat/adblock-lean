@@ -1849,10 +1849,6 @@ then
 	shift
 fi
 
-# shellcheck source=/dev/null
-# this is needed when running via 'sh /etc/init.d/adblock-lean'
-check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
-
 # detect when sourced from update() in older versions
 check_func failsafe_log 1>/dev/null && UPD_SOURCED=1
 
