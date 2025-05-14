@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC1090
+# shellcheck disable=SC3043,SC1090,SC3044
 
 # silence shellcheck warnings
 : "${LIBS_SOURCED}"
@@ -538,13 +538,11 @@ install_abl_files()
 {
 	local file preinst_path old_files='' exec_files='' \
 		preinst_reg_file="${dist_dir}/preinst_reg.md5" \
-		prev_config_format='' upd_config_format='' config_format_changed='' is_update='' \
+		prev_config_format='' upd_config_format='' config_format_changed='' \
 		dist_dir="${1}" version="${2}" upd_channel="${3}" new_file_list="${4}"
 
 	[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] || inst_failed "Missing arguments."
 	log_msg "" "Installing new files..."
-
-	[ -s "${ABL_SERVICE_PATH}" ] && is_update=1
 
 	# normalize path
 	try_mkdir -p "${dist_dir}${ABL_SERVICE_PATH%/*}"
@@ -571,7 +569,7 @@ install_abl_files()
 	exec_files="$(get_file_list "${dist_dir}${ABL_SERVICE_PATH}" EXEC)"
 
 	# handle update
-	if [ -n "${is_update}" ]
+	if [ -n "${IS_UPDATE}" ]
 	then
 		# get currently installed file list
 		old_files="$(get_file_list "${ABL_SERVICE_PATH}" ALL)"
@@ -716,7 +714,7 @@ install_abl_files()
 	fi
 	IFS="${DEFAULT_IFS}"
 
-	if [ -n "${is_update}" ] && grep -m1 -q '[ 	]*abl_post_update_2()' "${dist_dir}${ABL_SERVICE_PATH}"
+	if [ -n "${IS_UPDATE}" ] && grep -m1 -q '[ 	]*abl_post_update_2()' "${dist_dir}${ABL_SERVICE_PATH}"
 	then
 		(
 			clean_abl_env
@@ -747,7 +745,6 @@ install_abl_files()
 		)
 	fi
 
-	"${ABL_SERVICE_PATH}" enable || return 1
 	:
 }
 
@@ -825,14 +822,14 @@ fetch_and_install()
 
 	if [ -n "${sim_path}" ]
 	then
-		print_msg "Updating in simulation mode."
+		print_msg "Installing in simulation mode."
 		[ -d "${sim_path}" ] || fetch_failed "Update simulation directory '${sim_path}' does not exist."
 		[ -n "${ver_str_arg}" ] || fetch_failed "Specify new version string."
 		upd_ver="${ver_str_arg}"
 
 		[ -d "${sim_path}" ] || fetch_failed "Simulation source directory doesn't exist."
 		cp -rT "${sim_path}" "${dist_dir}"
-		log_msg "" "Updating adblock-lean to version '${upd_ver}' (update channel: '${upd_channel}')."
+		log_msg "" "Installing adblock-lean version '${upd_ver}' (update channel: '${upd_channel}')."
 	else
 		get_gh_ref "${upd_channel}" "${req_ver}" upd_ver tarball_url ver_type || fetch_failed
 		case "${upd_channel}" in
@@ -877,18 +874,33 @@ fetch_and_install()
 
 	if [ -n "${DO_DIALOGS}" ]
 	then
-		print_msg "" "Start adblock-lean now? (y|n)"
-		pick_opt "y|n"
-		if [ "${REPLY}" = y ]
+		if [ -n "${IS_UPDATE}" ] && [ -s "${ABL_CONFIG_FILE}" ]
 		then
-			clean_abl_env
-			# shellcheck source=/dev/null
-			. "${ABL_SERVICE_PATH}" || exit 1
-			start
+			print_msg "" "Start adblock-lean now? (y|n)"
+			pick_opt "y|n"
+			if [ "$REPLY" = y ]
+			then
+				clean_abl_env
+				# shellcheck source=/dev/null
+				. "${ABL_SERVICE_PATH}" || exit 1
+				enable &&
+				start
+			fi
+		else
+			print_msg "" "Set up adblock-lean now? (y|n)"
+			pick_opt "y|n"
+			if [ "$REPLY" = y ]
+			then
+				clean_abl_env
+				# shellcheck source=/dev/null
+				. "${ABL_SERVICE_PATH}" || exit 1
+				setup
+			fi
 		fi
 	fi
 }
 
+[ -s "${ABL_SERVICE_PATH}" ] && IS_UPDATE=1
 
 if [ -z "${INST_SOURCED}" ]
 then
