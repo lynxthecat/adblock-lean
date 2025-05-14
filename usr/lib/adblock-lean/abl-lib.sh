@@ -1076,26 +1076,25 @@ report_utils()
 	done
 
 	case "${AWK_CMD}" in
-		busybox*)
+		*gawk*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
+		*)
 			log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal." ;;
-		*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
+			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
 	esac
 
 	case "${SED_CMD}" in
-		busybox*)
+		*gnu*) log_msg -green "GNU sed detected so list processing will be fast." ;;
+		*)
 			log_msg -yellow "GNU sed not detected so list processing will be a little slower."
 			log_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
-		*) log_msg -green "GNU sed detected so list processing will be fast."
 	esac
 
 	case "${SORT_CMD}" in
-		busybox*)
+		*coreutils*) log_msg -green "coreutils-sort detected so sort will be fast." ;;
+		*)
 			log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
 			log_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
-		*) log_msg -green "coreutils-sort detected so sort will be fast."
 	esac
-
 }
 
 # return codes:
