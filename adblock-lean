@@ -345,26 +345,41 @@ rc_enabled()
 
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
 detect_utils() {
-	if type gawk &> /dev/null
-	then
-		AWK_CMD="gawk"
-	else
-		AWK_CMD="busybox awk"
-	fi
+	detect_util()
+	{
+		local out_var="${1}" pkg_name="${2}" gen_name="${3}" specific_path="${4}" busybox_cmd="${5}" specific_name="${6}" \
+			res_cmd=''
+		are_var_names_safe "${out_var}" || return 1
+		if [ -f "${specific_path}" ]
+		then
+			res_cmd="${specific_path}"
+		elif [ -n "${specific_name}" ] && check_util "${specific_name}"
+		then
+			res_cmd="${specific_name}"
+		elif check_util "${gen_name}"
+		then
+			res_cmd="${gen_name}"
+		elif eval "/bin/busybox ${gen_name} ${busybox_cmd} \"${test_path}\"" &>/dev/null
+		then
+			res_cmd="/bin/busybox ${gen_name}"
+		else
+			rm -f "${test_path}"
+			reg_failure "${gen_name} not found. Please install ${pkg_name}."
+			return 1
+		fi
+		: "${res_cmd}"
+		eval "${out_var}"='${res_cmd}'
+	}
 
-	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
-	then
-		SED_CMD="sed"
-	else
-		SED_CMD="busybox sed"
-	fi
+	local test_path=/tmp/utils-test
 
-	if sort --version 2>/dev/null | grep -qe coreutils
-	then
-		SORT_CMD="sort"
-	else
-		SORT_CMD="busybox sort"
-	fi
+	printf '%s\n' "." > "${test_path}" || { reg_failure "Failed to detect utils."; return 1; }
+
+	detect_util SED_CMD sed sed "/usr/libexec/sed-gnu" "-n '/./q'" &&
+	detect_util AWK_CMD gawk awk "/usr/bin/gawk" "'BEGIN{exit}'" gawk &&
+	detect_util SORT_CMD coreutils-sort sort "/usr/libexec/sort-coreutils" || return 1
+
+	rm -f /tmp/utils-test
 	:
 }
 
