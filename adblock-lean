@@ -345,26 +345,41 @@ rc_enabled()
 
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
 detect_utils() {
-	if type gawk &> /dev/null
-	then
-		AWK_CMD="gawk"
-	else
-		AWK_CMD="busybox awk"
-	fi
+	detect_util()
+	{
+		local out_var="${1}" pkg_name="${2}" gen_name="${3}" specific_path="${4}" busybox_cmd="${5}" specific_name="${6}" \
+			res_cmd=''
+		are_var_names_safe "${out_var}" || return 1
+		if [ -f "${specific_path}" ]
+		then
+			res_cmd="${specific_path}"
+		elif [ -n "${specific_name}" ] && check_util "${specific_name}"
+		then
+			res_cmd="${specific_name}"
+		elif check_util "${gen_name}"
+		then
+			res_cmd="${gen_name}"
+		elif eval "/bin/busybox ${gen_name} ${busybox_cmd} \"${test_path}\"" &>/dev/null
+		then
+			res_cmd="/bin/busybox ${gen_name}"
+		else
+			rm -f "${test_path}"
+			reg_failure "${gen_name} not found. Please install ${pkg_name}."
+			return 1
+		fi
+		: "${res_cmd}"
+		eval "${out_var}"='${res_cmd}'
+	}
 
-	if sed --version 2>/dev/null | grep -qe '(GNU sed)'
-	then
-		SED_CMD="sed"
-	else
-		SED_CMD="busybox sed"
-	fi
+	local test_path=/tmp/utils-test
 
-	if sort --version 2>/dev/null | grep -qe coreutils
-	then
-		SORT_CMD="sort"
-	else
-		SORT_CMD="busybox sort"
-	fi
+	printf '%s\n' "." > "${test_path}" || { reg_failure "Failed to detect utils."; return 1; }
+
+	detect_util SED_CMD sed sed "/usr/libexec/sed-gnu" "-n '/./q'" &&
+	detect_util AWK_CMD gawk awk "/usr/bin/gawk" "'BEGIN{exit}'" gawk &&
+	detect_util SORT_CMD coreutils-sort sort "/usr/libexec/sort-coreutils" || return 1
+
+	rm -f /tmp/utils-test
 	:
 }
 
@@ -895,11 +910,8 @@ init_command()
 	ABL_CMD="${1}"
 	local config_req='' work_dir_req='' init_action_msg=''
 
-	# detect if sourced from external RPC script for luci, depends on abl_luci_exit() being defined
-	check_func abl_luci_exit && ABL_LUCI_SOURCED=1
-
 	DO_DIALOGS=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ -z "${ABL_NOTRAPS}" ]
 	then
@@ -983,7 +995,9 @@ init_command()
 
 	if [ -n "${config_req}" ] && [ -z "${CONFIG_LOADED}" ]
 	then
-		load_config || { reg_failure "Failed to load config."; exit 1; }
+		local force_config_fix=
+		[ -n "${ABL_LUCI_SOURCED}" ] && force_config_fix='-f'
+		load_config ${force_config_fix} || { reg_failure "Failed to load config."; exit 1; }
 		CONFIG_LOADED=1
 	fi
 
@@ -1828,6 +1842,9 @@ disable()
 
 set_ansi
 
+# $luci_skip_dialogs is set if sourced from external RPC script for luci
+[ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
+
 # test process substitution support
 printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
 if ! /bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null
@@ -1846,10 +1863,6 @@ then
 	ABL_CMD="${1}"
 	shift
 fi
-
-# shellcheck source=/dev/null
-# this is needed when running via 'sh /etc/init.d/adblock-lean'
-check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
 
 # detect when sourced from update() in older versions
 check_func failsafe_log 1>/dev/null && UPD_SOURCED=1

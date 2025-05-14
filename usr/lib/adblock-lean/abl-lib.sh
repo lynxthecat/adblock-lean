@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057
+# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057,SC3019
 # ABL_VERSION=dev
 
 # silence shellcheck warnings
@@ -887,7 +887,7 @@ load_config()
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
 	local DO_DIALOGS=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ ! -f "${ABL_CONFIG_FILE}" ]
 	then
@@ -929,9 +929,12 @@ load_config()
 			done
 			IFS="${DEFAULT_IFS}"
 			pick_opt "y|n" || return 1
-			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 		fi
+	else
+		REPLY=y
 	fi
+
+	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
 	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 	:
@@ -1073,26 +1076,25 @@ report_utils()
 	done
 
 	case "${AWK_CMD}" in
-		busybox*)
+		*gawk*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
+		*)
 			log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal." ;;
-		*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
+			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
 	esac
 
 	case "${SED_CMD}" in
-		busybox*)
+		*gnu*) log_msg -green "GNU sed detected so list processing will be fast." ;;
+		*)
 			log_msg -yellow "GNU sed not detected so list processing will be a little slower."
 			log_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
-		*) log_msg -green "GNU sed detected so list processing will be fast."
 	esac
 
 	case "${SORT_CMD}" in
-		busybox*)
+		*coreutils*) log_msg -green "coreutils-sort detected so sort will be fast." ;;
+		*)
 			log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
 			log_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
-		*) log_msg -green "coreutils-sort detected so sort will be fast."
 	esac
-
 }
 
 # return codes:
@@ -1339,6 +1341,15 @@ clean_dnsmasq_dir()
 	# gather conf dirs of running instances
 	get_dnsmasq_instances
 	# gather conf dirs of configured instances
+
+	# this is needed when running via 'sh /etc/init.d/adblock-lean'
+	if [ -z "${ABL_LIB_FUNCTIONS_SOURCED}" ]
+	then
+		# shellcheck source=/dev/null
+		check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
+		ABL_LIB_FUNCTIONS_SOURCED=1
+	fi
+
 	config_load dhcp
 	config_foreach add_conf_dir dnsmasq
 	# gather conf dirs from /tmp/

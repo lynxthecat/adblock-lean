@@ -38,8 +38,11 @@ then
 	fi
 fi
 
+# $luci_skip_dialogs is set if sourced from external RPC script for luci
+[ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
+
 DO_DIALOGS=
-[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 if sed --version 2>/dev/null | grep -qe '(GNU sed)'
 then
@@ -55,7 +58,7 @@ cleanup_and_exit()
 {
 	trap - INT TERM EXIT
 	rm -rf "${ABL_DIR}" "${ABL_PID_DIR}"
-	[ -n "${luci_sourced}" ] && abl_inst_luci_exit "${1}"
+	[ -n "${ABL_LUCI_SOURCED}" ] && abl_inst_luci_exit "${1}"
 	exit "${1}"
 }
 
@@ -64,7 +67,7 @@ are_var_names_safe() {
 	local var_name
 	for var_name in "${@}"
 	do
-		case "${var_name}" in *[!a-zA-Z_]*) reg_inst_failure "Invalid var name '${var_name}'."; return 1; esac
+		case "${var_name}" in *[!a-zA-Z_]*) reg_falure "Invalid var name '${var_name}'."; return 1; esac
 	done
 	:
 }
@@ -116,8 +119,8 @@ is_included() {
 
 try_mv()
 {
-	[ -z "${1}" ] || [ -z "${2}" ] && { reg_inst_failure "try_mv(): bad arguments."; return 1; }
-	mv -f "${1}" "${2}" || { reg_inst_failure "Failed to move '${1}' to '${2}'."; return 1; }
+	[ -z "${1}" ] || [ -z "${2}" ] && { reg_falure "try_mv(): bad arguments."; return 1; }
+	mv -f "${1}" "${2}" || { reg_falure "Failed to move '${1}' to '${2}'."; return 1; }
 	:
 }
 
@@ -128,7 +131,7 @@ try_mkdir()
 	local p=
 	[ "${1}" = '-p' ] && { p='-p'; shift; }
 	[ -d "${1}" ] && return 0
-	mkdir ${p} "${1}" || { reg_inst_failure "Failed to create directory '${1}'."; return 1; }
+	mkdir ${p} "${1}" || { reg_falure "Failed to create directory '${1}'."; return 1; }
 	:
 }
 
@@ -171,7 +174,7 @@ log_msg()
 	:
 }
 
-reg_inst_failure()
+reg_falure()
 {
 	log_msg -err "" "${1}"
 	luci_errors="${luci_errors}${1}${_NL_}"
@@ -234,8 +237,8 @@ inst_failed()
 {
 	local fail_msg="${1}"
 	[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
-	[ -n "${fail_msg}" ] && reg_inst_failure "${fail_msg}"
-	reg_inst_failure "Failed to install adblock-lean."
+	[ -n "${fail_msg}" ] && reg_falure "${fail_msg}"
+	reg_falure "Failed to install adblock-lean."
 	rm -rf "${ABL_INST_DIR}" "${UCL_ERR_FILE}"
 	exit 1
 }
@@ -277,11 +280,11 @@ get_gh_ref()
 		# validate resulting ref
 		case "${gr_ref}" in
 			*[^"${_NL_}"]*"${_NL_}"*[^"${_NL_}"]*)
-				reg_inst_failure "Got multiple download URLs for version '${gr_version}'." \
+				reg_falure "Got multiple download URLs for version '${gr_version}'." \
 					"If using commit hash, please specify the complete commit hash string."
 				return 1 ;;
 			''|*[!a-zA-Z0-9._-]*)
-				reg_inst_failure "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
+				reg_falure "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
 				return 1
 		esac
 
@@ -396,7 +399,7 @@ get_gh_ref()
 						{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
 				)"
 				[ -n "${gr_branches}" ] || {
-					reg_inst_failure "Failed to get adblock-lean branches via GH API (url: '${ABL_GH_URL_API}/branches')."
+					reg_falure "Failed to get adblock-lean branches via GH API (url: '${ABL_GH_URL_API}/branches')."
 					[ -f "${gr_ucl_err_file}" ] &&
 						log_msg "uclient-fetch log:${_NL_}$(cat "${gr_ucl_err_file}")"
 						rm -f "${gr_ucl_err_file}"
@@ -406,7 +409,7 @@ get_gh_ref()
 				gr_grep_ptrn="^${gr_hash}"
 			fi ;;
 		*)
-			reg_inst_failure "Invalid update channel '${gr_channel}'."
+			reg_falure "Invalid update channel '${gr_channel}'."
 			return 1
 	esac
 
@@ -444,7 +447,7 @@ get_gh_ref()
 	if [ -z "${gr_ref}" ]
 	then
 		gr_fetch_rv=1
-		reg_inst_failure "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
+		reg_falure "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
 		[ -f "${gr_ucl_err_file}" ] && log_msg "uclient-fetch output:${_NL_}$(cat "${gr_ucl_err_file}")"
 	fi
 	rm -rf "${gr_fetch_tmp_dir:-?}"
@@ -758,7 +761,7 @@ fetch_and_install()
 	{
 		local fail_msg="${1}"
 		[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
-		[ -n "${fail_msg}" ] && reg_inst_failure "${fail_msg}"
+		[ -n "${fail_msg}" ] && reg_falure "${fail_msg}"
 		rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 		inst_failed
 	}
@@ -854,7 +857,7 @@ fetch_and_install()
 				clean_abl_env
 				# shellcheck source=/dev/null
 				INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
-					{ reg_inst_failure "Failed to source fetched install script."; exit 1; }
+					{ reg_falure "Failed to source fetched install script."; exit 1; }
 				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" ;;
 			4)
 				# old version format - call install_abl_files() from fetched service file
@@ -862,10 +865,10 @@ fetch_and_install()
 				clean_abl_env
 				# shellcheck source=/dev/null
 				. "${dist_dir}/adblock-lean" ||
-					{ reg_inst_failure "Failed to source fetched script."; exit 1; }
+					{ reg_falure "Failed to source fetched script."; exit 1; }
 				printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}" > "${dist_dir}/inst_files"
 				install_abl_files "${dist_dir}" "${upd_channel}_v${upd_ver}" ;;
-			*) reg_inst_failure "Failed to get version from fetched adblock-lean distribution."; exit 1 ;;
+			*) reg_falure "Failed to get version from fetched adblock-lean distribution."; exit 1 ;;
 		esac
 	) || exit 1
 
