@@ -11,7 +11,8 @@ ABL_SERVICE_PATH=/etc/init.d/adblock-lean
 ABL_DIR=/var/run/adblock-lean
 ABL_INST_DIR="${ABL_DIR}/remote_abl"
 UCL_ERR_FILE="${ABL_DIR}/uclient-fetch_err"
-ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
+: "${ABL_REPO_AUTHOR:=lynxthecat}"
+ABL_GH_URL_API=https://api.github.com/repos/${ABL_REPO_AUTHOR}/adblock-lean
 
 LC_ALL=C
 DEFAULT_IFS='	 
@@ -245,11 +246,11 @@ fetch_abl_dist()
 	local fetch_tarball_url="${2}" fetch_ref="${3}"
 	local fetch_dir fetch_rv tarball="${ABL_INST_DIR}/remote_abl.tar.gz"
 	log_msg "Downloading adblock-lean, version '${fetch_ref}'."
-	rm -rf "${UCL_ERR_FILE}" "${ABL_INST_DIR}/lynxthecat-adblock-lean-"*
+	rm -rf "${UCL_ERR_FILE}" "${ABL_INST_DIR}/${ABL_REPO_AUTHOR}-adblock-lean-"*
 	uclient-fetch "${fetch_tarball_url}" -O "${tarball}" 2> "${UCL_ERR_FILE}" &&
 	grep -q "Download completed" "${UCL_ERR_FILE}" &&
 	tar -C "${ABL_INST_DIR}" -xzf "${tarball}" &&
-	fetch_dir="$(find "${ABL_INST_DIR}/" -type d -name "lynxthecat-adblock-lean-*")"
+	fetch_dir="$(find "${ABL_INST_DIR}/" -type d -name "${ABL_REPO_AUTHOR}-adblock-lean-*")"
 	fetch_rv=${?}
 
 	[ "${fetch_rv}" != 0 ] && [ -s "${UCL_ERR_FILE}" ] && ! grep -q "Download completed" "${UCL_ERR_FILE}" &&

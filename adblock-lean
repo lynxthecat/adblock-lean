@@ -60,7 +60,8 @@ UCL_ERR_FILE="${ABL_DIR}/uclient-fetch_err"
 
 ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 
-ABL_GH_URL_API=https://api.github.com/repos/lynxthecat/adblock-lean
+: "${ABL_REPO_AUTHOR:=lynxthecat}"
+ABL_GH_URL_API=https://api.github.com/repos/${ABL_REPO_AUTHOR}/adblock-lean
 
 SCHEDULER_PID=
 
@@ -1012,11 +1013,11 @@ fetch_abl_dist()
 	local fetch_tarball_url="${2}"
 	local fetch_dir fetch_rv tarball="${ABL_UPD_DIR}/remote_abl.tar.gz"
 
-	rm -rf "${UCL_ERR_FILE}" "${ABL_UPD_DIR}/lynxthecat-adblock-lean-"*
+	rm -rf "${UCL_ERR_FILE}" "${ABL_UPD_DIR}/${ABL_REPO_AUTHOR}-adblock-lean-"*
 	uclient-fetch "${fetch_tarball_url}" -O "${tarball}" 2> "${UCL_ERR_FILE}" &&
 	grep -q "Download completed" "${UCL_ERR_FILE}" &&
 	tar -C "${ABL_UPD_DIR}" -xzf "${tarball}" &&
-	fetch_dir="$(find "${ABL_UPD_DIR}/" -type d -name "lynxthecat-adblock-lean-*")"
+	fetch_dir="$(find "${ABL_UPD_DIR}/" -type d -name "${ABL_REPO_AUTHOR}-adblock-lean-*")"
 	fetch_rv=${?}
 
 	[ "${fetch_rv}" != 0 ] && [ -s "${UCL_ERR_FILE}" ] && ! grep -q "Download completed" "${UCL_ERR_FILE}" &&
