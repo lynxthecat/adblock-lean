@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057
+# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057,SC3019
 # ABL_VERSION=dev
 
 # silence shellcheck warnings
@@ -817,6 +817,7 @@ parse_config()
 		return 1
 	}
 
+	rm -f "${parser_error_file}"
 	eval "${parse_vars}" 2> "${parser_error_file}" && [ ! -s "${parser_error_file}" ] ||
 	{
 		[ -s "${parser_error_file}" ] && err_print=" Errors: $(cat "${parser_error_file}")"
@@ -863,9 +864,9 @@ parse_config()
 				log_msg -warn "" "Config format version is unknown or invalid."
 				add_conf_fix "Update config format version" ;;
 			*)
-				if [ "${curr_config_format}" -lt "${def_config_format}" ]
+				if [ "${curr_config_format}" != "${def_config_format}" ]
 				then
-					log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+					log_msg -yellow "" "Current config format version '${curr_config_format}' differs from default config version '${def_config_format}'."
 					add_conf_fix "Update config format version"
 				fi
 		esac
@@ -886,7 +887,7 @@ load_config()
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
 	local DO_DIALOGS=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ ! -f "${ABL_CONFIG_FILE}" ]
 	then
@@ -928,9 +929,12 @@ load_config()
 			done
 			IFS="${DEFAULT_IFS}"
 			pick_opt "y|n" || return 1
-			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 		fi
+	else
+		REPLY=y
 	fi
+
+	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
 	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 	:
@@ -1072,26 +1076,25 @@ report_utils()
 	done
 
 	case "${AWK_CMD}" in
-		busybox*)
+		*gawk*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
+		*)
 			log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal." ;;
-		*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
+			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
 	esac
 
 	case "${SED_CMD}" in
-		busybox*)
+		*gnu*) log_msg -green "GNU sed detected so list processing will be fast." ;;
+		*)
 			log_msg -yellow "GNU sed not detected so list processing will be a little slower."
 			log_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
-		*) log_msg -green "GNU sed detected so list processing will be fast."
 	esac
 
 	case "${SORT_CMD}" in
-		busybox*)
+		*coreutils*) log_msg -green "coreutils-sort detected so sort will be fast." ;;
+		*)
 			log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
 			log_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
-		*) log_msg -green "coreutils-sort detected so sort will be fast."
 	esac
-
 }
 
 # return codes:
@@ -1142,12 +1145,11 @@ check_blocklist_compression_support()
 # 3 - automatic updates check is disabled for current update channel
 check_for_updates()
 {
-	local ref='' tarball_url='' curr_ver='' upd_channel='' no_upd=''
+	local tarball_url='' curr_ver='' upd_ver='' upd_channel='' no_upd=''
 	unset UPD_AVAIL UPD_DIRECTIONS
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in
-		release) ref=latest ;;
-		snapshot) ref=snapshot ;;
+		release|latest|snapshot) ;;
 		tag|commit) no_upd="was installed from a specific Git ${upd_channel}" ;;
 		'') no_upd="update channel is unknown" ;;
 		*) no_upd="update channel is '${upd_channel}'" ;;
@@ -1156,7 +1158,7 @@ check_for_updates()
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
-	get_gh_ref_data "${ref}" ref tarball_url upd_channel
+	get_gh_ref "${upd_channel}" "" upd_ver tarball_url _
 	local gh_ref_rv=${?}
 	luci_tarball_url="${tarball_url}"
 
@@ -1168,12 +1170,12 @@ check_for_updates()
 		return 2
 	}
 
-	if [ "${ref}" = "${curr_ver}" ]
+	if [ "${upd_ver}" = "${curr_ver}" ]
 	then
 		log_msg "The locally installed adblock-lean is the latest version."
 		return 0
 	else
-		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${ref}'.)"
+		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${upd_ver}'.)"
 		UPD_DIRECTIONS="Consider running: 'service adblock-lean update' to update it to the latest version."
 		UPD_AVAIL_MSG="adblock-lean update is available ${upd_details}"
 		: "${UPD_AVAIL_MSG}" # silence shellcheck warning
@@ -1339,6 +1341,15 @@ clean_dnsmasq_dir()
 	# gather conf dirs of running instances
 	get_dnsmasq_instances
 	# gather conf dirs of configured instances
+
+	# this is needed when running via 'sh /etc/init.d/adblock-lean'
+	if [ -z "${ABL_LIB_FUNCTIONS_SOURCED}" ]
+	then
+		# shellcheck source=/dev/null
+		check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
+		ABL_LIB_FUNCTIONS_SOURCED=1
+	fi
+
 	config_load dhcp
 	config_foreach add_conf_dir dnsmasq
 	# gather conf dirs from /tmp/
