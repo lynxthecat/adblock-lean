@@ -343,15 +343,23 @@ rc_enabled()
 detect_utils() {
 	detect_util()
 	{
-		local out_var="${1}" pkg_name="${2}" gen_name="${3}" specific_path="${4}" busybox_cmd="${5}" specific_name="${6}" \
-			res_cmd=''
+		local out_var="${1}" gen_name="${2}" pkg_name="${3}" specific_names="${4}" specific_paths="${5}" busybox_cmd="${6}" \
+			res_cmd='' util_path='' util_name=''
 		are_var_names_safe "${out_var}" || return 1
-		if [ -f "${specific_path}" ]
+		if [ -n "${specific_paths}" ] &&
+			for util_path in ${specific_paths}
+			do
+				[ -f "${util_path}" ] && break
+			done
 		then
-			res_cmd="${specific_path}"
-		elif [ -n "${specific_name}" ] && check_util "${specific_name}"
+			res_cmd="${util_path}"
+		elif [ -n "${specific_names}" ] &&
+			for util_name in ${specific_names}
+			do
+				check_util "${util_name}" && break
+			done
 		then
-			res_cmd="${specific_name}"
+			res_cmd="${util_name}"
 		elif check_util "${gen_name}"
 		then
 			res_cmd="${gen_name}"
@@ -371,9 +379,9 @@ detect_utils() {
 
 	printf '%s\n' "." > "${test_path}" || { reg_failure "Failed to detect utils."; return 1; }
 
-	detect_util SED_CMD sed sed "/usr/libexec/sed-gnu" "-n '/./q'" &&
-	detect_util AWK_CMD gawk awk "/usr/bin/gawk" "'BEGIN{exit}'" gawk &&
-	detect_util SORT_CMD coreutils-sort sort "/usr/libexec/sort-coreutils" || return 1
+	detect_util SED_CMD sed sed sed "/usr/libexec/sed-gnu" "-n '/./q'" &&
+	detect_util AWK_CMD awk gawk gawk "/usr/bin/gawk" "'BEGIN{exit}'" gawk &&
+	detect_util SORT_CMD sort coreutils-sort sort "/usr/libexec/sort-coreutils" || return 1
 
 	rm -f /tmp/utils-test
 	:
@@ -1442,6 +1450,8 @@ start()
 {
 	reg_action -purple "Starting adblock-lean, version ${ABL_VERSION}."
 	init_command start || exit 1
+
+	detect_util COMPR_CMD gzip gzip "pigz zstd gzip" "/usr/bin/pigz /usr/bin/zstd /bin/gzip" "-c" || return 1
 
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
