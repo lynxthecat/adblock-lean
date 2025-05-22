@@ -502,11 +502,12 @@ clean_abl_env()
 get_file_list()
 {
 	clean_abl_env
+	local _file_types="${2}"
 	# shellcheck source=/dev/null
 	[ -f "${1}" ] && . "${1}" || return 1
 	if check_func print_file_list # v0.7.2 and later
 	then
-		print_file_list "${2}"
+		print_file_list "${_file_types}"
 	elif check_func install_abl_files # v0.6.0-v0.7.1
 	then
 		case "${2}" in
