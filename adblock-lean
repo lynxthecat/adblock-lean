@@ -998,7 +998,7 @@ init_command()
 	local config_req='' work_dir_req='' init_action_msg='' process_vars_req=''
 
 	DO_DIALOGS=
-	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ -z "${ABL_NOTRAPS}" ]
 	then
@@ -1708,7 +1708,7 @@ update()
 		upd_channel='' req_upd_channel='' force_upd_channel='' force_update=''
 
 	IGNORE_CACHE=
-	while getopts ":s:v:U:W:fi" opt
+	while getopts ":s:v:U:W:yfi" opt
 	do
 		case ${opt} in
 			s) export sim_path="$OPTARG" ;;
@@ -1716,6 +1716,7 @@ update()
 			U) force_upd_channel=$OPTARG force_update=1 ;;
 			W) req_ver=$OPTARG force_update=1 ;;
 			f) force_update=1 libs_req='' ;;
+			y) export APPROVE_UPD_CHANGES=1 DO_DIALOGS='' ;;
 			i) IGNORE_CACHE=1 ;; # global var
 			*) unexp_arg "$OPTARG"; return 1
 		esac

@@ -43,7 +43,7 @@ fi
 [ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
 
 DO_DIALOGS=
-[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+[ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 if sed --version 2>/dev/null | grep -qe '(GNU sed)'
 then

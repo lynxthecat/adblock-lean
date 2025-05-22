@@ -897,11 +897,25 @@ parse_config()
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt
+	print_conf_fixes()
+	{
+		local fix cnt=0 IFS="${_NL_}"
+		for fix in ${conf_fixes}
+		do
+			IFS="${DEFAULT_IFS}"
+			[ -z "${fix}" ] && continue
+			cnt=$((cnt+1))
+			print_msg "${cnt}. ${fix}"
+		done
+		IFS="${DEFAULT_IFS}"
+	}
+
+	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line force_fix=''
+	[ "${1}" = '-f' ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
 	local DO_DIALOGS=
-	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ ! -f "${ABL_CONFIG_FILE}" ]
 	then
@@ -922,29 +936,22 @@ load_config()
 	esac
 
 	# if not in interactive console and force-fix not set, return error
-	[ -z "${DO_DIALOGS}" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
+	[ -z "${DO_DIALOGS}" ] && [ -z "${force_fix}" ] && { log_msg "${tip_msg}"; return 1; }
 
 	# sanity check
 	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
 
-	if [ -n "${DO_DIALOGS}" ] && [ "${1}" != '-f' ]
+	if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
 	then
 		if [ -n "${conf_fixes}" ]
 		then
 			print_msg -blue "" "Perform following automatic changes? (y|n)"
-			cnt=0
-			local IFS="${_NL_}"
-			for fix in ${conf_fixes}
-			do
-				IFS="${DEFAULT_IFS}"
-				[ -z "${fix}" ] && continue
-				cnt=$((cnt+1))
-				print_msg "${cnt}. ${fix}"
-			done
-			IFS="${DEFAULT_IFS}"
+			print_conf_fixes
 			pick_opt "y|n" || return 1
 		fi
 	else
+		print_msg -blue "" "Performing following config changes:"
+		print_conf_fixes
 		REPLY=y
 	fi
 
@@ -987,10 +994,13 @@ fix_config()
 	if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
-		[ -z "${DO_DIALOGS}" ] && return 1
-		log_msg "Proceed with suggested config changes? (y|n)"
-		pick_opt "y|n" || return 1
-		[ "${REPLY}" = n ] && return 1
+		if [ -z "${APPROVE_UPD_CHANGES}" ]
+		then
+			[ -z "${DO_DIALOGS}" ] && return 1
+			log_msg "Proceed with suggested config changes? (y|n)"
+			pick_opt "y|n" || return 1
+			[ "${REPLY}" = n ] && return 1
+		fi
 	else
 		log_msg "" "Old config file was saved as ${old_config_f}."
 	fi
@@ -1008,7 +1018,7 @@ write_config()
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
-	if [ -n "${DO_DIALOGS}" ] && [ -f "${ABL_CONFIG_FILE}" ]
+	if [ -n "${DO_DIALOGS}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -f "${ABL_CONFIG_FILE}" ]
 	then
 		print_msg "This will overwrite existing config. Proceed? (y|n)"
 		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
