@@ -861,7 +861,7 @@ fetch_and_install()
 	) || exit 1
 
 	rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
-	log_msg "adblock-lean (version '${upd_ver}') has been installed."
+	log_msg "" "adblock-lean (version '${upd_ver}') has been installed."
 
 	if [ -n "${DO_DIALOGS}" ]
 	then
