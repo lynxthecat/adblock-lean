@@ -339,51 +339,67 @@ rc_enabled()
 	[ -L "/etc/rc.d/K${STOP}adblock-lean" ]
 }
 
+detect_util()
+{
+	local du_out_var="${1}" gen_name="${2}" specific_name="${3}" specific_path="${4}" \
+		res_cmd='' _util _util_path='' busybox_variant_avail=''
+
+	are_var_names_safe "${du_out_var}" || return 1
+
+	[ "${5}" = '-b' ] && busybox_variant_avail=1
+
+	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ]
+	then
+		res_cmd="${specific_path}"
+	elif [ -n "${specific_name}" ] && check_util "${specific_name}"
+	then
+		res_cmd="${specific_name}"
+	elif [ -n "${gen_name}" ] && check_util "${gen_name}"
+	then
+		res_cmd="${gen_name}"
+	elif [ -n "${busybox_variant_avail}" ]
+	then
+		res_cmd="/bin/busybox ${gen_name}"
+	else
+		reg_failure "${gen_name} not found."
+		return 1
+	fi
+
+	case "${res_cmd}" in
+		/*) ;; # paths already known
+		*)
+			# get paths
+			if _util_path="$(command -v "${res_cmd}")" &&
+				{
+					# resolve symlinks
+					{ [ -h "${_util_path}" ] || [ -L "${_util_path}" ]; } &&
+					_util_path="$(readlink "${_util_path}")" &&
+					[ -n "${_util_path}" ] &&
+					_util_path="$(command -v "${_util_path}")" &&
+					case "${_util_path}" in
+						/bin/busybox*) _util="/bin/busybox ${gen_name}" ;;
+						*) _util="${_util_path}"
+					esac
+				} ||
+				[ -f "${_util}" ]
+			then
+				res_cmd="${_util}"
+			else
+				return 1
+			fi
+	esac
+
+	export "${du_out_var}=${res_cmd}"
+}
+
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
 detect_utils() {
-	detect_util()
-	{
-		local out_var="${1}" gen_name="${2}" pkg_name="${3}" specific_names="${4}" specific_paths="${5}" busybox_cmd="${6}" \
-			res_cmd='' util_path='' util_name=''
-		are_var_names_safe "${out_var}" || return 1
-		if [ -n "${specific_paths}" ] &&
-			for util_path in ${specific_paths}
-			do
-				[ -f "${util_path}" ] && break
-			done
-		then
-			res_cmd="${util_path}"
-		elif [ -n "${specific_names}" ] &&
-			for util_name in ${specific_names}
-			do
-				check_util "${util_name}" && break
-			done
-		then
-			res_cmd="${util_name}"
-		elif check_util "${gen_name}"
-		then
-			res_cmd="${gen_name}"
-		elif eval "/bin/busybox ${gen_name} ${busybox_cmd} \"${test_path}\"" &>/dev/null
-		then
-			res_cmd="/bin/busybox ${gen_name}"
-		else
-			rm -f "${test_path}"
-			reg_failure "${gen_name} not found. Please install ${pkg_name}."
-			return 1
-		fi
-		: "${res_cmd}"
-		eval "${out_var}"='${res_cmd}'
-	}
+	unset SED_CMD AWK_CMD SORT_CMD
 
-	local test_path=/tmp/utils-test
+	detect_util SED_CMD sed "" "/usr/libexec/sed-gnu" -b &&
+	detect_util AWK_CMD awk gawk "/usr/bin/gawk" -b &&
+	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b || return 1
 
-	printf '%s\n' "." > "${test_path}" || { reg_failure "Failed to detect utils."; return 1; }
-
-	detect_util SED_CMD sed sed sed "/usr/libexec/sed-gnu" "-n '/./q'" &&
-	detect_util AWK_CMD awk gawk gawk "/usr/bin/gawk" "'BEGIN{exit}'" gawk &&
-	detect_util SORT_CMD sort coreutils-sort sort "/usr/libexec/sort-coreutils" || return 1
-
-	rm -f /tmp/utils-test
 	:
 }
 
@@ -762,12 +778,12 @@ get_abl_run_state()
 {
 	[ -n "${DNSMASQ_CONF_D}" ] || { reg_failure "\$DNSMASQ_CONF_D is not set"; return 1; }
 	local f
-	for f in "${DNSMASQ_CONF_D}/.abl-blocklist.gz" "${DNSMASQ_CONF_D}/abl-blocklist"
+	for f in "${DNSMASQ_CONF_D}/.abl-blocklist${COMPR_EXT}" "${DNSMASQ_CONF_D}/abl-blocklist"
 	do
 		[ -f "${f}" ] && return 0
 	done
 
-	[ -f "${ABL_DIR}/prev_blocklist.gz" ] && return 3
+	[ -f "${ABL_DIR}/prev_blocklist${COMPR_EXT}" ] && return 3
 	return 4
 }
 
@@ -939,12 +955,47 @@ rm_cron_job()
 	:
 }
 
+# Delete adblock-lean addnmount entries for dnsmasq instance
+# NOTE: need to run 'uci commit dhcp' after calling this function
+# 1 - dnsmasq instance index
+# return codes:
+# 0 - OK
+# 1 - Error deleting all found entries
+# 2 - Some entries deleted
+# 3 - No entries found for instance
+del_addnmount()
+{
+	local rv path paths entry_deleted=0 entry_failed=0
+	paths="$(uci -q get "dhcp.@dnsmasq[${1}].addnmount" 2>/dev/null)"
+	for path in ${paths}
+	do
+		case "${path}" in */bin/busybox*|*gzip*|*pigz*|*zstd*) ;; *) continue; esac
+		log_msg -purple "" "Deleting addnmount entry for '${path}' for dnsmasq instance ${1} from /etc/config/dhcp."
+		if uci -q del_list "dhcp.@dnsmasq[${1}].addnmount=${path}"
+		then
+			entry_deleted=1
+		else
+			entry_failed=1
+			reg_failure "Failed to delete addnmount entry for '${path}' from /etc/config/dhcp."
+		fi
+	done
+
+	case "${entry_deleted}${entry_failed}" in
+		00) rv=3 ;;
+		01) rv=1 ;;
+		10) rv=0 ;;
+		11) rv=2 ;;
+	esac
+
+	return ${rv}
+}
+
 
 ### Commands init
 init_command()
 {
 	ABL_CMD="${1}"
-	local config_req='' work_dir_req='' init_action_msg=''
+	local config_req='' work_dir_req='' init_action_msg='' process_vars_req=''
 
 	DO_DIALOGS=
 	[ -z "${ABL_LUCI_SOURCED}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
@@ -964,12 +1015,12 @@ init_command()
 	case ${ABL_CMD} in
 		help|enabled|enable|disable|print_log|'') ;;
 		gen_stats) ;;
-		status) libs_req=1 work_dir_req=1 config_req=1 ;;
+		status) libs_req=1 work_dir_req=1 config_req=1 process_vars_req=1 ;;
 		upd_cron_job) libs_req=1 config_req=1 ;;
 		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
 		boot) libs_req=1 config_req=1 LOCK_REQ=1 ;;
-		pause) libs_req=1 work_dir_req=1 config_req=1 LOCK_REQ=1 ;;
-		start|resume) libs_req=1 work_dir_req=1 config_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		pause) libs_req=1 work_dir_req=1 config_req=1 process_vars_req=1 LOCK_REQ=1 ;;
+		start|resume) libs_req=1 work_dir_req=1 config_req=1 process_vars_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			init_action_msg="Stopping adblock-lean."
 			reg_action -purple "${init_action_msg}" || exit 1
@@ -981,6 +1032,7 @@ init_command()
 				1) exit 1 ;;
 				2) reg_failure "Failed to kill running adblock-lean processes."; exit 1
 			esac
+			load_config
 			CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instance)
 			libs_req=1 LOCK_REQ=1
@@ -990,6 +1042,8 @@ init_command()
 		update) work_dir_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		*) reg_failure "Invalid action '${ABL_CMD}'."; exit 1
 	esac
+
+	[ -n "${process_vars_req}" ] && libs_req=1 # ensure that libs are loaded
 
 	# source library scripts
 	if [ -n "${libs_req}" ]
@@ -1036,6 +1090,9 @@ init_command()
 		load_config ${force_config_fix} || { reg_failure "Failed to load config."; exit 1; }
 		CONFIG_LOADED=1
 	fi
+
+	# detect compression/extraction utils
+	[ -n "${process_vars_req}" ] && { set_processing_vars || exit 1; }
 
 	# check dnsmasq, source custom script
 	case ${ABL_CMD} in
@@ -1451,8 +1508,6 @@ start()
 	reg_action -purple "Starting adblock-lean, version ${ABL_VERSION}."
 	init_command start || exit 1
 
-	detect_util COMPR_CMD gzip gzip "pigz zstd gzip" "/usr/bin/pigz /usr/bin/zstd /bin/gzip" "-c" || return 1
-
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
 		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
@@ -1809,25 +1864,33 @@ uninstall()
 		rm -rf "${ABL_CONFIG_DIR:-???}"
 	fi
 
-	local i="-1" addnmount_deleted=1
+	local i="-1" addnm_deleted='' addnm_del_fail=''
 	while [ ${i} -lt 128 ]
 	do
 		i=$((i+1))
 		uci -q get dhcp.@dnsmasq[${i}] >/dev/null || break
-		case "$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" in */bin/busybox*) ;; *) continue; esac
-		addnmount_deleted=
-		log_msg -purple "" "Deleting the custom addnmount entry from /etc/config/dhcp."
-		if uci -q del_list dhcp.@dnsmasq[${i}].addnmount='/bin/busybox' && uci commit
+		del_addnmount "${i}"
+		case ${?} in
+			0) addnm_deleted=1 ;;
+			3) ;;
+			1) addnm_del_fail=1 ;;
+			2) addnm_deleted=1 addnm_del_fail=1
+		esac
+	done
+
+	if [ -n "${addnm_deleted}" ]
+	then
+		if uci commit dhcp
 		then
-			case "$(uci -q get dhcp.@dnsmasq[${i}].addnmount)" in */bin/busybox*) continue; esac
-			addnmount_deleted=1
 			log_msg "Note: the adblock-lean developers are not aware of any other software that requires the specific addnmount entry created by adblock-lean." \
 				"Should the addnmount entry be required for any reason then you will need to manually re-add it."
+		else
+			uci revert dhcp
+			addnm_del_fail=1
 		fi
-		break
-	done
-	[ -z "${addnmount_deleted}" ] &&
-		reg_failure "Failed to delete the custom addnmount entry from /etc/config/dhcp. Please delete manually."
+	fi
+
+	[ -n "${addnm_del_fail}" ] && log_msg "Some addnmount entries were not deleted. Please delete manually."
 
 	log_msg -purple "" "Deleting the scripts."
 	rm -f "${ABL_SERVICE_PATH}"

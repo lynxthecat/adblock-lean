@@ -93,7 +93,7 @@ Optional/recommended: enable blocklist compression to reduce RAM usage. To achie
 ```
 	list addnmount '/bin/busybox'
 ```
-to the relevant dnsmasq section (under `config dnsmasq`) of file `/etc/config/dhcp`.
+to the relevant dnsmasq section (under `config dnsmasq`) of file `/etc/config/dhcp`. If using a compression utility other than the built-in Busybox gzip, add a second addnmount line with the path to its executable file.
 
 If only one `config dnsmasq` section exists then that's the section to add the line to. If you have multiple `config dnsmasq` sections, this means that multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on - add the line to that section. Verify that same dnsmasq instance index is configured in `/etc/adblock-lean/config` (1st instance corresponds to the 1st `config dnsmasq` section and has index 0, further instances increment the index by 1).
 
@@ -235,7 +235,9 @@ Default config can be generated using: `service adblock-lean gen_config`.
 |`max_file_part_size_KB`              | Maximum size in KB of any individual downloaded blocklist part                                |
 |`max_blocklist_file_size_KB`         | Maximim size in KB of combined, processed blocklist                                           |
 |`deduplication`                      | Whether to perform sorting and deduplication of entries                                       |
-|`use_compression`                    | Compress while processing, and final blocklists. Reduces memory usage. 1/0 to enable/disable  |
+|`compression_util`                   | Utility used to compress while processing, and final blocklists. Reduces memory usage. `none` disables compression |
+|`intermediate_compression_options`   | Options passed to the compression utility while processing. `-[n]` universally specifies compression level.        |
+|`final_compression_options`          | Same as above but these options are passed to the compression utility when compressing the final blocklist.        |
 |`unload_blocklist_before_update`     | Unload current blocklist before update to save memory. 'auto' or 1/0 to enable/disable.       |
 |`boot_start_delay_s`                 | Start delay in seconds when service is started from system boot                               |
 |`MAX_PARALLEL_JOBS`                  | Max count of download and processing jobs to run in parallel. 'auto' sets this automatically  |
@@ -290,6 +292,12 @@ blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wil
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
 ```
+
+### Blocklist compression
+- By default, adblock-lean uses compression while processing downloaded blocklist/allowlist parts, and compresses the final blocklist before loading it into dnsmasq. This helps to reduce memory use.
+- Supported compression utilities: Busybox gzip (every OpenWrt system has this built-in), GNU gzip, pigz and zstd. The latter 2 utilities support multithreaded compression.
+- adblock-lean automatically sets parameters for any of the supported utilities for reasonable balance between speed and memory usage. You can specify your preferred compression utility in the `compression_util` option (default is `gzip`). You can also specify parameters to pass to the compression utility, separately for intermediate compression (`intermediate_compression_options`) and for the final blocklist compression (`final_compression_options`).
+- Final blocklist compression depends on appropriate addnmount entries existing in `/etc/config/dhcp`. After changing the compression utility in the config file, make sure to run `service adblock-lean setup` in order to update the addnmount entries (answer `e` when asked whether to create new config or use existing config).
 
 ## Whitelist mode
 This mode can be used to implement parental control or similar functionality while also adblocking inside the allowed domains. It can be enabled by setting the config option `whitelist_mode` to `1`. In this mode all domain names will be blocked, except for domains (and their subdomains) included in local and/or downloaded allowlists. In this mode, if blocklists are used in addition to allowlists, addresses which are included in the blocklists and which are subdomains of allowed domains - will be blocked as well.

@@ -269,15 +269,20 @@ do_setup()
 	fi
 
 	# make addnmount entry - enables blocklist compression to reduce RAM usage
-	check_addnmount
+	set_processing_vars -f
+	check_addnmounts
 	case ${?} in
-		0) log_msg -green "" "Found existing dnsmasq addnmount UCI entry." ;;
-		2) return 5 ;;
-		1)
-			log_msg -purple "" "Creating dnsmasq addnmount UCI entry."
-			uci add_list dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount='/bin/busybox' && uci commit ||
+		0) log_msg -green "" "Found existing dnsmasq addnmount entries." ;;
+		1) return 5 ;;
+		2)
+			del_addnmount "${DNSMASQ_INDEX}"
+			log_msg -purple "" "Creating dnsmasq addnmount entries in /etc/config/dhcp."
+			uci add_list "dhcp.@dnsmasq[${DNSMASQ_INDEX}].addnmount=${EXTR_CMD_STDOUT%% *}" &&
+			{ [ "${EXTR_CMD_STDOUT%% *}" = "/bin/busybox" ] || uci add_list "dhcp.@dnsmasq[${DNSMASQ_INDEX}].addnmount=/bin/busybox"; } &&
+			uci commit dhcp ||
 			{
-				reg_failure "Failed to create addnmount entry."
+				uci revert dhcp
+				reg_failure "Failed to create or change addnmount entries."
 				return 5
 			}
 	esac
@@ -492,8 +497,17 @@ print_def_config()
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1" @ 0|1
 
-	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
-	use_compression="1" @ 0|1
+	# Utility to compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory
+	# Supported options: gzip, pigz, zstd or 'none' to disable compression
+	compression_util="gzip" @ gzip|pigz|zstd|none
+
+	# Compression options: passed as-is to the compression utility
+	# Available options depend on the compression utility. '-[n]' universally specifies compression level.
+	# Busybox gzip ignores any options.
+	#   Intermediate compression. Default: '-3'.
+	intermediate_compression_options="-3" @ string
+	#   Final blocklist compression. Default: '-6'
+	final_compression_options="-6" @ string
 
 	# unload previous blocklist form memory and restart dnsmasq before generation of
 	# new blocklist in order to free up memory during generation of new blocklist - 'auto' or enable (1) or disable (0)
@@ -1098,20 +1112,47 @@ report_utils()
 }
 
 # return codes:
-# 0 - addnmount entry exists
-# 1 - addnmount entry doesn't exist
-# 2 - error
-check_addnmount()
+# 0 - addnmount entries exist
+# 1 - error
+# 2 - addnmount entries missing
+check_addnmounts()
 {
-	hash uci 1>/dev/null || { reg_failure "uci command was not found."; return 2; }
+	check_addnmount()
+	{
+		local path="${1}"
+		case "${path}" in
+			/*) ;;
+			*) reg_failure "check_addnmount: invalid path '${path}'."; return 1
+		esac
+
+		while [ -n "${path}" ]
+		do
+			is_included "${path}" "${addnmounts}" ' ' && return 0
+			path="${path%/*}"
+		done
+
+		return 1
+	}
+
+	check_util uci || { reg_failure "uci command was not found."; return 1; }
 	case "${DNSMASQ_INDEX}" in
 		''|*[!0-9]*)
 			reg_failure "Invalid index '${DNSMASQ_INDEX}' registered for dnsmasq instance '${DNSMASQ_INSTANCE}'."
-			return 2
+			return 1
 	esac
 
-	uci -q get dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount | grep -qE "('|^|[ \t])/bin(/\*|/busybox)*([ \t]|'|$)" && return 0
-	return 1
+	local addnmounts req_path
+	addnmounts="$(uci -q get dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount | ${SED_CMD} -E 's~/(\s|$)~ ~g')"
+
+	MISSING_ADDNMOUNTS=
+	for req_path in "/bin/busybox" "${EXTR_CMD_STDOUT%% *}"
+	do
+		[ -n "${req_path}" ] || continue
+		check_addnmount "${req_path}" || add2list MISSING_ADDNMOUNTS "${req_path}" ' '
+	done
+
+	[ -n "${MISSING_ADDNMOUNTS}" ] && return 2
+	:
 }
 
 # return codes:
@@ -1128,13 +1169,13 @@ check_blocklist_compression_support()
 		return 1
 	fi
 
-	check_addnmount && return 0
-	[ ${?} = 2 ] && { reg_failure "Failed to check addnmount entry for dnsmasq instance '${DNSMASQ_INSTANCE}'"; return 2; }
-	log_msg -warn "" "No appropriate 'addnmount' entry in /etc/config/dhcp was identified." \
+	check_addnmounts && return 0
+	[ ${?} = 1 ] && { reg_failure "Failed to check addnmount entries for dnsmasq instance '${DNSMASQ_INSTANCE}'"; return 2; }
+	log_msg -warn "" "Missing addnmount entries in /etc/config/dhcp for paths: ${MISSING_ADDNMOUNTS}" \
 		"Final blocklist compression will be disabled."
-	log_msg "addnmount entry is required to give dnsmasq access to busybox gunzip in order to extract compressed blocklist." \
-		"Run 'service adblock-lean setup' to have the entry created automatically, or follow the steps in the README." \
-		"Alternatively, change the 'use_compression' option in adblock-lean config to '0'."
+	log_msg "addnmount entries are required to give dnsmasq access to a utility used to extract compressed blocklist." \
+		"Run 'service adblock-lean setup' to have the entries created automatically, or follow the steps in the README." \
+		"Alternatively, change the 'compression_util' option in adblock-lean config to 'none'."
 	return 1
 }
 
@@ -1363,7 +1404,7 @@ clean_dnsmasq_dir()
 	for dir in ${ALL_CONF_DIRS}
 	do
 		IFS="${DEFAULT_IFS}"
-		rm -f "${dir}"/.abl-blocklist.gz "${dir}"/abl-blocklist \
+		rm -f "${dir}"/.abl-blocklist.* "${dir}"/abl-blocklist \
 			"${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
 	done
 	:
