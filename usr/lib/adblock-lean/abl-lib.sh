@@ -1,6 +1,5 @@
 #!/bin/sh
 # shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057,SC3019
-# ABL_VERSION=dev
 
 # silence shellcheck warnings
 : "${blue:=}" "${purple:=}" "${green:=}" "${red:=}" "${yellow:=}" "${n_c:=}"

@@ -840,12 +840,11 @@ ver_upd_fixup()
 	: "${fix_ver:=dev}"
 
 	# shellcheck disable=SC2046
-	busybox sed -i "
+	/bin/busybox sed -i "
 		s/^\s*ABL_VERSION=.*/ABL_VERSION=\"${fix_ver}\"/
 		s/^\s*ABL_UPD_CHANNEL=.*/ABL_UPD_CHANNEL=\"${fix_upd_channel}\"/" \
 			"${ABL_SERVICE_PATH}" &&
 	mkdir -p "${ABL_FILES_REG_PATH%/*}" &&
-	local IFS="${_NL_}" &&
 	set -- $(print_file_list ALL) &&
 	IFS="${DEFAULT_IFS}" &&
 	md5sums="$(md5sum "$@")" && [ -n "${md5sums}" ] &&
@@ -890,7 +889,9 @@ source_libs()
 		read_str_from_file -f "${ABL_CONFIG_DIR}/ver_migration" -d -v "curr_upd_ch curr_ver" &&
 		[ -n "${curr_upd_ch}" ] && [ -n "${curr_ver}" ] &&
 		ver_upd_fixup "${curr_ver}" "${curr_upd_ch}" &&
+		local abl_cmd="${ABL_CMD}" &&
 		. "${ABL_SERVICE_PATH}" || return 1
+		ABL_CMD="${abl_cmd}"
 	fi
 
 	local file libs_missing='' libs_source_failed=''
@@ -1957,7 +1958,7 @@ rm -f /tmp/abl-test
 detect_utils || exit 1
 
 # register 1st arg as $ABL_CMD when called by 'sh /etc/init.d/adblock-lean'
-if [ "${0}" = "${ABL_SERVICE_PATH}" ]
+if [ "${0}" = "${ABL_SERVICE_PATH}" ] && [ -n "${1}" ]
 then
 	ABL_CMD="${1}"
 	shift
