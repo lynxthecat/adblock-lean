@@ -298,7 +298,7 @@ blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wil
 ### Blocklist compression
 - By default, adblock-lean uses compression while processing downloaded blocklist/allowlist parts, and compresses the final blocklist before loading it into dnsmasq. This helps to reduce memory use.
 - Supported compression utilities: Busybox gzip (every OpenWrt system has this built-in), GNU gzip, pigz and zstd. The latter two utilities support multithreaded compression.
-- adblock-lean automatically sets parameters for any of the supported utilities for reasonable balance between speed and memory usage. You can specify your preferred compression utility in the `compression_util` option (default is `gzip`). You can also specify parameters to pass to the compression utility, separately for intermediate compression (`intermediate_compression_options`) and for the final blocklist compression (`final_compression_options`).
+- adblock-lean automatically sets parameters for any of the supported utilities to provide a reasonable balance between speed and memory usage. You can specify your preferred compression utility in the `compression_util` option (default is `gzip`). You can also specify parameters to pass to the compression utility, separately for intermediate compression (`intermediate_compression_options`) and for the final blocklist compression (`final_compression_options`).
 - Final blocklist compression depends on appropriate addnmount entries existing in `/etc/config/dhcp`. After changing the compression utility in the config file, make sure to run `service adblock-lean setup` in order to update the addnmount entries (answer `e` when asked whether to create new config or use existing config).
 
 ## Whitelist mode
