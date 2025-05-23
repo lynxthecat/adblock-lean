@@ -38,7 +38,7 @@ try_extract()
 			esac ;;
 		*) reg_failure "try_extract: file '${1}' has unexpected extension."; false
 	esac &&
-	${EXTR_CMD} "${1}" || { rm -f "${1%"${COMPR_EXT}"}"; reg_failure "Failed to extract '${1}'."; return 1; }
+	${EXTR_CMD} "${1}" || { rm -f "${1%.*}"; reg_failure "Failed to extract '${1}'."; return 1; }
 }
 
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
@@ -1091,8 +1091,9 @@ import_blocklist_file()
 
 	if [ -n "${src_compressed}" ] && [ -z "${final_compress}" ]
 	then
-		try_extract "${src_file}" || return 1
-		src_file="${src_file%"${COMPR_EXT}"}"
+		try_extract "${src_file}" &&
+		src_file="${src_file%.*}" &&
+		[ -n "${src_file}" ] || return 1
 	elif [ -z "${src_compressed}" ] && [ -n "${final_compress}" ]
 	then
 		try_compress "${src_file}" "${FINAL_COMPR_OPTS}" || return 1
