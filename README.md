@@ -35,11 +35,14 @@ adblock-lean includes the following features:
 - combining all downloaded and local lists into one final blocklist file
 - configurable minimum and maximum blocklist/allowlist parts and final blocklist size and lines count constraints designed to prevent memory over-use and minimize the chance of loading incomplete blocklist because of a download error
 - various checks and sanitization of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
-- during blocklist update, a compressed copy of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist.
+- during blocklist update, a compressed copy of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
+- supports concurrent download and processing of blocklist/allowlist parts for faster blocklist updates
+- supports pause and resume of adblocking without re-downloading blocklist/allowlist parts
 - supports optional calls to user-configurable script on success or failure (for example to send an email report)
-- automatic check for application updates and self update functionality (when authorized by the user)
+- optional automatic blocklist updates
+- automatic check for application updates and self update functionality (initiated by the user)
 - config validation and optional automatic config repair when problems are detected
-- strong emphasis on reliability, error checking and reporting, code quality and readability
+- strong emphasis on **performance**, **user-friendliness**, **reliability**, **error checking and reporting**, **code quality and readability**
 
 ## Installation on OpenWrt
 
@@ -100,7 +103,7 @@ Now run the command `service dnsmasq restart`.
 
 adblock-lean is written as a service and `service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
 
-Additional available commands:
+Additional available commands (use with `service adblock-lean <command>`):
 - `version`: prints adblock-lean version
 - `stop`: stops any running adblock-lean instances, unloads the blocklist and removes it from memory
 - `restart`: runs the `stop`, then `start` commands
@@ -179,26 +182,28 @@ adblock-lean supports two blocklist/allowlist formats: **raw format** and **dnsm
 
 ## Adding new lists
 
-The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as much as possible in respect of: _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other undesirable content_, all while breaking as few websites as possible. oisd lists are supported as well.
+The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as much as possible in respect of: _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam and other undesirable content_, all while breaking as few websites as possible. oisd lists are supported as well.
 
 ### Adding a new **Hagezi** list
-1. Decide on the source list format first (**raw** or **dnsmasq**)
-2. Add a **raw-formatted list** (recommended):
+1. Decide on the source list format first (**raw** or **dnsmasq** - normally prefer **raw**)
+2. Construct a **raw-formatted list URL** (recommended):
    - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/`
    - Add the **list name** to the **base download URL**. The list name must have the **-onlydomains** suffix. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard).
    - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt`
-3. **OR** add a **dnsmasq-formatted list**:
+3. **OR** construct a **dnsmasq-formatted list URL**:
    - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/`
    - Add the **list name** to the **base download URL**. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/dnsmasq).
    - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/popupads.txt`
+4. Add the constructed URL to the appropriate option in the adblock-lean config file (e.g. a URL for a **raw-formatted** blocklist URL should be added to the `blocklist_urls` config option, a URL for a **dnsmasq-formatted** list should be added to the `dnsmasq_blocklist_urls` config option)
 
 ### Adding a new **oisd** list
-1. Decide on the source list format (**raw** or **dnsmasq**)
+1. Decide on the source list format (**raw** or **dnsmasq** - normally prefer **raw**)
 2. Visit the [oisd page](https://oisd.nl/setup/adblock-lean)
-3. Add a **raw-formatted list** (recommended):
-   - Look for URLs named **domainswild2** (note the **2**) and use any of them
-4. **OR** add a **dnsmasq-formatted list**:
-   - Look for URLs named **dnsmasq2** (note the **2**) and use any of them
+3. Pick a **raw-formatted list** URL (recommended):
+   - Look for URLs named **domainswild2** (note the **2**) and pick any of them
+4. **OR** pick a **dnsmasq-formatted list** URL:
+   - Look for URLs named **dnsmasq2** (note the **2**) and pick any of them
+5. Add chosen URL to the appropriate option in the adblock-lean config file (e.g. a URL for a **raw-formatted** blocklist URL should be added to the `blocklist_urls` config option, a URL for a **dnsmasq-formatted** list should be added to the `dnsmasq_blocklist_urls` config option)
 
 ### Adding another list
 - Any other raw or dnsmasq format lists of your choice can be used, but make sure it conforms to [supported formats](#supported-formats).
@@ -307,9 +312,9 @@ Also note that in this mode by default the Github domains will be blocked, so th
 
 The resulting blocklist generated in whitelist mode will be typically much smaller than otherwise, so you may need to reduce the value of the `min_good_line_count` option in order for the list to be accepted by adblock-lean.
 
-## User-configurable calls on success or failure
+## User-configurable calls on success or failure and on version updates
 
-adblock-lean supports specifying a custom script which defines the functions `report_success`, `report_failure` and `report_update` to be called on success or failure, or when adblock-lean update is available (can be used to eg send an email/SMS/msg)
+adblock-lean supports specifying a custom script which defines any or all of the functions `report_success`, `report_failure` and `report_update` to be called on success or failure, or when adblock-lean update is available (can be used to eg send an email/SMS/msg)
 
 **Example below for free Brevo (formerly sendinblue) email service, but use your favourite smtp/email/SMS etc method.**
 
