@@ -421,7 +421,9 @@ service adblock-lean start
 adblock-lean implements a flexible update system which supports following options (use with `service adblock-lean update`):
 - `-y` : pre-approve any configuration changes suggested by the version update mechanism and automatically start the updated adblock-lean version
 - `-f` : update without calling the `stop` command first and do not load adblock-lean library scripts - this is mainly useful to fix a broken installation
-- `-v < [version]|[update_channel]|commit=[commit_hash] >` : either install a specific adblock-lean version (for example `-v 0.7.2`); or specify an update channel (either `-v release` or `-v snapshot` or `-v branch=<branch_name>`) - this will install the latest version from the corresponding update channel and change the version update behavior so it checks in that update channel for future updates; or install a version corresponding to a specific commit to the `master` branch. These options are mainly helpful for testing. Most users should be fine with the default update behavior which is following the `release` update channel.
+- `-v < [version]|[update_channel]|commit=[commit_hash] >` : either install a specific adblock-lean version (for example `-v 0.7.2`); or specify an update channel (either `-v release` or `-v snapshot` or `-v branch=<branch_name>`) - this will install the latest version from the corresponding update channel and change the version update behavior so it checks in that update channel for future updates; or install a version corresponding to a specific commit to the `master` branch. 
+
+These options are mainly helpful for testing. Most users should be fine with the default update behaviour which follows the `release` update channel.
 
 ## Uninstalling
 
