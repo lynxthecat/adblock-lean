@@ -25,25 +25,21 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 
 adblock-lean includes the following features:
 
+- automated interactive setup with presets for devices with different memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
 - supports multiple blocklist files downloaded from user-specified urls
-- supports local blocklist
+- supports local user-specified blocklist
 - supports multiple allowlist files downloaded from user-specified urls
-- supports local allowlist
+- supports local user-specified allowlist
 - supports blocklist compression (which significantly reduces memory consumption) by leveraging the new conf-script functionality of dnsmasq
 - removal of domains found in the allowlist from the blocklist files
 - combining all downloaded and local lists into one final blocklist file
-- check that each individual blocklist and allowlist file does not exceed configurable maximum size
-- check that the total blocklist size does not exceeed configurable maximum file size
-- check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
-- check that line count in blocklist file exceeds configurable minimum (default: 100,000)
-- save a compressed copy of the previous blocklist file, then load the new combined blocklist file into dnsmasq
-- perform checks on restarted dnsmasq with new blocklist file
-- revert to previous blocklist file if checks fail
-- if checks on previous blocklist file also fail then revert to not using any blocklist file
-- implements optional calls to user-configurable script on success or failure (for example to send an email report)
-- automatically check for application updates and self update functionality
-- config keys and values validation and optional automatic config repair when problems are detected
-- automated interactive setup
+- configurable minimum and maximum blocklist/allowlist parts and final blocklist size and lines count constraints designed to prevent memory over-use and minimize the chance of loading incomplete blocklist because of a download error
+- various checks and sanitization of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
+- during blocklist update, a compressed copy of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist.
+- supports optional calls to user-configurable script on success or failure (for example to send an email report)
+- automatic check for application updates and self update functionality (when authorized by the user)
+- config validation and optional automatic config repair when problems are detected
+- strong emphasis on reliability, error checking and reporting, code quality and readability
 
 ## Installation on OpenWrt
 
