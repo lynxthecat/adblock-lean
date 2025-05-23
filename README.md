@@ -341,7 +341,8 @@ report_update()
 {
 mailbody="${1}"
 mailsend -port 587 -smtp smtp-relay.brevo.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean update is available" -M "${mailbody}"
-}```
+}
+```
 
 - the Brevo password is supplied within their website, not the one created on sign-up.
 - If copy-pasting from Windows, avoid copy-pasting Windows-style newlines. To make sure, in Windows use a text editor which supports changing newline style (such as Notepad++) and make sure it is set to Unix (LF), rather than Windows (CR LF).
