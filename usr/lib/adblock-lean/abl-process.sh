@@ -1,6 +1,5 @@
 #!/bin/sh
 # shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045,SC3003,SC3060
-# ABL_VERSION=dev
 
 # silence shellcheck warnings
 : "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}" \
