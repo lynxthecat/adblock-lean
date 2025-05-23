@@ -114,7 +114,7 @@ are_var_names_safe() {
 	local var_name
 	for var_name in "${@}"
 	do
-		case "${var_name}" in *[!a-zA-Z_]*) reg_failure "Invalid var name '${var_name}'."; return 1; esac
+		case "${var_name}" in [!a-zA-Z_]*|*[!a-zA-Z0-9_]*) reg_failure "Invalid var name '${var_name}'."; return 1; esac
 	done
 	:
 }
@@ -369,8 +369,14 @@ detect_util()
 		/*) ;; # paths already known
 		*)
 			# get paths
-			if check_util "${res_cmd}" &&
-				{
+			if check_util "${res_cmd}" && _util_path="$(command -v "${res_cmd}")"
+			then
+				if [ -f "${_util_path}" ] && [ ! -h "${_util_path}" ] && [ ! -L "${_util_path}" ]
+				then
+					# path is not symlink
+					res_cmd="${_util_path}"
+				elif [ -h "${_util_path}" ] || [ -L "${_util_path}" ]
+				then
 					# resolve symlinks
 					_util_path="$(command -v "${res_cmd}")" &&
 					{ [ -h "${_util_path}" ] || [ -L "${_util_path}" ]; } &&
@@ -378,28 +384,28 @@ detect_util()
 					[ -n "${_util_path}" ] &&
 					_util_path="$(command -v "${_util_path}")" &&
 					case "${_util_path}" in
-						/bin/busybox*) _util="/bin/busybox ${gen_name}" ;;
-						*) _util="${_util_path}"
+						/bin/busybox*) res_cmd="/bin/busybox ${gen_name}" ;;
+						*) res_cmd="${_util_path}"
 					esac
-				} ||
-				[ -f "${_util}" ]
-			then
-				res_cmd="${_util}"
+				fi
+				[ -n "${res_cmd}" ] || return 1
 			else
 				return 1
 			fi
 	esac
-
 	export "${du_out_var}=${res_cmd}"
 }
 
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
 detect_utils() {
 	unset SED_CMD AWK_CMD SORT_CMD
+	local failed_utils=''
 
-	detect_util SED_CMD sed "" "/usr/libexec/sed-gnu" -b &&
-	detect_util AWK_CMD awk gawk "/usr/bin/gawk" -b &&
-	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b || return 1
+	detect_util SED_CMD sed "" "/usr/libexec/sed-gnu" -b || add2list failed_utils sed ', '
+	detect_util AWK_CMD awk gawk "/usr/bin/gawk" -b || add2list failed_utils awk ', '
+	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b || add2list failed_utils sort ', '
+
+	[ -z "${failed_utils}" ] || { reg_failure "Can not find essential utilities: ${failed_utils}.";  return 1; }
 
 	:
 }
@@ -1948,7 +1954,7 @@ then
 fi
 rm -f /tmp/abl-test
 
-detect_utils
+detect_utils || exit 1
 
 # register 1st arg as $ABL_CMD when called by 'sh /etc/init.d/adblock-lean'
 if [ "${0}" = "${ABL_SERVICE_PATH}" ]
