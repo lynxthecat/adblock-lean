@@ -510,7 +510,7 @@ get_file_list()
 		print_file_list "${_file_types}"
 	elif check_func install_abl_files # v0.6.0-v0.7.1
 	then
-		case "${2}" in
+		case "${_file_types}" in
 			EXEC) printf '%s\n' "${ABL_SERVICE_PATH}" ;;
 			*)
 				printf '%s\n' "${ABL_SERVICE_PATH}${_NL_}${ABL_LIB_FILES}${_NL_}${ABL_EXTRA_FILES}" |
