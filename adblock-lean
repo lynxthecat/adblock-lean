@@ -369,9 +369,10 @@ detect_util()
 		/*) ;; # paths already known
 		*)
 			# get paths
-			if _util_path="$(command -v "${res_cmd}")" &&
+			if check_util "${res_cmd}" &&
 				{
 					# resolve symlinks
+					_util_path="$(command -v "${res_cmd}")" &&
 					{ [ -h "${_util_path}" ] || [ -L "${_util_path}" ]; } &&
 					_util_path="$(readlink "${_util_path}")" &&
 					[ -n "${_util_path}" ] &&
