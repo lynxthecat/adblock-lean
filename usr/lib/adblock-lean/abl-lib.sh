@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057
+# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057,SC3019
 # ABL_VERSION=dev
 
 # silence shellcheck warnings
@@ -269,15 +269,20 @@ do_setup()
 	fi
 
 	# make addnmount entry - enables blocklist compression to reduce RAM usage
-	check_addnmount
+	set_processing_vars -f
+	check_addnmounts
 	case ${?} in
-		0) log_msg -green "" "Found existing dnsmasq addnmount UCI entry." ;;
-		2) return 5 ;;
-		1)
-			log_msg -purple "" "Creating dnsmasq addnmount UCI entry."
-			uci add_list dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount='/bin/busybox' && uci commit ||
+		0) log_msg -green "" "Found existing dnsmasq addnmount entries." ;;
+		1) return 5 ;;
+		2)
+			del_addnmount "${DNSMASQ_INDEX}"
+			log_msg -purple "" "Creating dnsmasq addnmount entries in /etc/config/dhcp."
+			uci add_list "dhcp.@dnsmasq[${DNSMASQ_INDEX}].addnmount=${EXTR_CMD_STDOUT%% *}" &&
+			{ [ "${EXTR_CMD_STDOUT%% *}" = "/bin/busybox" ] || uci add_list "dhcp.@dnsmasq[${DNSMASQ_INDEX}].addnmount=/bin/busybox"; } &&
+			uci commit dhcp ||
 			{
-				reg_failure "Failed to create addnmount entry."
+				uci revert dhcp
+				reg_failure "Failed to create or change addnmount entries."
 				return 5
 			}
 	esac
@@ -492,8 +497,17 @@ print_def_config()
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1" @ 0|1
 
-	# compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory - enable (1) or disable (0)
-	use_compression="1" @ 0|1
+	# Utility to compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory
+	# Supported options: gzip, pigz, zstd or 'none' to disable compression
+	compression_util="gzip" @ gzip|pigz|zstd|none
+
+	# Compression options: passed as-is to the compression utility
+	# Available options depend on the compression utility. '-[n]' universally specifies compression level.
+	# Busybox gzip ignores any options.
+	#   Intermediate compression. Default: '-3'.
+	intermediate_compression_options="-3" @ string
+	#   Final blocklist compression. Default: '-6'
+	final_compression_options="-6" @ string
 
 	# unload previous blocklist form memory and restart dnsmasq before generation of
 	# new blocklist in order to free up memory during generation of new blocklist - 'auto' or enable (1) or disable (0)
@@ -817,6 +831,7 @@ parse_config()
 		return 1
 	}
 
+	rm -f "${parser_error_file}"
 	eval "${parse_vars}" 2> "${parser_error_file}" && [ ! -s "${parser_error_file}" ] ||
 	{
 		[ -s "${parser_error_file}" ] && err_print=" Errors: $(cat "${parser_error_file}")"
@@ -863,9 +878,9 @@ parse_config()
 				log_msg -warn "" "Config format version is unknown or invalid."
 				add_conf_fix "Update config format version" ;;
 			*)
-				if [ "${curr_config_format}" -lt "${def_config_format}" ]
+				if [ "${curr_config_format}" != "${def_config_format}" ]
 				then
-					log_msg -yellow "" "Current config format version '${curr_config_format}' is older than default config version '${def_config_format}'."
+					log_msg -yellow "" "Current config format version '${curr_config_format}' differs from default config version '${def_config_format}'."
 					add_conf_fix "Update config format version"
 				fi
 		esac
@@ -882,11 +897,25 @@ parse_config()
 # 1 - (optional) '-f' to force fixing the config if it has issues
 load_config()
 {
-	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line fix cnt
+	print_conf_fixes()
+	{
+		local fix cnt=0 IFS="${_NL_}"
+		for fix in ${conf_fixes}
+		do
+			IFS="${DEFAULT_IFS}"
+			[ -z "${fix}" ] && continue
+			cnt=$((cnt+1))
+			print_msg "${cnt}. ${fix}"
+		done
+		IFS="${DEFAULT_IFS}"
+	}
+
+	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line force_fix=''
+	[ "${1}" = '-f' ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
 	local DO_DIALOGS=
-	[ -z "${luci_skip_dialogs}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
+	[ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && DO_DIALOGS=1
 
 	if [ ! -f "${ABL_CONFIG_FILE}" ]
 	then
@@ -907,30 +936,26 @@ load_config()
 	esac
 
 	# if not in interactive console and force-fix not set, return error
-	[ -z "${DO_DIALOGS}" ] && [ "${1}" != '-f' ] && { log_msg "${tip_msg}"; return 1; }
+	[ -z "${DO_DIALOGS}" ] && [ -z "${force_fix}" ] && { log_msg "${tip_msg}"; return 1; }
 
 	# sanity check
 	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
 
-	if [ -n "${DO_DIALOGS}" ] && [ "${1}" != '-f' ]
+	if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
 	then
 		if [ -n "${conf_fixes}" ]
 		then
 			print_msg -blue "" "Perform following automatic changes? (y|n)"
-			cnt=0
-			local IFS="${_NL_}"
-			for fix in ${conf_fixes}
-			do
-				IFS="${DEFAULT_IFS}"
-				[ -z "${fix}" ] && continue
-				cnt=$((cnt+1))
-				print_msg "${cnt}. ${fix}"
-			done
-			IFS="${DEFAULT_IFS}"
+			print_conf_fixes
 			pick_opt "y|n" || return 1
-			[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 		fi
+	else
+		print_msg -blue "" "Performing following config changes:"
+		print_conf_fixes
+		REPLY=y
 	fi
+
+	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
 	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 	:
@@ -969,10 +994,13 @@ fix_config()
 	if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_config_f}."
-		[ -z "${DO_DIALOGS}" ] && return 1
-		log_msg "Proceed with suggested config changes? (y|n)"
-		pick_opt "y|n" || return 1
-		[ "${REPLY}" = n ] && return 1
+		if [ -z "${APPROVE_UPD_CHANGES}" ]
+		then
+			[ -z "${DO_DIALOGS}" ] && return 1
+			log_msg "Proceed with suggested config changes? (y|n)"
+			pick_opt "y|n" || return 1
+			[ "${REPLY}" = n ] && return 1
+		fi
 	else
 		log_msg "" "Old config file was saved as ${old_config_f}."
 	fi
@@ -990,7 +1018,7 @@ write_config()
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
-	if [ -n "${DO_DIALOGS}" ] && [ -f "${ABL_CONFIG_FILE}" ]
+	if [ -n "${DO_DIALOGS}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -f "${ABL_CONFIG_FILE}" ]
 	then
 		print_msg "This will overwrite existing config. Proceed? (y|n)"
 		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
@@ -1072,43 +1100,69 @@ report_utils()
 	done
 
 	case "${AWK_CMD}" in
-		busybox*)
+		*gawk*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
+		*)
 			log_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal." ;;
-		*) log_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing."
+			log_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
 	esac
 
 	case "${SED_CMD}" in
-		busybox*)
+		*gnu*) log_msg -green "GNU sed detected so list processing will be fast." ;;
+		*)
 			log_msg -yellow "GNU sed not detected so list processing will be a little slower."
 			log_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
-		*) log_msg -green "GNU sed detected so list processing will be fast."
 	esac
 
 	case "${SORT_CMD}" in
-		busybox*)
+		*coreutils*) log_msg -green "coreutils-sort detected so sort will be fast." ;;
+		*)
 			log_msg -yellow "coreutils-sort not detected so sort will be a little slower."
 			log_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
-		*) log_msg -green "coreutils-sort detected so sort will be fast."
 	esac
-
 }
 
 # return codes:
-# 0 - addnmount entry exists
-# 1 - addnmount entry doesn't exist
-# 2 - error
-check_addnmount()
+# 0 - addnmount entries exist
+# 1 - error
+# 2 - addnmount entries missing
+check_addnmounts()
 {
-	hash uci 1>/dev/null || { reg_failure "uci command was not found."; return 2; }
+	check_addnmount()
+	{
+		local path="${1}"
+		case "${path}" in
+			/*) ;;
+			*) reg_failure "check_addnmount: invalid path '${path}'."; return 1
+		esac
+
+		while [ -n "${path}" ]
+		do
+			is_included "${path}" "${addnmounts}" ' ' && return 0
+			path="${path%/*}"
+		done
+
+		return 1
+	}
+
+	check_util uci || { reg_failure "uci command was not found."; return 1; }
 	case "${DNSMASQ_INDEX}" in
 		''|*[!0-9]*)
 			reg_failure "Invalid index '${DNSMASQ_INDEX}' registered for dnsmasq instance '${DNSMASQ_INSTANCE}'."
-			return 2
+			return 1
 	esac
 
-	uci -q get dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount | grep -qE "('|^|[ \t])/bin(/\*|/busybox)*([ \t]|'|$)" && return 0
-	return 1
+	local addnmounts req_path
+	addnmounts="$(uci -q get dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount | ${SED_CMD} -E 's~/(\s|$)~ ~g')"
+
+	MISSING_ADDNMOUNTS=
+	for req_path in "/bin/busybox" "${EXTR_CMD_STDOUT%% *}"
+	do
+		[ -n "${req_path}" ] || continue
+		check_addnmount "${req_path}" || add2list MISSING_ADDNMOUNTS "${req_path}" ' '
+	done
+
+	[ -n "${MISSING_ADDNMOUNTS}" ] && return 2
+	:
 }
 
 # return codes:
@@ -1125,13 +1179,13 @@ check_blocklist_compression_support()
 		return 1
 	fi
 
-	check_addnmount && return 0
-	[ ${?} = 2 ] && { reg_failure "Failed to check addnmount entry for dnsmasq instance '${DNSMASQ_INSTANCE}'"; return 2; }
-	log_msg -warn "" "No appropriate 'addnmount' entry in /etc/config/dhcp was identified." \
+	check_addnmounts && return 0
+	[ ${?} = 1 ] && { reg_failure "Failed to check addnmount entries for dnsmasq instance '${DNSMASQ_INSTANCE}'"; return 2; }
+	log_msg -warn "" "Missing addnmount entries in /etc/config/dhcp for paths: ${MISSING_ADDNMOUNTS}" \
 		"Final blocklist compression will be disabled."
-	log_msg "addnmount entry is required to give dnsmasq access to busybox gunzip in order to extract compressed blocklist." \
-		"Run 'service adblock-lean setup' to have the entry created automatically, or follow the steps in the README." \
-		"Alternatively, change the 'use_compression' option in adblock-lean config to '0'."
+	log_msg "addnmount entries are required to give dnsmasq access to a utility used to extract compressed blocklist." \
+		"Run 'service adblock-lean setup' to have the entries created automatically, or follow the steps in the README." \
+		"Alternatively, change the 'compression_util' option in adblock-lean config to 'none'."
 	return 1
 }
 
@@ -1142,12 +1196,11 @@ check_blocklist_compression_support()
 # 3 - automatic updates check is disabled for current update channel
 check_for_updates()
 {
-	local ref='' tarball_url='' curr_ver='' upd_channel='' no_upd=''
+	local tarball_url='' curr_ver='' upd_ver='' upd_channel='' no_upd=''
 	unset UPD_AVAIL UPD_DIRECTIONS
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in
-		release) ref=latest ;;
-		snapshot) ref=snapshot ;;
+		release|latest|snapshot) ;;
 		tag|commit) no_upd="was installed from a specific Git ${upd_channel}" ;;
 		'') no_upd="update channel is unknown" ;;
 		*) no_upd="update channel is '${upd_channel}'" ;;
@@ -1156,7 +1209,7 @@ check_for_updates()
 	reg_action -blue "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
-	get_gh_ref_data "${ref}" ref tarball_url upd_channel
+	get_gh_ref "${upd_channel}" "" upd_ver tarball_url _
 	local gh_ref_rv=${?}
 	luci_tarball_url="${tarball_url}"
 
@@ -1168,12 +1221,12 @@ check_for_updates()
 		return 2
 	}
 
-	if [ "${ref}" = "${curr_ver}" ]
+	if [ "${upd_ver}" = "${curr_ver}" ]
 	then
 		log_msg "The locally installed adblock-lean is the latest version."
 		return 0
 	else
-		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${ref}'.)"
+		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${upd_ver}'.)"
 		UPD_DIRECTIONS="Consider running: 'service adblock-lean update' to update it to the latest version."
 		UPD_AVAIL_MSG="adblock-lean update is available ${upd_details}"
 		: "${UPD_AVAIL_MSG}" # silence shellcheck warning
@@ -1339,6 +1392,15 @@ clean_dnsmasq_dir()
 	# gather conf dirs of running instances
 	get_dnsmasq_instances
 	# gather conf dirs of configured instances
+
+	# this is needed when running via 'sh /etc/init.d/adblock-lean'
+	if [ -z "${ABL_LIB_FUNCTIONS_SOURCED}" ]
+	then
+		# shellcheck source=/dev/null
+		check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
+		ABL_LIB_FUNCTIONS_SOURCED=1
+	fi
+
 	config_load dhcp
 	config_foreach add_conf_dir dnsmasq
 	# gather conf dirs from /tmp/
@@ -1352,7 +1414,7 @@ clean_dnsmasq_dir()
 	for dir in ${ALL_CONF_DIRS}
 	do
 		IFS="${DEFAULT_IFS}"
-		rm -f "${dir}"/.abl-blocklist.gz "${dir}"/abl-blocklist \
+		rm -f "${dir}"/.abl-blocklist.* "${dir}"/abl-blocklist \
 			"${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
 	done
 	:

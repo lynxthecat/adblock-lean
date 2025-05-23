@@ -1,6 +1,6 @@
 # ⚔ adblock-lean
 
-adblock-lean is a low maintenance (almost set and forget), powerful and ultra-efficient adblocking solution for OpenWrt that **does not mandate any external dependencies** or introduce unecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
+adblock-lean is a low maintenance (almost set and forget), powerful and ultra-efficient adblocking solution for OpenWrt that **does not mandate any external dependencies** or introduce unnecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
 
 If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
@@ -18,31 +18,31 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 - [Testing advert blocking](#testing-advert-blocking)
 - [Preserve adblock-lean files and config across OpenWrt upgrades](#preserve-adblock-lean-files-and-config-across-openwrt-upgrades)
 - [adblock-lean version updates](#adblock-lean-version-updates)
+- [Advanced version update options](#advanced_version_update_options)
 - [Uninstalling](#uninstalling)
 
 ## Features
 
 adblock-lean includes the following features:
 
+- automated interactive setup with presets for devices with different memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
 - supports multiple blocklist files downloaded from user-specified urls
-- supports local blocklist
+- supports local user-specified blocklist
 - supports multiple allowlist files downloaded from user-specified urls
-- supports local allowlist
+- supports local user-specified allowlist
 - supports blocklist compression (which significantly reduces memory consumption) by leveraging the new conf-script functionality of dnsmasq
 - removal of domains found in the allowlist from the blocklist files
 - combining all downloaded and local lists into one final blocklist file
-- check that each individual blocklist and allowlist file does not exceed configurable maximum size
-- check that the total blocklist size does not exceeed configurable maximum file size
-- check for rogue entries in blocklist file parts (e.g. check for redirection to specific IP)
-- check that line count in blocklist file exceeds configurable minimum (default: 100,000)
-- save a compressed copy of the previous blocklist file, then load the new combined blocklist file into dnsmasq
-- perform checks on restarted dnsmasq with new blocklist file
-- revert to previous blocklist file if checks fail
-- if checks on previous blocklist file also fail then revert to not using any blocklist file
-- implements optional calls to user-configurable script on success or failure (for example to send an email report)
-- automatically check for application updates and self update functionality
-- config keys and values validation and optional automatic config repair when problems are detected
-- automated interactive setup
+- configurable minimum and maximum blocklist/allowlist parts and final blocklist size and lines count constraints designed to prevent memory over-use and minimize the chance of loading incomplete blocklist because of a download error
+- various checks and sanitization of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
+- during blocklist update, a compressed copy of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
+- supports concurrent download and processing of blocklist/allowlist parts for faster blocklist updates
+- supports pause and resume of adblocking without re-downloading blocklist/allowlist parts
+- supports optional calls to user-configurable script on success or failure (for example to send an email report)
+- optional automatic blocklist updates
+- automatic check for application updates and self update functionality (initiated by the user)
+- config validation and optional automatic config repair when problems are detected
+- strong emphasis on **performance**, **user-friendliness**, **reliability**, **error checking and reporting**, **code quality and readability**
 
 ## Installation on OpenWrt
 
@@ -93,7 +93,7 @@ Optional/recommended: enable blocklist compression to reduce RAM usage. To achie
 ```
 	list addnmount '/bin/busybox'
 ```
-to the relevant dnsmasq section (under `config dnsmasq`) of file `/etc/config/dhcp`.
+to the relevant dnsmasq section (under `config dnsmasq`) of file `/etc/config/dhcp`. If using a compression utility other than the built-in Busybox gzip, add a second addnmount line with the path to its executable file.
 
 If only one `config dnsmasq` section exists then that's the section to add the line to. If you have multiple `config dnsmasq` sections, this means that multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on - add the line to that section. Verify that same dnsmasq instance index is configured in `/etc/adblock-lean/config` (1st instance corresponds to the 1st `config dnsmasq` section and has index 0, further instances increment the index by 1).
 
@@ -103,7 +103,7 @@ Now run the command `service dnsmasq restart`.
 
 adblock-lean is written as a service and `service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
 
-Additional available commands:
+Additional available commands (use with `service adblock-lean <command>`):
 - `version`: prints adblock-lean version
 - `stop`: stops any running adblock-lean instances, unloads the blocklist and removes it from memory
 - `restart`: runs the `stop`, then `start` commands
@@ -182,26 +182,28 @@ adblock-lean supports two blocklist/allowlist formats: **raw format** and **dnsm
 
 ## Adding new lists
 
-The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as much as possible in respect of: _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam, coins and other undesirable content_, all while breaking as few websites as possible. oisd lists are supported as well.
+The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as much as possible in respect of: _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam and other undesirable content_, all while breaking as few websites as possible. oisd lists are supported as well.
 
 ### Adding a new **Hagezi** list
-1. Decide on the source list format first (**raw** or **dnsmasq**)
-2. Add a **raw-formatted list** (recommended):
+1. Decide on the source list format first (**raw** or **dnsmasq** - normally prefer **raw**)
+2. Construct a **raw-formatted list URL** (recommended):
    - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/`
    - Add the **list name** to the **base download URL**. The list name must have the **-onlydomains** suffix. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard).
    - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt`
-3. **OR** add a **dnsmasq-formatted list**:
+3. **OR** construct a **dnsmasq-formatted list URL**:
    - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/`
    - Add the **list name** to the **base download URL**. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/dnsmasq).
    - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/popupads.txt`
+4. Add the constructed URL to the appropriate option in the adblock-lean config file (e.g. a URL for a **raw-formatted** blocklist URL should be added to the `blocklist_urls` config option, a URL for a **dnsmasq-formatted** list should be added to the `dnsmasq_blocklist_urls` config option)
 
 ### Adding a new **oisd** list
-1. Decide on the source list format (**raw** or **dnsmasq**)
+1. Decide on the source list format (**raw** or **dnsmasq** - normally prefer **raw**)
 2. Visit the [oisd page](https://oisd.nl/setup/adblock-lean)
-3. Add a **raw-formatted list** (recommended):
-   - Look for URLs named **domainswild2** (note the **2**) and use any of them
-4. **OR** add a **dnsmasq-formatted list**:
-   - Look for URLs named **dnsmasq2** (note the **2**) and use any of them
+3. Pick a **raw-formatted list** URL (recommended):
+   - Look for URLs named **domainswild2** (note the **2**) and pick any of them
+4. **OR** pick a **dnsmasq-formatted list** URL:
+   - Look for URLs named **dnsmasq2** (note the **2**) and pick any of them
+5. Add chosen URL to the appropriate option in the adblock-lean config file (e.g. a URL for a **raw-formatted** blocklist URL should be added to the `blocklist_urls` config option, a URL for a **dnsmasq-formatted** list should be added to the `dnsmasq_blocklist_urls` config option)
 
 ### Adding another list
 - Any other raw or dnsmasq format lists of your choice can be used, but make sure it conforms to [supported formats](#supported-formats).
@@ -235,7 +237,9 @@ Default config can be generated using: `service adblock-lean gen_config`.
 |`max_file_part_size_KB`              | Maximum size in KB of any individual downloaded blocklist part                                |
 |`max_blocklist_file_size_KB`         | Maximim size in KB of combined, processed blocklist                                           |
 |`deduplication`                      | Whether to perform sorting and deduplication of entries                                       |
-|`use_compression`                    | Compress while processing, and final blocklists. Reduces memory usage. 1/0 to enable/disable  |
+|`compression_util`                   | Utility used to compress while processing, and final blocklists. Reduces memory usage. `none` disables compression |
+|`intermediate_compression_options`   | Options passed to the compression utility while processing. `-[n]` universally specifies compression level.        |
+|`final_compression_options`          | Same as above but these options are passed to the compression utility when compressing the final blocklist.        |
 |`unload_blocklist_before_update`     | Unload current blocklist before update to save memory. 'auto' or 1/0 to enable/disable.       |
 |`boot_start_delay_s`                 | Start delay in seconds when service is started from system boot                               |
 |`MAX_PARALLEL_JOBS`                  | Max count of download and processing jobs to run in parallel. 'auto' sets this automatically  |
@@ -291,6 +295,12 @@ blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wil
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
 ```
 
+### Blocklist compression
+- By default, adblock-lean uses compression while processing downloaded blocklist/allowlist parts, and compresses the final blocklist before loading it into dnsmasq. This helps to reduce memory use.
+- Supported compression utilities: Busybox gzip (every OpenWrt system has this built-in), GNU gzip, pigz and zstd. The latter two utilities support multithreaded compression.
+- adblock-lean automatically sets parameters for any of the supported utilities to provide a reasonable balance between speed and memory usage. You can specify your preferred compression utility in the `compression_util` option (default is `gzip`). You can also specify parameters to pass to the compression utility, separately for intermediate compression (`intermediate_compression_options`) and for the final blocklist compression (`final_compression_options`).
+- Final blocklist compression depends on appropriate addnmount entries existing in `/etc/config/dhcp`. After changing the compression utility in the config file, make sure to run `service adblock-lean setup` in order to update the addnmount entries (answer `e` when asked whether to create new config or use existing config).
+
 ## Whitelist mode
 This mode can be used to implement parental control or similar functionality while also adblocking inside the allowed domains. It can be enabled by setting the config option `whitelist_mode` to `1`. In this mode all domain names will be blocked, except for domains (and their subdomains) included in local and/or downloaded allowlists. In this mode, if blocklists are used in addition to allowlists, addresses which are included in the blocklists and which are subdomains of allowed domains - will be blocked as well.
 
@@ -302,9 +312,9 @@ Also note that in this mode by default the Github domains will be blocked, so th
 
 The resulting blocklist generated in whitelist mode will be typically much smaller than otherwise, so you may need to reduce the value of the `min_good_line_count` option in order for the list to be accepted by adblock-lean.
 
-## User-configurable calls on success or failure
+## User-configurable calls on success or failure and on version updates
 
-adblock-lean supports specifying a custom script which defines the functions `report_success`, `report_failure` and `report_update` to be called on success or failure, or when adblock-lean update is available (can be used to eg send an email/SMS/msg)
+adblock-lean supports specifying a custom script which defines any or all of the functions `report_success`, `report_failure` and `report_update` to be called on success or failure, or when adblock-lean update is available (can be used to eg send an email/SMS/msg)
 
 **Example below for free Brevo (formerly sendinblue) email service, but use your favourite smtp/email/SMS etc method.**
 
@@ -405,6 +415,15 @@ After updating adblock-lean, run the command:
 ```bash
 service adblock-lean start
 ```
+
+## Advanced version update options
+
+adblock-lean implements a flexible update system which supports following options (use with `service adblock-lean update`):
+- `-y` : pre-approve any configuration changes suggested by the version update mechanism and automatically start the updated adblock-lean version
+- `-f` : update without calling the `stop` command first and do not load adblock-lean library scripts - this is mainly useful to fix a broken installation
+- `-v < [version]|[update_channel]|commit=[commit_hash] >` : either install a specific adblock-lean version (for example `-v 0.7.2`); or specify an update channel (either `-v release` or `-v snapshot` or `-v branch=<branch_name>`) - this will install the latest version from the corresponding update channel and change the version update behavior so it checks in that update channel for future updates; or install a version corresponding to a specific commit to the `master` branch. 
+
+These options are mainly helpful for testing. Most users should be fine with the default update behaviour which follows the `release` update channel.
 
 ## Uninstalling
 
