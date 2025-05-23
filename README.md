@@ -1,6 +1,6 @@
 # ⚔ adblock-lean
 
-adblock-lean is a low maintenance (almost set and forget), powerful and ultra-efficient adblocking solution for OpenWrt that **does not mandate any external dependencies** or introduce unecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
+adblock-lean is a low maintenance (almost set and forget), powerful and ultra-efficient adblocking solution for OpenWrt that **does not mandate any external dependencies** or introduce unnecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
 
 If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
@@ -18,6 +18,7 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 - [Testing advert blocking](#testing-advert-blocking)
 - [Preserve adblock-lean files and config across OpenWrt upgrades](#preserve-adblock-lean-files-and-config-across-openwrt-upgrades)
 - [adblock-lean version updates](#adblock-lean-version-updates)
+- [Advanced version update options](#advanced_version_update_options)
 - [Uninstalling](#uninstalling)
 
 ## Features
@@ -413,6 +414,13 @@ After updating adblock-lean, run the command:
 ```bash
 service adblock-lean start
 ```
+
+## Advanced version update options
+
+adblock-lean implements a flexible update system which supports following options (use with `service adblock-lean update`):
+- `-y` : pre-approve any configuration changes suggested by the version update mechanism and automatically start the updated adblock-lean version
+- `-f` : update without calling the `stop` command first and do not load adblock-lean library scripts - this is mainly useful to fix a broken installation
+- `-v < [version]|[update_channel]|commit=[commit_hash] >` : either install a specific adblock-lean version (for example `-v 0.7.2`); or specify an update channel (either `-v release` or `-v snapshot` or `-v branch=<branch_name>`) - this will install the latest version from the corresponding update channel and change the version update behavior so it checks in that update channel for future updates; or install a version corresponding to a specific commit to the `master` branch. These options are mainly helpful for testing. Most users should be fine with the default update behavior which is following the `release` update channel.
 
 ## Uninstalling
 
