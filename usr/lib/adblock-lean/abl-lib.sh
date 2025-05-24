@@ -316,10 +316,10 @@ mk_preset_arrays()
 	# cnt - target elements count/1000, mem - memory in MB
 	mini_urls="${hagezi_dl_url}/pro.mini-onlydomains.txt" \
 		mini_cnt=85 mini_mem=64
-	small_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" \
+	small_urls="${hagezi_dl_url}/pro-onlydomains.txt" \
 		small_cnt=250 small_mem=128
-	medium_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.medium-onlydomains.txt" \
-		medium_cnt=450 medium_mem=256
+	medium_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" \
+		medium_cnt=350 medium_mem=256
 	large_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
 		large_cnt=1200 large_mem=512
 	large_relaxed_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
