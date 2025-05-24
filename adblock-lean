@@ -342,21 +342,39 @@ rc_enabled()
 detect_util()
 {
 	local du_out_var="${1}" gen_name="${2}" specific_name="${3}" specific_path="${4}" \
-		res_cmd='' _util _util_path='' busybox_variant_avail=''
+		res_cmd='' res_name='' _util _util_path='' busybox_variant_avail=''
 
 	are_var_names_safe "${du_out_var}" || return 1
 
 	[ "${5}" = '-b' ] && busybox_variant_avail=1
 
-	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ]
+	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ] && [ ! -h "${specific_path}" ] && [ ! -L "${specific_path}" ]
 	then
 		res_cmd="${specific_path}"
-	elif [ -n "${specific_name}" ] && check_util "${specific_name}"
+	elif
+		{ [ -n "${specific_path}" ] && { [ -h "${specific_path}" ] || [ -L "${specific_path}" ]; } && res_name="${specific_path}"; } ||
+		{ [ -n "${specific_name}" ] && check_util "${specific_name}" && res_name="${specific_name}"; } ||
+		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; } &&
+		_util_path="$(command -v "${res_name}")" &&
+		# get paths
+		{
+			if [ -f "${_util_path}" ] && [ ! -h "${_util_path}" ] && [ ! -L "${_util_path}" ]
+			then
+				# path is not symlink
+				res_cmd="${_util_path}"
+			elif [ -h "${_util_path}" ] || [ -L "${_util_path}" ]
+			then
+				# resolve symlinks
+				_util_path="$(readlink "${_util_path}")" &&
+				[ -n "${_util_path}" ] &&
+				case "${_util_path}" in
+					/bin/busybox*) res_cmd="/bin/busybox ${gen_name}" ;;
+					*) res_cmd="${_util_path}"
+				esac
+			fi
+		} && [ -n "${res_cmd}" ]
 	then
-		res_cmd="${specific_name}"
-	elif [ -n "${gen_name}" ] && check_util "${gen_name}"
-	then
-		res_cmd="${gen_name}"
+		:
 	elif [ -n "${busybox_variant_avail}" ]
 	then
 		res_cmd="/bin/busybox ${gen_name}"
@@ -365,34 +383,6 @@ detect_util()
 		return 1
 	fi
 
-	case "${res_cmd}" in
-		/*) ;; # paths already known
-		*)
-			# get paths
-			if check_util "${res_cmd}" && _util_path="$(command -v "${res_cmd}")"
-			then
-				if [ -f "${_util_path}" ] && [ ! -h "${_util_path}" ] && [ ! -L "${_util_path}" ]
-				then
-					# path is not symlink
-					res_cmd="${_util_path}"
-				elif [ -h "${_util_path}" ] || [ -L "${_util_path}" ]
-				then
-					# resolve symlinks
-					_util_path="$(command -v "${res_cmd}")" &&
-					{ [ -h "${_util_path}" ] || [ -L "${_util_path}" ]; } &&
-					_util_path="$(readlink "${_util_path}")" &&
-					[ -n "${_util_path}" ] &&
-					_util_path="$(command -v "${_util_path}")" &&
-					case "${_util_path}" in
-						/bin/busybox*) res_cmd="/bin/busybox ${gen_name}" ;;
-						*) res_cmd="${_util_path}"
-					esac
-				fi
-				[ -n "${res_cmd}" ] || return 1
-			else
-				return 1
-			fi
-	esac
 	export "${du_out_var}=${res_cmd}"
 }
 
