@@ -386,8 +386,12 @@ detect_util()
 	export "${du_out_var}=${res_cmd}"
 }
 
+# 1 (optional) : '-f' to force re-detection
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
-detect_utils() {
+# shellcheck disable=SC2120
+detect_utils()
+{
+	[ -n "${UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
 	unset SED_CMD AWK_CMD SORT_CMD
 	local failed_utils=''
 
@@ -396,6 +400,7 @@ detect_utils() {
 	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b || add2list failed_utils sort ', '
 
 	[ -z "${failed_utils}" ] || { reg_failure "Can not find essential utilities: ${failed_utils}.";  return 1; }
+	export UTILS_DETECTED=1
 
 	:
 }
