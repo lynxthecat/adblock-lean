@@ -368,7 +368,7 @@ gen_preset()
 	reasonable_round max_blocklist_file_size_KB
 
 	case "${1}" in
-		mini) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
+		mini|small) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
 		*)
 			# target_lines_cnt * source_entry_size_B * lim_coeff * 1.03
 			max_file_part_size_KB=$(( (tgt_lines_cnt_k*1030*source_entry_size_B*lim_coeff)/1024 ))
