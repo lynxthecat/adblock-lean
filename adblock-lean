@@ -100,7 +100,7 @@ adblock-lean custom commands:
 
 # silence shellcheck warnings
 : "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}"
-: "${purple}" "${green}" "${TAB}" "${CR}" "${CR_LF}"
+: "${purple}" "${green}" "${red}" "${yellow}" "${TAB}" "${CR}" "${CR_LF}"
 : "${AWK_CMD}" "${SORT_CMD}"
 : "${ABL_GEN_FILES}" "${ABL_LIB_FILES}" "${ABL_EXTRA_FILES}" "${ABL_EXEC_FILES}" "${CONFIG_FORMAT}"
 : "${luci_log}" "${luci_pid_action}" "${luci_errors}" "${luci_dnsmasq_status}"
@@ -342,21 +342,39 @@ rc_enabled()
 detect_util()
 {
 	local du_out_var="${1}" gen_name="${2}" specific_name="${3}" specific_path="${4}" \
-		res_cmd='' _util _util_path='' busybox_variant_avail=''
+		res_cmd='' res_name='' _util _util_path='' busybox_variant_avail=''
 
 	are_var_names_safe "${du_out_var}" || return 1
 
 	[ "${5}" = '-b' ] && busybox_variant_avail=1
 
-	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ]
+	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ] && [ ! -h "${specific_path}" ] && [ ! -L "${specific_path}" ]
 	then
 		res_cmd="${specific_path}"
-	elif [ -n "${specific_name}" ] && check_util "${specific_name}"
+	elif
+		{ [ -n "${specific_path}" ] && { [ -h "${specific_path}" ] || [ -L "${specific_path}" ]; } && res_name="${specific_path}"; } ||
+		{ [ -n "${specific_name}" ] && check_util "${specific_name}" && res_name="${specific_name}"; } ||
+		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; } &&
+		_util_path="$(command -v "${res_name}")" &&
+		# get paths
+		{
+			if [ -f "${_util_path}" ] && [ ! -h "${_util_path}" ] && [ ! -L "${_util_path}" ]
+			then
+				# path is not symlink
+				res_cmd="${_util_path}"
+			elif [ -h "${_util_path}" ] || [ -L "${_util_path}" ]
+			then
+				# resolve symlinks
+				_util_path="$(readlink "${_util_path}")" &&
+				[ -n "${_util_path}" ] &&
+				case "${_util_path}" in
+					/bin/busybox*) res_cmd="/bin/busybox ${gen_name}" ;;
+					*) res_cmd="${_util_path}"
+				esac
+			fi
+		} && [ -n "${res_cmd}" ]
 	then
-		res_cmd="${specific_name}"
-	elif [ -n "${gen_name}" ] && check_util "${gen_name}"
-	then
-		res_cmd="${gen_name}"
+		:
 	elif [ -n "${busybox_variant_avail}" ]
 	then
 		res_cmd="/bin/busybox ${gen_name}"
@@ -365,39 +383,15 @@ detect_util()
 		return 1
 	fi
 
-	case "${res_cmd}" in
-		/*) ;; # paths already known
-		*)
-			# get paths
-			if check_util "${res_cmd}" && _util_path="$(command -v "${res_cmd}")"
-			then
-				if [ -f "${_util_path}" ] && [ ! -h "${_util_path}" ] && [ ! -L "${_util_path}" ]
-				then
-					# path is not symlink
-					res_cmd="${_util_path}"
-				elif [ -h "${_util_path}" ] || [ -L "${_util_path}" ]
-				then
-					# resolve symlinks
-					_util_path="$(command -v "${res_cmd}")" &&
-					{ [ -h "${_util_path}" ] || [ -L "${_util_path}" ]; } &&
-					_util_path="$(readlink "${_util_path}")" &&
-					[ -n "${_util_path}" ] &&
-					_util_path="$(command -v "${_util_path}")" &&
-					case "${_util_path}" in
-						/bin/busybox*) res_cmd="/bin/busybox ${gen_name}" ;;
-						*) res_cmd="${_util_path}"
-					esac
-				fi
-				[ -n "${res_cmd}" ] || return 1
-			else
-				return 1
-			fi
-	esac
 	export "${du_out_var}=${res_cmd}"
 }
 
+# 1 (optional) : '-f' to force re-detection
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
-detect_utils() {
+# shellcheck disable=SC2120
+detect_utils()
+{
+	[ -n "${UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
 	unset SED_CMD AWK_CMD SORT_CMD
 	local failed_utils=''
 
@@ -406,6 +400,7 @@ detect_utils() {
 	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b || add2list failed_utils sort ', '
 
 	[ -z "${failed_utils}" ] || { reg_failure "Can not find essential utilities: ${failed_utils}.";  return 1; }
+	export UTILS_DETECTED=1
 
 	:
 }
@@ -433,8 +428,8 @@ log_msg()
 	do
 		case "${_arg}" in
 			"-noprint") noprint=1 ;;
-			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
-			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
+			"-err") err_l=err color="-red" msgs_prefix="Error: " ;;
+			"-warn") err_l=warn color="-yellow" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
 			'') msgs="${msgs}dummy${_DELIM_}" ;;
 			*) msgs="${msgs}${msgs_prefix}${_arg}${_DELIM_}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
@@ -462,6 +457,12 @@ log_msg()
 write_log_file()
 {
 	[ -n "${LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${2:-info}: ${1}" >> "${LOG_FILE}" &
+}
+
+graceful_exit()
+{
+	[ -n "${ABL_LUCI_SOURCED}" ] && [ -z "${UPD_SOURCED}" ] && abl_luci_exit "${1:-0}"
+	exit "${1:-0}"
 }
 
 # exit with code ${1}
@@ -1945,17 +1946,20 @@ set_ansi
 # $luci_skip_dialogs is set if sourced from external RPC script for luci
 [ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
 
+# detect when sourced from update() in older versions
+check_func failsafe_log && UPD_SOURCED=1
+
 # test process substitution support
 printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
 if ! /bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null
 then
 	rm -f /tmp/abl-test
 	reg_failure "This shell does not support process substitution. To use adblock-lean, please update OpenWrt to 22.03 or later version."
-	exit 1
+	graceful_exit 1
 fi
 rm -f /tmp/abl-test
 
-detect_utils || exit 1
+detect_utils || graceful_exit 1
 
 # register 1st arg as $ABL_CMD when called by 'sh /etc/init.d/adblock-lean'
 if [ "${0}" = "${ABL_SERVICE_PATH}" ] && [ -n "${1}" ]
@@ -1963,9 +1967,6 @@ then
 	ABL_CMD="${1}"
 	shift
 fi
-
-# detect when sourced from update() in older versions
-check_func failsafe_log 1>/dev/null && UPD_SOURCED=1
 
 LIBS_SOURCED=
 
