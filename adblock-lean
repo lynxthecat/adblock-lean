@@ -459,6 +459,12 @@ write_log_file()
 	[ -n "${LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${2:-info}: ${1}" >> "${LOG_FILE}" &
 }
 
+graceful_exit()
+{
+	[ -n "${ABL_LUCI_SOURCED}" ] && [ -z "${UPD_SOURCED}" ] && abl_luci_exit "${1:-0}"
+	exit "${1:-0}"
+}
+
 # exit with code ${1}
 # if function 'abl_luci_exit' is defined, execute it before exit
 cleanup_and_exit()
@@ -1940,17 +1946,20 @@ set_ansi
 # $luci_skip_dialogs is set if sourced from external RPC script for luci
 [ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
 
+# detect when sourced from update() in older versions
+check_func failsafe_log && UPD_SOURCED=1
+
 # test process substitution support
 printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
 if ! /bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null
 then
 	rm -f /tmp/abl-test
 	reg_failure "This shell does not support process substitution. To use adblock-lean, please update OpenWrt to 22.03 or later version."
-	exit 1
+	graceful_exit 1
 fi
 rm -f /tmp/abl-test
 
-detect_utils || exit 1
+detect_utils || graceful_exit 1
 
 # register 1st arg as $ABL_CMD when called by 'sh /etc/init.d/adblock-lean'
 if [ "${0}" = "${ABL_SERVICE_PATH}" ] && [ -n "${1}" ]
@@ -1958,9 +1967,6 @@ then
 	ABL_CMD="${1}"
 	shift
 fi
-
-# detect when sourced from update() in older versions
-check_func failsafe_log 1>/dev/null && UPD_SOURCED=1
 
 LIBS_SOURCED=
 
