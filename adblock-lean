@@ -100,7 +100,7 @@ adblock-lean custom commands:
 
 # silence shellcheck warnings
 : "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}"
-: "${purple}" "${green}" "${TAB}" "${CR}" "${CR_LF}"
+: "${purple}" "${green}" "${red}" "${yellow}" "${TAB}" "${CR}" "${CR_LF}"
 : "${AWK_CMD}" "${SORT_CMD}"
 : "${ABL_GEN_FILES}" "${ABL_LIB_FILES}" "${ABL_EXTRA_FILES}" "${ABL_EXEC_FILES}" "${CONFIG_FORMAT}"
 : "${luci_log}" "${luci_pid_action}" "${luci_errors}" "${luci_dnsmasq_status}"
@@ -423,8 +423,8 @@ log_msg()
 	do
 		case "${_arg}" in
 			"-noprint") noprint=1 ;;
-			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
-			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
+			"-err") err_l=err color="-red" msgs_prefix="Error: " ;;
+			"-warn") err_l=warn color="-yellow" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
 			'') msgs="${msgs}dummy${_DELIM_}" ;;
 			*) msgs="${msgs}${msgs_prefix}${_arg}${_DELIM_}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
