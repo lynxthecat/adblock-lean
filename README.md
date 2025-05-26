@@ -185,28 +185,19 @@ adblock-lean supports two blocklist/allowlist formats: **raw format** and **dnsm
 The default [Hagezi lists](https://github.com/hagezi/dns-blocklists) are recommended to block as much as possible in respect of: _ads, affiliate, tracking, metrics, telemetry, fake, phishing, malware, scam and other undesirable content_, all while breaking as few websites as possible. oisd lists are supported as well.
 
 ### Adding a new **Hagezi** list
-1. Decide on the source list format first (**raw** or **dnsmasq** - normally prefer **raw**)
-2. Construct a **raw-formatted list URL** (recommended):
-   - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/`
-   - Add the **list name** to the **base download URL**. The list name must have the **-onlydomains** suffix. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/wildcard).
-   - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt`
-3. **OR** construct a **dnsmasq-formatted list URL**:
-   - Use the **base download URL** `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/`
-   - Add the **list name** to the **base download URL**. View available list names [here](https://github.com/hagezi/dns-blocklists/tree/main/dnsmasq).
-   - The **complete download URL** should look similar to this: `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/popupads.txt`
-4. Add the constructed URL to the appropriate option in the adblock-lean config file (e.g. a URL for a **raw-formatted** blocklist URL should be added to the `blocklist_urls` config option, a URL for a **dnsmasq-formatted** list should be added to the `dnsmasq_blocklist_urls` config option)
+Hagezi lists can be specified either by the complete download URL or by shortened list identifier. Using identifiers is easier, hence this guide covers this method.
+1. Pick one of Hagezi lists (all list names specified [here](/HAGEZI-LISTS.md), list descriptions [here](https://github.com/hagezi/dns-blocklists)).
+2. Construct a list identifier in the format `hagezi:[list_name]`, for example: `hagezi:popupads`
+3. Add the list identifier to the option for **raw-formatted** blocklist or allowlist URLs in adblock-lean config file (depending on which list you picked) (e.g. a blocklist identifier should be added to the `blocklist_urls` config option)
 
 ### Adding a new **oisd** list
-1. Decide on the source list format (**raw** or **dnsmasq** - normally prefer **raw**)
-2. Visit the [oisd page](https://oisd.nl/setup/adblock-lean)
-3. Pick a **raw-formatted list** URL (recommended):
-   - Look for URLs named **domainswild2** (note the **2**) and pick any of them
-4. **OR** pick a **dnsmasq-formatted list** URL:
-   - Look for URLs named **dnsmasq2** (note the **2**) and pick any of them
-5. Add chosen URL to the appropriate option in the adblock-lean config file (e.g. a URL for a **raw-formatted** blocklist URL should be added to the `blocklist_urls` config option, a URL for a **dnsmasq-formatted** list should be added to the `dnsmasq_blocklist_urls` config option)
+oisd lists can be specified either by the complete download URL or by shortened list identifier. Using identifiers is easier, hence this guide covers this method.
+1. Pick a one of the available oisd lists [here](https://oisd.nl/setup/adblock-lean). Following oisd list names are available: `small`, `big`, `nsfw-small`, `nsfw`.
+2. Construct a list identifier in the format `oisd:[list_name]`, for example: `oisd:big`
+3. Add the list identifier to the option for **raw-formatted** blocklist or allowlist URLs in adblock-lean config file (depending on which list you picked) (e.g. a blocklist identifier should be added to the `blocklist_urls` config option)
 
 ### Adding another list
-- Any other raw or dnsmasq format lists of your choice can be used, but make sure it conforms to [supported formats](#supported-formats).
+- Any other raw or dnsmasq format lists of your choice can be used by specifying its download URL, but make sure the list conforms to [supported formats](#supported-formats).
 
 ## Advanced configuration
 
@@ -281,7 +272,7 @@ blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wil
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
 ```
 
-- **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 450k entries
+- **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 350k entries
 ```bash
 blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"
 ```
@@ -308,7 +299,7 @@ For example, if the an allowlist has this entry: `google.com` and a blocklist ha
 
 Note that in this mode, the test domains (specified via the option `test_domains`) will be automatically added to the allowlist in order for the checks to pass. You can use empty string in that option - this will bypass that check and block the default domains (google.com, microsoft.com, amazon.com). Alternatively, you can specify preferred test domains instead of the default ones.
 
-Also note that in this mode by default the Github domains will be blocked, so the automatic adblock-lean version update functionality will not work - unless you add `raw.githubusercontent.com` to the allowlist.
+Also note that in this mode by default the Github domains will be blocked, so the automatic adblock-lean version update functionality will not work, unless you add `github.com` to the allowlist.
 
 The resulting blocklist generated in whitelist mode will be typically much smaller than otherwise, so you may need to reduce the value of the `min_good_line_count` option in order for the list to be accepted by adblock-lean.
 
