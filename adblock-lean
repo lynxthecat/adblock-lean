@@ -161,6 +161,7 @@ add2list() {
 		return 1
 	esac
 
+	local IFS="${DEFAULT_IFS}"
 	local curr_list delim="${3:-"${_NL_}"}" fs=
 	eval "curr_list=\"\${${1}}\""
 	is_included "${2}" "${curr_list}" "${delim}" && return 0
@@ -352,7 +353,8 @@ detect_util()
 	then
 		res_cmd="${specific_path}"
 	elif
-		{ [ -n "${specific_path}" ] && { [ -h "${specific_path}" ] || [ -L "${specific_path}" ]; } && res_name="${specific_path}"; } ||
+		{ [ -n "${specific_path}" ] && { [ -h "${specific_path}" ] || [ -L "${specific_path}" ]; } &&
+		res_name="${specific_path}"; } ||
 		{ [ -n "${specific_name}" ] && check_util "${specific_name}" && res_name="${specific_name}"; } ||
 		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; } &&
 		_util_path="$(command -v "${res_name}")" &&
@@ -368,8 +370,17 @@ detect_util()
 				_util_path="$(readlink "${_util_path}")" &&
 				[ -n "${_util_path}" ] &&
 				case "${_util_path}" in
-					/bin/busybox*) res_cmd="/bin/busybox ${gen_name}" ;;
-					*) res_cmd="${_util_path}"
+					busybox|/*) ;;
+					*) util_path="$(command -v "${util_path}")" &&
+						case "${util_path}" in
+							/) false ;;
+							/*) ;;
+							*) false
+						esac
+				esac &&
+				case "${_util_path}" in
+					busybox|/bin/busybox) res_cmd="/bin/busybox ${gen_name}" ;;
+					/*) res_cmd="${_util_path}" ;;
 				esac
 			fi
 		} && [ -n "${res_cmd}" ]
