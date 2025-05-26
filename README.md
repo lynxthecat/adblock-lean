@@ -192,7 +192,7 @@ Hagezi lists can be specified either by the complete download URL or by shortene
 
 ### Adding a new **oisd** list
 oisd lists can be specified either by the complete download URL or by shortened list identifier. Using identifiers is easier, hence this guide covers this method.
-1. Pick a one of the available oisd lists [here](https://oisd.nl/setup/adblock-lean). Following oisd list names are available: `small`, `big`, `nsfw-small`, `nsfw`.
+1. Pick one of the available oisd lists [here](https://oisd.nl/setup/adblock-lean). Following oisd list names are available: `small`, `big`, `nsfw-small`, `nsfw`.
 2. Construct a list identifier in the format `oisd:[list_name]`, for example: `oisd:big`
 3. Add the list identifier to the option for **raw-formatted** blocklist or allowlist URLs in adblock-lean config file (depending on which list you picked) (e.g. a blocklist identifier should be added to the `blocklist_urls` config option)
 
