@@ -1198,8 +1198,8 @@ check_for_updates()
 	unset UPD_AVAIL UPD_DIRECTIONS
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in
-		release|latest|snapshot) ;;
-		tag|commit) no_upd="was installed from a specific Git ${upd_channel}" ;;
+		release|latest|snapshot|branch=*) ;;
+		commit) no_upd="was installed from a specific Git commit" ;;
 		'') no_upd="update channel is unknown" ;;
 		*) no_upd="update channel is '${upd_channel}'" ;;
 	esac
