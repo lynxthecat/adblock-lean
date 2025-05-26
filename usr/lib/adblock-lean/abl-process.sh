@@ -175,15 +175,11 @@ get_list_url()
 	eval "${out_var}=''"
 	case "${2}" in *:*) ;; *) reg_failure "Invalid list identifier '${2}'."; return 1; esac
 	case "${list_author}" in
-		hagezi) lists="${HAGEZI_LISTS}" ;;
-		oisd) lists="${OISD_LISTS}" ;;
+		hagezi) lists="${HAGEZI_LISTS}" res_url="${HAGEZI_DL_URL}/${list_name}-onlydomains.txt" ;;
+		oisd) lists="${OISD_LISTS}" res_url="https://${list_name}.${OISD_DL_URL}" ;;
 		*) reg_failure "Unknown list '${2}'."; return 1
 	esac
 	is_included "${list_name}" "${lists}" " " || { reg_failure "Unknown ${list_author} list '${2}'."; return 1; }
-	case "${list_author}" in
-		hagezi) res_url="${HAGEZI_DL_URL}/${list_name}-onlydomains.txt" ;;
-		oisd) res_url="https://${list_name}.${OISD_DL_URL}"
-	esac
 
 	: "${res_url}"
 	eval "${out_var}=\"\${res_url}\""
