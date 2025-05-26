@@ -365,7 +365,7 @@ schedule_jobs()
 				case "${list_url}" in
 					hagezi:*|oisd:*)
 						local short_id="${list_url}"
-						if ! get_list_url list_url "${list_url}"
+						if ! get_list_url list_url "${short_id}"
 						then
 							[ "${list_part_failed_action}" = "STOP" ] &&
 								{ log_msg "list_part_failed_action is set to 'STOP', exiting."; finalize_scheduler 1; }
