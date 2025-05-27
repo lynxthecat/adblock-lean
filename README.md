@@ -328,6 +328,7 @@ report_failure()
 mailbody="${1}"
 mailsend -port 587 -smtp smtp-relay.brevo.com -auth -f FROM@EMAIL.COM -t TO@EMAIL.COM -user BREVO@USERNAME.COM -pass PASSWORD -sub "Adblock-lean blocklist update failed" -M "${mailbody}"
 }
+
 report_update()
 {
 mailbody="${1}"
