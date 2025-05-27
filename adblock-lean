@@ -1718,7 +1718,7 @@ resume()
 # optional: '-f' to skip calling stop()
 update()
 {
-	downg_not_supported() { reg_failure "Downgrade to this version is not supported."; return 1; }
+	downg_not_supported() { reg_failure "Downgrade to versions earlier than v0.7.3 is not supported."; return 1; }
 
 	# unset vars and functions from current version to have a clean slate with the new version
 	clean_abl_env()
