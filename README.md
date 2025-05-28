@@ -51,7 +51,7 @@ Connect to your OpenWrt router [via SSH](https://openwrt.org/docs/guide-quick-st
 To download and install adblock-lean, use the following commands:
 ```bash
 uclient-fetch https://raw.githubusercontent.com/lynxthecat/adblock-lean/master/abl-install.sh -O /tmp/abl-install.sh
-sh /tmp/abl-install.sh
+sh /tmp/abl-install.sh -v release
 ```
 
 adblock-lean includes automated interactive setup which makes it easy to get going. If you prefer manual setup, skip the following section.
