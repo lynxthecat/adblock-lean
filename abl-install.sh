@@ -182,24 +182,34 @@ reg_failure()
 # Return codes:
 # 1 - error
 # 2 - no version found
-# 3 - new version format
-# 4 - old version format
+# 3 - 1-string version format
+# 4 - 2-strings version format
+# 5 - 2-strings version format, config v9 or higher
 get_abl_version()
 {
 	get_ver_str()
 	{
-		local key_ptrn='' migr_ptrn=''
-		case "${1}" in
-			version)
-				key_ptrn="\\s*ABL_VERSION"
-				[ "${3}" = '-o' ] && migr_ptrn='s/^[^_]*_//;' ;;
-			upd_channel)
-				key_ptrn="\\s*ABL_UPD_CHANNEL"
-				[ "${3}" = '-o' ] && { key_ptrn="\\s*ABL_VERSION" migr_ptrn='s/_.*//;'; }
-		esac
-		[ "${3}" = '-o' ] && key_ptrn="\\s*#${key_ptrn}"
+		[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] && are_var_names_safe "${1}" "${2}" || return 1
+		local _par res_version='' res_upd_channel=''
+		for _par in version upd_channel
+		do
+			local key_ptrn='' migr_ptrn='' res=''
+			case "${_par}" in
+				version)
+					key_ptrn="\\s*ABL_VERSION"
+					[ "${4}" = '-o' ] && migr_ptrn='s/^[^_]*_//;' ;;
+				upd_channel)
+					key_ptrn="\\s*ABL_UPD_CHANNEL"
+					[ "${4}" = '-o' ] && { key_ptrn="\\s*ABL_VERSION" migr_ptrn='s/_.*//;'; }
+			esac
+			[ "${4}" = '-o' ] && key_ptrn="\\s*#${key_ptrn}"
 
-		${SED_CMD} -n "/^${key_ptrn}=/{s/^${key_ptrn}=//;s/#.*$//;s/\"//g;${migr_ptrn}p;:1 n;b1;}" "${2}"
+			res="$(${SED_CMD} -n "/^${key_ptrn}=/{s/^${key_ptrn}=//;s/#.*$//;s/\"//g;${migr_ptrn}p;:1 n;b1;}" "${3}")" &&
+				[ -n "${res}" ] || return 1
+			eval "res_${_par}=\"\${res}\""
+		done
+		eval "${1}=\"\${res_upd_channel}\" ${2}=\"\${res_version}\""
+		: "${res_upd_channel}" "${res_version}"
 	}
 
 	local gv_ver='' gv_upd_ch='' gv_rv=''
@@ -208,24 +218,29 @@ get_abl_version()
 		are_var_names_safe "${2}" "${3}" || return 1
 		eval "${2}"='' "${3}"=''
 	fi
-	# version format in v0.7.2 and later
-	if grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
-		gv_upd_ch="$(get_ver_str upd_channel "${1}")" &&
-		gv_ver="$(get_ver_str version "${1}")" &&
-		[ -n "${gv_upd_ch}" ] && [ -n "${gv_ver}" ]
+
+	# v0.7.3 and later
+	if old_config_format="$(get_config_format "${1}")" && [ -n "${old_config_format}" ] && [ "${old_config_format}" -ge 9 ] &&
+		grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
+		get_ver_str gv_upd_ch gv_ver "${1}"
 	then
-		gv_rv=3
-	# version format in v0.6.0 - v0.7.1
-	elif grep -q '^\s*#\s*ABL_VERSION=' "${1}" &&	
-		gv_upd_ch="$(get_ver_str upd_channel "${1}" -o)" &&
-		gv_ver="$(get_ver_str version "${1}" -o)" &&
-		[ -n "${gv_upd_ch}" ] && [ -n "${gv_ver}" ]
+		gv_rv=5
+	# version format in v0.7.2 and later
+	elif grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
+		get_ver_str gv_upd_ch gv_ver "${1}"
 	then
 		gv_rv=4
+	# version format in v0.6.0 - v0.7.1
+	elif grep -q '^\s*#\s*ABL_VERSION=' "${1}" &&	
+		get_ver_str gv_upd_ch gv_ver "${1}" -o
+	then
+		gv_rv=3
 	else
 		gv_rv=2
 	fi
-	[ -n "${2}${3}" ] && eval "${2}"='${gv_ver}' "${3}"='${gv_upd_ch}'
+	: "${gv_ver}" "${gv_upd_ch}"
+	[ -n "${2}" ] && eval "${2}"='${gv_ver}'
+	[ -n "${3}" ] && eval "${3}"='${gv_upd_ch}'
 	return ${gv_rv}
 }
 
@@ -760,6 +775,24 @@ fetch_and_install()
 		fetch_failed "fetch_and_install: unexpected argument '${1}'."
 	}
 
+	# v0.7.2 and earlier versions are incompatible with config v9 or later
+	rm_incompat_config()
+	{
+		[ -s "${ABL_CONFIG_FILE}" ] || return 0
+		local old_format='' old_config_f="/tmp/adblock-lean_config.old"
+		if old_format="$(get_config_format "${ABL_CONFIG_FILE}")" && [ -n "${old_format}" ] && [ "${old_format}" -ge 9 ]
+		then
+			log_msg "" "Warning: Version downgrade detected - removing incompatible config."
+			if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
+			then
+				reg_failure "Failed to save old config file as ${old_config_f}."
+			else
+				log_msg "Old config file was saved as ${old_config_f}." ""
+			fi
+			rm -f "${ABL_CONFIG_FILE}"
+		fi
+	}
+
 	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
 		upd_channel='' req_upd_channel='' force_upd_channel=''
 
@@ -835,29 +868,33 @@ fetch_and_install()
 
 	get_abl_version "${dist_dir}/adblock-lean"
 	(
-		case "${?}" in
+		local gv_rv=${?}
+		case "${gv_rv}" in
 			2)
 				# no version found - call install_abl_files() from this installer
-				rm -f "${ABL_FILES_REG_PATH}"
+				rm_incompat_config
 				export pid_file="/tmp/adblock-lean/adblock-lean.pid" # for compatibility with older versions
+				rm -f "${ABL_FILES_REG_PATH}"
 				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" "${ABL_SERVICE_PATH}" ;;
 			3)
-				# new version format - call install_abl_files() from fetched installer
-				clean_abl_env
-				# shellcheck source=/dev/null
-				INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
-					{ reg_failure "Failed to source fetched install script."; exit 1; }
-				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" ;;
-			4)
 				# old version format - call install_abl_files() from fetched service file
-				rm -f "${ABL_FILES_REG_PATH}"
+				rm_incompat_config
 				clean_abl_env
 				# shellcheck source=/dev/null
 				. "${dist_dir}/adblock-lean" ||
 					{ reg_failure "Failed to source fetched script."; exit 1; }
 				printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}" > "${dist_dir}/inst_files"
+				rm -f "${ABL_FILES_REG_PATH}"
 				install_abl_files "${dist_dir}" "${upd_channel}_v${upd_ver}" ;;
-			*) reg_failure "Failed to get version from fetched adblock-lean distribution."; exit 1 ;;
+			4|5)
+				# new version format - call install_abl_files() from fetched installer
+				[ "${gv_rv}" = 4 ] && rm_incompat_config
+				clean_abl_env
+				# shellcheck source=/dev/null
+				INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
+					{ reg_failure "Failed to source fetched install script."; exit 1; }
+				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" ;;
+			*) reg_failure "Failed to get version from fetched adblock-lean distribution."; false ;;
 		esac
 	) || exit 1
 

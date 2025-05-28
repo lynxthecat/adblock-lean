@@ -14,7 +14,15 @@ SCHEDULE_DIR="${ABL_DIR}/schedule"
 PROCESSING_TIMEOUT_S=900 # 15 minutes
 IDLE_TIMEOUT_S=300 # 5 minutes
 
-ABL_TEST_DOMAIN="adblocklean-test123.info"
+ABL_TEST_DOMAIN="adblocklean-test123.totallybogus"
+
+OISD_DL_URL="oisd.nl/domainswild2"
+HAGEZI_DL_URL="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
+OISD_LISTS="big small nsfw nsfw-small"
+HAGEZI_LISTS="anti.piracy blocklist-referral doh doh-vpn-proxy-bypass dyndns fake gambling gambling.medium gambling.mini hoster \
+light multi native.amazon native.apple native.huawei native.lgwebos native.oppo-realme native.roku native.samsung \
+native.tiktok native.tiktok.extended native.vivo native.winoffice native.xiaomi nosafesearch nsfw popupads \
+pro pro.mini pro.plus pro.plus.mini tif tif.medium tif.mini ultimate ultimate.mini urlshortener whitelist-referral"
 
 
 # UTILITY FUNCTIONS
@@ -44,7 +52,7 @@ try_extract()
 # output via optional variable with name $3
 # returns status 0 if the result is null, 1 if not
 subtract_a_from_b() {
-	local sab_out="${3:-___dummy}"
+	local sab_out="${3:-___dummy}" IFS="${DEFAULT_IFS}"
 	case "${2}" in '') unset "${sab_out}"; return 0; esac
 	case "${1}" in '') eval "${sab_out}"='${2}'; [ ! "${2}" ]; return; esac
 	local _fs_su="${4:-"${_NL_}"}"
@@ -155,6 +163,28 @@ set_processing_vars()
 	[ -n "${compr_util_known}" ] && export PROCESS_VARS_SET=1
 	export COMPR_EXT COMPR_CMD COMPR_CMD_STDOUT EXTR_CMD EXTR_CMD_STDOUT USE_COMPRESSION
 	:
+}
+
+# 1 - var name for output
+# 2 - list identifier in the form [hagezi|oisd]:[list_name]
+get_list_url()
+{
+	local res_url out_var="${1}" list_id="${2}" list_author list_name lists=''
+
+	are_var_names_safe "${out_var}" || return 1
+	eval "${out_var}=''"
+	case "${list_id}" in *:*) ;; *) reg_failure "Invalid list identifier '${list_id}'."; return 1; esac
+	case "${list_id}" in *[A-Z]*) list_id="$(printf '%s' "${list_id}" | tr 'A-Z' 'a-z')"; esac
+	list_author="${list_id%%\:*}" list_name="${list_id#*\:}"
+	case "${list_author}" in
+		hagezi) lists="${HAGEZI_LISTS}" res_url="${HAGEZI_DL_URL}/${list_name}-onlydomains.txt" ;;
+		oisd) lists="${OISD_LISTS}" res_url="https://${list_name}.${OISD_DL_URL}" ;;
+		*) reg_failure "Unknown list '${2}'."; return 1
+	esac
+	is_included "${list_name}" "${lists}" " " || { reg_failure "Unknown ${list_author} list '${2}'."; return 1; }
+
+	: "${res_url}"
+	eval "${out_var}=\"\${res_url}\""
 }
 
 
@@ -322,7 +352,7 @@ schedule_jobs()
 				log_msg -warn "" "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
 					"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
 				case "${list_type}" in blocklist|allowlist)
-					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | ${SED_CMD} -n '/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
+					bad_hagezi_urls="$(printf %s "${list_urls}" | tr ' ' '\n' | ${SED_CMD} -n '/^hagezi:/n;/\/hagezi\//{/onlydomains\./d;/^$/d;p;}')"
 					[ -n "${bad_hagezi_urls}" ] && log_msg -warn "" \
 						"Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" "${bad_hagezi_urls}"
 				esac
@@ -330,6 +360,17 @@ schedule_jobs()
 
 			for list_url in ${list_urls}
 			do
+				case "${list_url}" in
+					hagezi:*|Hagezi:*|oisd:*|OISD:*)
+						local short_id="${list_url}"
+						if ! get_list_url list_url "${short_id}"
+						then
+							[ "${list_part_failed_action}" = "STOP" ] &&
+								{ log_msg "list_part_failed_action is set to 'STOP', exiting."; finalize_scheduler 1; }
+							log_msg -yellow "Skipping list '${short_id}' and continuing."
+							continue
+						fi
+				esac
 				part_line_count=0
 				schedule_job DL "${list_url}" "${list_type}" "${list_format}" || finalize_scheduler 1
 				export "JOB_URL_${!}"="${list_url}"

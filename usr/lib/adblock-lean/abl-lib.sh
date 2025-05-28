@@ -310,19 +310,17 @@ do_setup()
 # shellcheck disable=2034
 mk_preset_arrays()
 {
-	local hagezi_dl_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
-
 	# quasi-arrays for presets
 	# cnt - target elements count/1000, mem - memory in MB
-	mini_urls="${hagezi_dl_url}/pro.mini-onlydomains.txt" \
+	mini_urls="hagezi:pro.mini" \
 		mini_cnt=85 mini_mem=64
-	small_urls="${hagezi_dl_url}/pro-onlydomains.txt" \
+	small_urls="hagezi:pro" \
 		small_cnt=250 small_mem=128
-	medium_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif.mini-onlydomains.txt" \
+	medium_urls="hagezi:pro hagezi:tif.mini" \
 		medium_cnt=350 medium_mem=256
-	large_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
+	large_urls="hagezi:pro hagezi:tif" \
 		large_cnt=1200 large_mem=512
-	large_relaxed_urls="${hagezi_dl_url}/pro-onlydomains.txt ${hagezi_dl_url}/tif-onlydomains.txt" \
+	large_relaxed_urls="hagezi:pro hagezi:tif" \
 		large_relaxed_cnt=1200 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 
@@ -447,12 +445,13 @@ print_def_config()
 	# including subdomains of allowed domains
 	whitelist_mode="0" @ 0|1
 
-	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist urls separated by spaces
+	# One or more *raw domain* format blocklist/ipv4 blocklist/allowlist URLs and/or short list identifiers separated by spaces
+	# Short list identifiers have the form of [hagezi|oisd]:[list_name]. Examples: hagezi:tif.mini, oisd:big
 	blocklist_urls="${blocklist_urls}" @ string
 	blocklist_ipv4_urls="" @ string
 	allowlist_urls="" @ string
 
-	# One or more *dnsmasq format* domain blocklist/ipv4 blocklist/allowlist urls separated by spaces
+	# One or more *dnsmasq format* domain blocklist/ipv4 blocklist/allowlist URLs separated by spaces
 	dnsmasq_blocklist_urls="" @ string
 	dnsmasq_blocklist_ipv4_urls="" @ string
 	dnsmasq_allowlist_urls="" @ string
@@ -1199,8 +1198,8 @@ check_for_updates()
 	unset UPD_AVAIL UPD_DIRECTIONS
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in
-		release|latest|snapshot) ;;
-		tag|commit) no_upd="was installed from a specific Git ${upd_channel}" ;;
+		release|latest|snapshot|branch=*) ;;
+		commit) no_upd="was installed from a specific Git commit" ;;
 		'') no_upd="update channel is unknown" ;;
 		*) no_upd="update channel is '${upd_channel}'" ;;
 	esac
