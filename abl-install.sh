@@ -779,9 +779,18 @@ fetch_and_install()
 	rm_incompat_config()
 	{
 		[ -s "${ABL_CONFIG_FILE}" ] || return 0
-		local old_format=''
-		old_format="$(get_config_format "${ABL_CONFIG_FILE}")" && [ -n "${old_format}" ] && [ "${old_format}" -ge 9 ] &&
+		local old_format='' old_config_f="/tmp/adblock-lean_config.old"
+		if old_format="$(get_config_format "${ABL_CONFIG_FILE}")" && [ -n "${old_format}" ] && [ "${old_format}" -ge 9 ]
+		then
+			log_msg "" "Warning: Version downgrade detected - removing incompatible config."
+			if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
+			then
+				reg_failure "Failed to save old config file as ${old_config_f}."
+			else
+				log_msg "Old config file was saved as ${old_config_f}." ""
+			fi
 			rm -f "${ABL_CONFIG_FILE}"
+		fi
 	}
 
 	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
@@ -865,6 +874,7 @@ fetch_and_install()
 				# no version found - call install_abl_files() from this installer
 				rm_incompat_config
 				export pid_file="/tmp/adblock-lean/adblock-lean.pid" # for compatibility with older versions
+				rm -f "${ABL_FILES_REG_PATH}"
 				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" "${ABL_SERVICE_PATH}" ;;
 			3)
 				# old version format - call install_abl_files() from fetched service file
@@ -874,6 +884,7 @@ fetch_and_install()
 				. "${dist_dir}/adblock-lean" ||
 					{ reg_failure "Failed to source fetched script."; exit 1; }
 				printf '%s\n' "${ABL_SERVICE_PATH} ${ABL_LIB_FILES} ${ABL_EXTRA_FILES}" > "${dist_dir}/inst_files"
+				rm -f "${ABL_FILES_REG_PATH}"
 				install_abl_files "${dist_dir}" "${upd_channel}_v${upd_ver}" ;;
 			4|5)
 				# new version format - call install_abl_files() from fetched installer
