@@ -169,11 +169,13 @@ set_processing_vars()
 # 2 - list identifier in the form [hagezi|oisd]:[list_name]
 get_list_url()
 {
-	local res_url out_var="${1}" list_author="${2%%\:*}" list_name="${2#*\:}" lists=''
+	local res_url out_var="${1}" list_id="${2}" list_author list_name lists=''
 
 	are_var_names_safe "${out_var}" || return 1
 	eval "${out_var}=''"
-	case "${2}" in *:*) ;; *) reg_failure "Invalid list identifier '${2}'."; return 1; esac
+	case "${list_id}" in *:*) ;; *) reg_failure "Invalid list identifier '${list_id}'."; return 1; esac
+	case "${list_id}" in *[A-Z]*) list_id="$(printf '%s' "${list_id}" | tr 'A-Z' 'a-z')"; esac
+	list_author="${list_id%%\:*}" list_name="${list_id#*\:}"
 	case "${list_author}" in
 		hagezi) lists="${HAGEZI_LISTS}" res_url="${HAGEZI_DL_URL}/${list_name}-onlydomains.txt" ;;
 		oisd) lists="${OISD_LISTS}" res_url="https://${list_name}.${OISD_DL_URL}" ;;
@@ -359,7 +361,7 @@ schedule_jobs()
 			for list_url in ${list_urls}
 			do
 				case "${list_url}" in
-					hagezi:*|oisd:*)
+					hagezi:*|Hagezi:*|oisd:*|OISD:*)
 						local short_id="${list_url}"
 						if ! get_list_url list_url "${short_id}"
 						then
