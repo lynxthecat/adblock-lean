@@ -540,12 +540,12 @@ print_def_config()
 # generates config
 do_gen_config()
 {
-	local cnt
+	local cnt totalmem preset
 
 	if [ -n "${DO_DIALOGS}" ] && [ -z "${luci_preset}" ]
 	then
 		mk_preset_arrays
-		mk_def_preset || print_msg "Skipping automatic preset recommendation."
+		mk_def_preset preset totalmem || print_msg "Skipping automatic preset recommendation."
 		if [ -n "${preset}" ]
 		then
 			print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is '${purple}${preset}${n_c}':"
@@ -572,7 +572,7 @@ do_gen_config()
 	else
 		# determine preset for luci
 		case "${luci_preset}" in
-			''|auto) mk_def_preset || { log_msg "Falling back to preset 'small'."; preset=small; } ;;
+			''|auto) mk_def_preset preset totalmem || { log_msg "Falling back to preset 'small'."; preset=small; } ;;
 			*) preset="${luci_preset}"
 		esac
 	fi
@@ -615,23 +615,28 @@ do_gen_config()
 	:
 }
 
-# sets ${preset} to recommended preset, depending on system memory capacity
+# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
+# expects preset vars to be set
 mk_def_preset()
 {
-	unset preset totalmem
-	local mem cnt
-	local IFS="${DEFAULT_IFS}"
-	read -r _ totalmem _ < /proc/meminfo
-	case "${totalmem}" in
-		''|*[!0-9]*) reg_failure "\$totalmem has invalid value '${totalmem}'. Failed to determine system memory capacity."; return 1 ;;
+	are_var_names_safe "${1}" "${2}" || return 1
+	unset "${1}" "${2}"
+	local _totalmem _mem _preset IFS="${DEFAULT_IFS}"
+	[ -n "${ALL_PRESETS}" ] && eval "[ -n \"\${${ALL_PRESETS%% *}_mem}\" ]" ||
+		{ reg_failure "mk_def_preset: essential vars are unset."; return 1; }
+
+	read -r _ _totalmem _ < /proc/meminfo
+	case "${_totalmem}" in
+		''|*[!0-9]*) reg_failure "\$_totalmem has invalid value '${_totalmem}'. Failed to determine system memory capacity."; return 1 ;;
 		*)
-			for preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | ${SED_CMD} 'x;1!H;$!d;x') # loop over presets in reverse order
+			for _preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | ${SED_CMD} 'x;1!H;$!d;x') # loop over presets in reverse order
 			do
-				eval "mem=\"\${${preset}_mem}\""
+				eval "_mem=\"\${${_preset}_mem}\""
 				# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
-				[ "${totalmem}" -ge $((mem * 800)) ] && break
+				[ "${_totalmem}" -ge $((_mem * 800)) ] && break
 			done
 	esac
+	eval "${1}"='${_preset}' "${2}"='${_totalmem}'
 	:
 }
 
