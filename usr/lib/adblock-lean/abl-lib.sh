@@ -545,7 +545,7 @@ do_gen_config()
 	if [ -n "${DO_DIALOGS}" ] && [ -z "${luci_preset}" ]
 	then
 		mk_preset_arrays
-		mk_def_preset preset totalmem || print_msg "Skipping automatic preset recommendation."
+		get_def_preset preset totalmem || print_msg "Skipping automatic preset recommendation."
 		if [ -n "${preset}" ]
 		then
 			print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is '${purple}${preset}${n_c}':"
@@ -572,7 +572,7 @@ do_gen_config()
 	else
 		# determine preset for luci
 		case "${luci_preset}" in
-			''|auto) mk_def_preset preset totalmem || { log_msg "Falling back to preset 'small'."; preset=small; } ;;
+			''|auto) get_def_preset preset totalmem || { log_msg "Falling back to preset 'small'."; preset=small; } ;;
 			*) preset="${luci_preset}"
 		esac
 	fi
@@ -617,13 +617,13 @@ do_gen_config()
 
 # sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
 # expects preset vars to be set
-mk_def_preset()
+get_def_preset()
 {
 	are_var_names_safe "${1}" "${2}" || return 1
 	unset "${1}" "${2}"
 	local _totalmem _mem _preset IFS="${DEFAULT_IFS}"
 	[ -n "${ALL_PRESETS}" ] && eval "[ -n \"\${${ALL_PRESETS%% *}_mem}\" ]" ||
-		{ reg_failure "mk_def_preset: essential vars are unset."; return 1; }
+		{ reg_failure "get_def_preset: essential vars are unset."; return 1; }
 
 	read -r _ _totalmem _ < /proc/meminfo
 	case "${_totalmem}" in
