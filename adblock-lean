@@ -431,7 +431,7 @@ detect_util()
 # 1 (optional) : '-f' to force re-detection
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
 # shellcheck disable=SC2120
-detect_utils()
+detect_main_utils()
 {
 	[ -n "${MAIN_UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
 	unset SED_CMD AWK_CMD SORT_CMD
@@ -1982,7 +1982,7 @@ then
 fi
 rm -f /tmp/abl-test
 
-detect_utils || graceful_exit 1
+detect_main_utils || graceful_exit 1
 
 # register 1st arg as $ABL_CMD when called by 'sh /etc/init.d/adblock-lean'
 if [ "${0}" = "${ABL_SERVICE_PATH}" ] && [ -n "${1}" ]

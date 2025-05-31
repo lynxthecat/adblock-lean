@@ -290,7 +290,7 @@ do_setup()
 	case "${PKG_MANAGER}" in
 		apk|opkg)
 			install_packages && luci_pkgs_install_failed=
-			detect_utils -f ;;
+			detect_main_utils -f ;;
 		*)
 			log_msg -yellow "" "Can not automatically check and install recommended packages (${RECOMMENDED_PKGS})." \
 				"Consider to check for their presence and install if needed."
