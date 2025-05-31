@@ -357,50 +357,66 @@ rc_enabled()
 
 detect_util()
 {
+	unexp_arg() { reg_failure "${me}: unexpected argument '${1}'."; }
+
 	local du_out_var="${1}" gen_name="${2}" specific_name="${3}" specific_path="${4}" \
-		res_cmd='' res_name='' _util _util_path='' busybox_variant_avail=''
+		res_cmd='' res_name='' _util _util_path='' busybox_variant_avail='' skip_links='' path_exists='' path_is_symlink='' \
+		opt me=detect_util
+
+	[ ${#} -ge 4 ] || { reg_failure "${me}: not enough arguments"; return 1; }
+	shift 4
+
+	while getopts :bs opt
+	do
+		case "${opt}" in
+			b) busybox_variant_avail=1 ;;
+			s) skip_links=1 ;;
+			*) unexp_arg "${opt}"; return 1;
+		esac
+	done
+	shift $((OPTIND-1))
+	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
 
 	are_var_names_safe "${du_out_var}" || return 1
 
-	[ "${5}" = '-b' ] && busybox_variant_avail=1
-
-	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ] && [ ! -h "${specific_path}" ] && [ ! -L "${specific_path}" ]
+	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ]
 	then
-		res_cmd="${specific_path}"
+		_util_path="${specific_path}" path_exists=1
 	elif
-		{ [ -n "${specific_path}" ] && { [ -h "${specific_path}" ] || [ -L "${specific_path}" ]; } &&
-		res_name="${specific_path}"; } ||
 		{ [ -n "${specific_name}" ] && check_util "${specific_name}" && res_name="${specific_name}"; } ||
-		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; } &&
-		_util_path="$(command -v "${res_name}")" &&
-		# get paths
+		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; }
+	then
+		_util_path="$(command -v "${res_name}")"
+	fi
+
+	if [ -n "${_util_path}" ] &&
 		{
-			if [ -f "${_util_path}" ] && [ ! -h "${_util_path}" ] && [ ! -L "${_util_path}" ]
-			then
-				# path is not symlink
-				res_cmd="${_util_path}"
-			elif [ -h "${_util_path}" ] || [ -L "${_util_path}" ]
+			[ -L "${_util_path}" ] && path_is_symlink=1
+			if [ -n "${path_is_symlink}" ] && [ -z "${skip_links}" ]
 			then
 				# resolve symlinks
 				_util_path="$(readlink "${_util_path}")" &&
-				[ -n "${_util_path}" ] &&
 				case "${_util_path}" in
-					busybox|/*) ;;
+					busybox|/bin/busybox) _util_path="/bin/busybox ${gen_name}" ;;
+					''|/) false ;;
+					/*) : ;;
 					*) util_path="$(command -v "${util_path}")" &&
 						case "${util_path}" in
-							/) false ;;
-							/*) ;;
+							''|/) false ;;
+							/*) : ;;
 							*) false
 						esac
-				esac &&
-				case "${_util_path}" in
-					busybox|/bin/busybox) res_cmd="/bin/busybox ${gen_name}" ;;
-					/*) res_cmd="${_util_path}" ;;
 				esac
+			elif [ -z "${path_is_symlink}" ] && { [ -n "${path_exists}" ] || [ -f "${_util_path}" ]; }
+			then
+				# path is not symlink
+				:
+			else
+				false
 			fi
-		} && [ -n "${res_cmd}" ]
+		}
 	then
-		:
+		res_cmd="${_util_path}"
 	elif [ -n "${busybox_variant_avail}" ]
 	then
 		res_cmd="/bin/busybox ${gen_name}"
@@ -417,17 +433,16 @@ detect_util()
 # shellcheck disable=SC2120
 detect_utils()
 {
-	[ -n "${UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
+	[ -n "${MAIN_UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
 	unset SED_CMD AWK_CMD SORT_CMD
 	local failed_utils=''
 
-	detect_util SED_CMD sed "" "/usr/libexec/sed-gnu" -b || add2list failed_utils sed ', '
-	detect_util AWK_CMD awk gawk "/usr/bin/gawk" -b || add2list failed_utils awk ', '
-	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b || add2list failed_utils sort ', '
+	detect_util SED_CMD sed "" "/usr/libexec/sed-gnu" -b -s || add2list failed_utils sed ', '
+	detect_util AWK_CMD awk gawk "/usr/bin/gawk" -b -s || add2list failed_utils awk ', '
+	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b -s || add2list failed_utils sort ', '
 
 	[ -z "${failed_utils}" ] || { reg_failure "Can not find essential utilities: ${failed_utils}.";  return 1; }
-	export UTILS_DETECTED=1
-
+	export MAIN_UTILS_DETECTED=1
 	:
 }
 
