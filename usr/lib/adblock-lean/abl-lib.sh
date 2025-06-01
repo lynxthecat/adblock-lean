@@ -329,7 +329,7 @@ mk_preset_arrays()
 # 1 - mini|small|medium|large|large_relaxed
 # 2 - (optional) '-d' to print the description
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
-gen_preset()
+set_preset_vars()
 {
 	# keeps first two digits, replaces others with 0's
 	# 1 - var for I/O
@@ -434,7 +434,7 @@ print_def_config()
 	mk_preset_arrays
 	: "${preset:=small}"
 	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "print_def_config: \$preset var has invalid value."; exit 1; }
-	gen_preset "${preset}" -n
+	set_preset_vars "${preset}" -n
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
 
@@ -553,7 +553,7 @@ do_gen_config()
 		if [ -n "${preset}" ]
 		then
 			print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is '${purple}${preset}${n_c}':"
-			gen_preset "${preset}"
+			set_preset_vars "${preset}"
 			print_msg "" "[C]onfirm this preset or [p]ick another preset?"
 			pick_opt "c|p"
 		else
@@ -567,7 +567,7 @@ do_gen_config()
 			for preset in ${ALL_PRESETS}
 			do
 				add2list presets_case_opts "${preset}" "|"
-				gen_preset "${preset}" -d
+				set_preset_vars "${preset}" -d
 			done
 			print_msg "" "Pick preset:"
 			pick_opt "${presets_case_opts}"
