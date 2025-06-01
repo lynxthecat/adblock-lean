@@ -324,27 +324,31 @@ mk_preset_arrays()
 		large_relaxed_cnt=1200 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 
+# sets $blocklist_urls, $min_good_line_count, $max_blocklist_file_size_KB, $max_file_part_size_KB
+# requires preset vars to be set
 # 1 - mini|small|medium|large|large_relaxed
 # 2 - (optional) '-d' to print the description
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
 gen_preset()
 {
-	# rounds down to reasonable number of digits, based on the input number of digits
+	# keeps first two digits, replaces others with 0's
 	# 1 - var for I/O
 	reasonable_round()
 	{
-		local input res shift_digits
+		local input factor neg='' me=reasonable_round
 		eval "input=\"\${${1}}\""
-		shift_digits=$(( ${#input}-2 ))
-		case "${shift_digits}" in
-			-*|'')
-				shift_digits=0
-				shifted="${input}" ;; # shell doesn't handle ${var:0:-0} correctly
-			*)	shifted=${input:0:-${shift_digits}}
+		case "${input}" in -*) neg='-' input="${input#-}"; esac
+		input="${input#"${input%%[!0]*}"}"
+		: "${input:=0}"
+		case "${input}" in
+			*[!0-9]*) reg_failure "${me}: invalid input '${input}'."; return 1 ;;
+			?|??) return 0 ;;
+			????????????*) reg_failure "${me}: input '${input}' too large."; return 1 ;;
+			*)
+				factor=$(( 10**(${#input}-2) ))
+				eval "${1}=${neg}$(( (input/factor) * factor ))"
 		esac
-		res="$(( shifted * 10**shift_digits ))"
-		eval "${1}"='${res}'
-		: "${res}"
+		:
 	}
 
 	local val field mem tgt_lines_cnt_k lim_coeff final_entry_size_B source_entry_size_B
