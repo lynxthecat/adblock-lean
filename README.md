@@ -18,7 +18,7 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 - [Testing advert blocking](#testing-advert-blocking)
 - [Preserve adblock-lean files and config across OpenWrt upgrades](#preserve-adblock-lean-files-and-config-across-openwrt-upgrades)
 - [adblock-lean version updates](#adblock-lean-version-updates)
-- [Advanced version update options](#advanced_version_update_options)
+- [Advanced version update options](#advanced-version-update-options)
 - [Uninstalling](#uninstalling)
 
 ## Features
