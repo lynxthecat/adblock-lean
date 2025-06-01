@@ -363,18 +363,18 @@ set_preset_vars()
 
 	# target_lines_cnt / 3.5
 	min_good_line_count=$((tgt_lines_cnt_k*10000/35))
-	reasonable_round min_good_line_count
+	reasonable_round min_good_line_count || return 1
 
 	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
 	max_blocklist_file_size_KB=$(( (tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024 ))
-	reasonable_round max_blocklist_file_size_KB
+	reasonable_round max_blocklist_file_size_KB || return 1
 
 	case "${1}" in
 		mini|small) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
 		*)
 			# target_lines_cnt * source_entry_size_B * lim_coeff * 1.03
 			max_file_part_size_KB=$(( (tgt_lines_cnt_k*1030*source_entry_size_B*lim_coeff)/1024 ))
-			reasonable_round max_file_part_size_KB
+			reasonable_round max_file_part_size_KB || return 1
 	esac
 
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
@@ -433,8 +433,8 @@ print_def_config()
 
 	mk_preset_arrays
 	: "${preset:=small}"
-	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "print_def_config: \$preset var has invalid value."; exit 1; }
-	set_preset_vars "${preset}" -n
+	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "print_def_config: \$preset var has invalid value."; return 1; }
+	set_preset_vars "${preset}" -n || return 1
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
 
@@ -553,7 +553,7 @@ do_gen_config()
 		if [ -n "${preset}" ]
 		then
 			print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is '${purple}${preset}${n_c}':"
-			set_preset_vars "${preset}"
+			set_preset_vars "${preset}" || return 1
 			print_msg "" "[C]onfirm this preset or [p]ick another preset?"
 			pick_opt "c|p"
 		else
@@ -567,7 +567,7 @@ do_gen_config()
 			for preset in ${ALL_PRESETS}
 			do
 				add2list presets_case_opts "${preset}" "|"
-				set_preset_vars "${preset}" -d
+				set_preset_vars "${preset}" -d || return 1
 			done
 			print_msg "" "Pick preset:"
 			pick_opt "${presets_case_opts}"
