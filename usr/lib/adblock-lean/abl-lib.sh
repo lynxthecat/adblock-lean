@@ -1395,36 +1395,9 @@ do_select_dnsmasq_instance() {
 
 clean_dnsmasq_dir()
 {
-	# shellcheck disable=SC2317
-	add_conf_dir()
-	{
-		local confdir
-		config_get confdir "${1}" confdir
-		add2list ALL_CONF_DIRS "${confdir}"
-	}
-
-	# gather conf dirs of running instances
-	get_dnsmasq_instances
-	# gather conf dirs of configured instances
-
-	# this is needed when running via 'sh /etc/init.d/adblock-lean'
-	if [ -z "${ABL_LIB_FUNCTIONS_SOURCED}" ]
-	then
-		# shellcheck source=/dev/null
-		check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
-		ABL_LIB_FUNCTIONS_SOURCED=1
-	fi
-
-	config_load dhcp
-	config_foreach add_conf_dir dnsmasq
-	# gather conf dirs from /tmp/
-	local dir tmp_conf_dirs IFS="${_NL_}"
-	tmp_conf_dirs="$(find /tmp/ -type d \( -name "dnsmasq.cfg*" -o -name dnsmasq.d \))"
-	for dir in ${tmp_conf_dirs}
-	do
-		add2list ALL_CONF_DIRS "${dir}"
-	done
-
+	[ -n "${ALL_CONF_DIRS}" ] || { get_dnsmasq_instances; [ -n "${ALL_CONF_DIRS}" ]; } ||
+		{ reg_failure "Failed to detect dnsmasq conf directory. Can not remove adblock-lean files."; return 1; }
+	local IFS="${_NL_}"
 	for dir in ${ALL_CONF_DIRS}
 	do
 		IFS="${DEFAULT_IFS}"
@@ -1471,10 +1444,40 @@ get_dnsmasq_instance_ns()
 # ALL_CONF_DIRS, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
 # ${instance}_INDEX, ${instance}_RUNNING
 get_dnsmasq_instances() {
-	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt i s f dir
+	# shellcheck disable=SC2317
+	add_conf_dir()
+	{
+		local confdir
+		config_get confdir "${1}" confdir
+		[ -n "${confdir}" ] && add2list ALL_CONF_DIRS "${confdir}"
+	}
+
+	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt i s f dir 
 	DNSMASQ_INSTANCES=
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -blue "Checking dnsmasq instances."
+
+	# gather conf dirs from /etc/config/dhcp
+	if [ -z "${DHCP_LOADED}" ]
+	then
+		# shellcheck source=/dev/null
+		{ check_func config_load 1>/dev/null || . /lib/functions.sh; } &&
+		config_load dhcp ||
+			{ reg_failure "Failed to load /etc/config/dhcp"; return 1; }
+		DHCP_LOADED=1
+	fi
+
+	config_foreach add_conf_dir dnsmasq
+
+	# gather conf dirs from /tmp/
+	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
+	do
+		[ -n "${dir}" ] && [ -d "${dir}" ] || continue
+		add2list ALL_CONF_DIRS "${dir}"
+	done
+
+	# gather info from '/etc/init.d/dnsmasq info'
+
 	# shellcheck source=/dev/null
 	. /usr/share/libubox/jshn.sh &&
 	json_load "$(/etc/init.d/dnsmasq info)" &&
