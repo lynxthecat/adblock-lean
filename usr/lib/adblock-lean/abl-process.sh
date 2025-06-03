@@ -967,7 +967,7 @@ gen_and_process_blocklist()
 	log_msg -green "New blocklist file check passed."
 	log_msg "Final list uncompressed file size: ${final_list_size_human}."
 
-	if ! import_blocklist_file "${final_compress}"
+	if ! import_blocklist "${final_compress}"
 	then
 		reg_failure "Failed to import new blocklist file."
 		return 1
@@ -994,9 +994,9 @@ gen_and_process_blocklist()
 	:
 }
 
-try_export_existing_blocklist()
+try_export_blocklist()
 {
-	export_existing_blocklist
+	export_blocklist
 	case ${?} in
 		1) reg_failure "Failed to export the blocklist."; return 1 ;;
 		2) return 2
@@ -1008,7 +1008,7 @@ try_export_existing_blocklist()
 # 0 - success
 # 1 - failure
 # 2 - blocklist file not found (nothing to export)
-export_existing_blocklist()
+export_blocklist()
 {
 	export_failed() { rm -f "${src_d}/abl-blocklist" "${src_d}/.abl-blocklist"* "${bk_path:-?}"*; }
 
@@ -1111,7 +1111,7 @@ restore_saved_blocklist()
 		restore_failed
 		return 1
 	fi
-	import_blocklist_file "${final_compress}" || { reg_failure "Failed to import the blocklist file."; restore_failed; return 1; }
+	import_blocklist "${final_compress}" || { reg_failure "Failed to import the blocklist file."; restore_failed; return 1; }
 
 	restart_dnsmasq || { restore_failed; return 1; }
 
@@ -1119,7 +1119,7 @@ restore_saved_blocklist()
 }
 
 # 1 (optional): if set, compresses the file unless already compressed
-import_blocklist_file()
+import_blocklist()
 {
 	local src src_compressed='' src_file="${ABL_DIR}/abl-blocklist" dest_file="${DNSMASQ_CONF_D}/abl-blocklist"
 	local final_compress="${1}"

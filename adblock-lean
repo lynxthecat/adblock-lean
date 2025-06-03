@@ -1565,7 +1565,7 @@ start()
 		sleep "${random_delay_mins}m"
 	fi
 
-	try_export_existing_blocklist
+	try_export_blocklist
 	[ ${?} = 1 ] && exit 1
 
 	FAIL_STOP_REQ=1
@@ -1702,7 +1702,7 @@ pause()
 	esac
 	FAIL_STOP_REQ=1
 	reg_action -purple "Pausing adblock-lean." || exit 1
-	try_export_existing_blocklist || exit 1
+	try_export_blocklist || exit 1
 	restart_dnsmasq || exit 1
 	FAIL_STOP_REQ=
 	log_msg -purple "adblock-lean is now paused."
