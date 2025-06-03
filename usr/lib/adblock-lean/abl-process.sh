@@ -1014,20 +1014,30 @@ export_existing_blocklist()
 
 	reg_export() { reg_action -blue "Creating ${1} backup of existing blocklist." || return 1; }
 
-	local src_d="${DNSMASQ_CONF_D}" bk_path="${ABL_DIR}/prev_blocklist" file prev_file='' prev_file_compat='' prev_file_compressed=''
+	local src_d bk_path="${ABL_DIR}/prev_blocklist" file prev_file='' prev_file_compat='' prev_file_compressed=''
 
-	for file in "${src_d}/abl-blocklist" "${src_d}/.abl-blocklist."*
+	if [ -f "${bk_path}${COMPR_EXT}" ]
+	then
+		log_msg "" "Blocklist backup file already exists."
+		rm -f "${DNSMASQ_CONF_D}/abl-blocklist" "${DNSMASQ_CONF_D}/.abl-blocklist"*
+		return 0 
+	fi
+
+	for src_d in "${DNSMASQ_CONF_D}" "${ABL_DIR}"
 	do
-		[ -n "${file}" ] && [ -f "${file}" ] || continue
-		prev_file="${file}"
-		case "${prev_file}" in *"/.abl-blocklist"*) prev_file_compressed=1; esac
-		if
-			{ [ -n "${USE_COMPRESSION}" ] && case "${prev_file}" in *"/.abl-blocklist${COMPR_EXT}") : ;; *) false; esac; } ||
-			{ [ -z "${USE_COMPRESSION}" ] && [ -z "${prev_file_compressed}" ]; }
-		then
-			prev_file_compat=1
-		fi
-		break
+		for file in "${src_d}/abl-blocklist" "${src_d}/.abl-blocklist."* "${src_d}/prev_blocklist"*
+		do
+			[ -f "${file}" ] || continue
+			prev_file="${file}"
+			case "${prev_file}" in *".gz"|*".zst") prev_file_compressed=1; esac
+			if
+				{ [ -n "${USE_COMPRESSION}" ] && case "${prev_file}" in *"/.abl-blocklist${COMPR_EXT}") : ;; *) false; esac; } ||
+				{ [ -z "${USE_COMPRESSION}" ] && [ -z "${prev_file_compressed}" ]; }
+			then
+				prev_file_compat=1
+			fi
+			break 2
+		done
 	done
 
 	[ -n "${prev_file}" ] || { log_msg "" "No existing compressed or uncompressed blocklist identified."; return 2; }
@@ -1043,14 +1053,14 @@ export_existing_blocklist()
 	if [ -z "${prev_file_compat}" ] && [ -n "${prev_file_compressed}" ]
 	then
 		try_extract "${prev_file}" || { export_failed; return 1; }
-		prev_file="${src_d}/.abl-blocklist"
+		prev_file="${prev_file%.*}"
 		prev_file_compressed=
 	fi
 
 	if [ -z "${USE_COMPRESSION}" ] && [ -n "${prev_file_compressed}" ]
 	then
 		try_extract "${prev_file}" || { export_failed; return 1; }
-		prev_file="${src_d}/.abl-blocklist"
+		prev_file="${prev_file%.*}"
 	elif [ -n "${USE_COMPRESSION}" ] && [ -z "${prev_file_compressed}" ]
 	then
 		{ [ "${prev_file}" = "${src_d}/.abl-blocklist" ] || try_mv "${prev_file}" "${src_d}/.abl-blocklist"; } &&
