@@ -827,12 +827,16 @@ get_abl_run_state()
 {
 	[ -n "${DNSMASQ_CONF_D}" ] || { reg_failure "\$DNSMASQ_CONF_D is not set"; return 1; }
 	local f
-	for f in "${DNSMASQ_CONF_D}/.abl-blocklist${COMPR_EXT}" "${DNSMASQ_CONF_D}/abl-blocklist"
+	for f in "${DNSMASQ_CONF_D}/.abl-blocklist"* "${DNSMASQ_CONF_D}/abl-blocklist"
 	do
-		[ -f "${f}" ] && return 0
+		[ -n "${f}" ] && [ -f "${f}" ] && return 0
 	done
 
-	[ -f "${ABL_DIR}/prev_blocklist${COMPR_EXT}" ] && return 3
+	for f in "${ABL_DIR}/prev_blocklist"*
+	do
+		[ -n "${f}" ] && [ -f "${f}" ] && return 3
+	done
+
 	return 4
 }
 
