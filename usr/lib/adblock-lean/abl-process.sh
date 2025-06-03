@@ -1027,7 +1027,7 @@ export_blocklist()
 	do
 		for file in "${src_d}/abl-blocklist" "${src_d}/.abl-blocklist."* "${src_d}/prev_blocklist"*
 		do
-			[ -f "${file}" ] || continue
+			[ -n "${file}" ] && [ -f "${file}" ] || continue
 			prev_file="${file}"
 			case "${prev_file}" in *".gz"|*".zst") prev_file_compressed=1; esac
 			if
