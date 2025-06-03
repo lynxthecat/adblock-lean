@@ -647,6 +647,10 @@ get_def_preset()
 # validate config and assign to variables
 #
 # 1 - path to file
+# Optional:
+#   2 - var to output conf fixes
+#   3 - var to output missing keys
+#   4 - var to output bad value keys
 #
 # return codes:
 # 0 - Success
@@ -654,20 +658,22 @@ get_def_preset()
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
 # 3 - Internal parser error
 #
-# sets ${missing_keys}, ${conf_fixes}, ${bad_value_keys}
-# and variables for luci:
+# sets variables for luci:
 # *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
-# *_bad_conf_format *_conf_fixes *_bad_value_keys
-# shellcheck disable=SC2317,SC2034
+#     *_bad_conf_format *_conf_fixes *_bad_value_keys
 parse_config()
 {
-	add_conf_fix() { conf_fixes="${conf_fixes}${1}"$'\n'; }
+	add_conf_fix() { p_conf_fixes="${p_conf_fixes}${1}"$'\n'; }
 
 	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' \
-		entry key val bad_val_entries='' corrected_entries='' valid_values all_valid_values \
+		key val bad_val_entries='' corrected_entries='' \
+		p_conf_fixes='' p_missing_keys='' p_bad_val_keys='' \
 		sed_conf_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d'
 
-	unset curr_config_format def_config_format bad_value_keys \
+	are_var_names_safe "${2}" "${3}" "${4}" || return 1
+	eval "${2:-_}='' ${3:-_}='' ${4:-_}='' "
+
+	unset curr_config_format def_config_format \
 		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_conf_format luci_conf_fixes preset
 
@@ -696,11 +702,11 @@ parse_config()
 
 	# get config versions
 	curr_config_format="$(get_config_format "${1}")"
-	luci_curr_config_format=${curr_config_format}
+	export luci_curr_config_format="${curr_config_format}"
 	def_config_format="$(printf %s "${def_config}" | get_config_format)"
-	luci_def_config_format=${def_config_format}
+	export luci_def_config_format="${def_config_format}"
 
-	local parse_vars valid_lines def_lines_arr
+	local parse_vars valid_lines
 	# extract valid values from default config
 	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
@@ -813,9 +819,9 @@ parse_config()
 					missing_keys=missing_keys key " "
 				}
 			}
-			print "missing_keys=\"" missing_keys "\" " \
+			print "p_missing_keys=\"" missing_keys "\" " \
 				"unexp_keys=\"" unexp_keys "\" " \
-				"bad_value_keys=\"" bad_val_keys "\" "
+				"p_bad_val_keys=\"" bad_val_keys "\" "
 			exit rv
 		}'
 	)" 2> "${parser_error_file}" ||
@@ -852,21 +858,21 @@ parse_config()
 		unexp_entries="$(cat "${ABL_CONF_STAGING_DIR}/unexp_entries")"
 		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
-		luci_unexp_keys=${unexp_keys% }
-		luci_unexp_entries=${unexp_entries%$'\n'}
+		export luci_unexp_keys="${unexp_keys% }"
+		export luci_unexp_entries="${unexp_entries%$'\n'}"
 	fi
 
-	if [ -n "${missing_keys}" ]
+	if [ -n "${p_missing_keys}" ]
 	then
-		reg_failure "Missing keys in config: '${missing_keys% }'."
+		reg_failure "Missing keys in config: '${p_missing_keys% }'."
 		missing_entries="$(cat "${ABL_CONF_STAGING_DIR}/missing_entries")"
 		print_msg "Corresponding default config entries:" "${missing_entries%$'\n'}"
 		add_conf_fix "Re-add missing config entries with default values"
-		luci_missing_keys=${missing_keys% }
-		luci_missing_entries=${missing_entries%$'\n'}
+		export luci_missing_keys="${p_missing_keys% }"
+		export luci_missing_entries="${missing_entries%$'\n'}"
 	fi
 
-	if [ -n "${bad_value_keys}" ]
+	if [ -n "${p_bad_val_keys}" ]
 	then
 		reg_failure "Detected config entries with unexpected values."
 		bad_val_entries="$(cat "${ABL_CONF_STAGING_DIR}/bad_val_entries")"
@@ -874,11 +880,11 @@ parse_config()
 		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
 			"Corresponding default config entries:" "${corrected_entries%$'\n'}"
 		add_conf_fix "Replace unexpected values with defaults"
-		luci_bad_val_entries=${bad_val_entries%$'\n'}
-		luci_corrected_entries=${corrected_entries%$'\n'}
+		export luci_bad_val_entries="${bad_val_entries%$'\n'}"
+		export luci_corrected_entries="${corrected_entries%$'\n'}"
 	fi
 
-	if [ -z "${conf_fixes}" ]
+	if [ -z "${p_conf_fixes}" ]
 	then
 		case "${curr_config_format}" in
 			*[!0-9]*|'')
@@ -893,10 +899,12 @@ parse_config()
 		esac
 	fi
 
-	conf_fixes="${conf_fixes%$'\n'}"
-	luci_conf_fixes="${conf_fixes}"
+	p_conf_fixes="${p_conf_fixes%$'\n'}"
 
-	[ -n "${conf_fixes}" ] && return 2
+	eval "${2:-_}"='${p_conf_fixes}' "${3:-_}"='${p_missing_keys}' "${4:-_}"='${p_bad_val_keys}'
+	export luci_conf_fixes="${p_conf_fixes}"
+
+	[ -n "${p_conf_fixes}" ] && return 2
 	:
 }
 
@@ -907,7 +915,7 @@ load_config()
 	print_conf_fixes()
 	{
 		local fix cnt=0 IFS="${_NL_}"
-		for fix in ${conf_fixes}
+		for fix in ${l_conf_fixes}
 		do
 			IFS="${DEFAULT_IFS}"
 			[ -z "${fix}" ] && continue
@@ -917,7 +925,7 @@ load_config()
 		IFS="${DEFAULT_IFS}"
 	}
 
-	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line force_fix=''
+	local key val line force_fix='' l_missing_keys='' l_conf_fixes='' l_bad_val_keys=''
 	[ "${1}" = '-f' ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
@@ -934,7 +942,7 @@ load_config()
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
-	parse_config "${ABL_CONFIG_FILE}"
+	parse_config "${ABL_CONFIG_FILE}" l_conf_fixes l_missing_keys l_bad_val_keys
 	case ${?} in
 		0) return 0 ;;
 		1) log_msg "${tip_msg}"; return 1 ;; # config error with no automatic fix
@@ -946,11 +954,11 @@ load_config()
 	[ -z "${DO_DIALOGS}" ] && [ -z "${force_fix}" ] && { log_msg "${tip_msg}"; return 1; }
 
 	# sanity check
-	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
+	[ -z "${l_conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
 
 	if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
 	then
-		if [ -n "${conf_fixes}" ]
+		if [ -n "${l_conf_fixes}" ]
 		then
 			print_msg -blue "" "Perform following automatic changes? (y|n)"
 			print_conf_fixes
@@ -964,35 +972,34 @@ load_config()
 
 	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
-	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+	fix_config "${l_missing_keys} ${l_bad_val_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 	:
 }
 
 # 1 - missing keys (whitespace-separated)
 fix_config()
 {
-	local missing_keys="${1}"
+	local fix_keys="${1}" fixed_config
 
-	case "${missing_keys}" in
+	case "${fix_keys}" in
 		*DNSMASQ_CONF_D*|*DNSMASQ_INSTANCE*|*DNSMASQ_INDEX*)
 			select_dnsmasq_instance -n || return 1 ;;
 	esac
 
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
-		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" | while IFS="${_NL_}" read -r line
+		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" |
+		while IFS="${_NL_}" read -r def_line
 		do
-			case ${line} in
-				\#*|'') printf '%s\n' "${line}"; continue ;;
+			case "${def_line}" in
+				\#*|'') printf '%s\n' "${def_line}"; continue ;;
 				*=*)
-					key=${line%%=*}
-					case " ${missing_keys} " in
-						*" ${key} "*) printf '%s\n' "${line}"; continue ;;
-						*)
-							eval "val=\"\${${key}}\""
-							printf '%s\n' "${key}=\"${val}\""
-							continue
-					esac
+					key=${def_line%%=*}
+					is_included "${key}" "${fix_keys}" " " && { printf '%s\n' "${def_line}"; continue; }
+					curr_val=
+					eval "curr_val=\"\${${key}}\""
+					printf '%s\n' "${key}=\"${curr_val}\""
+					continue
 			esac
 		done
 	)"
@@ -1021,7 +1028,7 @@ fix_config()
 # 1 - new config file contents
 write_config()
 {
-	local tmp_config="${ABL_CONF_STAGING_DIR}/write-config.tmp" missing_keys conf_fixes
+	local tmp_config="${ABL_CONF_STAGING_DIR}/write-config.tmp"
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
