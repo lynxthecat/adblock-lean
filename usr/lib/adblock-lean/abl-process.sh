@@ -1016,6 +1016,14 @@ export_blocklist()
 
 	local src_d bk_path="${ABL_DIR}/prev_blocklist" file prev_file='' prev_file_compat='' prev_file_compressed=''
 
+	local dir IFS="${_NL_}"
+	for dir in ${ALL_CONF_DIRS}
+	do
+		IFS="${DEFAULT_IFS}"
+		rm -f "${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
+	done
+	IFS="${DEFAULT_IFS}"
+
 	if [ -f "${bk_path}${COMPR_EXT}" ]
 	then
 		log_msg "" "Blocklist backup file already exists."
