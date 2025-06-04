@@ -372,9 +372,11 @@ Just add the files:
 /usr/libexec/abl_custom-script.sh   # if used with your config
 ```
 
-to the list of files to backup in the Configuration tab in LuCi here:
+to the list of files to backup in the Configuration tab in LuCi here (use the IP address of your router):
 
-http://openwrt.lan/cgi-bin/luci/admin/system/flash
+```
+http://OPENWRT_ROUTER_IP/cgi-bin/luci/admin/system/flash
+```
 
 After completing sysupgrade, run the interactive setup again to re-enable adblock-lean:
 `sh /etc/init.d/adblock-lean setup`. To preserve your old config, answer `e` when asked this question:
