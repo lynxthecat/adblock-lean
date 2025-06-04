@@ -249,34 +249,34 @@ https://github.com/hagezi/dns-blocklists
 
 ### Pre-defined presets
 
-adblock-lean includes 5 pre-defined presets (mini, small, medium, large, large_relaxed), each one intended for devices with a certain total memory capacity. When running `adblock-lean setup` or `adblock-lean gen_config`, you can select one of these presets and have the corresponding config options automatically set.
+adblock-lean includes 5 pre-defined presets (mini, small, medium, large, large_relaxed), each one intended for devices with a certain total memory capacity. When running `service adblock-lean setup` or `service adblock-lean gen_config`, you can select one of these presets and have the corresponding config options automatically set.
 
 When selecting a certain preset, the values for options `max_file_part_size_KB`, `max_blocklist_file_size_KB`, `min_good_line_count` are automatically calculated and written to the config file based on expected entries count.
 
-The pre-defined presets (you can pick one when running `service adblock-lean gen_config` or `service adblock-lean setup`) are:
+The pre-defined presets are:
 
 - **Mini**: for devices with 64MB of RAM. Aim for <100k entries. This preset includes circa 85k entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.mini-onlydomains.txt"
+blocklist_urls="hagezi:pro.mini"
 ```
 
 - **Small**: for devices with 128MB of RAM. Aim for <300k entries. This preset includes circa 250k entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
+blocklist_urls="hagezi:pro"
 ```
 
 - **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 350k entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"
+blocklist_urls="hagezi:pro hagezi:tif.mini"
 ```
 
 - **Large**: for devices with 512MB of RAM. This preset includes circa 1M entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
+blocklist_urls="hagezi:pro hagezi:tif"
 ```
 - **Large-Relaxed**: for devices with 1024MB of RAM or more. This preset includes circa 1M entries and same default blocklist URLs as 'Large' but the `max` values are more relaxed and allow for larger fluctuations in downloaded blocklist sizes.
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
+blocklist_urls="hagezi:pro hagezi:tif"
 ```
 
 ### Blocklist compression
