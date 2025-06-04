@@ -23,25 +23,24 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 
 ## Features
 
-adblock-lean includes the following features:
+Main features of adblock-lean:
 
-- automated interactive setup with presets for devices with different memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
-- supports multiple blocklist files downloaded from user-specified urls
-- supports local user-specified blocklist
-- supports multiple allowlist files downloaded from user-specified urls
-- supports local user-specified allowlist
-- supports blocklist compression (which significantly reduces memory consumption) by leveraging the new conf-script functionality of dnsmasq
-- removal of domains found in the allowlist from the blocklist files
-- combining all downloaded and local lists into one final blocklist file
-- configurable minimum and maximum blocklist/allowlist parts and final blocklist size and lines count constraints designed to prevent memory over-use and minimize the chance of loading incomplete blocklist because of a download error
-- various checks and sanitization of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
-- during blocklist update, a compressed copy of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
-- supports concurrent download and processing of blocklist/allowlist parts for faster blocklist updates
-- supports pause and resume of adblocking without re-downloading blocklist/allowlist parts
-- supports optional calls to user-configurable script on success or failure (for example to send an email report)
-- optional automatic blocklist updates
-- automatic check for application updates and self update functionality (initiated by the user)
-- config validation and optional automatic config repair when problems are detected
+- easy **automated interactive setup** with presets for devices based on memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
+- supports **multiple blocklist and/or allowlist files** downloaded from user-specified URLs
+- supports **local blocklist and/or allowlist** files specified by the user
+- supports **automatic blocklist updates**
+- supports **blocklist compression** (which significantly reduces memory consumption) by leveraging the new conf-script functionality of dnsmasq
+- **automatic optimization** of the final blocklist which further reduces memory consumption
+- supports **deduplication** of entries across all blocklist and/or allowlist parts
+- **removes domains found in the allowlist** from the blocklist files in order to reduce final blocklist size
+- **configurable constraints** for minimum and maximum size and lines count in blocklist/allowlist parts and in the final blocklist, designed to prevent memory over-use and minimize the likelihood of loading an incomplete blocklist because of a download error
+- various **checks and sanitization** of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
+- during blocklist update, a **compressed backup copy** of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
+- supports **concurrent download and processing** of blocklist/allowlist parts for faster blocklist updates
+- supports **pause and resume** of adblocking without re-downloading blocklist/allowlist parts
+- supports optional calls to **user-configurable script** on success or failure (for example to send an email report)
+- automatic check for application updates and **self update** functionality (initiated by the user)
+- **config validation** and optional **automatic config repair** when problems are detected
 - strong emphasis on **performance**, **user-friendliness**, **reliability**, **error checking and reporting**, **code quality and readability**
 
 ## Installation on OpenWrt
@@ -101,7 +100,7 @@ Now run the command `service dnsmasq restart`.
 
 ## Usage
 
-adblock-lean is written as a service and `service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
+`service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, adblock-lean will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fall back to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
 
 Additional available commands (use with `service adblock-lean <command>`):
 - `version`: prints adblock-lean version
@@ -122,17 +121,14 @@ Additional available commands (use with `service adblock-lean <command>`):
 - `select_dnsmasq_instance`: analyzes dnsmasq instances and sets required options in the adblock-lean config
 
 ## Basic configuration
-The config file for adblock-lean is located in `/etc/adblock-lean/config`.
+Generally, if you ran the automated setup then you don't have to make any additional configuration changes. If you want to further customize adblocking, this can be achieved by modifying the config file located at `/etc/adblock-lean/config`.
 
-A new compatible config can be generated automatically, which will overwrite the previous config fie:
+The `setup` command is available after installation:
 ```bash
-service adblock-lean gen_config
+service adblock-lean setup
 ```
 
-The `setup` command is available after installation as well:
-```bash
-service adblock-lean setup # runs the interactive setup routine
-```
+This will re-run the setup routine which includes a call to `gen_config` if you choose to create a new config.
 
 For manual configuration, a text editor like nano or vi can be used to modify the config file:
 ```bash
@@ -140,6 +136,8 @@ opkg update
 opkg install nano
 nano /etc/adblock-lean/config
 ```
+
+Make sure to run `service adblock-lean start` after manually modifying the config file.
 
 ## Local Blocklist and Allowlist
 adblock-lean supports the use of a local blocklist or allowlist to supplement and/or override the downloaded blocklists and allowlists. 
@@ -153,7 +151,7 @@ The following features are supported:
 - allow a higher level domain when subdomains are blocked (allow example.com when ads.example.com and tracking.example.com are in the blocklist).
 
 ### Automatic blocklist updates
-Automatic blocklist updates can be enabled via a cron job. When enabled, adblock-lean will run according to schedule specified in the config file, with a delay of random number of minutes (0-60).
+Automatic blocklist updates can be enabled via a cron job. When enabled, adblock-lean will run according to schedule specified in the config file, with a delay of random number of minutes (0-60). The automated `setup` routine offers to set up a daily update schedule and if you accept, creates a daily cron job with the default blocklist update schedule.
 
 The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on the blocklist server; and from a selfish perspective, increase the prospect that the server is not loaded during the download. 
 
@@ -200,10 +198,6 @@ oisd lists can be specified either by the complete download URL or by shortened 
 - Any other raw or dnsmasq format lists of your choice can be used by specifying its download URL, but make sure the list conforms to [supported formats](#supported-formats).
 
 ## Advanced configuration
-
-adblock-lean reads in a config file from `/etc/adblock-lean/config`
-
-Default config can be generated using: `service adblock-lean gen_config`.
 
 **Each configuration option is internally documented in detail with comments in `/etc/adblock-lean/config`.** Short version:
 
@@ -256,34 +250,34 @@ https://github.com/hagezi/dns-blocklists
 
 ### Pre-defined presets
 
-adblock-lean includes 5 pre-defined presets (mini, small, medium, large, large_relaxed), each one intended for devices with a certain total memory capacity. When running `adblock-lean setup` or `adblock-lean gen_config`, you can select one of these presets and have the corresponding config options automatically set.
+adblock-lean includes 5 pre-defined presets (mini, small, medium, large, large_relaxed), each one intended for devices with a certain total memory capacity. When running `service adblock-lean setup` or `service adblock-lean gen_config`, you can select one of these presets and have the corresponding config options automatically set.
 
 When selecting a certain preset, the values for options `max_file_part_size_KB`, `max_blocklist_file_size_KB`, `min_good_line_count` are automatically calculated and written to the config file based on expected entries count.
 
-The pre-defined presets (you can pick one when running `service adblock-lean gen_config` or `service adblock-lean setup`) are:
+The pre-defined presets are:
 
 - **Mini**: for devices with 64MB of RAM. Aim for <100k entries. This preset includes circa 85k entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.mini-onlydomains.txt"
+blocklist_urls="hagezi:pro.mini"
 ```
 
 - **Small**: for devices with 128MB of RAM. Aim for <300k entries. This preset includes circa 250k entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
+blocklist_urls="hagezi:pro"
 ```
 
 - **Medium**: for devices with 256MB of RAM. Aim for <600k entries. This preset includes circa 350k entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"
+blocklist_urls="hagezi:pro hagezi:tif.mini"
 ```
 
 - **Large**: for devices with 512MB of RAM. This preset includes circa 1M entries
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
+blocklist_urls="hagezi:pro hagezi:tif"
 ```
 - **Large-Relaxed**: for devices with 1024MB of RAM or more. This preset includes circa 1M entries and same default blocklist URLs as 'Large' but the `max` values are more relaxed and allow for larger fluctuations in downloaded blocklist sizes.
 ```bash
-blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
+blocklist_urls="hagezi:pro hagezi:tif"
 ```
 
 ### Blocklist compression
@@ -295,7 +289,7 @@ blocklist_urls="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wil
 ## Whitelist mode
 This mode can be used to implement parental control or similar functionality while also adblocking inside the allowed domains. It can be enabled by setting the config option `whitelist_mode` to `1`. In this mode all domain names will be blocked, except for domains (and their subdomains) included in local and/or downloaded allowlists. In this mode, if blocklists are used in addition to allowlists, addresses which are included in the blocklists and which are subdomains of allowed domains - will be blocked as well.
 
-For example, if the an allowlist has this entry: `google.com` and a blocklist has this entry: `ads.google.com`, and `whitelist_mode` is set to `1`, then `ads.google.com` will be blocked, while `google.com` and `mail.google.com` (and any other subdomain of `google.com` which is not included in the blocklist) will work.
+For example, if an allowlist has this entry: `google.com` and a blocklist has this entry: `ads.google.com`, and `whitelist_mode` is set to `1`, then `ads.google.com` will be blocked, while `google.com` and `mail.google.com` (and any other subdomain of `google.com` which is not included in the blocklist) will work.
 
 Note that in this mode, the test domains (specified via the option `test_domains`) will be automatically added to the allowlist in order for the checks to pass. You can use empty string in that option - this will bypass that check and block the default domains (google.com, microsoft.com, amazon.com). Alternatively, you can specify preferred test domains instead of the default ones.
 
@@ -379,9 +373,11 @@ Just add the files:
 /usr/libexec/abl_custom-script.sh   # if used with your config
 ```
 
-to the list of files to backup in the Configuration tab in LuCi here:
+to the list of files to backup in the Configuration tab in LuCi here (use the IP address of your router):
 
-http://openwrt.lan/cgi-bin/luci/admin/system/flash
+```
+http://OPENWRT_ROUTER_IP/cgi-bin/luci/admin/system/flash
+```
 
 After completing sysupgrade, run the interactive setup again to re-enable adblock-lean:
 `sh /etc/init.d/adblock-lean setup`. To preserve your old config, answer `e` when asked this question:
@@ -402,11 +398,6 @@ During certain updates, adblock-lean will require a configuration update. adbloc
 If automatic config update fails for any reason, a new compatible config can be generated, which will overwrite the previous config fie:
 ```bash
 service adblock-lean gen_config
-```
-
-After updating adblock-lean, run the command:
-```bash
-service adblock-lean start
 ```
 
 ## Advanced version update options
