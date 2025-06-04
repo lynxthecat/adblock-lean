@@ -150,7 +150,7 @@ The following features are supported:
 - allow a higher level domain when subdomains are blocked (allow example.com when ads.example.com and tracking.example.com are in the blocklist).
 
 ### Automatic blocklist updates
-Automatic blocklist updates can be enabled via a cron job. When enabled, adblock-lean will run according to schedule specified in the config file, with a delay of random number of minutes (0-60).
+Automatic blocklist updates can be enabled via a cron job. When enabled, adblock-lean will run according to schedule specified in the config file, with a delay of random number of minutes (0-60). The automated `setup` routine offers to set up a daily update schedule and if you accept, creates a daily cron job with the default blocklist update schedule.
 
 The random delay serves to prevent a thundering herd: from an altruistic perspective, amelioerate load on the blocklist server; and from a selfish perspective, increase the prospect that the server is not loaded during the download. 
 
