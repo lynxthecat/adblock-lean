@@ -399,11 +399,6 @@ If automatic config update fails for any reason, a new compatible config can be 
 service adblock-lean gen_config
 ```
 
-After updating adblock-lean, run the command:
-```bash
-service adblock-lean start
-```
-
 ## Advanced version update options
 
 adblock-lean implements a flexible update system which supports following options (use with `service adblock-lean update`):
