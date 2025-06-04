@@ -25,7 +25,7 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 
 Main features of adblock-lean:
 
-- easy **automated interactive setup** with presets for devices with different memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
+- easy **automated interactive setup** with presets for devices based on memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
 - supports **multiple blocklist and/or allowlist files** downloaded from user-specified URLs
 - supports **local blocklist and/or allowlist** files specified by the user
 - supports **automatic blocklist updates**
