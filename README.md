@@ -99,7 +99,7 @@ Now run the command `service dnsmasq restart`.
 
 ## Usage
 
-adblock-lean is written as a service and `service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, the script will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fallback to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
+`service adblock-lean start` will process any local blocklist/allowlist, download blocklist/allowlist parts, generate a new merged blocklist file and set up dnsmasq with it. Various checks are performed and, depending on the outcome of those checks, adblock-lean will either: accept the new blocklist file; reject the blocklist file if it didn't pass the checks and fall back to a previous blocklist file if available; or as a last resort restart dnsmasq with no blocklist file.
 
 Additional available commands (use with `service adblock-lean <command>`):
 - `version`: prints adblock-lean version
