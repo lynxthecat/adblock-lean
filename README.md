@@ -120,17 +120,14 @@ Additional available commands (use with `service adblock-lean <command>`):
 - `select_dnsmasq_instance`: analyzes dnsmasq instances and sets required options in the adblock-lean config
 
 ## Basic configuration
-The config file for adblock-lean is located in `/etc/adblock-lean/config`.
+Generally, if you ran the automated setup then you don't have to make any additional configuration changes. If you want to further customize adblocking, this can be done by modifying the config file located in `/etc/adblock-lean/config`.
 
-A new compatible config can be generated automatically, which will overwrite the previous config fie:
+The `setup` command is available after installation:
 ```bash
-service adblock-lean gen_config
+service adblock-lean setup
 ```
 
-The `setup` command is available after installation as well:
-```bash
-service adblock-lean setup # runs the interactive setup routine
-```
+This will re-run the setup routine which includes a call to `gen_config` if you choose to create a new config.
 
 For manual configuration, a text editor like nano or vi can be used to modify the config file:
 ```bash
@@ -138,6 +135,8 @@ opkg update
 opkg install nano
 nano /etc/adblock-lean/config
 ```
+
+Make sure to run `service adblock-lean start` after manually modifying the config file.
 
 ## Local Blocklist and Allowlist
 adblock-lean supports the use of a local blocklist or allowlist to supplement and/or override the downloaded blocklists and allowlists. 
