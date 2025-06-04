@@ -198,10 +198,6 @@ oisd lists can be specified either by the complete download URL or by shortened 
 
 ## Advanced configuration
 
-adblock-lean reads in a config file from `/etc/adblock-lean/config`
-
-Default config can be generated using: `service adblock-lean gen_config`.
-
 **Each configuration option is internally documented in detail with comments in `/etc/adblock-lean/config`.** Short version:
 
 | Option                              | Description                                                                                   |
