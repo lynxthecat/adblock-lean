@@ -23,25 +23,23 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 
 ## Features
 
-adblock-lean includes the following features:
+Main features of adblock-lean:
 
-- automated interactive setup with presets for devices with different memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
-- supports multiple blocklist files downloaded from user-specified urls
-- supports local user-specified blocklist
-- supports multiple allowlist files downloaded from user-specified urls
-- supports local user-specified allowlist
-- supports blocklist compression (which significantly reduces memory consumption) by leveraging the new conf-script functionality of dnsmasq
-- removal of domains found in the allowlist from the blocklist files
-- combining all downloaded and local lists into one final blocklist file
-- configurable minimum and maximum blocklist/allowlist parts and final blocklist size and lines count constraints designed to prevent memory over-use and minimize the chance of loading incomplete blocklist because of a download error
-- various checks and sanitization of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
-- during blocklist update, a compressed copy of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
-- supports concurrent download and processing of blocklist/allowlist parts for faster blocklist updates
-- supports pause and resume of adblocking without re-downloading blocklist/allowlist parts
-- supports optional calls to user-configurable script on success or failure (for example to send an email report)
-- optional automatic blocklist updates
-- automatic check for application updates and self update functionality (initiated by the user)
-- config validation and optional automatic config repair when problems are detected
+- easy **automated interactive setup** with presets for devices with different memory capacity (64MiB/128MiB/256MiB/512MiB/1024MiB and higher)
+- supports **multiple blocklist and/or allowlist files** downloaded from user-specified URLs
+- supports **local blocklist and/or allowlist** files specified by the user
+- supports **automatic blocklist updates**
+- supports **blocklist compression** (which significantly reduces memory consumption) by leveraging the new conf-script functionality of dnsmasq
+- **automatic optimization** of the final blocklist which further reduces memory consumption
+- **removes domains found in the allowlist** from the blocklist files in order to reduce final blocklist size
+- **configurable constraints** for minimum and maximum size and lines count in blocklist/allowlist parts and in the final blocklist, designed to prevent memory over-use and minimize the chance of loading incomplete blocklist because of a download error
+- various **checks and sanitization** of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
+- during blocklist update, a **compressed backup copy** of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
+- supports **concurrent download and processing** of blocklist/allowlist parts for faster blocklist updates
+- supports **pause and resume** of adblocking without re-downloading blocklist/allowlist parts
+- supports optional calls to **user-configurable script** on success or failure (for example to send an email report)
+- automatic check for application updates and **self update** functionality (initiated by the user)
+- **config validation** and optional **automatic config repair** when problems are detected
 - strong emphasis on **performance**, **user-friendliness**, **reliability**, **error checking and reporting**, **code quality and readability**
 
 ## Installation on OpenWrt
