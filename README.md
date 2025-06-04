@@ -33,7 +33,7 @@ Main features of adblock-lean:
 - **automatic optimization** of the final blocklist which further reduces memory consumption
 - supports **deduplication** of entries across all blocklist and/or allowlist parts
 - **removes domains found in the allowlist** from the blocklist files in order to reduce final blocklist size
-- **configurable constraints** for minimum and maximum size and lines count in blocklist/allowlist parts and in the final blocklist, designed to prevent memory over-use and minimize the chance of loading incomplete blocklist because of a download error
+- **configurable constraints** for minimum and maximum size and lines count in blocklist/allowlist parts and in the final blocklist, designed to prevent memory over-use and minimize the likelihood of loading an incomplete blocklist because of a download error
 - various **checks and sanitization** of downloaded blocklist/allowlist parts designed to avoid loading incompatible, corrupted or malicious data
 - during blocklist update, a **compressed backup copy** of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
 - supports **concurrent download and processing** of blocklist/allowlist parts for faster blocklist updates
