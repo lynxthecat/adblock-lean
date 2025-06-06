@@ -290,7 +290,7 @@ do_setup()
 	case "${PKG_MANAGER}" in
 		apk|opkg)
 			install_packages && luci_pkgs_install_failed=
-			detect_utils -f ;;
+			detect_main_utils -f ;;
 		*)
 			log_msg -yellow "" "Can not automatically check and install recommended packages (${RECOMMENDED_PKGS})." \
 				"Consider to check for their presence and install if needed."
@@ -324,27 +324,31 @@ mk_preset_arrays()
 		large_relaxed_cnt=1200 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 
+# sets $blocklist_urls, $min_good_line_count, $max_blocklist_file_size_KB, $max_file_part_size_KB
+# requires preset vars to be set
 # 1 - mini|small|medium|large|large_relaxed
 # 2 - (optional) '-d' to print the description
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
-gen_preset()
+set_preset_vars()
 {
-	# rounds down to reasonable number of digits, based on the input number of digits
+	# keeps first two digits, replaces others with 0's
 	# 1 - var for I/O
 	reasonable_round()
 	{
-		local input res shift_digits
+		local input factor neg='' me=reasonable_round
 		eval "input=\"\${${1}}\""
-		shift_digits=$(( ${#input}-2 ))
-		case "${shift_digits}" in
-			-*|'')
-				shift_digits=0
-				shifted="${input}" ;; # shell doesn't handle ${var:0:-0} correctly
-			*)	shifted=${input:0:-${shift_digits}}
+		case "${input}" in -*) neg='-' input="${input#-}"; esac
+		input="${input#"${input%%[!0]*}"}"
+		: "${input:=0}"
+		case "${input}" in
+			*[!0-9]*) reg_failure "${me}: invalid input '${input}'."; return 1 ;;
+			?|??) return 0 ;;
+			????????????*) reg_failure "${me}: input '${input}' too large."; return 1 ;;
+			*)
+				factor=$(( 10**(${#input}-2) ))
+				eval "${1}=${neg}$(( (input/factor) * factor ))"
 		esac
-		res="$(( shifted * 10**shift_digits ))"
-		eval "${1}"='${res}'
-		: "${res}"
+		:
 	}
 
 	local val field mem tgt_lines_cnt_k lim_coeff final_entry_size_B source_entry_size_B
@@ -359,18 +363,18 @@ gen_preset()
 
 	# target_lines_cnt / 3.5
 	min_good_line_count=$((tgt_lines_cnt_k*10000/35))
-	reasonable_round min_good_line_count
+	reasonable_round min_good_line_count || return 1
 
 	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
 	max_blocklist_file_size_KB=$(( (tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024 ))
-	reasonable_round max_blocklist_file_size_KB
+	reasonable_round max_blocklist_file_size_KB || return 1
 
 	case "${1}" in
 		mini|small) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
 		*)
 			# target_lines_cnt * source_entry_size_B * lim_coeff * 1.03
 			max_file_part_size_KB=$(( (tgt_lines_cnt_k*1030*source_entry_size_B*lim_coeff)/1024 ))
-			reasonable_round max_file_part_size_KB
+			reasonable_round max_file_part_size_KB || return 1
 	esac
 
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
@@ -429,8 +433,8 @@ print_def_config()
 
 	mk_preset_arrays
 	: "${preset:=small}"
-	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "print_def_config: \$preset var has invalid value."; exit 1; }
-	gen_preset "${preset}" -n
+	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "print_def_config: \$preset var has invalid value."; return 1; }
+	set_preset_vars "${preset}" -n || return 1
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
 
@@ -540,16 +544,16 @@ print_def_config()
 # generates config
 do_gen_config()
 {
-	local cnt
+	local cnt totalmem preset
 
 	if [ -n "${DO_DIALOGS}" ] && [ -z "${luci_preset}" ]
 	then
 		mk_preset_arrays
-		mk_def_preset || print_msg "Skipping automatic preset recommendation."
+		get_def_preset preset totalmem || print_msg "Skipping automatic preset recommendation."
 		if [ -n "${preset}" ]
 		then
 			print_msg "" "Based on the total usable memory of this device ($(bytes2human $((totalmem*1024)) )), the recommended preset is '${purple}${preset}${n_c}':"
-			gen_preset "${preset}"
+			set_preset_vars "${preset}" || return 1
 			print_msg "" "[C]onfirm this preset or [p]ick another preset?"
 			pick_opt "c|p"
 		else
@@ -563,7 +567,7 @@ do_gen_config()
 			for preset in ${ALL_PRESETS}
 			do
 				add2list presets_case_opts "${preset}" "|"
-				gen_preset "${preset}" -d
+				set_preset_vars "${preset}" -d || return 1
 			done
 			print_msg "" "Pick preset:"
 			pick_opt "${presets_case_opts}"
@@ -572,7 +576,7 @@ do_gen_config()
 	else
 		# determine preset for luci
 		case "${luci_preset}" in
-			''|auto) mk_def_preset || { log_msg "Falling back to preset 'small'."; preset=small; } ;;
+			''|auto) get_def_preset preset totalmem || { log_msg "Falling back to preset 'small'."; preset=small; } ;;
 			*) preset="${luci_preset}"
 		esac
 	fi
@@ -615,29 +619,41 @@ do_gen_config()
 	:
 }
 
-# sets ${preset} to recommended preset, depending on system memory capacity
-mk_def_preset()
+# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
+# expects preset vars to be set
+get_def_preset()
 {
-	unset preset totalmem
-	local mem cnt
-	local IFS="${DEFAULT_IFS}"
-	read -r _ totalmem _ < /proc/meminfo
-	case "${totalmem}" in
-		''|*[!0-9]*) reg_failure "\$totalmem has invalid value '${totalmem}'. Failed to determine system memory capacity."; return 1 ;;
+	are_var_names_safe "${1}" "${2}" || return 1
+	unset "${1}" "${2}"
+	local _totalmem _mem _preset IFS="${DEFAULT_IFS}"
+	[ -n "${ALL_PRESETS}" ] && eval "[ -n \"\${${ALL_PRESETS%% *}_mem}\" ]" ||
+		{ reg_failure "get_def_preset: essential vars are unset."; return 1; }
+
+	read -r _ _totalmem _ < /proc/meminfo
+	case "${_totalmem}" in
+		''|*[!0-9]*)
+			reg_failure "\$_totalmem has invalid value '${_totalmem}'. Failed to determine system memory capacity."
+			log_msg "Unable to select best preset for this system."
+			return 1 ;;
 		*)
-			for preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | ${SED_CMD} 'x;1!H;$!d;x') # loop over presets in reverse order
+			for _preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | ${SED_CMD} 'x;1!H;$!d;x') # loop over presets in reverse order
 			do
-				eval "mem=\"\${${preset}_mem}\""
+				eval "_mem=\"\${${_preset}_mem}\""
 				# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
-				[ "${totalmem}" -ge $((mem * 800)) ] && break
+				[ "${_totalmem}" -ge $((_mem * 800)) ] && break
 			done
 	esac
+	eval "${1}"='${_preset}' "${2}"='${_totalmem}'
 	:
 }
 
 # validate config and assign to variables
 #
 # 1 - path to file
+# Optional:
+#   2 - var to output conf fixes
+#   3 - var to output missing keys
+#   4 - var to output bad value keys
 #
 # return codes:
 # 0 - Success
@@ -645,20 +661,22 @@ mk_def_preset()
 # 2 - Unexpected, missing or legacy-formatted (no double quotes) entries found
 # 3 - Internal parser error
 #
-# sets ${missing_keys}, ${conf_fixes}, ${bad_value_keys}
-# and variables for luci:
+# sets variables for luci:
 # *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
-# *_bad_conf_format *_conf_fixes *_bad_value_keys
-# shellcheck disable=SC2317,SC2034
+#     *_bad_conf_format *_conf_fixes *_bad_value_keys
 parse_config()
 {
-	add_conf_fix() { conf_fixes="${conf_fixes}${1}"$'\n'; }
+	add_conf_fix() { p_conf_fixes="${p_conf_fixes}${1}"$'\n'; }
 
 	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' \
-		entry key val bad_val_entries='' corrected_entries='' valid_values all_valid_values \
+		key val bad_val_entries='' corrected_entries='' \
+		p_conf_fixes='' p_missing_keys='' p_bad_val_keys='' \
 		sed_conf_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d'
 
-	unset curr_config_format def_config_format bad_value_keys \
+	are_var_names_safe "${2}" "${3}" "${4}" || return 1
+	eval "${2:-_}='' ${3:-_}='' ${4:-_}='' "
+
+	unset curr_config_format def_config_format \
 		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_conf_format luci_conf_fixes preset
 
@@ -687,11 +705,11 @@ parse_config()
 
 	# get config versions
 	curr_config_format="$(get_config_format "${1}")"
-	luci_curr_config_format=${curr_config_format}
+	export luci_curr_config_format="${curr_config_format}"
 	def_config_format="$(printf %s "${def_config}" | get_config_format)"
-	luci_def_config_format=${def_config_format}
+	export luci_def_config_format="${def_config_format}"
 
-	local parse_vars valid_lines def_lines_arr
+	local parse_vars valid_lines
 	# extract valid values from default config
 	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
@@ -804,9 +822,9 @@ parse_config()
 					missing_keys=missing_keys key " "
 				}
 			}
-			print "missing_keys=\"" missing_keys "\" " \
+			print "p_missing_keys=\"" missing_keys "\" " \
 				"unexp_keys=\"" unexp_keys "\" " \
-				"bad_value_keys=\"" bad_val_keys "\" "
+				"p_bad_val_keys=\"" bad_val_keys "\" "
 			exit rv
 		}'
 	)" 2> "${parser_error_file}" ||
@@ -843,21 +861,21 @@ parse_config()
 		unexp_entries="$(cat "${ABL_CONF_STAGING_DIR}/unexp_entries")"
 		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
-		luci_unexp_keys=${unexp_keys% }
-		luci_unexp_entries=${unexp_entries%$'\n'}
+		export luci_unexp_keys="${unexp_keys% }"
+		export luci_unexp_entries="${unexp_entries%$'\n'}"
 	fi
 
-	if [ -n "${missing_keys}" ]
+	if [ -n "${p_missing_keys}" ]
 	then
-		reg_failure "Missing keys in config: '${missing_keys% }'."
+		reg_failure "Missing keys in config: '${p_missing_keys% }'."
 		missing_entries="$(cat "${ABL_CONF_STAGING_DIR}/missing_entries")"
 		print_msg "Corresponding default config entries:" "${missing_entries%$'\n'}"
 		add_conf_fix "Re-add missing config entries with default values"
-		luci_missing_keys=${missing_keys% }
-		luci_missing_entries=${missing_entries%$'\n'}
+		export luci_missing_keys="${p_missing_keys% }"
+		export luci_missing_entries="${missing_entries%$'\n'}"
 	fi
 
-	if [ -n "${bad_value_keys}" ]
+	if [ -n "${p_bad_val_keys}" ]
 	then
 		reg_failure "Detected config entries with unexpected values."
 		bad_val_entries="$(cat "${ABL_CONF_STAGING_DIR}/bad_val_entries")"
@@ -865,11 +883,11 @@ parse_config()
 		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
 			"Corresponding default config entries:" "${corrected_entries%$'\n'}"
 		add_conf_fix "Replace unexpected values with defaults"
-		luci_bad_val_entries=${bad_val_entries%$'\n'}
-		luci_corrected_entries=${corrected_entries%$'\n'}
+		export luci_bad_val_entries="${bad_val_entries%$'\n'}"
+		export luci_corrected_entries="${corrected_entries%$'\n'}"
 	fi
 
-	if [ -z "${conf_fixes}" ]
+	if [ -z "${p_conf_fixes}" ]
 	then
 		case "${curr_config_format}" in
 			*[!0-9]*|'')
@@ -884,10 +902,12 @@ parse_config()
 		esac
 	fi
 
-	conf_fixes="${conf_fixes%$'\n'}"
-	luci_conf_fixes="${conf_fixes}"
+	p_conf_fixes="${p_conf_fixes%$'\n'}"
 
-	[ -n "${conf_fixes}" ] && return 2
+	eval "${2:-_}"='${p_conf_fixes}' "${3:-_}"='${p_missing_keys}' "${4:-_}"='${p_bad_val_keys}'
+	export luci_conf_fixes="${p_conf_fixes}"
+
+	[ -n "${p_conf_fixes}" ] && return 2
 	:
 }
 
@@ -898,7 +918,7 @@ load_config()
 	print_conf_fixes()
 	{
 		local fix cnt=0 IFS="${_NL_}"
-		for fix in ${conf_fixes}
+		for fix in ${l_conf_fixes}
 		do
 			IFS="${DEFAULT_IFS}"
 			[ -z "${fix}" ] && continue
@@ -908,7 +928,7 @@ load_config()
 		IFS="${DEFAULT_IFS}"
 	}
 
-	local conf_fixes='' fixed_config='' missing_keys='' bad_value_keys='' key val line force_fix=''
+	local key val line force_fix='' l_missing_keys='' l_conf_fixes='' l_bad_val_keys=''
 	[ "${1}" = '-f' ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
@@ -925,7 +945,7 @@ load_config()
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
-	parse_config "${ABL_CONFIG_FILE}"
+	parse_config "${ABL_CONFIG_FILE}" l_conf_fixes l_missing_keys l_bad_val_keys
 	case ${?} in
 		0) return 0 ;;
 		1) log_msg "${tip_msg}"; return 1 ;; # config error with no automatic fix
@@ -937,11 +957,11 @@ load_config()
 	[ -z "${DO_DIALOGS}" ] && [ -z "${force_fix}" ] && { log_msg "${tip_msg}"; return 1; }
 
 	# sanity check
-	[ -z "${conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
+	[ -z "${l_conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
 
 	if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
 	then
-		if [ -n "${conf_fixes}" ]
+		if [ -n "${l_conf_fixes}" ]
 		then
 			print_msg -blue "" "Perform following automatic changes? (y|n)"
 			print_conf_fixes
@@ -955,35 +975,34 @@ load_config()
 
 	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
-	fix_config "${missing_keys} ${bad_value_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+	fix_config "${l_missing_keys} ${l_bad_val_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 	:
 }
 
 # 1 - missing keys (whitespace-separated)
 fix_config()
 {
-	local missing_keys="${1}"
+	local fix_keys="${1}" fixed_config
 
-	case "${missing_keys}" in
+	case "${fix_keys}" in
 		*DNSMASQ_CONF_D*|*DNSMASQ_INSTANCE*|*DNSMASQ_INDEX*)
 			select_dnsmasq_instance -n || return 1 ;;
 	esac
 
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
-		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" | while IFS="${_NL_}" read -r line
+		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" |
+		while IFS="${_NL_}" read -r def_line
 		do
-			case ${line} in
-				\#*|'') printf '%s\n' "${line}"; continue ;;
+			case "${def_line}" in
+				\#*|'') printf '%s\n' "${def_line}"; continue ;;
 				*=*)
-					key=${line%%=*}
-					case " ${missing_keys} " in
-						*" ${key} "*) printf '%s\n' "${line}"; continue ;;
-						*)
-							eval "val=\"\${${key}}\""
-							printf '%s\n' "${key}=\"${val}\""
-							continue
-					esac
+					key=${def_line%%=*}
+					is_included "${key}" "${fix_keys}" " " && { printf '%s\n' "${def_line}"; continue; }
+					curr_val=
+					eval "curr_val=\"\${${key}}\""
+					printf '%s\n' "${key}=\"${curr_val}\""
+					continue
 			esac
 		done
 	)"
@@ -1012,7 +1031,7 @@ fix_config()
 # 1 - new config file contents
 write_config()
 {
-	local tmp_config="${ABL_CONF_STAGING_DIR}/write-config.tmp" missing_keys conf_fixes
+	local tmp_config="${ABL_CONF_STAGING_DIR}/write-config.tmp"
 
 	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
 
@@ -1379,36 +1398,9 @@ do_select_dnsmasq_instance() {
 
 clean_dnsmasq_dir()
 {
-	# shellcheck disable=SC2317
-	add_conf_dir()
-	{
-		local confdir
-		config_get confdir "${1}" confdir
-		add2list ALL_CONF_DIRS "${confdir}"
-	}
-
-	# gather conf dirs of running instances
-	get_dnsmasq_instances
-	# gather conf dirs of configured instances
-
-	# this is needed when running via 'sh /etc/init.d/adblock-lean'
-	if [ -z "${ABL_LIB_FUNCTIONS_SOURCED}" ]
-	then
-		# shellcheck source=/dev/null
-		check_func config_load 1>/dev/null || . /lib/functions.sh || { reg_failure "Failed to source /lib/functions.sh"; exit 1; }
-		ABL_LIB_FUNCTIONS_SOURCED=1
-	fi
-
-	config_load dhcp
-	config_foreach add_conf_dir dnsmasq
-	# gather conf dirs from /tmp/
-	local dir tmp_conf_dirs IFS="${_NL_}"
-	tmp_conf_dirs="$(find /tmp/ -type d \( -name "dnsmasq.cfg*" -o -name dnsmasq.d \))"
-	for dir in ${tmp_conf_dirs}
-	do
-		add2list ALL_CONF_DIRS "${dir}"
-	done
-
+	[ -n "${ALL_CONF_DIRS}" ] || { get_dnsmasq_instances; [ -n "${ALL_CONF_DIRS}" ]; } ||
+		{ reg_failure "Failed to detect dnsmasq conf directory. Can not remove adblock-lean files."; return 1; }
+	local IFS="${_NL_}"
 	for dir in ${ALL_CONF_DIRS}
 	do
 		IFS="${DEFAULT_IFS}"
@@ -1455,10 +1447,40 @@ get_dnsmasq_instance_ns()
 # ALL_CONF_DIRS, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
 # ${instance}_INDEX, ${instance}_RUNNING
 get_dnsmasq_instances() {
-	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt i s f dir
+	# shellcheck disable=SC2317
+	add_conf_dir()
+	{
+		local confdir
+		config_get confdir "${1}" confdir
+		[ -n "${confdir}" ] && add2list ALL_CONF_DIRS "${confdir}"
+	}
+
+	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt i s f dir 
 	DNSMASQ_INSTANCES=
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -blue "Checking dnsmasq instances."
+
+	# gather conf dirs from /etc/config/dhcp
+	if [ -z "${DHCP_LOADED}" ]
+	then
+		# shellcheck source=/dev/null
+		{ check_func config_load 1>/dev/null || . /lib/functions.sh; } &&
+		config_load dhcp ||
+			{ reg_failure "Failed to load /etc/config/dhcp"; return 1; }
+		DHCP_LOADED=1
+	fi
+
+	config_foreach add_conf_dir dnsmasq
+
+	# gather conf dirs from /tmp/
+	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
+	do
+		[ -n "${dir}" ] && [ -d "${dir}" ] || continue
+		add2list ALL_CONF_DIRS "${dir}"
+	done
+
+	# gather info from '/etc/init.d/dnsmasq info'
+
 	# shellcheck source=/dev/null
 	. /usr/share/libubox/jshn.sh &&
 	json_load "$(/etc/init.d/dnsmasq info)" &&

@@ -357,50 +357,66 @@ rc_enabled()
 
 detect_util()
 {
+	unexp_arg() { reg_failure "${me}: unexpected argument '${1}'."; }
+
 	local du_out_var="${1}" gen_name="${2}" specific_name="${3}" specific_path="${4}" \
-		res_cmd='' res_name='' _util _util_path='' busybox_variant_avail=''
+		res_cmd='' res_name='' _util _util_path='' busybox_variant_avail='' skip_links='' path_exists='' path_is_symlink='' \
+		opt me=detect_util
+
+	[ ${#} -ge 4 ] || { reg_failure "${me}: not enough arguments"; return 1; }
+	shift 4
+
+	while getopts :bs opt
+	do
+		case "${opt}" in
+			b) busybox_variant_avail=1 ;;
+			s) skip_links=1 ;;
+			*) unexp_arg "${opt}"; return 1;
+		esac
+	done
+	shift $((OPTIND-1))
+	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
 
 	are_var_names_safe "${du_out_var}" || return 1
 
-	[ "${5}" = '-b' ] && busybox_variant_avail=1
-
-	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ] && [ ! -h "${specific_path}" ] && [ ! -L "${specific_path}" ]
+	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ]
 	then
-		res_cmd="${specific_path}"
+		_util_path="${specific_path}" path_exists=1
 	elif
-		{ [ -n "${specific_path}" ] && { [ -h "${specific_path}" ] || [ -L "${specific_path}" ]; } &&
-		res_name="${specific_path}"; } ||
 		{ [ -n "${specific_name}" ] && check_util "${specific_name}" && res_name="${specific_name}"; } ||
-		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; } &&
-		_util_path="$(command -v "${res_name}")" &&
-		# get paths
+		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; }
+	then
+		_util_path="$(command -v "${res_name}")"
+	fi
+
+	if [ -n "${_util_path}" ] &&
 		{
-			if [ -f "${_util_path}" ] && [ ! -h "${_util_path}" ] && [ ! -L "${_util_path}" ]
-			then
-				# path is not symlink
-				res_cmd="${_util_path}"
-			elif [ -h "${_util_path}" ] || [ -L "${_util_path}" ]
+			[ -L "${_util_path}" ] && path_is_symlink=1
+			if [ -n "${path_is_symlink}" ] && [ -z "${skip_links}" ]
 			then
 				# resolve symlinks
 				_util_path="$(readlink "${_util_path}")" &&
-				[ -n "${_util_path}" ] &&
 				case "${_util_path}" in
-					busybox|/*) ;;
+					busybox|/bin/busybox) _util_path="/bin/busybox ${gen_name}" ;;
+					''|/) false ;;
+					/*) : ;;
 					*) util_path="$(command -v "${util_path}")" &&
 						case "${util_path}" in
-							/) false ;;
-							/*) ;;
+							''|/) false ;;
+							/*) : ;;
 							*) false
 						esac
-				esac &&
-				case "${_util_path}" in
-					busybox|/bin/busybox) res_cmd="/bin/busybox ${gen_name}" ;;
-					/*) res_cmd="${_util_path}" ;;
 				esac
+			elif [ -z "${path_is_symlink}" ] && { [ -n "${path_exists}" ] || [ -f "${_util_path}" ]; }
+			then
+				# path is not symlink
+				:
+			else
+				false
 			fi
-		} && [ -n "${res_cmd}" ]
+		}
 	then
-		:
+		res_cmd="${_util_path}"
 	elif [ -n "${busybox_variant_avail}" ]
 	then
 		res_cmd="/bin/busybox ${gen_name}"
@@ -415,19 +431,18 @@ detect_util()
 # 1 (optional) : '-f' to force re-detection
 # sets $AWK_CMD, $SED_CMD, $SORT_CMD
 # shellcheck disable=SC2120
-detect_utils()
+detect_main_utils()
 {
-	[ -n "${UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
+	[ -n "${MAIN_UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
 	unset SED_CMD AWK_CMD SORT_CMD
 	local failed_utils=''
 
-	detect_util SED_CMD sed "" "/usr/libexec/sed-gnu" -b || add2list failed_utils sed ', '
-	detect_util AWK_CMD awk gawk "/usr/bin/gawk" -b || add2list failed_utils awk ', '
-	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b || add2list failed_utils sort ', '
+	detect_util SED_CMD sed "" "/usr/libexec/sed-gnu" -b -s || add2list failed_utils sed ', '
+	detect_util AWK_CMD awk gawk "/usr/bin/gawk" -b -s || add2list failed_utils awk ', '
+	detect_util SORT_CMD sort "" "/usr/libexec/sort-coreutils" -b -s || add2list failed_utils sort ', '
 
 	[ -z "${failed_utils}" ] || { reg_failure "Can not find essential utilities: ${failed_utils}.";  return 1; }
-	export UTILS_DETECTED=1
-
+	export MAIN_UTILS_DETECTED=1
 	:
 }
 
@@ -812,12 +827,16 @@ get_abl_run_state()
 {
 	[ -n "${DNSMASQ_CONF_D}" ] || { reg_failure "\$DNSMASQ_CONF_D is not set"; return 1; }
 	local f
-	for f in "${DNSMASQ_CONF_D}/.abl-blocklist${COMPR_EXT}" "${DNSMASQ_CONF_D}/abl-blocklist"
+	for f in "${DNSMASQ_CONF_D}/.abl-blocklist"* "${DNSMASQ_CONF_D}/abl-blocklist"
 	do
-		[ -f "${f}" ] && return 0
+		[ -n "${f}" ] && [ -f "${f}" ] && return 0
 	done
 
-	[ -f "${ABL_DIR}/prev_blocklist${COMPR_EXT}" ] && return 3
+	for f in "${ABL_DIR}/prev_blocklist"*
+	do
+		[ -n "${f}" ] && [ -f "${f}" ] && return 3
+	done
+
 	return 4
 }
 
@@ -1550,7 +1569,7 @@ start()
 		sleep "${random_delay_mins}m"
 	fi
 
-	try_export_existing_blocklist
+	try_export_blocklist
 	[ ${?} = 1 ] && exit 1
 
 	FAIL_STOP_REQ=1
@@ -1687,7 +1706,7 @@ pause()
 	esac
 	FAIL_STOP_REQ=1
 	reg_action -purple "Pausing adblock-lean." || exit 1
-	try_export_existing_blocklist || exit 1
+	try_export_blocklist || exit 1
 	restart_dnsmasq || exit 1
 	FAIL_STOP_REQ=
 	log_msg -purple "adblock-lean is now paused."
@@ -1967,7 +1986,7 @@ then
 fi
 rm -f /tmp/abl-test
 
-detect_utils || graceful_exit 1
+detect_main_utils || graceful_exit 1
 
 # register 1st arg as $ABL_CMD when called by 'sh /etc/init.d/adblock-lean'
 if [ "${0}" = "${ABL_SERVICE_PATH}" ] && [ -n "${1}" ]
