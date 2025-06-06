@@ -631,7 +631,10 @@ get_def_preset()
 
 	read -r _ _totalmem _ < /proc/meminfo
 	case "${_totalmem}" in
-		''|*[!0-9]*) reg_failure "\$_totalmem has invalid value '${_totalmem}'. Failed to determine system memory capacity."; return 1 ;;
+		''|*[!0-9]*)
+			reg_failure "\$_totalmem has invalid value '${_totalmem}'. Failed to determine system memory capacity."
+			log_msg "Unable to select best preset for this system."
+			return 1 ;;
 		*)
 			for _preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | ${SED_CMD} 'x;1!H;$!d;x') # loop over presets in reverse order
 			do
