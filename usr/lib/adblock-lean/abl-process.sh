@@ -245,7 +245,7 @@ handle_done_job()
 # sets var named $1 to remaining time based on $PROCESSING_TIMEOUT_S or to $IDLE_TIMEOUT_S, whichever is lower
 # if timeout is hit, returns 1
 # 1 - var name to output remaining time
-check_for_timeout()
+get_remaining_time()
 {
 	local ct_curr_time_s ct_total_time_s ct_remaining_time_s
 	eval "${1}"=0
@@ -285,15 +285,15 @@ schedule_job()
 
 	# wait for job vacancy
 	local remaining_time_s done_pid done_rv
-	check_for_timeout remaining_time_s || return 1
+	get_remaining_time remaining_time_s || return 1
 
 	while [ "${RUNNING_JOBS_CNT}" -ge "${PARALLEL_JOBS}" ] && [ -e "${SCHED_CB_FIFO}" ] &&
 		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
 	do
-		check_for_timeout remaining_time_s || return 1
+		get_remaining_time remaining_time_s || return 1
 		handle_done_job "${done_pid}" "${done_rv}" || return 1
 	done
-	check_for_timeout remaining_time_s || return 1
+	get_remaining_time remaining_time_s || return 1
 
 	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
 	process_list_part "${@}" &
@@ -397,14 +397,14 @@ schedule_jobs()
 
 	# wait for jobs to finish and handle errors
 	local remaining_time_s done_pid done_rv
-	check_for_timeout remaining_time_s || return 1
+	get_remaining_time remaining_time_s || return 1
 	while [ "${RUNNING_JOBS_CNT}" -gt 0 ] && [ -e "${SCHED_CB_FIFO}" ] &&
 		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
 	do
-		check_for_timeout remaining_time_s || finalize_scheduler 1
+		get_remaining_time remaining_time_s &&
 		handle_done_job "${done_pid}" "${done_rv}" || finalize_scheduler 1
 	done
-	check_for_timeout remaining_time_s || finalize_scheduler 1
+	get_remaining_time remaining_time_s || finalize_scheduler 1
 	[ "${RUNNING_JOBS_CNT}" = 0 ] ||
 		{ reg_failure "Not all jobs are done: \${RUNNING_JOBS_CNT}=${RUNNING_JOBS_CNT}"; finalize_scheduler 1; }
 
