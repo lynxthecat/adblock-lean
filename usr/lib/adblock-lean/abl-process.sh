@@ -361,7 +361,7 @@ schedule_jobs()
 			for list_url in ${list_urls}
 			do
 				case "${list_url}" in
-					hagezi:*|Hagezi:*|oisd:*|OISD:*)
+					hagezi:*|oisd:*)
 						local short_id="${list_url}"
 						if ! get_list_url list_url "${short_id}"
 						then
@@ -469,11 +469,21 @@ process_list_part()
 		rogue_el_file="${ABL_DIR}/rogue_el_${job_id}" \
 		list_stats_file="${ABL_DIR}/stats_${job_id}" \
 		size_exceeded_file="${ABL_DIR}/size_exceeded_${job_id}" \
-		part_line_count='' line_count_human compress_part='' min_line_count='' min_line_count_human \
-		part_size_B='' retry=1
+		part_line_count='' line_count_human min_line_count='' min_line_count_human \
+		part_size_B='' retry=1 \
+		part_compr_or_cat="cat" fetch_cmd
+
+	case "${list_origin}" in
+		DL) fetch_cmd=dl_list ;;
+		LOCAL) fetch_cmd="cat" ;;
+		*) reg_failure "Invalid list origin '${list_origin}'."; finalize_job 1
+	esac
 
 	case ${list_type} in
-		blocklist|blocklist_ipv4) [ -n "${USE_COMPRESSION}" ] && { dest_file="${dest_file}${COMPR_EXT}"; compress_part=1; }
+		blocklist|blocklist_ipv4) [ -n "${USE_COMPRESSION}" ] && {
+			dest_file="${dest_file}${COMPR_EXT}"
+			part_compr_or_cat="${COMPR_CMD_STDOUT} ${INTERM_COMPR_OPTS}"
+		}
 	esac
 	eval "min_line_count=\"\${min_${list_type}_part_line_count}\""
 
@@ -481,16 +491,11 @@ process_list_part()
 	do
 		rm -f "${rogue_el_file}" "${list_stats_file}" "${size_exceeded_file}" "${ucl_err_file}"
 
-		# Download or cat the list
-		local fetch_cmd lines_cnt_low='' dl_completed=''
-		case "${list_origin}" in
-			DL) fetch_cmd=dl_list ;;
-			LOCAL) fetch_cmd="cat" ;;
-			*) reg_failure "Invalid list origin '${list_origin}'."; finalize_job 1
-		esac
-
 		print_msg "Processing ${list_format} ${list_type}: ${blue}${list_path}${n_c}"
 		log_msg -noprint "Processing ${list_format} ${list_type}: ${list_path}"
+
+		# Download or cat the list
+		local lines_cnt_low='' dl_completed=''
 
 		${fetch_cmd} "${list_path}" |
 		# limit size
@@ -539,13 +544,8 @@ process_list_part()
 		# check lists for rogue elements
 		tee >(${SED_CMD} -nE "/${val_entry_regex}/d;p;:1 n;b1" > "${rogue_el_file}") |
 
-		# compress parts
-		if [ -n "${compress_part}" ]
-		then
-			${COMPR_CMD_STDOUT} ${INTERM_COMPR_OPTS}
-		else
-			cat
-		fi > "${dest_file}"
+		# compress or cat
+		${part_compr_or_cat} > "${dest_file}"
 
 		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
 		if [ -f "${size_exceeded_file}" ]
@@ -796,14 +796,18 @@ gen_and_process_blocklist()
 	local elapsed_time_s list_type out_f="${ABL_DIR}/abl-blocklist"
 	local dnsmasq_err max_blocklist_file_size_B=$((max_blocklist_file_size_KB*1024))
 
-	local find_ext='' find_cmd="cat" final_compress=
+	local find_ext='' find_cmd="cat" final_compress='' final_compr_or_cat="cat" final_extr_or_cat="cat"
 	if [ -n "${USE_COMPRESSION}" ]
 	then
 		find_ext="${COMPR_EXT}" find_cmd="${EXTR_CMD_STDOUT}"
 
 		check_blocklist_compression_support
 		case ${?} in
-			0) final_compress=1 ;;
+			0)
+				final_compress=1
+				out_f="${out_f}${COMPR_EXT}"
+				final_compr_or_cat="${COMPR_CMD_STDOUT} ${FINAL_COMPR_OPTS}"
+				final_extr_or_cat="${EXTR_CMD_STDOUT}" ;;
 			2) exit 1
 		esac
 	fi
@@ -851,8 +855,6 @@ gen_and_process_blocklist()
 	fi
 
 	reg_action -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
-
-	[ -n "${final_compress}" ] && out_f="${out_f}${COMPR_EXT}"
 
 	rm -f "${ABL_DIR}/dnsmasq_err"
 
@@ -906,12 +908,10 @@ gen_and_process_blocklist()
 
 	# limit size
 	{ head -c "${max_blocklist_file_size_B}"; read -rn1 -d '' && { touch "${ABL_DIR}/abl-too-big.tmp"; cat 1>/dev/null; }; } |
-	if  [ -n "${final_compress}" ]
-	then
-		${COMPR_CMD_STDOUT} ${FINAL_COMPR_OPTS}
-	else
-		cat
-	fi > "${out_f}" || { reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
+
+	# compress or cat
+	${final_compr_or_cat} > "${out_f}" ||
+		{ reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
 
 	if [ -f "${ABL_DIR}/abl-too-big.tmp" ]; then
 		rm -f "${out_f}"
@@ -925,12 +925,8 @@ gen_and_process_blocklist()
 
 	# check the final blocklist with dnsmasq --test
 	reg_action -blue "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
-	if  [ -n "${final_compress}" ]
-	then
-		${EXTR_CMD_STDOUT} "${out_f}"
-	else
-		cat "${out_f}"
-	fi |
+
+	${final_extr_or_cat} "${out_f}" |
 	dnsmasq --test -C - 2> "${ABL_DIR}/dnsmasq_err"
 	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ABL_DIR}/dnsmasq_err"
 	then
