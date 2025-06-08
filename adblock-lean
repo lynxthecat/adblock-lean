@@ -21,9 +21,6 @@ STOP=04
 
 # expects that the RPC script for luci UI is named specifically 'luci.adblock-lean'
 
-# get return value of built-in actions
-action_rv="${?}"
-
 LC_ALL=C
 DEFAULT_IFS='	 
 '
@@ -99,7 +96,7 @@ adblock-lean custom commands:
 	uninstall                uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 # silence shellcheck warnings
-: "${action:=}" "${action_rv}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}"
+: "${action:=}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}"
 : "${purple}" "${green}" "${red}" "${yellow}" "${TAB}" "${CR}" "${CR_LF}"
 : "${AWK_CMD}" "${SORT_CMD}"
 : "${ABL_GEN_FILES}" "${ABL_LIB_FILES}" "${ABL_EXTRA_FILES}" "${ABL_EXEC_FILES}" "${CONFIG_FORMAT}"
