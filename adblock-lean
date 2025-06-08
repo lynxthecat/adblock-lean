@@ -22,10 +22,9 @@ STOP=04
 # expects that the RPC script for luci UI is named specifically 'luci.adblock-lean'
 
 LC_ALL=C
-DEFAULT_IFS='	 
-'
 _NL_='
 '
+DEFAULT_IFS="	 ${_NL_}"
 IFS="${DEFAULT_IFS}"
 
 CONFIG_FORMAT=v9
