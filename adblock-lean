@@ -649,7 +649,7 @@ update_action_file()
 report_curr_action()
 {
 	[ "${MSGS_DEST}" = "/dev/null" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ "${1}" != "-log" ] && return 0
-	local reported_pid report_cmd=print_msg
+	local reported_pid report_cmd=print_msg curr_action=''
 	[ -n "${ACTION_FILE}" ] || { reg_failure "\$ACTION_FILE var is unset."; return 1; }
 	[ -f "${ACTION_FILE}" ] || return 0
 	if [ -z "${LOCK_PID}" ]
@@ -663,12 +663,12 @@ report_curr_action()
 	fi
 	reported_pid="${LOCK_PID:-unknown}"
 
-	read_str_from_file -v PID_ABL_CMD -f "${ACTION_FILE}" -a 2 -D action -V "unknown action"
+	read_str_from_file -v curr_action -f "${ACTION_FILE}" -a 2 -D action -V "unknown action"
 
 	[ "${1}" = -log ] && report_cmd=log_msg
 
-	${report_cmd} "adblock-lean (PID: ${reported_pid}) is performing action '${PID_ABL_CMD}'."
-	luci_pid_action=${PID_ABL_CMD}
+	${report_cmd} "adblock-lean (PID: ${reported_pid}) is performing action '${curr_action}'."
+	luci_pid_action=${curr_action}
 	:
 }
 
