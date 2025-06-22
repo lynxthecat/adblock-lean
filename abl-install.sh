@@ -5,14 +5,17 @@
 : "${LIBS_SOURCED}"
 
 ABL_INSTALLER_VER=2
-ABL_UPD_DIR="/var/run/adblock-lean-update"
-ABL_CONFIG_DIR=/etc/adblock-lean
-ABL_PID_DIR=/tmp/adblock-lean
-ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
+
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
-ABL_DIR=/var/run/adblock-lean
-ABL_INST_DIR="${ABL_DIR}/remote_abl"
-UCL_ERR_FILE="${ABL_DIR}/uclient-fetch_err"
+ABL_TMP_DIR=/var/run/adblock-lean/tmp
+ABL_UPD_DIR=${ABL_TMP_DIR}/update
+ABL_INST_DIR=${ABL_TMP_DIR}/remote_abl
+ABL_PID_DIR=/tmp/adblock-lean
+ABL_CONFIG_DIR=/etc/adblock-lean
+
+ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
+UCL_ERR_FILE="${ABL_TMP_DIR}/uclient-fetch_err"
+
 : "${ABL_REPO_AUTHOR:=lynxthecat}"
 ABL_GH_URL_API="https://api.github.com/repos/${ABL_REPO_AUTHOR}/adblock-lean"
 ABL_MAIN_BRANCH=master
@@ -58,7 +61,7 @@ fi
 cleanup_and_exit()
 {
 	trap - INT TERM EXIT
-	rm -rf "${ABL_DIR}" "${ABL_PID_DIR}"
+	rm -rf "${ABL_TMP_DIR}" "${ABL_PID_DIR}"
 	[ -n "${ABL_LUCI_SOURCED}" ] && abl_inst_luci_exit "${1}"
 	exit "${1}"
 }
