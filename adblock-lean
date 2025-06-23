@@ -27,7 +27,7 @@ _NL_='
 DEFAULT_IFS="	 ${_NL_}"
 IFS="${DEFAULT_IFS}"
 
-CONFIG_FORMAT=v9
+CONFIG_FORMAT=v10
 
 if [ -z "${MSGS_DEST}" ]
 then
@@ -39,11 +39,13 @@ then
 	fi
 fi
 
-ABL_DIR=/var/run/adblock-lean
+ABL_RUN_DIR=/var/run/adblock-lean
+ABL_TMP_DIR=${ABL_RUN_DIR}/tmp
+ABL_UPD_DIR=${ABL_TMP_DIR}/update
+ABL_PID_DIR=/tmp/adblock-lean
+
 ABL_LIB_DIR=/usr/lib/adblock-lean
 ABL_CONFIG_DIR=/etc/adblock-lean
-ABL_PID_DIR=/tmp/adblock-lean
-ABL_UPD_DIR="/var/run/adblock-lean-update"
 ABL_CONF_STAGING_DIR="/tmp/abl-conf-staging"
 
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
@@ -65,7 +67,7 @@ ACTION_FILE="${ABL_PID_DIR}/adblock-lean.action"
 
 ABL_UPDATE_LOG_FILE=/var/log/abl_update.log
 ABL_SESSION_LOG_FILE=/var/log/abl_session.log
-UCL_ERR_FILE="${ABL_DIR}/uclient-fetch_err"
+UCL_ERR_FILE="${ABL_TMP_DIR}/uclient-fetch_err"
 
 ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 
@@ -73,32 +75,35 @@ ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 ABL_GH_URL_API="https://api.github.com/repos/${ABL_REPO_AUTHOR}/adblock-lean"
 ABL_MAIN_BRANCH=master
 
+SHARED_BLOCKLIST_PATH=${ABL_RUN_DIR}/abl-blocklist
+
 SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instance gen_config upd_cron_job print_log update uninstall"
+EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall"
 EXTRA_HELP="
 adblock-lean custom commands:
-	version                  print adblock-lean version
-	setup                    run automated setup for adblock-lean
-	status                   check dnsmasq and entries count of existing blocklist
-	pause                    pause adblock-lean
-	resume                   resume adblock-lean
-	gen_stats                generate dnsmasq stats for system log
-	select_dnsmasq_instance  analyze dnsmasq instances and set dnsmasq conf-dir
-	gen_config               generate default config based on one of the pre-defined presets
-	upd_cron_job             create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	                         if config option set to 'disable', remove existing cron job if any
-	print_log                print most recent session log
-	update                   update adblock-lean to the latest version
-	uninstall                uninstall adblock-lean, remove all adblock-lean-related files and settings"
+	version                   print adblock-lean version
+	setup                     run automated setup for adblock-lean
+	status                    check dnsmasq and entries count of existing blocklist
+	pause                     pause adblock-lean
+	resume                    resume adblock-lean
+	gen_stats                 generate dnsmasq stats for system log
+	select_dnsmasq_instances  analyze dnsmasq instances and set dnsmasq conf-dir
+	gen_config                generate default config based on one of the pre-defined presets
+	upd_cron_job              create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+	                          if config option set to 'disable', remove existing cron job if any
+	print_log                 print most recent session log
+	update                    update adblock-lean to the latest version
+	uninstall                 uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 # silence shellcheck warnings
 : "${action:=}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}"
 : "${purple}" "${green}" "${red}" "${yellow}" "${TAB}" "${CR}" "${CR_LF}"
 : "${AWK_CMD}" "${SORT_CMD}"
-: "${ABL_GEN_FILES}" "${ABL_LIB_FILES}" "${ABL_EXTRA_FILES}" "${ABL_EXEC_FILES}" "${CONFIG_FORMAT}"
+: "${ABL_GEN_FILES}" "${ABL_LIB_FILES}" "${ABL_EXTRA_FILES}" "${ABL_EXEC_FILES}" "${ABL_CONFIG_FILE}" "${CONFIG_FORMAT}"
+: "${SHARED_BLOCKLIST_PATH}"
 : "${luci_log}" "${luci_pid_action}" "${luci_errors}" "${luci_dnsmasq_status}"
 : "${luci_good_line_count}" "${luci_update_status}" "${luci_pkgs_install_failed}" "${luci_cron_job_creation_failed}"
 
@@ -117,7 +122,7 @@ are_var_names_safe() {
 
 check_func()
 {
-	[ "$(type "${1}" 2>/dev/null | head -n1)" = "${1} is a function" ]
+	check_util "${1}" && [ "$(type "${1}" 2>/dev/null | head -n1)" = "${1} is a function" ]
 }
 
 check_util()
@@ -417,7 +422,7 @@ detect_util()
 	then
 		res_cmd="/bin/busybox ${gen_name}"
 	else
-		reg_failure "${gen_name} not found."
+		reg_failure "${me}: '${gen_name:-"${specific_name}"}' not found."
 		return 1
 	fi
 
@@ -511,13 +516,13 @@ cleanup_and_exit()
 	then
 		[ "${1}" != 0 ] && print_msg "" "Cleaning up..."
 		[ -n "${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}" 2>/dev/null
-		rm -rf "${ABL_DIR}"
+		rm -rf "${ABL_TMP_DIR}"
 	fi
 
 	if [ -n "${FAIL_STOP_REQ}" ]
 	then
 		ABL_NOTRAPS=1 stop "${1}" -noexit
-		rm -rf "${ABL_DIR}"
+		rm -rf "${ABL_RUN_DIR}"
 	fi
 
 	rm -rf "${ABL_CONF_STAGING_DIR}"
@@ -821,16 +826,29 @@ kill_pids_recursive()
 # 4 - stopped
 get_abl_run_state()
 {
-	[ -n "${DNSMASQ_CONF_D}" ] || { reg_failure "\$DNSMASQ_CONF_D is not set. Failed to check adblock-lean run state."; return 1; }
-	local f
-	for f in "${DNSMASQ_CONF_D}/.abl-blocklist"* "${DNSMASQ_CONF_D}/abl-blocklist"
+	[ -n "${DNSMASQ_CONF_DIRS}" ] || { reg_failure "\$DNSMASQ_CONF_DIRS is not set. Failed to check adblock-lean run state."; return 1; }
+	local f dir file_exists=0 file_missing=0
+
+	for dir in "${ABL_RUN_DIR}" ${DNSMASQ_CONF_DIRS}
 	do
-		[ -n "${f}" ] && [ -f "${f}" ] && return 0
+		for f in "${dir}/abl-blocklist"* "${dir}/.abl-blocklist"*
+		do
+			case "${f}" in ''|*"*") continue; esac
+			file_exists=1
+			continue 2
+		done
+		file_missing=1
 	done
 
-	for f in "${ABL_DIR}/prev_blocklist"*
+	case "${file_exists}${file_missing}" in
+		11) return 0 ;;
+		10) return 1
+	esac
+
+	for f in "${ABL_RUN_DIR}/prev_blocklist"*
 	do
-		[ -n "${f}" ] && [ -f "${f}" ] && return 3
+		case "${f}" in ''|*"*") continue; esac
+		return 3
 	done
 
 	return 4
@@ -1007,27 +1025,30 @@ rm_cron_job()
 
 # Delete adblock-lean addnmount entries for dnsmasq instance
 # NOTE: need to run 'uci commit dhcp' after calling this function
-# 1 - dnsmasq instance index
+# 1 - dnsmasq instance indexes
 # return codes:
 # 0 - OK
 # 1 - Error deleting all found entries
 # 2 - Some entries deleted
 # 3 - No entries found for instance
-del_addnmount()
+del_addnmounts()
 {
-	local rv path paths entry_deleted=0 entry_failed=0
-	paths="$(uci -q get "dhcp.@dnsmasq[${1}].addnmount" 2>/dev/null)"
-	for path in ${paths}
+	local rv path paths entry_deleted=0 entry_failed=0 index
+	for index in ${1}
 	do
-		case "${path}" in */bin/busybox*|*gzip*|*pigz*|*zstd*) ;; *) continue; esac
-		log_msg -purple "" "Deleting addnmount entry for '${path}' for dnsmasq instance ${1} from /etc/config/dhcp."
-		if uci -q del_list "dhcp.@dnsmasq[${1}].addnmount=${path}"
-		then
-			entry_deleted=1
-		else
-			entry_failed=1
-			reg_failure "Failed to delete addnmount entry for '${path}' from /etc/config/dhcp."
-		fi
+		paths="$(uci -q get "dhcp.@dnsmasq[${index}].addnmount" 2>/dev/null)"
+		for path in ${paths}
+		do
+			case "${path}" in */bin/busybox*|*gzip*|*pigz*|*zstd*|/var/run/adblock-lean/abl-blocklist*) ;; *) continue; esac
+			log_msg -purple "" "Deleting addnmount entry for '${path}' for dnsmasq instance ${index} from /etc/config/dhcp."
+			if uci -q del_list "dhcp.@dnsmasq[${index}].addnmount=${path}"
+			then
+				entry_deleted=1
+			else
+				entry_failed=1
+				reg_failure "Failed to delete addnmount entry for '${path}' from /etc/config/dhcp."
+			fi
+		done
 	done
 
 	case "${entry_deleted}${entry_failed}" in
@@ -1084,9 +1105,9 @@ init_command()
 			esac
 			load_config
 			CLEANUP_REQ=1 LOCK_REQ=1 ;;
-		select_dnsmasq_instance)
+		select_dnsmasq_instances)
 			libs_req=1 LOCK_REQ=1
-			[ "${action}" = select_dnsmasq_instance ] && config_req=1 # require config when called directly
+			[ "${action}" = select_dnsmasq_instances ] && config_req=1 # require config when called directly
 			;;
 		reload|restart) reg_action -purple "Restarting adblock-lean." || exit 1 ;;
 		update) work_dir_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
@@ -1131,7 +1152,7 @@ init_command()
 
 	[ -n "${init_action_msg}" ] && write_log_file "${init_action_msg}" "info"
 
-	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_DIR}" || exit 1; }
+	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_TMP_DIR}" || exit 1; }
 
 	if [ -n "${config_req}" ] && [ -z "${CONFIG_LOADED}" ]
 	then
@@ -1142,12 +1163,12 @@ init_command()
 	fi
 
 	# detect compression/extraction utils
-	[ -n "${process_vars_req}" ] && { set_processing_vars || exit 1; }
+	[ -n "${process_vars_req}" ] && { detect_processing_utils && set_processing_vars || exit 1; }
 
 	# check dnsmasq, source custom script
 	case ${ABL_CMD} in
 		start|pause|resume)
-			check_dnsmasq_instance "${DNSMASQ_INSTANCE}" || exit 1
+			check_dnsmasq_instances || exit 1
 			if [ -n "${custom_script}" ]
 			then
 				custom_scr_sourced=
@@ -1368,7 +1389,7 @@ abl_post_update_1()
 
 	# @temp_workaround - remove a few months from now
 	# when upgrading from older versions, fetch and install latest release
-	if [ -f "${ABL_DIR}/adblock-lean.latest" ]
+	if [ -f "${ABL_RUN_DIR}/adblock-lean.latest" ]
 	then
 		if rc_enabled
 		then
@@ -1383,7 +1404,8 @@ abl_post_update_1()
 			)
 		fi
 		update -f -v release || exit 1
-		cp "${ABL_SERVICE_PATH}" "${ABL_DIR}/adblock-lean.latest"
+		try_mkdir -p "${ABL_RUN_DIR}"
+		cp "${ABL_SERVICE_PATH}" "${ABL_RUN_DIR}/adblock-lean.latest"
 	fi
 
 	:
@@ -1527,9 +1549,9 @@ upd_cron_job()
 	:
 }
 
-select_dnsmasq_instance() {
-	init_command select_dnsmasq_instance &&
-	do_select_dnsmasq_instance "${@}"
+select_dnsmasq_instances() {
+	init_command select_dnsmasq_instances &&
+	do_select_dnsmasq_instances "${@}"
 }
 
 # 1 - (optional) '-noexit' to return to the calling function
@@ -1565,23 +1587,33 @@ start()
 		sleep "${random_delay_mins}m"
 	fi
 
-	try_export_blocklist
-	[ ${?} = 1 ] && exit 1
+	local rv=1
 
-	FAIL_STOP_REQ=1
-	if ! gen_and_process_blocklist
+	export_blocklist
+	if [ ${?} != 1 ]
 	then
-		reg_failure "Failed to generate new blocklist."
-		restore_saved_blocklist || stop 1
-		check_active_blocklist || { reg_failure "Active blocklist check failed with previous blocklist file."; stop 1; }
-		log_msg -green "Previous blocklist restored and dnsmasq check passed."
-		FAIL_STOP_REQ=
-		exit 1
+		if FAIL_STOP_REQ=1 gen_and_process_blocklist
+		then
+			rv=0
+		else
+			reg_failure "Failed to generate new blocklist."
+			local restore_failed=1
+			if restore_saved_blocklist
+			then
+				if check_active_blocklist
+				then
+					log_msg -green "Previous blocklist restored and dnsmasq check passed."
+					restore_failed=
+				else
+					reg_failure "Active blocklist check failed with previous blocklist file."
+				fi
+			fi
+			[ -n "${restore_failed}" ] && stop 1 -noexit
+		fi
 	fi
-	FAIL_STOP_REQ=
 
 	check_for_updates
-	exit 0
+	exit ${rv}
 }
 
 # 1 - (optional) exit code
@@ -1601,19 +1633,10 @@ stop()
 
 	init_command stop || { FAIL_STOP_REQ=''; exit 1; }
 
-	# get DNSMASQ_CONF_D without calling load_config()
-	[ -f "${ABL_CONFIG_FILE}" ] &&
-	DNSMASQ_CONF_D="$($SED_CMD -n '/^\s*DNSMASQ_CONF_D=/{s/^\s*DNSMASQ_CONF_D=//;s/\s*#.*//;s/"//g;p;q;}' "${ABL_CONFIG_FILE}")" &&
-	[ -n "${DNSMASQ_CONF_D}" ] ||
-	{
-		reg_failure "Failed to get DNSMASQ_CONF_D from config. Can not delete the blocklist from dnsmasq config directory."
-		stop_rc=1
-	}
-
 	log_msg "Removing any adblock-lean blocklist files in dnsmasq config directories."
 	clean_dnsmasq_dir || stop_rc=1
-	restart_dnsmasq -nostop || stop_rc=1
-	log_msg -purple "" "Stopped adblock-lean."
+	restart_dnsmasq -nostop &&
+	log_msg -purple "" "Stopped adblock-lean." || stop_rc=1
 	[ -n "$noexit" ] && return "${stop_rc}"
 	FAIL_STOP_REQ=
 	exit "${stop_rc}"
@@ -1648,9 +1671,12 @@ status()
 			report_curr_action
 			exit 2
 	esac
+
+	log_msg -purple "" "adblock-lean (version ${ABL_VERSION}) status:"
 	get_abl_run_state
 	run_state=${?}
-	log_msg -purple "" "adblock-lean (${ABL_VERSION}) status:"
+
+	check_dnsmasq_instances || run_state=1
 	case ${run_state} in
 		0|1) ;;
 		3) log_msg -yellow "" "adblock-lean is paused." ;;
@@ -1701,8 +1727,8 @@ pause()
 		4) log_msg -err "adblock-lean is currently stopped."; exit 1;
 	esac
 	FAIL_STOP_REQ=1
-	reg_action -purple "Pausing adblock-lean." || exit 1
-	try_export_blocklist || exit 1
+	reg_action -purple "Pausing adblock-lean." &&
+	export_blocklist &&
 	restart_dnsmasq || exit 1
 	FAIL_STOP_REQ=
 	log_msg -purple "adblock-lean is now paused."
@@ -1902,7 +1928,7 @@ uninstall()
 	do
 		i=$((i+1))
 		uci -q get dhcp.@dnsmasq[${i}] >/dev/null || break
-		del_addnmount "${i}"
+		del_addnmounts "${i}"
 		case ${?} in
 			0) addnm_deleted=1 ;;
 			3) ;;

@@ -84,7 +84,7 @@ _<details><summary>If you need to manually configure the dnsmasq instance adbloc
 1) Check which `config dnsmasq` sections are defined in `/etc/config/dhcp`.
 2) If only one `config dnsmasq` section exists then you are only running 1 dnsmasq instance. Note and write down: instance index is 0; instance name (it's either `cfg01411c` if the name is not specified or the optional word right after `config dnsmasq`); if `option confdir` is set, note and write down the value. If it is not set then the default conf-dir is `/tmp/dnsmasq.cfg01411c.d` in OpenWrt 24.10 and later (including current snapshots), or `/tmp/dnsmasq.d` in older OpenWrt versions.
 3) If you have multiple `config dnsmasq` sections then multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on. Use the command `/etc/init.d/dnsmasq info` to get a list of all running instances as json. Find the relevant dnsmasq instance. Note: instance index (1st instance has index 0, further instances increment the index by 1); instance name (example: `cfg01411c`); which network interfaces the relevant instance serves (likely listed in the 'netdev' section). In the `"command"` section of the json, look for a path in `/var/etc/`, write down the path. Check the contents of the file at that path and look for `conf_dir=`. This is the conf-dir this instance is using - note and write it down.
-4) In the adblock-lean config file: specify instance name in option `DNSMASQ_INSTANCE` (example: `DNSMASQ_INSTANCE="cfg01411c"`); specify instance index in option `DNSMASQ_INDEX` (example: `DNSMASQ_INDEX="0"`), specify instance conf-dir in option `DNSMASQ_CONF_D` (example: `DNSMASQ_CONF_D="/tmp/dnsmasq.d"`).
+4) In the adblock-lean config file: specify instance index in option `DNSMASQ_INDEXES` (example: `DNSMASQ_INDEXES="0"`), specify instance conf-dir in option `DNSMASQ_CONF_DIRS` (example: `DNSMASQ_CONF_DIRS="/tmp/dnsmasq.d"`). To adblock on multiple dnsmasq instances, specify multiple indexes and their corresponding conf-dirs, separated by whitespace.
 
 </details>
 
@@ -118,7 +118,7 @@ Additional available commands (use with `service adblock-lean <command>`):
 - `print_log`: prints most recent session log
 - `upd_cron_job`: creates cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
                   if config option set to 'disable', removes existing cron job if any
-- `select_dnsmasq_instance`: analyzes dnsmasq instances and sets required options in the adblock-lean config
+- `select_dnsmasq_instances`: analyzes dnsmasq instances and sets required options in the adblock-lean config
 
 ## Basic configuration
 Generally, if you ran the automated setup then you don't have to make any additional configuration changes. If you want to further customize adblocking, this can be achieved by modifying the config file located at `/etc/adblock-lean/config`.
@@ -230,9 +230,8 @@ oisd lists can be specified either by the complete download URL or by shortened 
 |`MAX_PARALLEL_JOBS`                  | Max count of download and processing jobs to run in parallel. 'auto' sets this automatically  |
 |`custom_script`                      | Path to custom user script to execute on success on failure                                   |
 |`cron_schedule`                      | Crontab schedule for automatic blocklist updates or `disable`                                 |
-|`DNSMASQ_INSTANCE`                   | Name of the dnsmasq instance to attach to. Normally set automatically by the `setup` command  |
-|`DNSMASQ_CONF_D`                     | Conf-dir used by the dnsmasq instance. Normally set automatically by the `setup` command      |
-|`DNSMASQ_INDEX`                      | Index of the dnsmasq instance. Normally set automatically by the `setup` command              |
+|`DNSMASQ_INDEXES`                    | Indexes of dnsmasq instances to adblock on. Normally set automatically by the `setup` command |
+|`DNSMASQ_CONF_DIRS`                  | Conf-dirs used by the dnsmasq instances. Normally set automatically by the `setup` command    |
 
 For devices with low memory capacity (less than 512MiB), the option `unload_blocklist_before_update`, when set to `auto`, will cause previous blocklist to be unloaded before downloading and processing a new one, in order to free up memory. For other cases of memory scarcity, consider setting this option to `1`.
 
