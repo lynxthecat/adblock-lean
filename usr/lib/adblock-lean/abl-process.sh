@@ -93,6 +93,17 @@ get_elapsed_time_s()
 
 # HELPER FUNCTIONS
 
+check_confscript_support()
+{
+	dnsmasq --help | grep -qe "--conf-script" ||
+	{
+		reg_failure "The version of dnsmasq installed on this system is too old." \
+			"To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
+		return 1
+	}
+	:
+}
+
 # exports PROCESS_UTILS_SET COMPR_CMD COMPR_CMD_STDOUT COMPR_EXT EXTR_CMD EXTR_CMD_STDOUT
 detect_processing_utils()
 {
@@ -179,13 +190,7 @@ set_processing_vars()
 
 	if [ -n "${USE_COMPRESSION}" ] || multi_inst_needed
 	then
-		dnsmasq --help | grep -qe "--conf-script" ||
-		{
-			reg_failure "The version of dnsmasq installed on this system is too old." \
-				"To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
-			return 1
-		}
-
+		check_confscript_support || return 1
 		check_addnmounts missing_addnmounts
 		addnmounts_rv=${?}
 

@@ -87,6 +87,45 @@ int2human() {
 
 ### SETUP AND CONFIG MANAGEMENT
 
+create_addnmounts()
+{
+	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
+
+	local index final_blocklist_file add_list_failed=
+	for index in ${DNSMASQ_INDEXES}
+	do
+		{ [ -z "${EXTR_CMD_STDOUT%% *}" ] || create_addnmount "${index}" "${EXTR_CMD_STDOUT%% *}"; } &&
+		{ [ "${EXTR_CMD_STDOUT%% *}" = "/bin/busybox" ] || create_addnmount "${index}" "/bin/busybox"; } &&
+		{
+			if [ "${compression_util}" = none ]
+			then
+				if multi_inst_needed
+				then
+					final_blocklist_file="${SHARED_BLOCKLIST_PATH}"
+				else
+					final_blocklist_file="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist"
+				fi
+			else
+				final_blocklist_file="${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
+			fi
+
+			if [ "${compression_util}" != none ] || multi_inst_needed
+			then
+				create_addnmount "${index}" "${final_blocklist_file}" || { add_list_failed=1; break; }
+			else
+				:
+			fi
+		} || { add_list_failed=1; break; }
+	done
+	[ -z "${add_list_failed}" ] && uci commit dhcp ||
+	{
+		uci revert dhcp
+		reg_failure "Failed to create or change addnmount entries."
+		return 1
+	}
+	:
+}
+
 # Error codes:
 # 1 - general error
 # 2 - gen_config failed
@@ -222,8 +261,6 @@ do_setup()
 		:
 	}
 
-	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
-
 	[ -n "${ABL_SERVICE_PATH}" ] || { reg_failure "\${ABL_SERVICE_PATH} variable is unset."; return 1; }
 	[ -f "${ABL_SERVICE_PATH}" ] || { reg_failure "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
 
@@ -273,49 +310,11 @@ do_setup()
 	# create addnmount entries - enables blocklist compression and adblocking on multiple instances
 	detect_processing_utils || return 1
 	check_addnmounts
+
 	case ${?} in
 		0) log_msg -green "" "Found existing dnsmasq addnmount entries." ;;
 		1) return 5 ;;
-		2|3)
-			local add_list_failed='' final_blocklist_file=''
-			del_addnmounts "${DNSMASQ_INDEXES}"
-			case ${?} in
-				0|3) : ;;
-				*) false
-			esac &&
-			log_msg -purple "" "Creating dnsmasq addnmount entries in /etc/config/dhcp." &&
-			for index in ${DNSMASQ_INDEXES}
-			do
-				{ [ -z "${EXTR_CMD_STDOUT%% *}" ] || create_addnmount "${index}" "${EXTR_CMD_STDOUT%% *}"; } &&
-				{ [ "${EXTR_CMD_STDOUT%% *}" = "/bin/busybox" ] || create_addnmount "${index}" "/bin/busybox"; } &&
-				{
-					if [ "${compression_util}" = none ]
-					then
-						if multi_inst_needed
-						then
-							final_blocklist_file="${SHARED_BLOCKLIST_PATH}"
-						else
-							final_blocklist_file="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist"
-						fi
-					else
-						final_blocklist_file="${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
-					fi
-
-					if [ "${compression_util}" != none ] || multi_inst_needed
-					then
-						create_addnmount "${index}" "${final_blocklist_file}" || { add_list_failed=1; break; }
-					else
-						:
-					fi
-				} || { add_list_failed=1; break; }
-			done
-
-			[ -z "${add_list_failed}" ] && uci commit dhcp ||
-			{
-				uci revert dhcp
-				reg_failure "Failed to create or change addnmount entries."
-				return 5
-			}
+		2|3) create_addnmounts || return 5
 	esac
 
 	detect_pkg_manager
@@ -927,6 +926,7 @@ parse_config()
 
 	local err_print=''
 	rm -f "${parser_error_file}"
+
 	eval "${parse_vars}" 2> "${parser_error_file}" && [ ! -s "${parser_error_file}" ] ||
 	{
 		[ -s "${parser_error_file}" ] && err_print=" Errors: ${_NL_}$(cat "${parser_error_file}")"
@@ -1061,6 +1061,35 @@ load_config()
 	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
 	fix_config "${l_replace_keys}" "${l_migrated_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+
+	# automatically create missing addnmount entries during version update
+	local use_compression='' missing_addnmounts='' REPLY
+	if [ -n "${ABL_IN_INSTALL}" ] && [ -n "${DNSMASQ_INDEXES}" ] && get_dnsmasq_instances && detect_processing_utils
+	then
+		case "${compression_util}" in none|'') ;; *)
+			use_compression=1
+		esac
+
+		if { [ -n "${use_compression}" ] || multi_inst_needed; } && check_confscript_support
+		then
+			check_addnmounts missing_addnmounts
+			if [ -n "${missing_addnmounts}" ]
+			then
+				REPLY=
+				log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${missing_addnmounts}"
+				if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
+				then
+					print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
+					pick_opt "y|n" || return 1
+				else
+					print_msg -blue "" "Automatically creating missing addnmount entries."
+					REPLY=y
+				fi
+				[ "${REPLY}" = y ] && create_addnmounts
+			fi
+		fi
+	fi
+
 	:
 }
 

@@ -740,7 +740,9 @@ install_abl_files()
 	then
 		(
 			clean_abl_env
-			failsafe_log "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
+			failsafe_log "${_NL_}NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
+			export ABL_IN_INSTALL=1
+
 			# load config in new version
 			# shellcheck source=/dev/null
 			if  . "${ABL_SERVICE_PATH}" &&
@@ -754,6 +756,7 @@ install_abl_files()
 		:
 		)
 	fi
+	ABL_IN_INSTALL=
 
 	:
 }
