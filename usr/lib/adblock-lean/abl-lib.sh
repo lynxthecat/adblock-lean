@@ -115,34 +115,48 @@ suggest_addnmounts()
 
 create_addnmounts()
 {
-	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
+	create_addnmount() {
+		uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"
+	}
 
-	local index final_blocklist_file add_list_failed=
+	local IFS="${DEFAULT_IFS}" index path paths add_list_failed=
 	for index in ${DNSMASQ_INDEXES}
 	do
-		{ [ -z "${EXTR_CMD_STDOUT%% *}" ] || create_addnmount "${index}" "${EXTR_CMD_STDOUT%% *}"; } &&
-		{ [ "${EXTR_CMD_STDOUT%% *}" = "/bin/busybox" ] || create_addnmount "${index}" "/bin/busybox"; } &&
-		{
-			if [ "${compression_util}" = none ]
+		paths=
+		[ -n "${EXTR_CMD_STDOUT%% *}" ] && add2list paths "${EXTR_CMD_STDOUT%% *}"
+		add2list paths "/bin/busybox"
+		if [ "${compression_util}" = none ]
+		then
+			if multi_inst_needed
 			then
-				if multi_inst_needed
-				then
-					final_blocklist_file="${SHARED_BLOCKLIST_PATH}"
-				else
-					final_blocklist_file="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist"
-				fi
+				path="${SHARED_BLOCKLIST_PATH}"
 			else
-				final_blocklist_file="${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
+				path="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist"
 			fi
+		else
+			path="${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
+		fi
 
-			if [ "${compression_util}" != none ] || multi_inst_needed
-			then
-				create_addnmount "${index}" "${final_blocklist_file}" || { add_list_failed=1; break; }
-			else
-				:
-			fi
-		} || { add_list_failed=1; break; }
+		if [ "${compression_util}" != none ] || multi_inst_needed
+		then
+			add2list paths "${path}"
+		fi
+
+		if [ -n "${paths}" ]
+		then
+			del_addnmounts "${index}"
+			case ${?} in 0|3) ;; *) { add_list_failed=1; break; }; esac
+			log_msg -purple "Creating dnsmasq addnmount entries for dnsmasq instance ${index}."
+			IFS="${_NL_}"
+			for path in ${paths}
+			do
+				IFS="${DEFAULT_IFS}"
+				create_addnmount "${index}" "${path}" || { add_list_failed=1; break 2; }
+			done
+			IFS="${DEFAULT_IFS}"
+		fi
 	done
+
 	[ -z "${add_list_failed}" ] && uci commit dhcp ||
 	{
 		uci revert dhcp
@@ -336,7 +350,6 @@ do_setup()
 	# create addnmount entries - enables blocklist compression and adblocking on multiple instances
 	detect_processing_utils || return 1
 	check_addnmounts
-
 	case ${?} in
 		0) log_msg -green "" "Found existing dnsmasq addnmount entries." ;;
 		1) return 5 ;;

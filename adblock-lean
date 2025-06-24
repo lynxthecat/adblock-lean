@@ -1040,7 +1040,7 @@ del_addnmounts()
 		for path in ${paths}
 		do
 			case "${path}" in */bin/busybox*|*gzip*|*pigz*|*zstd*|/var/run/adblock-lean/abl-blocklist*) ;; *) continue; esac
-			log_msg -purple "" "Deleting addnmount entry for '${path}' for dnsmasq instance ${index} from /etc/config/dhcp."
+			log_msg -purple "Deleting addnmount entry for '${path}' for dnsmasq instance ${index}."
 			if uci -q del_list "dhcp.@dnsmasq[${index}].addnmount=${path}"
 			then
 				entry_deleted=1
