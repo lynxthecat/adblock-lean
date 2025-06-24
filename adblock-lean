@@ -1875,7 +1875,7 @@ update()
 		*) reg_failure "Failed to get version from fetched adblock-lean distribution."; false ;;
 	esac || exit 1
 
-	log_msg -green "adblock-lean has been updated to version '${upd_ver}'."
+	log_msg -green "" "adblock-lean has been updated to version '${upd_ver}'."
 
 	if [ -n "${DO_DIALOGS}" ]
 	then
