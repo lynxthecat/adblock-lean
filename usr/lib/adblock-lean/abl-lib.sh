@@ -87,6 +87,32 @@ int2human() {
 
 ### SETUP AND CONFIG MANAGEMENT
 
+suggest_addnmounts()
+{
+	local use_compression='' missing_addnmounts='' REPLY
+	case "${compression_util}" in none|'') ;; *)
+		use_compression=1
+	esac
+
+	if { [ -n "${use_compression}" ] || multi_inst_needed; } && check_confscript_support
+	then
+		check_addnmounts missing_addnmounts
+		if [ -n "${missing_addnmounts}" ]
+		then
+			log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${missing_addnmounts}"
+			if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
+			then
+				print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
+				pick_opt "y|n" || return 1
+			else
+				log_msg -blue "" "Automatically creating missing addnmount entries."
+				REPLY=y
+			fi
+			[ "${REPLY}" = y ] && create_addnmounts
+		fi
+	fi
+}
+
 create_addnmounts()
 {
 	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
@@ -1063,31 +1089,9 @@ load_config()
 	fix_config "${l_replace_keys}" "${l_migrated_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
 
 	# automatically create missing addnmount entries during version update
-	local use_compression='' missing_addnmounts='' REPLY
 	if [ -n "${ABL_IN_INSTALL}" ] && [ -n "${DNSMASQ_INDEXES}" ] && get_dnsmasq_instances && detect_processing_utils
 	then
-		case "${compression_util}" in none|'') ;; *)
-			use_compression=1
-		esac
-
-		if { [ -n "${use_compression}" ] || multi_inst_needed; } && check_confscript_support
-		then
-			check_addnmounts missing_addnmounts
-			if [ -n "${missing_addnmounts}" ]
-			then
-				REPLY=
-				log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${missing_addnmounts}"
-				if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
-				then
-					print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
-					pick_opt "y|n" || return 1
-				else
-					print_msg -blue "" "Automatically creating missing addnmount entries."
-					REPLY=y
-				fi
-				[ "${REPLY}" = y ] && create_addnmounts
-			fi
-		fi
+		suggest_addnmounts
 	fi
 
 	:
@@ -1579,6 +1583,9 @@ do_select_dnsmasq_instances() {
 			" "${ABL_CONFIG_FILE}"
 		)" || return 1
 	fi
+
+	detect_processing_utils && suggest_addnmounts
+
 	:
 }
 
