@@ -3,8 +3,9 @@
 
 # silence shellcheck warnings
 : "${blue:=}" "${purple:=}" "${green:=}" "${red:=}" "${yellow:=}" "${n_c:=}"
-: "${blocklist_urls:=}" "${test_domains:=}" "${whitelist_mode:=}"
+: "${blocklist_urls:=}" "${test_domains:=}" "${whitelist_mode:=}" "${compression_util:=}"
 : "${luci_cron_job_creation_failed}" "${luci_pkgs_install_failed}" "${luci_tarball_url}"
+: "${DNSMASQ_CONF_DIRS}"
 
 ### GLOBAL VARIABLES
 RECOMMENDED_PKGS="gawk sed coreutils-sort"
@@ -85,6 +86,85 @@ int2human() {
 
 
 ### SETUP AND CONFIG MANAGEMENT
+
+suggest_addnmounts()
+{
+	local use_compression='' missing_addnmounts='' REPLY
+	case "${compression_util}" in none|'') ;; *)
+		use_compression=1
+	esac
+
+	if { [ -n "${use_compression}" ] || multi_inst_needed; } && check_confscript_support
+	then
+		check_addnmounts missing_addnmounts
+		if [ -n "${missing_addnmounts}" ]
+		then
+			log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${missing_addnmounts}"
+			if [ -n "${DO_DIALOGS}" ] && [ -z "${force_fix}" ]
+			then
+				print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
+				pick_opt "y|n" || return 1
+			else
+				log_msg -blue "" "Automatically creating missing addnmount entries."
+				REPLY=y
+			fi
+			[ "${REPLY}" = y ] && create_addnmounts
+		fi
+	fi
+}
+
+create_addnmounts()
+{
+	create_addnmount() {
+		uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"
+	}
+
+	local IFS="${DEFAULT_IFS}" index path paths add_list_failed=
+	for index in ${DNSMASQ_INDEXES}
+	do
+		paths=
+		[ -n "${EXTR_CMD_STDOUT%% *}" ] && add2list paths "${EXTR_CMD_STDOUT%% *}"
+		add2list paths "/bin/busybox"
+		if [ "${compression_util}" = none ]
+		then
+			if multi_inst_needed
+			then
+				path="${SHARED_BLOCKLIST_PATH}"
+			else
+				path="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist"
+			fi
+		else
+			path="${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
+		fi
+
+		if [ "${compression_util}" != none ] || multi_inst_needed
+		then
+			add2list paths "${path}"
+		fi
+
+		if [ -n "${paths}" ]
+		then
+			del_addnmounts "${index}"
+			case ${?} in 0|3) ;; *) { add_list_failed=1; break; }; esac
+			log_msg -purple "Creating dnsmasq addnmount entries for dnsmasq instance ${index}."
+			IFS="${_NL_}"
+			for path in ${paths}
+			do
+				IFS="${DEFAULT_IFS}"
+				create_addnmount "${index}" "${path}" || { add_list_failed=1; break 2; }
+			done
+			IFS="${DEFAULT_IFS}"
+		fi
+	done
+
+	[ -z "${add_list_failed}" ] && uci commit dhcp ||
+	{
+		uci revert dhcp
+		reg_failure "Failed to create or change addnmount entries."
+		return 1
+	}
+	:
+}
 
 # Error codes:
 # 1 - general error
@@ -267,23 +347,13 @@ do_setup()
 		[ "${rv}" = 6 ] || return ${rv}
 	fi
 
-	# make addnmount entry - enables blocklist compression to reduce RAM usage
-	set_processing_vars -f
+	# create addnmount entries - enables blocklist compression and adblocking on multiple instances
+	detect_processing_utils || return 1
 	check_addnmounts
 	case ${?} in
 		0) log_msg -green "" "Found existing dnsmasq addnmount entries." ;;
 		1) return 5 ;;
-		2)
-			del_addnmount "${DNSMASQ_INDEX}"
-			log_msg -purple "" "Creating dnsmasq addnmount entries in /etc/config/dhcp."
-			uci add_list "dhcp.@dnsmasq[${DNSMASQ_INDEX}].addnmount=${EXTR_CMD_STDOUT%% *}" &&
-			{ [ "${EXTR_CMD_STDOUT%% *}" = "/bin/busybox" ] || uci add_list "dhcp.@dnsmasq[${DNSMASQ_INDEX}].addnmount=/bin/busybox"; } &&
-			uci commit dhcp ||
-			{
-				uci revert dhcp
-				reg_failure "Failed to create or change addnmount entries."
-				return 5
-			}
+		2|3) create_addnmounts || return 5
 	esac
 
 	detect_pkg_manager
@@ -392,44 +462,24 @@ set_preset_vars()
 
 # (optional) -d to print with allowed value types (otherwise print without)
 # (optional) -p to print with values from preset
-# (optional) -i to print with DNSMASQ_INSTANCE
-# (optional) -n to print with DNSMASQ_INDEX
-# (optional) -c to print with DNSMASQ_CONF_D
+# (optional) -n to print with DNSMASQ_INDEXES
+# (optional) -c to print with DNSMASQ_CONF_DIRS
 print_def_config()
 {
-	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer)
+	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer), integer_list
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
 
 	# process args
-	local preset='' print_types='' dnsmasq_instance='' dnsmasq_index='' dnsmasq_conf_d=''
-	while getopts ":i:n:c:p:d" opt; do
+	local preset='' print_types='' dnsmasq_indexes='' dnsmasq_conf_dirs=''
+	while getopts ":n:c:p:d" opt; do
 		case $opt in
-			i) dnsmasq_instance=$OPTARG ;;
-			n) dnsmasq_index=$OPTARG ;;
-			c) dnsmasq_conf_d=$OPTARG ;;
+			n) dnsmasq_indexes=$OPTARG ;;
+			c) dnsmasq_conf_dirs=$OPTARG ;;
 			p) preset=$OPTARG ;;
 			d) print_types=1 ;;
 			*) ;;
 		esac
 	done
-
-	# @temp_workaround for updating: exploiting the fact that print_def_config()
-	# is called from updated script - remove a few months from now
-	# removes files with old filenames from dnsmasq dir
-	if [ "${ABL_CMD}" = update ] && [ -z "${dnsmasq_instance}" ] &&
-		[ -z "${dnsmasq_index}" ] && [ -z "${dnsmasq_conf_d}" ] && [ -z "${preset}" ] && [ -z "${print_types}" ]
-	then
-		local dnsmasq_tmp_d file dnsmasq_restart_req
-		for dnsmasq_tmp_d in "/tmp/dnsmasq.d" "$(uci get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
-		do
-			for file in "${dnsmasq_tmp_d}"/.blocklist.gz "${dnsmasq_tmp_d}"/blocklist \
-				"${dnsmasq_tmp_d}"/conf-script "${dnsmasq_tmp_d}"/.extract_blocklist
-			do
-				[ -f "${file}" ] && { rm -f "${file}"; dnsmasq_restart_req=1; }
-			done
-		done
-		[ -n "${dnsmasq_restart_req}" ] && restart_dnsmasq -nostop
-	fi
 
 	mk_preset_arrays
 	: "${preset:=small}"
@@ -532,11 +582,10 @@ print_def_config()
 	# Crontab schedule expression for periodic list updates
 	cron_schedule="${cron_schedule:-"0 5 * * *"}" @ string
 
-	# dnsmasq instance and config directory
+	# dnsmasq instance indexes and config directories
 	# normally this should be set automatically by the 'setup' command
-	DNSMASQ_INSTANCE="${dnsmasq_instance}" @ string
-	DNSMASQ_INDEX="${dnsmasq_index}" @ integer
-	DNSMASQ_CONF_D="${dnsmasq_conf_d}" @ string
+	DNSMASQ_INDEXES="${dnsmasq_indexes}" @ integer_list
+	DNSMASQ_CONF_DIRS="${dnsmasq_conf_dirs}" @ string
 
 	EOT
 }
@@ -584,7 +633,7 @@ do_gen_config()
 	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "Invalid preset '${preset}'."; return 1; }
 	log_msg -blue "Selected preset '${preset}'."
 
-	select_dnsmasq_instance -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
+	select_dnsmasq_instances -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
 
 	# create cron job
 	cron_schedule=
@@ -613,9 +662,8 @@ do_gen_config()
 	[ "${REPLY}" = n ] && cron_schedule=disable
 
 	reg_action -purple "Generating new default config for adblock-lean from preset '${preset}'." || return 1
-	write_config "$(print_def_config -p "${preset}" -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}")" || return 1
+	write_config "$(print_def_config -p "${preset}" -n "${DNSMASQ_INDEXES}" -c "${DNSMASQ_CONF_DIRS}")" || return 1
 
-	[ "${ABL_CMD}" = gen_config ] && check_blocklist_compression_support
 	:
 }
 
@@ -652,8 +700,8 @@ get_def_preset()
 # 1 - path to file
 # Optional:
 #   2 - var to output conf fixes
-#   3 - var to output missing keys
-#   4 - var to output bad value keys
+#   3 - var to output keys requiring replacement
+#   4 - var to output keys requiring migration
 #
 # return codes:
 # 0 - Success
@@ -669,16 +717,34 @@ parse_config()
 	add_conf_fix() { p_conf_fixes="${p_conf_fixes}${1}"$'\n'; }
 
 	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' \
+		p_migrated_keys='' migrate_keys='' migrate_entries='' \
 		key val bad_val_entries='' corrected_entries='' \
-		p_conf_fixes='' p_missing_keys='' p_bad_val_keys='' \
+		p_conf_fixes='' missing_keys='' bad_val_keys='' \
 		sed_conf_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d'
 
 	are_var_names_safe "${2}" "${3}" "${4}" || return 1
-	eval "${2:-_}='' ${3:-_}='' ${4:-_}='' "
+	eval "${2:-_}='' ${3:-_}='' ${4:-_}=''"
 
 	unset curr_config_format def_config_format \
 		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_conf_format luci_conf_fixes preset
+
+	# newline-separated list of options to migrate in the format <old_key=new_key>
+	MIGRATE_OPTS='
+		DNSMASQ_INDEX=DNSMASQ_INDEXES
+		DNSMASQ_CONF_D=DNSMASQ_CONF_DIRS
+	'
+	local IFS="${_NL_}" migrate_opts_tmp='' opt
+	# remove leading and trailing spaces/tabs
+	for opt in ${MIGRATE_OPTS}
+	do
+		[ -n "${opt}" ] || continue
+		opt="${opt#"${opt%%[! 	]*}"}"
+		opt="${opt%"${opt##*[! 	]}"}"
+		migrate_opts_tmp="${migrate_opts_tmp}${opt}${_NL_}"
+	done
+	IFS="${DEFAULT_IFS}"
+	MIGRATE_OPTS="${migrate_opts_tmp}"
 
 	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 3; }
 
@@ -713,79 +779,135 @@ parse_config()
 	# extract valid values from default config
 	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
-	local parser_error_file="${ABL_CONF_STAGING_DIR}/parser_error"
-	rm -f "${parser_error_file}" "${ABL_CONF_STAGING_DIR}/unexp_entries" \
+	local parser_error_file="${ABL_CONF_STAGING_DIR}/parser_error" inval_entry_file="${ABL_CONF_STAGING_DIR}/inval_entry"
+	rm -f "${parser_error_file}" "${inval_entry_file}" "${ABL_CONF_STAGING_DIR}/unexp_entries" \
 		"${ABL_CONF_STAGING_DIR}/bad_val_entries" "${ABL_CONF_STAGING_DIR}/missing_entries"
+
 	parse_vars="$(
 		printf '%s\n' "${curr_config}" |
-		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v A="${ABL_CONF_STAGING_DIR}" '
+		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v M="${MIGRATE_OPTS}" -v A="${ABL_CONF_STAGING_DIR}" '
 		# return codes: 0=OK, 1=awk or default config error, 253=check double-quotes, 254=Invalid entry detected
 
-		# make default config arrays: def_arr, valid_values_regex_arr, valid_values_print_arr
+		function check_value(key,val)
+		{
+			regex="^(" valid_values_regex_arr[key] ")$"
+			if (val !~ regex) {
+				return 1
+			}
+			return 0
+		}
+
+		# create arrays: def_arr, valid_values_regex_arr, valid_values_print_arr
 		BEGIN{
 			rv=0
-			missing[1]="key"
-			missing[2]="value"
-			missing[3]="allowed values"
+			line_comp[1]="key"
+			line_comp[2]="value"
+			line_comp[3]="allowed values"
 
 			# create def_lines_arr
 			split(V,def_lines_arr,"\n")
 			for (ind in def_lines_arr) {
+				# remove whitespaces/tabs
+				sub(/"[ \t]*@[ \t]*/,"\"@",def_lines_arr[ind])
+				def_lines_arr[ind]=def_lines_arr[ind]
 				# validate default config line
-				sub(/[ \t]+@/,"@",def_lines_arr[ind])
-				sub(/@[ \t]+/,"@",def_lines_arr[ind])
-				n=split(def_lines_arr[ind],def_line_parts,"[=@]")
-				if (n!=3) {print "Internal error in default config: invalid line " q def_lines_arr[ind] q "." > "/dev/stderr"; rv=1; exit}
+				n=split(def_lines_arr[ind],def_line_parts,"[=@]") # split into key, value, allowed values
+				if (n!=3) {print "Invalid line in default config: " q def_lines_arr[ind] q "." > "/dev/stderr"; rv=1; exit}
 				for (i in def_line_parts) {
 					if (! def_line_parts[i]) {
-						print "Internal error in default config: line " q def_lines_arr[ind] q " is missing the " missing[i] "." > "/dev/stderr"
+						print "Invalid line in default config: " q def_lines_arr[ind] q " is missing the " line_comp[i] "." > "/dev/stderr"
 						rv=1
 						exit
 					}
 				}
 
 				key=def_line_parts[1]
-				def_val=def_line_parts[2]
+				def_arr[key]=def_line_parts[2]
 				valid_values=def_line_parts[3]
 
-				# create cleaned up def_arr
-				def_arr[key]=def_val
+				# create entry-specific validation regex array, printable valid values array
+				if (valid_values_seen_regex_arr[valid_values] != "")
+				{
+					valid_values_regex_arr[key]=valid_values_seen_regex_arr[valid_values]
+					valid_values_print_arr[key]=valid_values_seen_print_arr[valid_values]
+				}
+				else if (valid_values ~ /(^|\|)string($|\|)/)
+				{
+					valid_values_regex_arr[key]=".*"
+					valid_values_seen_regex_arr[valid_values]=".*"
+				}
+				else
+				{
+					val_regex=valid_values
+					if ( ! sub(/integer_list/,"[ 	]*[0-9]+([ 	]+[0-9]+)*[ 	]*",val_regex) )
+						sub(/integer/,"[0-9]+",val_regex)
+					valid_values_regex_arr[key]=val_regex
+					valid_values_seen_regex_arr[valid_values]=val_regex
 
-				# make entry-specific validation regex array
-				val_regex=valid_values
-				sub(/integer/,"[0-9]+",val_regex)
-				sub(/string/,".*",val_regex)
-				valid_values_regex_arr[key]=val_regex
-
-				# make printable entry-specific valid values array
-				val_print=valid_values
-				sub(/integer/,"non-negative integer",val_print)
-				gsub(/\|/," or ", val_print)
-				valid_values_print_arr[key]=val_print
+					val_print=valid_values
+					if ( ! sub(/integer_list/,"space-separated list of non-negative integers",val_print) )
+						sub(/integer/,"non-negative integer",val_print)
+					gsub(/\|/," or ", val_print)
+					valid_values_print_arr[key]=val_print
+					valid_values_seen_print_arr[valid_values]=val_print
+				}
 			}
+
+			# create migrate_keys_arr
+			split(M,migrate_lines_arr,"\n")
+			for (ind in migrate_lines_arr)
+			{
+				line=migrate_lines_arr[ind]
+				n = index(line, "=")
+				if(n)
+				{
+					old_key = substr(line, 1, n-1)
+					new_key = substr(line, n+1)
+					migrate_keys_arr[old_key] = new_key
+				}
+			}
+
 		}
 
 		# process user config
 		{
 			# handle double or missing =
 			if ( $0 !~ /^[^=]+=[^=]+([ \t]+(#.*){0,1})*$/ ) {
-				print $0 > "/dev/stderr"
+				print $0 > A"/inval_entry"
 				rv=254
 				exit
 			}
 
 			# key must be non-empty and alphanumeric
 			if ( $1 !~ /^[a-zA-Z0-9_]+$/ ) {
-				print $0 > "/dev/stderr"
+				print $0 > A"/inval_entry"
 				rv=254
 				exit
 			}
 
 			# line must have exactly 2 double-quotes after = and no characters before #
 			if ( $0 !~ /^[^"]+="[^"]*"([ \t]+(#[^"]*){0,1}){0,1}$/ ) {
-				print $0 > "/dev/stderr"
+				print $0 > A"/inval_entry"
 				rv=253
 				exit
+			}
+
+			# get value
+			split($2,tmp,"\"")
+			val=tmp[2]
+
+			# handle migrated keys
+			if ($1 in migrate_keys_arr) {
+				new_key=migrate_keys_arr[$1]
+				if (check_value(new_key,val) == 0)
+				{
+					migrated_keys_arr[new_key]
+					migrate_keys=migrate_keys $1 " "
+					migrated_keys=migrated_keys new_key " "
+					migrate_opts=migrate_opts "MIGRATE_" new_key "=" val "\n"
+					print $0 >> A"/migrate_entries"
+					next
+				}
 			}
 
 			# handle unexpected keys
@@ -795,17 +917,12 @@ parse_config()
 				next
 			}
 
-			# register key
+			# register the key
 			config_keys[$1]
 
-			# remove in-line comments and preceding spaces
-			sub(/[ \t]*#.*/,"",$2)
-
 			# handle unexpected values
-			val=$2
-			gsub(/"/,"",val)
-			regex="^(" valid_values_regex_arr[$1] ")$"
-			if (val !~ regex) {
+			if (check_value($1,val) != 0)
+			{
 				bad_val_keys=bad_val_keys $1 " "
 				print $1 "=" $2 " (should be " valid_values_print_arr[$1] ")" >> A"/bad_val_entries"
 				print $1 "=" def_arr[$1] >> A"/corrected_entries"
@@ -814,77 +931,84 @@ parse_config()
 
 			print $1 "=\"" val "\""
 		}
+
 		END{
 			if (rv != 0) {exit rv}
 			for (key in def_arr) {
-				if (key in config_keys) {} else {
+				if (key in config_keys || key in migrated_keys_arr) {} else {
 					print key "=" def_arr[key] >> A"/missing_entries"
 					missing_keys=missing_keys key " "
 				}
 			}
-			print "p_missing_keys=\"" missing_keys "\" " \
+			print "missing_keys=\"" missing_keys "\" " \
+				"migrate_keys=\"" migrate_keys "\" " \
+				"p_migrated_keys=\"" migrated_keys "\" " \
 				"unexp_keys=\"" unexp_keys "\" " \
-				"p_bad_val_keys=\"" bad_val_keys "\" "
+				"bad_val_keys=\"" bad_val_keys "\" " \
+				migrate_opts
 			exit rv
 		}'
-	)" 2> "${parser_error_file}" ||
+	)" 2> "${parser_error_file}" && [ ! -s "${parser_error_file}" ] ||
 	{
-		local awk_rv=${?} err_print=''
-		[ -s "${parser_error_file}" ] && err_print="$(cat "${parser_error_file}")"
-
-		[ -n "${err_print}" ] &&
-			case "${awk_rv}" in
-				253|254) err_print=": '${err_print}'" ;;
-				*) err_print=" ${err_print}"
-			esac
+		local awk_rv=${?} inval_entry=''
+		[ -s "${parser_error_file}" ] && reg_failure "awk errors encountered while parsing config:${_NL_}$(cat "${parser_error_file}")"
+		[ -s "${inval_entry_file}" ] && inval_entry=": $(cat "${inval_entry_file}")"
 
 		case "${awk_rv}" in
-			253) reg_failure "Invalid entry in config (check double-quotes)${err_print}." ;;
-			254) reg_failure "Invalid entry in config${err_print}." ;;
-			*) reg_failure "Failed to parse config.${err_print}"; return 3
+			253) reg_failure "Invalid entry in config (check double-quotes)${inval_entry}." ;;
+			254) reg_failure "Invalid entry in config${inval_entry}." ;;
+			*) reg_failure "Failed to parse config."; return 3
 		esac
 
 		return 1
 	}
 
+	local err_print=''
 	rm -f "${parser_error_file}"
+
 	eval "${parse_vars}" 2> "${parser_error_file}" && [ ! -s "${parser_error_file}" ] ||
 	{
-		[ -s "${parser_error_file}" ] && err_print=" Errors: $(cat "${parser_error_file}")"
+		[ -s "${parser_error_file}" ] && err_print=" Errors: ${_NL_}$(cat "${parser_error_file}")"
 		reg_failure "Failed to parse config.${err_print}"
 		return 3
 	}
 
+	if [ -n "${migrate_keys}" ]
+	then
+		log_msg -yellow "" "Following config options need to be migrated (option name has changed): '${migrate_keys% }'."
+		migrate_entries="$(cat "${ABL_CONF_STAGING_DIR}/migrate_entries")"
+		print_msg "Corresponding config entries:" "${migrate_entries%$'\n'}"
+		add_conf_fix "Migrate config entries"
+		export luci_migrate_keys="${migrate_keys% }" luci_migrate_entries="${migrate_entries%$'\n'}"
+	fi
+
 	if [ -n "${unexp_keys}" ]
 	then
-		reg_failure "Unexpected keys in config: '${unexp_keys% }'."
+		log_msg -yellow "" "Unexpected keys in config: '${unexp_keys% }'."
 		unexp_entries="$(cat "${ABL_CONF_STAGING_DIR}/unexp_entries")"
 		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
 		add_conf_fix "Remove unexpected entries from the config"
-		export luci_unexp_keys="${unexp_keys% }"
-		export luci_unexp_entries="${unexp_entries%$'\n'}"
+		export luci_unexp_keys="${unexp_keys% }" luci_unexp_entries="${unexp_entries%$'\n'}"
 	fi
 
-	if [ -n "${p_missing_keys}" ]
+	if [ -n "${missing_keys}" ]
 	then
-		reg_failure "Missing keys in config: '${p_missing_keys% }'."
+		log_msg -yellow "" "Missing keys in config: '${missing_keys% }'."
 		missing_entries="$(cat "${ABL_CONF_STAGING_DIR}/missing_entries")"
 		print_msg "Corresponding default config entries:" "${missing_entries%$'\n'}"
 		add_conf_fix "Re-add missing config entries with default values"
-		export luci_missing_keys="${p_missing_keys% }"
-		export luci_missing_entries="${missing_entries%$'\n'}"
+		export luci_missing_keys="${missing_keys% }" luci_missing_entries="${missing_entries%$'\n'}"
 	fi
 
-	if [ -n "${p_bad_val_keys}" ]
+	if [ -n "${bad_val_keys}" ]
 	then
-		reg_failure "Detected config entries with unexpected values."
+		log_msg -yellow "" "Detected config entries with unexpected values."
 		bad_val_entries="$(cat "${ABL_CONF_STAGING_DIR}/bad_val_entries")"
 		corrected_entries="$(cat "${ABL_CONF_STAGING_DIR}/corrected_entries")"
 		print_msg "The following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
 			"Corresponding default config entries:" "${corrected_entries%$'\n'}"
 		add_conf_fix "Replace unexpected values with defaults"
-		export luci_bad_val_entries="${bad_val_entries%$'\n'}"
-		export luci_corrected_entries="${corrected_entries%$'\n'}"
+		export luci_bad_val_entries="${bad_val_entries%$'\n'}" luci_corrected_entries="${corrected_entries%$'\n'}"
 	fi
 
 	if [ -z "${p_conf_fixes}" ]
@@ -903,9 +1027,9 @@ parse_config()
 	fi
 
 	p_conf_fixes="${p_conf_fixes%$'\n'}"
-
-	eval "${2:-_}"='${p_conf_fixes}' "${3:-_}"='${p_missing_keys}' "${4:-_}"='${p_bad_val_keys}'
 	export luci_conf_fixes="${p_conf_fixes}"
+
+	eval "${2:-_}=\"${p_conf_fixes}\" ${3:-_}=\"${missing_keys}${bad_val_keys}\" ${4:-_}=\"${p_migrated_keys}\""
 
 	[ -n "${p_conf_fixes}" ] && return 2
 	:
@@ -928,7 +1052,7 @@ load_config()
 		IFS="${DEFAULT_IFS}"
 	}
 
-	local key val line force_fix='' l_missing_keys='' l_conf_fixes='' l_bad_val_keys=''
+	local key val line force_fix='' l_replace_keys='' l_migrated_keys='' l_conf_fixes=''
 	[ "${1}" = '-f' ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
 	# Need to set DO_DIALOGS here for compatibility when updating from earlier versions
@@ -945,7 +1069,7 @@ load_config()
 	local tip_msg="Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
 
 	# validate config and assign to variables
-	parse_config "${ABL_CONFIG_FILE}" l_conf_fixes l_missing_keys l_bad_val_keys
+	parse_config "${ABL_CONFIG_FILE}" l_conf_fixes l_replace_keys l_migrated_keys
 	case ${?} in
 		0) return 0 ;;
 		1) log_msg "${tip_msg}"; return 1 ;; # config error with no automatic fix
@@ -975,37 +1099,59 @@ load_config()
 
 	[ "${REPLY}" = n ] && { log_msg "${tip_msg}"; return 1; }
 
-	fix_config "${l_missing_keys} ${l_bad_val_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+	fix_config "${l_replace_keys}" "${l_migrated_keys}" || { reg_failure "Failed to fix the config."; log_msg "${tip_msg}"; return 1; }
+
+	# automatically create missing addnmount entries during version update
+	if [ -n "${ABL_IN_INSTALL}" ] && [ -n "${DNSMASQ_INDEXES}" ] && get_dnsmasq_instances && detect_processing_utils
+	then
+		suggest_addnmounts
+	fi
+
 	:
 }
 
-# 1 - missing keys (whitespace-separated)
+# 1 - keys to replace (whitespace-separated)
+# 2 - keys to migrate
 fix_config()
 {
-	local fix_keys="${1}" fixed_config
+	local replace_keys="${1}" migrated_keys="${2}" fixed_config
 
-	case "${fix_keys}" in
-		*DNSMASQ_CONF_D*|*DNSMASQ_INSTANCE*|*DNSMASQ_INDEX*)
-			select_dnsmasq_instance -n || return 1 ;;
+	case "${replace_keys}" in
+		*DNSMASQ_INDEXES*|*DNSMASQ_CONF_DIRS*)
+			select_dnsmasq_instances -n || return 1
+			# shellcheck disable=SC2034
+			MIGRATE_DNSMASQ_INDEXES="${DNSMASQ_INDEXES}" MIGRATE_DNSMASQ_CONF_DIRS="${DNSMASQ_CONF_DIRS}" ;;
 	esac
 
 	# recreate config from default while replacing values with values from the existing config
 	fixed_config="$(
-		print_def_config -c "${DNSMASQ_CONF_D}" -i "${DNSMASQ_INSTANCE}" -n "${DNSMASQ_INDEX}" |
+		print_def_config -n "${DNSMASQ_INDEXES}" -c "${DNSMASQ_CONF_DIRS}" |
 		while IFS="${_NL_}" read -r def_line
 		do
 			case "${def_line}" in
 				\#*|'') printf '%s\n' "${def_line}"; continue ;;
 				*=*)
 					key=${def_line%%=*}
-					is_included "${key}" "${fix_keys}" " " && { printf '%s\n' "${def_line}"; continue; }
 					curr_val=
+					if is_included "${key}" "${replace_keys}" " "
+					then
+						printf '%s\n' "${def_line}"
+						continue
+					elif is_included "${key}" "${migrated_keys}" " "
+					then
+						eval "[ -n \"\${MIGRATE_${key}+set}\" ]" ||
+							{ reg_failure "fix_config: '\$MIGRATE_${key}' not set."; exit 1; }
+						eval "curr_val=\"\${MIGRATE_${key}}\""
+						printf '%s\n' "${key}=\"${curr_val}\""
+						continue
+					fi
 					eval "curr_val=\"\${${key}}\""
 					printf '%s\n' "${key}=\"${curr_val}\""
 					continue
 			esac
 		done
-	)"
+		:
+	)" || return 1
 
 	local old_config_f="/tmp/adblock-lean_config.old"
 	if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
@@ -1138,11 +1284,32 @@ report_utils()
 	esac
 }
 
+multi_inst_needed()
+{
+	case "${DNSMASQ_INDEXES}" in *[0-9]" "[0-9]*) return 0; esac
+	return 1
+}
+
+# 1 (optional) - var name for missing addnmounts output
+
 # return codes:
-# 0 - addnmount entries exist
+# 0 - compression and multiple instances possible
 # 1 - error
-# 2 - addnmount entries missing
+# 2 - compression not possible, multiple instances possible
+# 3 - compression and multiple instances not possible
+# shellcheck disable=SC2120
 check_addnmounts()
+{
+	[ -n "${1}" ] && unset "${1}"
+	local rv ca_missing=
+	try_check_addnmounts
+	rv=${?}
+	[ -n "${1}" ] && eval "${1}=\"${ca_missing}\""
+	[ ${rv} = 1 ] && reg_failure "Failed to check addnmount entries for dnsmasq instances."
+	return ${rv}
+}
+
+try_check_addnmounts()
 {
 	check_addnmount()
 	{
@@ -1158,52 +1325,62 @@ check_addnmounts()
 			path="${path%/*}"
 		done
 
-		return 1
+		return 2
 	}
 
-	check_util uci || { reg_failure "uci command was not found."; return 1; }
-	case "${DNSMASQ_INDEX}" in
-		''|*[!0-9]*)
-			reg_failure "Invalid index '${DNSMASQ_INDEX}' registered for dnsmasq instance '${DNSMASQ_INSTANCE}'."
-			return 1
-	esac
+	local me=check_addnmounts index addnmounts req_path rv='' compr_addnm_missing
 
-	local addnmounts req_path
-	addnmounts="$(uci -q get dhcp.@dnsmasq["${DNSMASQ_INDEX}"].addnmount | ${SED_CMD} -E 's~/(\s|$)~ ~g')"
+	check_util uci || { reg_failure "${me}: uci not found."; return 1; }
 
-	MISSING_ADDNMOUNTS=
-	for req_path in "/bin/busybox" "${EXTR_CMD_STDOUT%% *}"
+	for index in ${DNSMASQ_INDEXES}
 	do
-		[ -n "${req_path}" ] || continue
-		check_addnmount "${req_path}" || add2list MISSING_ADDNMOUNTS "${req_path}" ' '
+		case "${index}" in
+			''|*[!0-9]*)
+				reg_failure "${me}: Invalid dnsmasq index '${index}'."
+				return 1
+		esac
+		addnmounts="$(uci -q get dhcp.@dnsmasq["${index}"].addnmount | ${SED_CMD} -E 's~/(\s|$)~ ~g')" ||
+			{ reg_failure "${me}: uci command failed."; return 1; }
+
+		check_addnmount "/bin/busybox"
+		case ${?} in
+			0) ;;
+			1) return 1 ;;
+			*)
+				rv=3
+				add2list ca_missing "/bin/busybox" ' '
+		esac
+
+		compr_addnm_missing=
+		if [ "${compression_util}" != none ] &&
+			for req_path in "${EXTR_CMD_STDOUT%% *}" "${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
+			do
+				[ -n "${req_path}" ] || { reg_failure "${me}: internal error."; return 1; }
+				check_addnmount "${req_path}"
+				case "${?}" in
+					0) : ;;
+					1) return 1 ;;
+					*)
+						: "${rv:=2}"
+						add2list ca_missing "${req_path}" ' '; compr_addnm_missing=1
+				esac
+			done && [ -z "${compr_addnm_missing}" ]
+		then
+			:
+		elif multi_inst_needed
+		then
+			check_addnmount "${SHARED_BLOCKLIST_PATH}"
+			case ${?} in
+				0) ;;
+				1) return 1 ;;
+				*)
+					rv=3
+					[ "${compression_util}" = none ] && add2list ca_missing "${SHARED_BLOCKLIST_PATH}" ' '
+			esac
+		fi
 	done
 
-	[ -n "${MISSING_ADDNMOUNTS}" ] && return 2
-	:
-}
-
-# return codes:
-# 0 - addnmount entry exists
-# 1 - addnmount entry doesn't exist
-# 2 - error
-check_blocklist_compression_support()
-{
-	if ! dnsmasq --help | grep -qe "--conf-script"
-	then
-		log_msg "" "Note: The version of dnsmasq installed on this system does not support blocklist compression." \
-			"Blocklist compression support in dnsmasq can be verified by checking the output of: dnsmasq --help | grep -e \"--conf-script\"" \
-			"To use dnsmasq compression (which saves memory), upgrade OpenWrt and/or dnsmasq to a newer version that supports blocklist compression."
-		return 1
-	fi
-
-	check_addnmounts && return 0
-	[ ${?} = 1 ] && { reg_failure "Failed to check addnmount entries for dnsmasq instance '${DNSMASQ_INSTANCE}'"; return 2; }
-	log_msg -warn "" "Missing addnmount entries in /etc/config/dhcp for paths: ${MISSING_ADDNMOUNTS}" \
-		"Final blocklist compression will be disabled."
-	log_msg "addnmount entries are required to give dnsmasq access to a utility used to extract compressed blocklist." \
-		"Run 'service adblock-lean setup' to have the entries created automatically, or follow the steps in the README." \
-		"Alternatively, change the 'compression_util' option in adblock-lean config to 'none'."
-	return 1
+	return ${rv:-0}
 }
 
 # return values:
@@ -1293,9 +1470,19 @@ enable_cron_service()
 
 ### dnsmasq support implementation
 
-# analyze dnsmasq instances and set $DNSMASQ_CONF_D
+# analyze dnsmasq instances and set $DNSMASQ_CONF_DIRS
 # 1 - (optional) '-n' to only set vars (no config write)
-do_select_dnsmasq_instance() {
+do_select_dnsmasq_instances() {
+	validate_indexes()
+	{
+		printf '%s\n' "${1}" | grep -qE "^(a|${indexes}|(${indexes} )+)$" &&
+		case "${1}" in
+			a) : ;;
+			*[!0-9\ ]*) false ;;
+			*) :
+		esac
+	}
+
 	get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] ||
 	{
 		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
@@ -1303,16 +1490,18 @@ do_select_dnsmasq_instance() {
 		get_dnsmasq_instances && [ "${DNSMASQ_INSTANCES_CNT}" != 0 ] || return 1
 	}
 
+	local conf_dirs='' conf_dirs_instance index indexes='' ifaces='' REPLY first diff conf_dirs_cnt conf_dirs_print='' add_dir
+
 	if [ "${DNSMASQ_INSTANCES_CNT}" = 1 ]
 	then
-		DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES}"
 		log_msg -blue "Detected only 1 dnsmasq instance - skipping manual instance selection."
+		DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
 	else
 		# check if all instances share same conf-dirs
-		local instance conf_dirs conf_dirs_instance index indexes ifaces REPLY='' first=1 diff=
-		for instance in ${DNSMASQ_INSTANCES}
+		REPLY='' first=1 diff='' conf_dirs_cnt=''
+		for index in ${DNSMASQ_RUNNING_INDEXES}
 		do
-			eval "conf_dirs_instance=\"\${${instance}_CONF_DIRS}\""
+			eval "conf_dirs_instance=\"\${CONF_DIRS_${index}}\""
 			case "${first}" in
 				1)
 					first=
@@ -1328,8 +1517,8 @@ do_select_dnsmasq_instance() {
 		# if conf-dirs are shared, attach to first instance
 		if [ -z "${diff}" ]
 		then
-			DNSMASQ_INSTANCE="${DNSMASQ_INSTANCES%%"${_NL_}"*}"
 			log_msg -blue "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
+			DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
 		else
 			# if conf-dirs are not shared, ask the user
 			log_msg -blue "Multiple dnsmasq instances detected."
@@ -1337,62 +1526,79 @@ do_select_dnsmasq_instance() {
 			if [ -n "${DO_DIALOGS}" ]
 			then
 				log_msg "" "Existing dnsmasq instances and assigned network interfaces:"
-				for instance in ${DNSMASQ_INSTANCES}
+				for index in ${DNSMASQ_RUNNING_INDEXES}
 				do
-					eval "index=\"\${${instance}_INDEX}\""
-					eval "ifaces=\"\${${instance}_IFACES}\""
+					eval "instance=\"\${INST_NAME_${index}}\"" \
+						"ifaces=\"\${IFACES_${index}}\""
 					log_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
-					eval "local instance_${index}=\"${instance}\""
 					indexes="${indexes}${index}|"
 				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort:"
-				pick_opt "${indexes}a" || exit 1
-			elif [ -n "${LUCI_DNSMASQ_INSTANCE_INDEX}" ]
+				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort." \
+					"To adblock on multiple instances, enter their indexes separated by whitespaces."
+				while :
+				do
+					printf %s "${indexes}a: " > "${MSGS_DEST}"
+					read -r REPLY
+					validate_indexes "${REPLY}" ||
+						{ printf '\n%s\n\n' "Please enter ${indexes}a" > "${MSGS_DEST}"; continue; }
+					break
+				done
+			elif [ -n "${LUCI_DNSMASQ_INDEXES}" ]
 			then
-				REPLY="${LUCI_DNSMASQ_INSTANCE_INDEX}"
-				is_included "${REPLY}" "${indexes}" "|" ||
-					{ reg_failure "dnsmasq instance with index '${REPLY}' does not exist."; return 1; }
+				REPLY="${LUCI_DNSMASQ_INDEXES}"
+				validate_indexes "${REPLY}" ||
+					{ reg_failure "Invalid dnsmasq instance indexes '${REPLY}'."; return 1; }
 			else
+				reg_failure "dnsmasq indexes not specified."
 				return 1
 			fi
 
 			[ "${REPLY}" = a ] && { log_msg "Aborted config generation."; exit 0; }
-			eval "DNSMASQ_INSTANCE=\"\${instance_${REPLY}}\""
+			DNSMASQ_INDEXES="${REPLY}"
 		fi
 	fi
-	eval "DNSMASQ_INDEX=\"\${${DNSMASQ_INSTANCE}_INDEX}\""
-	log_msg "Selected dnsmasq instance ${DNSMASQ_INDEX}: '${DNSMASQ_INSTANCE}'."
+	log_msg "Selected dnsmasq indexes: '${DNSMASQ_INDEXES}'."
 
-	local conf_dirs conf_dirs_cnt
-	eval "conf_dirs=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS}\""
-	eval "conf_dirs_cnt=\"\${${DNSMASQ_INSTANCE}_CONF_DIRS_CNT}\""
+	DNSMASQ_CONF_DIRS=
+	for index in ${DNSMASQ_INDEXES}
+	do
+		add_dir=''
+		eval "conf_dirs=\"\${CONF_DIRS_${index}}\"
+			conf_dirs_cnt=\"\${CONF_DIRS_CNT_${index}}\""
 
-	if [ "${conf_dirs_cnt}" = 1 ]
-	then
-		DNSMASQ_CONF_D="${conf_dirs}"
-	else
-		if is_included "/tmp/dnsmasq.d" "${conf_dirs}"
+		if [ "${conf_dirs_cnt}" = 1 ]
 		then
-			DNSMASQ_CONF_D=/tmp/dnsmasq.d
-		elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}"
-		then
-			DNSMASQ_CONF_D=/tmp/dnsmasq.cfg01411c.d
+			add_dir="${conf_dirs}"
 		else
-			# fall back to first conf-dir
-			DNSMASQ_CONF_D="${conf_dirs%%"${_NL_}"*}"
+			if is_included "/tmp/dnsmasq.d" "${conf_dirs}"
+			then
+				add_dir="/tmp/dnsmasq.d"
+			elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}"
+			then
+				add_dir="/tmp/dnsmasq.cfg01411c.d"
+			else
+				# fall back to first conf-dir
+				add_dir="${conf_dirs%%"${_NL_}"*}"
+			fi
 		fi
-	fi
-	log_msg "Selected dnsmasq conf-dir '${DNSMASQ_CONF_D}'."
+		[ -n "${add_dir}" ] && { add2list DNSMASQ_CONF_DIRS "${add_dir}" " "; add2list conf_dirs_print "${add_dir}" ", "; }
+	done
+
+	[ -n "${DNSMASQ_CONF_DIRS}" ] || { reg_failure "Failed to detect conf-dirs for dnsmasq indexes '${DNSMASQ_INDEXES}'."; return 1; }
+
+	log_msg "Selected dnsmasq conf-dirs: ${conf_dirs_print}"
 	if [ "${1}" != '-n' ]
 	then
 		write_config "$(
-			$SED_CMD -E '/^\s*(DNSMASQ_CONF_D|DNSMASQ_INSTANCE|DNSMASQ_INDEX)=/d' "${ABL_CONFIG_FILE}"
-			printf '%s\n%s\n%s\n' \
-				"DNSMASQ_INSTANCE=\"${DNSMASQ_INSTANCE}\"" \
-				"DNSMASQ_CONF_D=\"${DNSMASQ_CONF_D}\"" \
-				"DNSMASQ_INDEX=\"${DNSMASQ_INDEX}\""
+			${SED_CMD} "
+				s~^\s*DNSMASQ_INDEXES=.*~DNSMASQ_INDEXES=\"${DNSMASQ_INDEXES}\"~
+				s~^\s*DNSMASQ_CONF_DIRS=.*~DNSMASQ_CONF_DIRS=\"${DNSMASQ_CONF_DIRS}\"~
+			" "${ABL_CONFIG_FILE}"
 		)" || return 1
 	fi
+
+	detect_processing_utils && suggest_addnmounts
+
 	:
 }
 
@@ -1407,45 +1613,13 @@ clean_dnsmasq_dir()
 		rm -f "${dir}"/.abl-blocklist.* "${dir}"/abl-blocklist \
 			"${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
 	done
-	:
-}
-
-# Get nameservers for dnsmasq instance
-# Output via global vars: ${instance}_NS_4, ${instance}_NS_6
-# 1 - instance id
-get_dnsmasq_instance_ns()
-{
-	local family ip_regex ip_regex_4 ip_regex_6 iface line instance_ns instance_ifaces ip ip_tmp
-	local instance="${1}"
-	ip_regex_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
-	ip_regex_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
-	: "${ip_regex_4}" "${ip_regex_6}"
-
-	for family in 4 6
-	do
-		eval "ip_regex=\"\${ip_regex_${family}}\""
-		eval "instance_ifaces=\"\${${instance}_IFACES}\""
-		instance_ns="$(
-			ip -o -${family} addr show | $SED_CMD -nE '/^\s*[0-9]+:\s*/{s/^\s*[0-9]+\s*:\s+//;s/scope .*//;s/\s+/ /g;p;}' |
-			while read -r line
-			do
-				iface="${line%% *}"
-				[ -n "${iface}" ] &&
-				is_included "${iface}" "${instance_ifaces}" ", " || continue
-				ip_tmp="${line##*inet"${family#4}" }"
-				ip="${ip_tmp%%/*}"
-				[ -n "${ip}" ] && printf '%s\n' "${ip}"
-			done | grep -E "^${ip_regex}$"
-		)"
-		eval "${instance}_NS_${family}=\"${instance_ns}\""
-	done
+	rm -f "${SHARED_BLOCKLIST_PATH:-???}"*
 	:
 }
 
 # populates global vars:
-# DNSMASQ_INSTANCES, DNSMASQ_INSTANCES_CNT, ${instance}_IFACES,
-# ALL_CONF_DIRS, ${instance}_CONF_DIRS, ${instance}_CONF_DIRS_CNT,
-# ${instance}_INDEX, ${instance}_RUNNING
+# ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
+# INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index},
 get_dnsmasq_instances() {
 	# shellcheck disable=SC2317
 	add_conf_dir()
@@ -1455,8 +1629,8 @@ get_dnsmasq_instances() {
 		[ -n "${confdir}" ] && add2list ALL_CONF_DIRS "${confdir}"
 	}
 
-	local nonempty='' instance instances instance_index l1_conf_file l1_conf_files conf_dirs conf_dirs_cnt i s f dir 
-	DNSMASQ_INSTANCES=
+	local nonempty='' instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir 
+	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -blue "Checking dnsmasq instances."
 
@@ -1475,7 +1649,7 @@ get_dnsmasq_instances() {
 	# gather conf dirs from /tmp/
 	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
 	do
-		[ -n "${dir}" ] && [ -d "${dir}" ] || continue
+		case "${dir}" in ''|*".cfg*") continue; esac
 		add2list ALL_CONF_DIRS "${dir}"
 	done
 
@@ -1490,21 +1664,22 @@ get_dnsmasq_instances() {
 	json_select instances &&
 	json_get_keys instances || return 1
 
-	instance_index=0
+	index=0
 	for instance in ${instances}
 	do
+		unset "INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}"
+
 		case "${instance}" in
 			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
 		esac
 		json_is_a "${instance}" object || continue # skip if $instance is not object
 		json_select "${instance}" &&
-		json_get_var "${instance}_RUNNING" running &&
+		json_get_var "RUNNING_${index}" running &&
 		json_is_a command array &&
 		json_select command || return 1
 
-		add2list DNSMASQ_INSTANCES "${instance}" || return 1
-		eval "${instance}_INDEX=${instance_index}"
-		instance_index=$((instance_index+1))
+		add2list running_instances "${instance}" &&
+		add2list DNSMASQ_RUNNING_INDEXES "${index}" " " || return 1
 		l1_conf_files=
 
 		# look for '-C' in values, get next value which is instance's conf file
@@ -1526,7 +1701,6 @@ get_dnsmasq_instances() {
 
 		# get ifaces for instance
 		ifaces="$(${AWK_CMD} -F= '/^\s*interface=/ {if (!seen[$2]++) {ifaces = ifaces $2 ", "} } END {print ifaces}' "$@")"
-		eval "${instance}_IFACES=\"${ifaces%, }\""
 
 		# get conf-dirs for instance
 		conf_dirs="$(
@@ -1543,88 +1717,88 @@ get_dnsmasq_instances() {
 		do
 			add2list ALL_CONF_DIRS "${dir}"
 		done
-		eval "${instance}_CONF_DIRS=\"${conf_dirs}\""
-
-		cnt_lines conf_dirs_cnt "${conf_dirs}"
-		eval "${instance}_CONF_DIRS_CNT=\"${conf_dirs_cnt}\""
+		eval "INST_NAME_${index}=\"${instance}\"
+			CONF_DIRS_${index}=\"${conf_dirs}\"
+			IFACES_${index}=\"${ifaces%, }\""
+		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
+		index=$((index+1))
 	done
 	json_cleanup
-	cnt_lines DNSMASQ_INSTANCES_CNT "${DNSMASQ_INSTANCES}"
+	cnt_lines DNSMASQ_INSTANCES_CNT "${running_instances}"
 
 	:
 }
 
-# Checks that dnsmasq instance with given ID is running and verifies that its index and conf-dir are same as in config
-# 1 - instance id
+# Checks that configured dnsmasq instances are running and verifies that their indexes and conf-dirs match the config
 # return codes:
 # 0 - dnsmasq running
 # 1 - dnsmasq instance is not running or other error
-check_dnsmasq_instance()
+check_dnsmasq_instances()
 {
-	local instance_running dnsmasq_conf_dirs please_run="Please run 'service adblock-lean select_dnsmasq_instance'."
-	[ -n "${1}" ] ||
-	{
-		reg_failure "dnsmasq instance is not set. ${please_run}"
-		return 1
-	}
-
-	[ -n "${DNSMASQ_CONF_D}" ] ||
-	{
-		reg_failure "dnsmasq config directory is not set. ${please_run}"
-		return 1
-	}
+	local instance index dir instance_conf_dirs conf_dir_reg all_abl_conf_dirs='' \
+		inst_ind="dnsmasq instance with index" please_run="Please run 'service adblock-lean select_dnsmasq_instances'."
 
 	get_dnsmasq_instances ||
 	{
 		reg_failure "No running dnsmasq instances found."
 		stop -noexit
-		get_dnsmasq_instances ||
+		get_dnsmasq_instances || { reg_failure "dnsmasq service appears to be broken."; return 1; }
+	}
+
+	[ -n "${DNSMASQ_INDEXES}" ] || { reg_failure "dnsmasq instances are not set."; return 1; }
+
+	for index in ${DNSMASQ_INDEXES}
+	do
+		eval "[ \"\${RUNNING_${index}}\" = 1 ]" ||
 		{
-			reg_failure "dnsmasq service appears to be broken."
+			reg_failure "${inst_ind} ${index} is not running."
+			stop -noexit
+			get_dnsmasq_instances &&
+			eval "[ \"\${RUNNING_${index}}\" = 1 ]" ||
+			{
+				reg_failure "${inst_ind} ${index} is misconfigured or not running."
+				return 1
+			}
+		}
+
+		conf_dir_reg=
+		eval "instance_conf_dirs=\"\${CONF_DIRS_${index}}\""
+		[ -n "${instance_conf_dirs}" ] || { reg_failure "dnsmasq config directory is not set for instance with index ${index}."; return 1; }
+		all_abl_conf_dirs="${all_abl_conf_dirs}${instance_conf_dirs}${_NL_}"
+
+		local IFS="${_NL_}"
+		for dir in ${instance_conf_dirs}
+		do
+			IFS="${DEFAULT_IFS}"
+			is_included "${dir}" "${DNSMASQ_CONF_DIRS}" " " && conf_dir_reg=1
+			[ -d "${dir}" ] ||
+			{
+				reg_failure "Conf-dir '${dir}' does not exist. ${inst_ind} ${index} is misconfigured. ${please_run}"
+				return 1
+			}
+		done
+		IFS="${DEFAULT_IFS}"
+
+		[ -n "${conf_dir_reg}" ] ||
+		{
+			reg_failure "Conf-dirs for ${inst_ind} ${index} changed. ${please_run}"
 			return 1
 		}
-	}
 
-	eval "instance_running=\"\${${1}_RUNNING}\"" &&
-	[ "${instance_running}" = 1 ] ||
-	{
-		reg_failure "dnsmasq instance '${1}' is not running."
-		stop -noexit
-		get_dnsmasq_instances &&
-		eval "instance_running=\"\${${1}_RUNNING}\"" &&
-		[ "${instance_running}" = 1 ] ||
+		# check if config section exists in /etc/config/dhcp
+		uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
 		{
-			reg_failure "dnsmasq instance '${1}' is misconfigured or not running. ${please_run}"
+			reg_failure "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
 			return 1
 		}
-	}
+	done
 
-	# check if config section exists in /etc/config/dhcp
-	uci show "dhcp.${1}" &>/dev/null ||
-	{
-		reg_failure "dnsmasq instance '${1}' is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
-		return 1
-	}
+	for dir in ${DNSMASQ_CONF_DIRS}
+	do
+		is_included "${dir}" "${all_abl_conf_dirs}" "${_NL_}" ||
+			{ reg_failure "conf-dir directory '${dir}' is set in config but not used by dnsmasq instances '${DNSMASQ_INDEXES}'."; return 1; }
+	done
 
-	eval "dnsmasq_conf_dirs=\"\${${1}_CONF_DIRS}\""
-	is_included "${DNSMASQ_CONF_D}" "${dnsmasq_conf_dirs}" ||
-	{
-		reg_failure "Conf-dir for dnsmasq instance '${1}' changed (was: '${DNSMASQ_CONF_D}'). ${please_run}"
-		return 1
-	}
-
-	eval "instance_index=\"\${${1}_INDEX}\""
-	[ "${instance_index}" = "${DNSMASQ_INDEX}" ] ||
-	{
-		reg_failure "dnsmasq instances changed: actual instance index '${instance_index}' doesn't match configured index '${DNSMASQ_INDEX}'. ${please_run}"
-		return 1
-	}
-
-	[ -d "${DNSMASQ_CONF_D}" ] ||
-	{
-		reg_failure "Conf-dir '${DNSMASQ_CONF_D}' does not exist. dnsmasq instance '${1}' is misconfigured. ${please_run}"
-		return 1
-	}
 	:
 }
 
