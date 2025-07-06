@@ -1,3 +1,4 @@
+```
 anti.piracy
 blocklist-referral
 doh
@@ -36,3 +37,4 @@ ultimate
 ultimate.mini
 urlshortener
 whitelist-referral
+```
