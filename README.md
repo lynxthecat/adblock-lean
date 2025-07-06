@@ -83,18 +83,19 @@ _<details><summary>If you need to manually configure the dnsmasq instance adbloc
 
 1) Check which `config dnsmasq` sections are defined in `/etc/config/dhcp`.
 2) If only one `config dnsmasq` section exists then you are only running 1 dnsmasq instance. Note and write down: instance index is 0; instance name (it's either `cfg01411c` if the name is not specified or the optional word right after `config dnsmasq`); if `option confdir` is set, note and write down the value. If it is not set then the default conf-dir is `/tmp/dnsmasq.cfg01411c.d` in OpenWrt 24.10 and later (including current snapshots), or `/tmp/dnsmasq.d` in older OpenWrt versions.
-3) If you have multiple `config dnsmasq` sections then multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on. Use the command `/etc/init.d/dnsmasq info` to get a list of all running instances as json. Find the relevant dnsmasq instance. Note: instance index (1st instance has index 0, further instances increment the index by 1); instance name (example: `cfg01411c`); which network interfaces the relevant instance serves (likely listed in the 'netdev' section). In the `"command"` section of the json, look for a path in `/var/etc/`, write down the path. Check the contents of the file at that path and look for `conf_dir=`. This is the conf-dir this instance is using - note and write it down.
+3) If you have multiple `config dnsmasq` sections then multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on. Use the command `/etc/init.d/dnsmasq info` to get a list of all running instances as json. Find the relevant dnsmasq instance. Note: instance index (1st instance has index 0, further instances increment the index by 1); which network interfaces the relevant instance serves (likely listed in the 'netdev' section). In the `"command"` section of the json, look for a path in `/var/etc/`, write down the path. Check the contents of the file at that path and look for `conf_dir=`. This is the conf-dir this instance is using - note and write it down.
 4) In the adblock-lean config file: specify instance index in option `DNSMASQ_INDEXES` (example: `DNSMASQ_INDEXES="0"`), specify instance conf-dir in option `DNSMASQ_CONF_DIRS` (example: `DNSMASQ_CONF_DIRS="/tmp/dnsmasq.d"`). To adblock on multiple dnsmasq instances, specify multiple indexes and their corresponding conf-dirs, separated by whitespace.
 
 </details>
 
-Optional/recommended: enable blocklist compression to reduce RAM usage. To achieve this, add the line
+Optional/recommended: enable blocklist compression to reduce RAM usage. To achieve this, add the lines
 ```
 	list addnmount '/bin/busybox'
+	list addnmount '/var/run/adblock-lean/abl-blocklist.gz'
 ```
-to the relevant dnsmasq section (under `config dnsmasq`) of file `/etc/config/dhcp`. If using a compression utility other than the built-in Busybox gzip, add a second addnmount line with the path to its executable file.
+to the relevant dnsmasq section (under `config dnsmasq`) of file `/etc/config/dhcp`. If using a compression utility other than the built-in Busybox gzip, make sure the extension (gz) matches or change if necessary and add a third addnmount line with the path to its executable file.
 
-If only one `config dnsmasq` section exists then that's the section to add the line to. If you have multiple `config dnsmasq` sections, this means that multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on - add the line to that section. Verify that same dnsmasq instance index is configured in `/etc/adblock-lean/config` (1st instance corresponds to the 1st `config dnsmasq` section and has index 0, further instances increment the index by 1).
+If only one `config dnsmasq` section exists then that's the section to add the line to. If you have multiple `config dnsmasq` sections, this means that multiple dnsmasq instances are running on your device. Then you should know which dnsmasq instance you want adblocking to work on - add the line to that section. Verify that same dnsmasq instance index is configured in `/etc/adblock-lean/config` (1st instance corresponds to the 1st `config dnsmasq` section and has index 0, further instances increment the index by 1). If adblocking on multiple dnsmasq instances, add aforementioned addnmount entries to each `config dnsmasq` section for respective dnsmasq instances.
 
 Now run the command `service dnsmasq restart`.
 
@@ -118,7 +119,8 @@ Additional available commands (use with `service adblock-lean <command>`):
 - `print_log`: prints most recent session log
 - `upd_cron_job`: creates cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
                   if config option set to 'disable', removes existing cron job if any
-- `select_dnsmasq_instances`: analyzes dnsmasq instances and sets required options in the adblock-lean config
+- `select_dnsmasq_instances`: analyzes dnsmasq instances and sets required options in the adblock-lean config.
+            If multiple dnsmasq instances are found, allows the user to pick which instances to adblock on.
 
 ## Basic configuration
 Generally, if you ran the automated setup then you don't have to make any additional configuration changes. If you want to further customize adblocking, this can be achieved by modifying the config file located at `/etc/adblock-lean/config`.
