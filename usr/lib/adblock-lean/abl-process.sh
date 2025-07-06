@@ -107,12 +107,12 @@ check_confscript_support()
 # exports PROCESS_UTILS_SET COMPR_CMD COMPR_CMD_STDOUT COMPR_EXT EXTR_CMD EXTR_CMD_STDOUT
 detect_processing_utils()
 {
-	[ -n "${compression_util}" ] || { reg_failure "detect_processing_utils: \$compression_util is not set."; return 1; }
 	[ -n "${PROCESS_UTILS_SET}" ] && return 0
 
 	unset PROCESS_UTILS_SET COMPR_CMD COMPR_CMD_STDOUT COMPR_EXT EXTR_CMD EXTR_CMD_STDOUT
 
 	local compr_cmd_opts='' compr_util_path='' extr_cmd_opts=''
+	: "${compression_util:=gzip}"
 	case "${compression_util}" in
 		gzip)
 			detect_util compr_util_path gzip "" "/usr/libexec/gzip-gnu" -b &&
@@ -143,8 +143,6 @@ detect_processing_utils()
 #    FINAL_COMPR_OR_CAT, FINAL_COMPR_OPTS
 set_processing_vars()
 {
-	[ -n "${compression_util}" ]  || { reg_failure "set_processing_vars: \$compression_util is not set."; return 1; }
-
 	local par_opt='' cpu_cnt compression_util="${compression_util:-gzip}" addnmounts_rv missing_addnmounts \
 		please_run_setup="Please run 'service adblock-lean setup' to create the required addnmount entries."
 	unset USE_COMPRESSION FINAL_COMPRESS PARALLEL_JOBS INTERM_COMPR_OPTS FINAL_COMPR_OPTS
