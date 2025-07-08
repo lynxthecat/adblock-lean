@@ -381,17 +381,17 @@ do_setup()
 mk_preset_arrays()
 {
 	# quasi-arrays for presets
-	# cnt - target elements count/1000, mem - memory in MB
+	# urls_cnt - urls count, cnt - target elements count, mem - memory in MB
 	mini_urls="hagezi:pro.mini" \
-		mini_cnt=85 mini_mem=64
+		mini_urls_cnt=1 mini_cnt=85000 mini_mem=64
 	small_urls="hagezi:pro" \
-		small_cnt=250 small_mem=128
+		small_urls_cnt=1 small_cnt=250000 small_mem=128
 	medium_urls="hagezi:pro hagezi:tif.mini" \
-		medium_cnt=350 medium_mem=256
+		medium_urls_cnt=2 medium_cnt=350000 medium_mem=256
 	large_urls="hagezi:pro hagezi:tif" \
-		large_cnt=1200 large_mem=512
+		large_urls_cnt=2 large_cnt=1200000 large_mem=512
 	large_relaxed_urls="hagezi:pro hagezi:tif" \
-		large_relaxed_cnt=1200 large_relaxed_mem=1024 large_relaxed_coeff=2
+		large_relaxed_urls_cnt=2 large_relaxed_cnt=1200000 large_relaxed_mem=1024 large_relaxed_coeff=2
 }
 
 # sets $blocklist_urls, $min_good_line_count, $max_blocklist_file_size_KB, $max_file_part_size_KB
@@ -400,6 +400,34 @@ mk_preset_arrays()
 # 2 - (optional) '-d' to print the description
 # 2 - (optional) '-n' to print nothing (only assign values to vars)
 set_preset_vars()
+{
+	local val field mem tgt_entries_cnt tgt_entries_cnt_human lim_coeff urls_cnt
+
+	eval "mem=\"\${${1}_mem}\"
+		urls_cnt=\"\${${1}_urls_cnt}\"
+		tgt_entries_cnt=\"\${${1}_cnt}\"
+		lim_coeff=\"\${${1}_coeff}\"
+		blocklist_urls=\"\${${1}_urls}\""
+	: "${lim_coeff:=1}" "${mem:=???}"
+
+	do_calculate_values -n "${tgt_entries_cnt}" "${urls_cnt}" "${lim_coeff}" || return 1
+
+	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
+
+	if [ "${2}" != '-n' ]
+	then
+		int2human tgt_entries_cnt_human "${tgt_entries_cnt}"
+		print_msg "${blue}Elements count:${n_c} ~${tgt_entries_cnt_human}"
+		for field in blocklist_urls max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
+		do
+			eval "val=\"\${${field}}\""
+			print_msg "${blue}${field}${n_c}=\"${val}\""
+		done
+	fi
+	:
+}
+
+do_calculate_values()
 {
 	# keeps first two digits, replaces others with 0's
 	# 1 - var for I/O
@@ -421,9 +449,52 @@ set_preset_vars()
 		:
 	}
 
-	local val field mem tgt_lines_cnt_k lim_coeff final_entry_size_B source_entry_size_B
+	local urls_cnt val field tgt_entries_cnt tgt_entries_cnt_human lim_coeff final_entry_size_B source_entry_size_B noprint=''
 
-	eval "mem=\"\${${1}_mem}\" tgt_lines_cnt_k=\"\${${1}_cnt}\" lim_coeff=\"\${${1}_coeff:-1}\" blocklist_urls=\"\${${1}_urls}\""
+	[ "${1}" = '-n' ] && { noprint=1; shift; }
+
+	local tgt_entries_cnt="${1}" urls_cnt="${2}" lim_coeff="${3:-1}"
+
+	if [ -z "${noprint}" ]
+	then
+		[ -z "${tgt_entries_cnt}" ] && while :
+		do
+			print_msg "Enter target entries count for the final blocklist:"
+			read -r tgt_entries_cnt
+			case "${tgt_entries_cnt}" in ''|*[!0-9]*)
+				print_msg "Invalid input '${tgt_entries_cnt}'. Please enter a number."
+				continue
+			esac
+			break
+		done
+		case "${tgt_entries_cnt}" in ''|*[!0-9]*)
+			print_msg "Error: Invalid entries count '${tgt_entries_cnt}'."
+			return 1
+		esac
+
+		while :
+		do
+			print_msg "How many URLs are used?"
+			read -r urls_cnt
+			case "${urls_cnt}" in ''|*[!0-9]*)
+				print_msg "Invalid input '${urls_cnt}'. Please enter a number."
+				continue
+			esac
+			break
+		done
+	else
+		case "${tgt_entries_cnt}" in ''|*[!0-9]*)
+			reg_failure "calculate_values: invalid entries count '${tgt_entries_cnt}'."; return 1 ;;
+		esac
+
+		case "${urls_cnt}" in ''|*[!0-9]*)
+			reg_failure "calculate_values: Invalid URLs count '${urls_cnt}'."
+			return 1
+		esac
+	fi
+
+	[ "${urls_cnt}" -eq 0 ] && { reg_failure "calculate_values: Invalid URLs count '${urls_cnt}'."; return 1; }
+
 
 	# Default values calculation:
 	# Values are rounded down to reasonable degree
@@ -431,33 +502,34 @@ set_preset_vars()
 	final_entry_size_B=20 # assumption
 	source_entry_size_B=20 # assumption for raw domains format. dnsmasq source format not used by default
 
-	# target_lines_cnt / 3.5
-	min_good_line_count=$((tgt_lines_cnt_k*10000/35))
+	# tgt_entries_cnt / 3.5
+	min_good_line_count=$((tgt_entries_cnt*10/35))
 	reasonable_round min_good_line_count || return 1
 
-	# target_lines_cnt * final_entry_size_B * lim_coeff * 1.25
-	max_blocklist_file_size_KB=$(( (tgt_lines_cnt_k*1250*final_entry_size_B*lim_coeff)/1024 ))
+	# (tgt_entries_cnt * final_entry_size_B * lim_coeff * 1.25)/1024
+	max_blocklist_file_size_KB=$(( (tgt_entries_cnt*final_entry_size_B*lim_coeff*125)/(1024*100) + 1 ))
 	reasonable_round max_blocklist_file_size_KB || return 1
 
-	case "${1}" in
-		mini|small) max_file_part_size_KB=${max_blocklist_file_size_KB} ;;
-		*)
-			# target_lines_cnt * source_entry_size_B * lim_coeff * 1.03
-			max_file_part_size_KB=$(( (tgt_lines_cnt_k*1030*source_entry_size_B*lim_coeff)/1024 ))
-			reasonable_round max_file_part_size_KB || return 1
-	esac
-
-	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
-
-	if [ "${2}" != '-n' ]
+	if [ "${urls_cnt}" -eq 1 ]
 	then
-		print_msg "${blue}Elements count:${n_c} ~${tgt_lines_cnt_k}k"
-		for field in blocklist_urls max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
+		max_file_part_size_KB=${max_blocklist_file_size_KB}
+	else
+		# (tgt_entries_cnt * source_entry_size_B * lim_coeff * 1.03)/1024
+		max_file_part_size_KB=$(( (tgt_entries_cnt*source_entry_size_B*lim_coeff*103)/(1024*100) + 1 ))
+		reasonable_round max_file_part_size_KB || return 1
+	fi
+
+	if [ -z "${noprint}" ]
+	then
+		int2human tgt_entries_cnt_human "${tgt_entries_cnt}"
+		print_msg "" "Recommended values for ${tgt_entries_cnt_human} entries:"
+		for field in max_file_part_size_KB max_blocklist_file_size_KB min_good_line_count
 		do
 			eval "val=\"\${${field}}\""
 			print_msg "${blue}${field}${n_c}=\"${val}\""
 		done
 	fi
+	:
 }
 
 # (optional) -d to print with allowed value types (otherwise print without)

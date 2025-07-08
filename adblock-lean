@@ -81,7 +81,7 @@ SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall"
+EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_values"
 EXTRA_HELP="
 adblock-lean custom commands:
 	version                   print adblock-lean version
@@ -96,7 +96,8 @@ adblock-lean custom commands:
 	                          if config option set to 'disable', remove existing cron job if any
 	print_log                 print most recent session log
 	update                    update adblock-lean to the latest version
-	uninstall                 uninstall adblock-lean, remove all adblock-lean-related files and settings"
+	uninstall                 uninstall adblock-lean, remove all adblock-lean-related files and settings
+	calculate_values          calculate values for configuration options based on target entries count"
 
 # silence shellcheck warnings
 : "${action:=}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}"
@@ -1988,6 +1989,13 @@ disable()
 		log_msg "The adblock-lean service is already disabled."
 	fi
 	return "$rv"
+}
+
+calculate_values()
+{
+	source_libs || exit 1
+	do_calculate_values "${@}"
+	exit ${?}
 }
 
 set_ansi
