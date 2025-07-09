@@ -410,7 +410,7 @@ set_preset_vars()
 		blocklist_urls=\"\${${1}_urls}\""
 	: "${lim_coeff:=1}" "${mem:=???}"
 
-	do_calculate_values -n "${tgt_entries_cnt}" "${urls_cnt}" "${lim_coeff}" || return 1
+	do_calculate_limits -n "${tgt_entries_cnt}" "${urls_cnt}" "${lim_coeff}" || return 1
 
 	[ "${2}" = '-d' ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${mem} MB of memory."
 
@@ -427,7 +427,7 @@ set_preset_vars()
 	:
 }
 
-do_calculate_values()
+do_calculate_limits()
 {
 	# keeps first two digits, replaces others with 0's
 	# 1 - var for I/O
@@ -484,16 +484,16 @@ do_calculate_values()
 		done
 	else
 		case "${tgt_entries_cnt}" in ''|*[!0-9]*)
-			reg_failure "calculate_values: invalid entries count '${tgt_entries_cnt}'."; return 1 ;;
+			reg_failure "calculate_limits: invalid entries count '${tgt_entries_cnt}'."; return 1 ;;
 		esac
 
 		case "${urls_cnt}" in ''|*[!0-9]*)
-			reg_failure "calculate_values: Invalid URLs count '${urls_cnt}'."
+			reg_failure "calculate_limits: Invalid URLs count '${urls_cnt}'."
 			return 1
 		esac
 	fi
 
-	[ "${urls_cnt}" -eq 0 ] && { reg_failure "calculate_values: Invalid URLs count '${urls_cnt}'."; return 1; }
+	[ "${urls_cnt}" -eq 0 ] && { reg_failure "calculate_limits: Invalid URLs count '${urls_cnt}'."; return 1; }
 
 
 	# Default values calculation:
