@@ -483,6 +483,7 @@ schedule_jobs()
 # 1 - Fatal error (stop processing)
 # 2 - Download failure
 # 3 - Processing failure
+# shellcheck disable=SC2317
 process_list_part()
 {
 	finalize_job()
@@ -503,11 +504,11 @@ process_list_part()
 		exit "${1}"
 	}
 
-	# shellcheck disable=SC2317
-	dl_list()
-	{
-		uclient-fetch "${1}" -O- --timeout=3 2> "${ucl_err_file}"
-	}
+	dl_list() { uclient-fetch "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
+
+	conv_dnsmasq_to_raw() { ${SED_CMD} -E "${format_conv_prefix};${format_conv_suffix}" | tr '/' '\n'; }
+
+	case_conv() { tr 'A-Z' 'a-z'; }
 
 	local list_origin="${1}" list_path="${2}" list_type="${3}" list_format="${4}" curr_job_pid
 
@@ -516,12 +517,6 @@ process_list_part()
 	for v in 1 2 3 4; do
 		eval "[ -z \"\${${v}}\" ]" && finalize_job 1 "Missing argument ${v}."
 	done
-
-	case "${list_type}" in
-		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
-		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
-		*) finalize_job 1 "Invalid list type '${list_type}'"
-	esac
 
 	local list_id="${list_type}-${list_origin}-${list_format}"
 	local job_id="${list_id}-${curr_job_pid}"
@@ -532,12 +527,20 @@ process_list_part()
 		size_exceeded_file="${ABL_TMP_DIR}/size_exceeded_${job_id}" \
 		part_line_count='' line_count_human min_line_count='' min_line_count_human \
 		part_size_B='' retry=1 \
-		part_compr_or_cat="cat" fetch_cmd
+		part_compr_or_cat="cat" fetch_cmd \
+		format_conv_or_cat="cat" format_conv_prefix="s~^[ \t]*(local|server|address)=/~~" format_conv_suffix='' \
+		case_conv_or_cat="cat"
 
 	case "${list_origin}" in
 		DL) fetch_cmd=dl_list ;;
 		LOCAL) fetch_cmd="cat" ;;
-		*) reg_failure "Invalid list origin '${list_origin}'."; finalize_job 1
+		*) finalize_job 1 "Invalid list origin '${list_origin}'."
+	esac
+
+	case "${list_type}" in
+		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
+		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
+		*) finalize_job 1 "Invalid list type '${list_type}'"
 	esac
 
 	case ${list_type} in blocklist|blocklist_ipv4)
@@ -547,6 +550,19 @@ process_list_part()
 			part_compr_or_cat="${COMPR_CMD_STDOUT} ${INTERM_COMPR_OPTS}"
 		}
 	esac
+
+	case "${list_type}" in
+		blocklist) format_conv_suffix='s~/$~~' ;;
+		blocklist_ipv4) format_conv_prefix="s~^[ \t]*bogus-nxdomain=~~" ;;
+		allowlist) format_conv_suffix='s~/#$~~'
+	esac
+
+	[ "${list_format}" = dnsmasq ] && format_conv_or_cat=conv_dnsmasq_to_raw
+
+	case "${list_type}" in
+		allowlist|blocklist) case_conv_or_cat="case_conv"
+	esac
+
 	eval "min_line_count=\"\${min_${list_type}_part_line_count}\""
 
 	while :
@@ -557,34 +573,22 @@ process_list_part()
 		log_msg -noprint "Processing ${list_format} ${list_type}: ${list_path}"
 
 		# Download or cat the list
-		local lines_cnt_low='' dl_completed=''
-
 		${fetch_cmd} "${list_path}" |
-		# limit size
+
+		# Limit size
 		{ head -c "${max_file_part_size_KB}k"; read -rn1 -d '' && { touch "${size_exceeded_file}"; cat 1>/dev/null; }; } |
 
 		# Remove comment lines and trailing comments, remove whitespaces
 		${SED_CMD} 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
 
 		# Convert dnsmasq format to raw format
-		if [ "${list_format}" = dnsmasq ]
-		then
-			local rm_prefix_expr="s~^[ \t]*(local|server|address)=/~~" rm_suffix_expr=''
-			case "${list_type}" in
-				blocklist) rm_suffix_expr='s~/$~~' ;;
-				blocklist_ipv4) rm_prefix_expr="s~^[ \t]*bogus-nxdomain=~~" ;;
-				allowlist) rm_suffix_expr='s~/#$~~'
-			esac
-			${SED_CMD} -E "${rm_prefix_expr};${rm_suffix_expr}" | tr '/' '\n'
-		else
-			cat
-		fi |
+		${format_conv_or_cat} |
 
 		# Count bytes and entries
 		tee >(wc -wc > "${list_stats_file}") |
 
 		# Convert to lowercase
-		case "${list_type}" in allowlist|blocklist) tr 'A-Z' 'a-z' ;; *) cat; esac |
+		${case_conv_or_cat} |
 
 		if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 		then
@@ -616,6 +620,8 @@ process_list_part()
 			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
 			finalize_job 2
 		fi
+
+		local lines_cnt_low='' dl_completed=''
 
 		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
 
@@ -666,8 +672,7 @@ process_list_part()
 
 		log_msg -yellow "" "Processing job for URL '${list_url}' is sleeping for 5 seconds after failed download attempt."
 		sleep 5 &
-		local sleep_pid=${!}
-		wait ${sleep_pid}
+		wait ${!}
 	done
 }
 
