@@ -16,8 +16,8 @@ IDLE_TIMEOUT_S=300 # 5 minutes
 
 ABL_TEST_DOMAIN="adblocklean-test123.totallybogus"
 
-OISD_DL_URL="oisd.nl/domainswild2"
-HAGEZI_DL_URL="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
+OISD_DL_URL="oisd.nl"
+HAGEZI_DL_URL="https://raw.githubusercontent.com/hagezi/dns-blocklists/main"
 OISD_LISTS="big small nsfw nsfw-small"
 HAGEZI_LISTS="anti.piracy blocklist-referral doh doh-vpn-proxy-bypass dyndns fake gambling gambling.medium gambling.mini hoster \
 light multi native.amazon native.apple native.huawei native.lgwebos native.oppo-realme native.roku native.samsung \
@@ -228,9 +228,11 @@ set_processing_vars()
 
 # 1 - var name for output
 # 2 - list identifier in the form [hagezi|oisd]:[list_name]
+# 3 - list format (raw|dnsmasq)
 get_list_url()
 {
-	local res_url out_var="${1}" list_id="${2}" list_author list_name lists=''
+	local url_prefix url_suffix raw_suffix dnsmasq_suffix res_url list_author list_name lists='' \
+		out_var="${1}" list_id="${2}" list_format="${3}"
 
 	are_var_names_safe "${out_var}" || return 1
 	eval "${out_var}=''"
@@ -238,14 +240,32 @@ get_list_url()
 	case "${list_id}" in *[A-Z]*) list_id="$(printf '%s' "${list_id}" | tr 'A-Z' 'a-z')"; esac
 	list_author="${list_id%%\:*}" list_name="${list_id#*\:}"
 	case "${list_author}" in
-		hagezi) lists="${HAGEZI_LISTS}" res_url="${HAGEZI_DL_URL}/${list_name}-onlydomains.txt" ;;
-		oisd) lists="${OISD_LISTS}" res_url="https://${list_name}.${OISD_DL_URL}" ;;
-		*) reg_failure "Unknown list '${2}'."; return 1
+		hagezi)
+			lists="${HAGEZI_LISTS}"
+			url_prefix="${HAGEZI_DL_URL}"
+			raw_suffix="/wildcard/${list_name}-onlydomains.txt"
+			dnsmasq_suffix="/dnsmasq/${list_name}.txt" ;;
+		oisd)
+			lists="${OISD_LISTS}"
+			url_prefix="https://${list_name}.${OISD_DL_URL}"
+			raw_suffix="/domainswild2"
+			dnsmasq_suffix="/dnsmasq" ;;
+		*)
+			reg_failure "Unknown list '${2}'."; return 1
 	esac
+
 	is_included "${list_name}" "${lists}" " " || { reg_failure "Unknown ${list_author} list '${2}'."; return 1; }
 
-	: "${res_url}"
-	eval "${out_var}=\"\${res_url}\""
+	case "${list_format}" in
+		raw|dnsmasq)
+			eval "url_suffix=\"\${${list_format}_suffix}\""
+			res_url="${url_prefix}${url_suffix}" ;;
+		*)
+			reg_failure "Unexpected list format '${list_format}'."; return 1
+	esac
+
+	: "${raw_suffix}" "${dnsmasq_suffix}"
+	eval "${out_var}=\"${res_url}\""
 }
 
 
@@ -424,7 +444,7 @@ schedule_jobs()
 				case "${list_url}" in
 					hagezi:*|oisd:*)
 						local short_id="${list_url}"
-						if ! get_list_url list_url "${short_id}"
+						if ! get_list_url list_url "${short_id}" "${list_format}"
 						then
 							[ "${list_part_failed_action}" = "STOP" ] &&
 								{ log_msg "list_part_failed_action is set to 'STOP', exiting."; finalize_scheduler 1; }
