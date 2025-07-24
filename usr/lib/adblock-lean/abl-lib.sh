@@ -484,7 +484,7 @@ do_calculate_limits()
 		done
 	else
 		case "${tgt_entries_cnt}" in ''|*[!0-9]*)
-			reg_failure "calculate_limits: invalid entries count '${tgt_entries_cnt}'."; return 1 ;;
+			reg_failure "calculate_limits: Invalid entries count '${tgt_entries_cnt}'."; return 1 ;;
 		esac
 
 		case "${urls_cnt}" in ''|*[!0-9]*)
