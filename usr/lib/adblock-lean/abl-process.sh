@@ -633,14 +633,6 @@ process_list_part()
 		# compress or cat
 		${part_compr_or_cat} > "${dest_file}"
 
-		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
-		if [ -f "${size_exceeded_file}" ]
-		then
-			reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
-			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
-			finalize_job 2
-		fi
-
 		local lines_cnt_low='' dl_completed=''
 
 		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
@@ -663,6 +655,14 @@ process_list_part()
 				*) log_msg -warn "${rogue_el_print} identified in ${list_type} file from: ${list_path}."
 			esac
 			finalize_job 3
+		fi
+
+		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
+		if [ -f "${size_exceeded_file}" ]
+		then
+			reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
+			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
+			finalize_job 2
 		fi
 
 		int2human line_count_human "${part_line_count}"
