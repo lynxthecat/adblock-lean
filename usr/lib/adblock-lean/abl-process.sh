@@ -803,12 +803,10 @@ gen_and_process_blocklist()
 {
 	convert_entries()
 	{
-		if [ "${AWK_CMD}" = gawk ]
-		then
-			pack_entries_awk "$@"
-		else
-			pack_entries_sed "$@"
-		fi
+		case "${AWK_CMD}" in
+			*gawk) pack_entries_awk "$@" ;;
+			*) pack_entries_sed "$@"
+		esac
 	}
 
 	# convert to dnsmasq format and pack 4 input lines into 1 output line
