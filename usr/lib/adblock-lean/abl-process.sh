@@ -756,7 +756,7 @@ gen_list_parts()
 			# consolidate allowlist parts into one file
 			for file in "${PROCESSED_PARTS_DIR}/allowlist-"*
 			do
-				[ -e "${file}" ] || break
+				case "${file}" in ''|*"*") continue; esac
 				cat "${file}" >> "${PROCESSED_PARTS_DIR}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
 				rm -f "${file}"
 			done
@@ -768,7 +768,7 @@ gen_list_parts()
 			local file part_line_count=0 list_line_count=0
 			for file in "${ABL_TMP_DIR}/stats_${list_type}-"*
 			do
-				[ -e "${file}" ] || break
+				case "${file}" in ''|*"*") continue; esac
 				read_str_from_file -v "part_line_count _" -f "${file}" -a 1 -V 0 || return 1
 				list_line_count=$((list_line_count+part_line_count))
 			done
