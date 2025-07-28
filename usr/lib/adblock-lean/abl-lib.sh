@@ -788,7 +788,8 @@ parse_config()
 {
 	add_conf_fix() { p_conf_fixes="${p_conf_fixes}${1}"$'\n'; }
 
-	local def_config='' curr_config='' missing_entries='' unexp_keys='' unexp_entries='' \
+	local def_config='' curr_config='' \
+		i keys entries entry_type_print_lc \
 		p_migrated_keys='' migrate_keys='' migrate_entries='' \
 		key val bad_val_entries='' corrected_entries='' \
 		p_conf_fixes='' missing_keys='' bad_val_keys='' \
@@ -847,13 +848,16 @@ parse_config()
 	def_config_format="$(printf %s "${def_config}" | get_config_format)"
 	export luci_def_config_format="${def_config_format}"
 
-	local parse_vars valid_lines
+	local parse_vars valid_lines entry_type
 	# extract valid values from default config
 	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
 	# parse config
 	local parser_error_file="${ABL_CONF_STAGING_DIR}/parser_error" inval_entry_file="${ABL_CONF_STAGING_DIR}/inval_entry"
-	rm -f "${parser_error_file}" "${inval_entry_file}" "${ABL_CONF_STAGING_DIR}/unexp_entries" \
-		"${ABL_CONF_STAGING_DIR}/bad_val_entries" "${ABL_CONF_STAGING_DIR}/missing_entries"
+	rm -f "${parser_error_file}" "${inval_entry_file}"
+	for entry_type in unexp bad_val missing dup migrate
+	do
+		rm -f "${ABL_CONF_STAGING_DIR}/${entry_type}_entries"
+	done
 
 	parse_vars="$(
 		printf '%s\n' "${curr_config}" |
@@ -869,14 +873,13 @@ parse_config()
 			return 0
 		}
 
-		# create arrays: def_arr, valid_values_regex_arr, valid_values_print_arr
 		BEGIN{
 			rv=0
 			line_comp[1]="key"
 			line_comp[2]="value"
 			line_comp[3]="allowed values"
 
-			# create def_lines_arr
+			# create validation arrays
 			split(V,def_lines_arr,"\n")
 			for (ind in def_lines_arr) {
 				# remove whitespaces/tabs
@@ -982,6 +985,13 @@ parse_config()
 				}
 			}
 
+			# handle duplicate keys
+			if ($1 in config_keys) {
+				dup_keys=dup_keys $1 " "
+				print $0 >> A"/dup_entries"
+				next
+			}
+
 			# handle unexpected keys
 			if ($1 in def_arr) {} else {
 				unexp_keys=unexp_keys $1 " "
@@ -1016,6 +1026,7 @@ parse_config()
 				"migrate_keys=\"" migrate_keys "\" " \
 				"p_migrated_keys=\"" migrated_keys "\" " \
 				"unexp_keys=\"" unexp_keys "\" " \
+				"dup_keys=\"" dup_keys "\" " \
 				"bad_val_keys=\"" bad_val_keys "\" " \
 				migrate_opts
 			exit rv
@@ -1054,23 +1065,25 @@ parse_config()
 		export luci_migrate_keys="${migrate_keys% }" luci_migrate_entries="${migrate_entries%$'\n'}"
 	fi
 
-	if [ -n "${unexp_keys}" ]
-	then
-		log_msg -yellow "" "Unexpected keys in config: '${unexp_keys% }'."
-		unexp_entries="$(cat "${ABL_CONF_STAGING_DIR}/unexp_entries")"
-		print_msg "Corresponding config entries:" "${unexp_entries%$'\n'}"
-		add_conf_fix "Remove unexpected entries from the config"
-		export luci_unexp_keys="${unexp_keys% }" luci_unexp_entries="${unexp_entries%$'\n'}"
-	fi
+	for i in \
+		"dup|duplicate|Duplicate|Remove duplicate entries from the config" \
+		"unexp|unexpected|Unexpected|Remove unexpected entries from the config" \
+		"missing|missing|Missing|Re-add missing config entries with default values"
+	do
+		entry_type="${i%%|*}"
+		eval "keys=\"\${${entry_type}_keys% }\""
+		[ -n "${keys}" ] || continue
 
-	if [ -n "${missing_keys}" ]
-	then
-		log_msg -yellow "" "Missing keys in config: '${missing_keys% }'."
-		missing_entries="$(cat "${ABL_CONF_STAGING_DIR}/missing_entries")"
-		print_msg "Corresponding default config entries:" "${missing_entries%$'\n'}"
-		add_conf_fix "Re-add missing config entries with default values"
-		export luci_missing_keys="${missing_keys% }" luci_missing_entries="${missing_entries%$'\n'}"
-	fi
+		i="${i#"${entry_type}|"}"
+		entry_type_print_lc="${i%%|*}"
+		i="${i#"${entry_type_print_lc}|"}"
+
+		log_msg -yellow "" "${i%%|*} keys in config: '${keys}'."
+		entries="$(cat "${ABL_CONF_STAGING_DIR}/${entry_type}_entries")"
+		print_msg "Corresponding config entries:" "${entries%$'\n'}"
+		add_conf_fix "Remove ${entry_type_print_lc} entries from the config"
+		export "luci_${entry_type}_keys"="${keys}" "luci_${entry_type}_entries"="${entries%$'\n'}"
+	done
 
 	if [ -n "${bad_val_keys}" ]
 	then
