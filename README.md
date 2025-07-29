@@ -38,6 +38,7 @@ Main features of adblock-lean:
 - during blocklist update, a **compressed backup copy** of the previous blocklist file is kept until the new blocklist passes all checks. If checks fail, adblock-lean restores the previous blocklist
 - supports **concurrent download and processing** of blocklist/allowlist parts for faster blocklist updates
 - supports **pause and resume** of adblocking without re-downloading blocklist/allowlist parts
+- supports adblocking on **multiple dnsmasq instances**
 - supports optional calls to **user-configurable script** on success or failure (for example to send an email report)
 - automatic check for application updates and **self update** functionality (initiated by the user)
 - **config validation** and optional **automatic config repair** when problems are detected
@@ -121,6 +122,7 @@ Additional available commands (use with `service adblock-lean <command>`):
                   if config option set to 'disable', removes existing cron job if any
 - `select_dnsmasq_instances`: analyzes dnsmasq instances and sets required options in the adblock-lean config.
             If multiple dnsmasq instances are found, allows the user to pick which instances to adblock on.
+- `calculate_limits`: calculates and prints recommended values for config options `min_good_line_count`, `max_file_part_size_KB`, `max_blocklist_file_size_KB`, based on target entries count (specified by the user).
 
 ## Basic configuration
 Generally, if you ran the automated setup then you don't have to make any additional configuration changes. If you want to further customize adblocking, this can be achieved by modifying the config file located at `/etc/adblock-lean/config`.

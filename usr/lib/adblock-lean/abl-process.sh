@@ -16,8 +16,8 @@ IDLE_TIMEOUT_S=300 # 5 minutes
 
 ABL_TEST_DOMAIN="adblocklean-test123.totallybogus"
 
-OISD_DL_URL="oisd.nl/domainswild2"
-HAGEZI_DL_URL="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard"
+OISD_DL_URL="oisd.nl"
+HAGEZI_DL_URL="https://raw.githubusercontent.com/hagezi/dns-blocklists/main"
 OISD_LISTS="big small nsfw nsfw-small"
 HAGEZI_LISTS="anti.piracy blocklist-referral doh doh-vpn-proxy-bypass dyndns fake gambling gambling.medium gambling.mini hoster \
 light multi native.amazon native.apple native.huawei native.lgwebos native.oppo-realme native.roku native.samsung \
@@ -228,9 +228,11 @@ set_processing_vars()
 
 # 1 - var name for output
 # 2 - list identifier in the form [hagezi|oisd]:[list_name]
+# 3 - list format (raw|dnsmasq)
 get_list_url()
 {
-	local res_url out_var="${1}" list_id="${2}" list_author list_name lists=''
+	local url_prefix url_suffix raw_suffix dnsmasq_suffix res_url list_author list_name lists='' \
+		out_var="${1}" list_id="${2}" list_format="${3}"
 
 	are_var_names_safe "${out_var}" || return 1
 	eval "${out_var}=''"
@@ -238,14 +240,32 @@ get_list_url()
 	case "${list_id}" in *[A-Z]*) list_id="$(printf '%s' "${list_id}" | tr 'A-Z' 'a-z')"; esac
 	list_author="${list_id%%\:*}" list_name="${list_id#*\:}"
 	case "${list_author}" in
-		hagezi) lists="${HAGEZI_LISTS}" res_url="${HAGEZI_DL_URL}/${list_name}-onlydomains.txt" ;;
-		oisd) lists="${OISD_LISTS}" res_url="https://${list_name}.${OISD_DL_URL}" ;;
-		*) reg_failure "Unknown list '${2}'."; return 1
+		hagezi)
+			lists="${HAGEZI_LISTS}"
+			url_prefix="${HAGEZI_DL_URL}"
+			raw_suffix="/wildcard/${list_name}-onlydomains.txt"
+			dnsmasq_suffix="/dnsmasq/${list_name}.txt" ;;
+		oisd)
+			lists="${OISD_LISTS}"
+			url_prefix="https://${list_name}.${OISD_DL_URL}"
+			raw_suffix="/domainswild2"
+			dnsmasq_suffix="/dnsmasq" ;;
+		*)
+			reg_failure "Unknown list '${2}'."; return 1
 	esac
+
 	is_included "${list_name}" "${lists}" " " || { reg_failure "Unknown ${list_author} list '${2}'."; return 1; }
 
-	: "${res_url}"
-	eval "${out_var}=\"\${res_url}\""
+	case "${list_format}" in
+		raw|dnsmasq)
+			eval "url_suffix=\"\${${list_format}_suffix}\""
+			res_url="${url_prefix}${url_suffix}" ;;
+		*)
+			reg_failure "Unexpected list format '${list_format}'."; return 1
+	esac
+
+	: "${raw_suffix}" "${dnsmasq_suffix}"
+	eval "${out_var}=\"${res_url}\""
 }
 
 
@@ -424,7 +444,7 @@ schedule_jobs()
 				case "${list_url}" in
 					hagezi:*|oisd:*)
 						local short_id="${list_url}"
-						if ! get_list_url list_url "${short_id}"
+						if ! get_list_url list_url "${short_id}" "${list_format}"
 						then
 							[ "${list_part_failed_action}" = "STOP" ] &&
 								{ log_msg "list_part_failed_action is set to 'STOP', exiting."; finalize_scheduler 1; }
@@ -483,6 +503,7 @@ schedule_jobs()
 # 1 - Fatal error (stop processing)
 # 2 - Download failure
 # 3 - Processing failure
+# shellcheck disable=SC2317
 process_list_part()
 {
 	finalize_job()
@@ -503,11 +524,11 @@ process_list_part()
 		exit "${1}"
 	}
 
-	# shellcheck disable=SC2317
-	dl_list()
-	{
-		uclient-fetch "${1}" -O- --timeout=3 2> "${ucl_err_file}"
-	}
+	dl_list() { uclient-fetch "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
+
+	conv_dnsmasq_to_raw() { ${SED_CMD} -E "${format_conv_prefix};${format_conv_suffix}" | tr '/' '\n'; }
+
+	case_conv() { tr 'A-Z' 'a-z'; }
 
 	local list_origin="${1}" list_path="${2}" list_type="${3}" list_format="${4}" curr_job_pid
 
@@ -516,12 +537,6 @@ process_list_part()
 	for v in 1 2 3 4; do
 		eval "[ -z \"\${${v}}\" ]" && finalize_job 1 "Missing argument ${v}."
 	done
-
-	case "${list_type}" in
-		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
-		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
-		*) finalize_job 1 "Invalid list type '${list_type}'"
-	esac
 
 	local list_id="${list_type}-${list_origin}-${list_format}"
 	local job_id="${list_id}-${curr_job_pid}"
@@ -532,12 +547,20 @@ process_list_part()
 		size_exceeded_file="${ABL_TMP_DIR}/size_exceeded_${job_id}" \
 		part_line_count='' line_count_human min_line_count='' min_line_count_human \
 		part_size_B='' retry=1 \
-		part_compr_or_cat="cat" fetch_cmd
+		part_compr_or_cat="cat" fetch_cmd \
+		format_conv_or_cat="cat" format_conv_prefix="s~^[ \t]*(local|server|address)=/~~" format_conv_suffix='' \
+		case_conv_or_cat="cat"
 
 	case "${list_origin}" in
 		DL) fetch_cmd=dl_list ;;
 		LOCAL) fetch_cmd="cat" ;;
-		*) reg_failure "Invalid list origin '${list_origin}'."; finalize_job 1
+		*) finalize_job 1 "Invalid list origin '${list_origin}'."
+	esac
+
+	case "${list_type}" in
+		allowlist|blocklist) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
+		blocklist_ipv4) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
+		*) finalize_job 1 "Invalid list type '${list_type}'"
 	esac
 
 	case ${list_type} in blocklist|blocklist_ipv4)
@@ -547,6 +570,19 @@ process_list_part()
 			part_compr_or_cat="${COMPR_CMD_STDOUT} ${INTERM_COMPR_OPTS}"
 		}
 	esac
+
+	case "${list_type}" in
+		blocklist) format_conv_suffix='s~/$~~' ;;
+		blocklist_ipv4) format_conv_prefix="s~^[ \t]*bogus-nxdomain=~~" ;;
+		allowlist) format_conv_suffix='s~/#$~~'
+	esac
+
+	[ "${list_format}" = dnsmasq ] && format_conv_or_cat=conv_dnsmasq_to_raw
+
+	case "${list_type}" in
+		allowlist|blocklist) case_conv_or_cat="case_conv"
+	esac
+
 	eval "min_line_count=\"\${min_${list_type}_part_line_count}\""
 
 	while :
@@ -557,34 +593,22 @@ process_list_part()
 		log_msg -noprint "Processing ${list_format} ${list_type}: ${list_path}"
 
 		# Download or cat the list
-		local lines_cnt_low='' dl_completed=''
-
 		${fetch_cmd} "${list_path}" |
-		# limit size
+
+		# Limit size
 		{ head -c "${max_file_part_size_KB}k"; read -rn1 -d '' && { touch "${size_exceeded_file}"; cat 1>/dev/null; }; } |
 
 		# Remove comment lines and trailing comments, remove whitespaces
 		${SED_CMD} 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
 
 		# Convert dnsmasq format to raw format
-		if [ "${list_format}" = dnsmasq ]
-		then
-			local rm_prefix_expr="s~^[ \t]*(local|server|address)=/~~" rm_suffix_expr=''
-			case "${list_type}" in
-				blocklist) rm_suffix_expr='s~/$~~' ;;
-				blocklist_ipv4) rm_prefix_expr="s~^[ \t]*bogus-nxdomain=~~" ;;
-				allowlist) rm_suffix_expr='s~/#$~~'
-			esac
-			${SED_CMD} -E "${rm_prefix_expr};${rm_suffix_expr}" | tr '/' '\n'
-		else
-			cat
-		fi |
+		${format_conv_or_cat} |
 
 		# Count bytes and entries
 		tee >(wc -wc > "${list_stats_file}") |
 
 		# Convert to lowercase
-		case "${list_type}" in allowlist|blocklist) tr 'A-Z' 'a-z' ;; *) cat; esac |
+		${case_conv_or_cat} |
 
 		if [ "${list_type}" = blocklist ] && [ "${use_allowlist}" = 1 ]
 		then
@@ -609,13 +633,7 @@ process_list_part()
 		# compress or cat
 		${part_compr_or_cat} > "${dest_file}"
 
-		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
-		if [ -f "${size_exceeded_file}" ]
-		then
-			reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
-			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
-			finalize_job 2
-		fi
+		local lines_cnt_low='' dl_completed=''
 
 		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
 
@@ -637,6 +655,14 @@ process_list_part()
 				*) log_msg -warn "${rogue_el_print} identified in ${list_type} file from: ${list_path}."
 			esac
 			finalize_job 3
+		fi
+
+		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
+		if [ -f "${size_exceeded_file}" ]
+		then
+			reg_failure "Size of ${list_type} part from '${list_path}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
+			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type} part path or URL from config."
+			finalize_job 2
 		fi
 
 		int2human line_count_human "${part_line_count}"
@@ -666,8 +692,7 @@ process_list_part()
 
 		log_msg -yellow "" "Processing job for URL '${list_url}' is sleeping for 5 seconds after failed download attempt."
 		sleep 5 &
-		local sleep_pid=${!}
-		wait ${sleep_pid}
+		wait ${!}
 	done
 }
 
@@ -731,7 +756,7 @@ gen_list_parts()
 			# consolidate allowlist parts into one file
 			for file in "${PROCESSED_PARTS_DIR}/allowlist-"*
 			do
-				[ -e "${file}" ] || break
+				case "${file}" in ''|*"*") continue; esac
 				cat "${file}" >> "${PROCESSED_PARTS_DIR}/allowlist" || { reg_failure "Failed to merge allowlist part."; return 1; }
 				rm -f "${file}"
 			done
@@ -743,7 +768,7 @@ gen_list_parts()
 			local file part_line_count=0 list_line_count=0
 			for file in "${ABL_TMP_DIR}/stats_${list_type}-"*
 			do
-				[ -e "${file}" ] || break
+				case "${file}" in ''|*"*") continue; esac
 				read_str_from_file -v "part_line_count _" -f "${file}" -a 1 -V 0 || return 1
 				list_line_count=$((list_line_count+part_line_count))
 			done
@@ -778,12 +803,10 @@ gen_and_process_blocklist()
 {
 	convert_entries()
 	{
-		if [ "${AWK_CMD}" = gawk ]
-		then
-			pack_entries_awk "$@"
-		else
-			pack_entries_sed "$@"
-		fi
+		case "${AWK_CMD}" in
+			*gawk) pack_entries_awk "$@" ;;
+			*) pack_entries_sed "$@"
+		esac
 	}
 
 	# convert to dnsmasq format and pack 4 input lines into 1 output line

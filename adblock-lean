@@ -81,7 +81,7 @@ SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall"
+EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits"
 EXTRA_HELP="
 adblock-lean custom commands:
 	version                   print adblock-lean version
@@ -96,7 +96,8 @@ adblock-lean custom commands:
 	                          if config option set to 'disable', remove existing cron job if any
 	print_log                 print most recent session log
 	update                    update adblock-lean to the latest version
-	uninstall                 uninstall adblock-lean, remove all adblock-lean-related files and settings"
+	uninstall                 uninstall adblock-lean, remove all adblock-lean-related files and settings
+	calculate_limits          calculate recommended values for max_ and min_ config options based on target entries count"
 
 # silence shellcheck warnings
 : "${action:=}" "${EXTRA_COMMANDS}" "${EXTRA_HELP}" "${boot_start_delay_s:=}"
@@ -1211,7 +1212,38 @@ get_gh_ref()
 			"prev_upd_channel"='${gr_channel}' "prev_version"='${gr_version}'
 	}
 
-	local gr_branch gr_branches='' gr_grep_ptrn='' gr_ref='' gr_ver_type='' gr_fetch_rv=0 \
+	get_and_process_ref()
+	{
+		local branch url \
+			channel="${1}" ptrn="${2}" branches="${3}" err_file="${4}"
+		case "${channel}" in
+			release)
+				uclient-fetch "${ABL_GH_URL_API}/releases" -O- 2> "${err_file}" | {
+					jsonfilter -e '@[@.prerelease=false]' |
+					jsonfilter -a -e "@[@.target_commitish=\"${ABL_MAIN_BRANCH}\"].tag_name"
+					cat 1>/dev/null
+				} ;;
+			snapshot|branch=*|commit=*)
+				for branch in ${branches}
+				do
+					url="${ABL_GH_URL_API}/commits?sha=${branch}"
+					uclient-fetch "${url}" -O- 2> "${err_file}" | {
+						jsonfilter -e '@[@.commit]["url"]' |
+						${SED_CMD} 's/.*\///' # only leave the commit hash
+						cat 1>/dev/null
+					}
+				done
+		esac |
+		if [ -n "${ptrn}" ]
+		then
+			grep "${ptrn}"
+		else
+			head -n1 # get latest version or commit
+			cat 1>/dev/null
+		fi
+	}
+
+	local gr_branches='' gr_grep_ptrn='' gr_ref='' gr_ver_type='' gr_fetch_rv=0 \
 		gr_fetch_tmp_dir="${ABL_UPD_DIR}/ref_fetch" \
 		prev_ref prev_ver_type prev_upd_channel prev_version \
 		gr_channel="${1}" gr_version="${2}"
@@ -1327,35 +1359,8 @@ get_gh_ref()
 	esac
 
 	# Get GH ref
-	[ -z "${gr_ref}" ] && gr_ref="$(
-		case "${gr_channel}" in
-			release)
-				uclient-fetch "${ABL_GH_URL_API}/releases" -O- 2> "${gr_ucl_err_file}" | {
-					jsonfilter -e '@[@.prerelease=false]' |
-					jsonfilter -a -e "@[@.target_commitish=\"${ABL_MAIN_BRANCH}\"].tag_name"
-					cat 1>/dev/null
-				} ;;
-			snapshot|branch=*|commit=*)
-				for gr_branch in ${gr_branches}
-				do
-					ref_fetch_url="${ABL_GH_URL_API}/commits?sha=${gr_branch}"
-					uclient-fetch "${ref_fetch_url}" -O- 2> "${gr_ucl_err_file}" | {
-						jsonfilter -e '@[@.commit]["url"]' |
-						${SED_CMD} 's/.*\///' # only leave the commit hash
-						cat 1>/dev/null
-					}
-				done
-		esac |
-		{
-			if [ -n "${gr_grep_ptrn}" ]
-			then
-				grep "${gr_grep_ptrn}"
-			else
-				head -n1 # get latest version or commit
-			fi
-			cat 1>/dev/null
-		}
-	)"
+	[ -z "${gr_ref}" ] &&
+		gr_ref="$(get_and_process_ref "${gr_channel}" "${gr_grep_ptrn}" "${gr_branches}" "${gr_ucl_err_file}")"
 
 	if [ -z "${gr_ref}" ]
 	then
@@ -1988,6 +1993,13 @@ disable()
 		log_msg "The adblock-lean service is already disabled."
 	fi
 	return "$rv"
+}
+
+calculate_limits()
+{
+	source_libs || exit 1
+	do_calculate_limits "${@}"
+	exit ${?}
 }
 
 set_ansi
