@@ -2,6 +2,8 @@
 
 adblock-lean is a low maintenance (almost set and forget), powerful and ultra-efficient adblocking solution for OpenWrt that **does not mandate any external dependencies** or introduce unnecessary bloat. It is  **highly optimized for RAM & CPU efficiency** during blocklist download & processing, and does not remain running in memory after execution.  adblock-lean is designed to leverage the [major rewrite of the DNS server and domain handling code](https://thekelleys.org.uk/dnsmasq/CHANGELOG) associated with dnsmasq 2.86, which drastically improves dnsmasq performance and reduces memory footprint. This **facilitates the use of very large blocklists even for low spec, low performance devices.**
 
+adblock-lean can also be leveraged to block unwanted content in general. For example, families can use adblock-lean to block pornography, gambling or social media for devices connected to the family router.
+
 If you like adblock-lean and can benefit from it, then please leave a ⭐ (top right) and become a [stargazer](https://github.com/lynxthecat/adblock-lean/stargazers)! And feel free to post any feedback on the official OpenWrt thread [here](https://forum.openwrt.org/t/adblock-lean-set-up-adblock-using-dnsmasq-blocklist/157076). Thank you for your support.
 
 ## Table of contents
@@ -314,6 +316,10 @@ Note that in this mode, the test domains (specified via the option `test_domains
 Also note that in this mode by default the Github domains will be blocked, so the automatic adblock-lean version update functionality will not work, unless you add `github.com` to the allowlist.
 
 The resulting blocklist generated in whitelist mode will be typically much smaller than otherwise, so you may need to reduce the value of the `min_good_line_count` option in order for the list to be accepted by adblock-lean.
+
+## Family filtering
+
+For those wanting to block adult content, either in addition to, or instead of adblocking, it is suggested to consider setting the main DNS resolver to Cloudflare's [1.1.1.1 for Families](https://blog.cloudflare.com/introducing-1-1-1-1-for-families/) - this blocks the vast majority of adult content without any noticeable impact on ordinary use - and then selectively blocking any further unwanted content using custom local or remote blocklists.
 
 ## User-configurable calls on success or failure and on version updates
 
