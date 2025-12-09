@@ -736,27 +736,36 @@ reg_success()
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
-	local abl_pids
+	local abl_pids lock_res
 	check_lock
-	if [ ${?} = 2 ]
+	lock_res=${?}
+	if [ ${lock_res} = 2 ]
 	then
 		kill "${LOCK_PID}" 2>/dev/null
+		sleep 3
+
+		check_lock
+		lock_res=${?}
+	fi
+
+	[ "${lock_res}" = 3 ] && return 0
+
+
+	if [ -n "${LOCK_PID}" ] && [ "${lock_res}" = 2 ]
+	then
+		abl_pids="${LOCK_PID}"
 	else
 		# if PID file doesn't exist, check for running abl processes just in case
 		local pgrep_ptrn="(^((sh|/bin/sh)\s+){0,1}(/etc/rc.common\s+){0,1}/etc/(rc.d/S${START}|init.d/)|luci\.)adblock-lean"
 		abl_pids="$(pgrep -fa "${pgrep_ptrn}" | ${SED_CMD} -E "/\sstop$/d;s/\s+.*//;/^${$}$/d" | tr '\n' ' ')"
-		[ -n "${abl_pids}" ] && kill_pids_recursive "${abl_pids}"
 	fi
 
-	# wait for adblock-lean instance to exit
-	local i=0
-	while [ -f "${PID_FILE}" ] && [ ${i} -lt 10 ]
-	do
-		check_lock
-		[ ${?} != 2 ] && break
-		sleep 1
-		i=$((i+1))
-	done
+	if [ -n "${abl_pids}" ]
+	then
+		kill_pids_recursive "${abl_pids}" || { reg_failure "Failed to stop running adblock-lean processes."; return 1; }
+	fi
+
+	rm_lock
 
 	:
 }
@@ -766,6 +775,16 @@ kill_abl_pids()
 # 2 - pid's to exclude
 kill_pids_recursive()
 {
+	get_alive_pids() {
+		eval "${1}="
+		local _pid _pids=''
+		for _pid in ${2}
+		do
+			[ -d "/proc/${_pid}" ] && _pids="${_pids}${_pid} "
+		done
+		eval "${1}"='${_pids}'
+	}
+
 	# recursively add child pid's of pid $2 to whitespace-separated list stored in var $1
 	# 1 - var name for output
 	# 2 - pid
@@ -795,7 +814,7 @@ kill_pids_recursive()
 		done
 	}
 
-	local initial_pids='' exclude_pids="${2}" pid max_pid_scan_depth=10 max_k_attempts=10
+	local initial_pids='' alive_pids='' running_pids='' exclude_pids="${2}" pid max_pid_scan_depth=10 max_k_attempts=10
 
 	# compile a list of initial pids and recursively child pids
 	for pid in ${1}
@@ -809,12 +828,10 @@ kill_pids_recursive()
 	[ -n "${initial_pids}" ] || return 0
 
 	kill "${initial_pids}" 2>/dev/null
-	local running_pids="${initial_pids}" k_attempt=0
+	running_pids="${initial_pids}" k_attempt=0
+
 	while :
 	do
-		k_attempt=$((k_attempt+1))
-		[ ${k_attempt} -le ${max_k_attempts} ] || break
-
 		for pid in ${running_pids}
 		do
 			add_child_pids running_pids "${pid}"
@@ -822,18 +839,24 @@ kill_pids_recursive()
 
 		kill "${running_pids}" 2>/dev/null
 
-		local alive_pids=''
-		for pid in ${running_pids}
-		do
-			[ -d "/proc/${pid}" ] && alive_pids="${alive_pids}${pid} "
-		done
+		get_alive_pids alive_pids "${running_pids}"
+
 		running_pids="${alive_pids}"
 		[ -n "${running_pids}" ] || return 0
 
+		k_attempt=$((k_attempt+1))
+		[ ${k_attempt} -le ${max_k_attempts} ] || break
 		sleep 1
 	done
+
+	[ -z "${running_pids}" ] && return 0
+
 	kill -9 "${running_pids}" 2>/dev/null
-	:
+	sleep 1
+
+	get_alive_pids alive_pids "${running_pids}"
+	[ -z "${alive_pids}" ] && return 0
+	return 1
 }
 
 # return codes:
