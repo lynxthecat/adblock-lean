@@ -348,7 +348,10 @@ handle_fatal()
 		reg_failure "Fatal error reported by unknown processing job."
 	fi
 
-	[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}"
+	[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && {
+		kill -s USR1 "${SCHEDULER_PID}"
+		wait_on_pid "${SCHEDULER_PID}" 5
+	}
 
 	exit 1
 }

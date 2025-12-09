@@ -529,7 +529,10 @@ cleanup_and_exit()
 	if [ -n "${CLEANUP_REQ}" ]
 	then
 		[ "${1}" != 0 ] && print_msg "" "Cleaning up..."
-		[ -n "${SCHEDULER_PID}" ] && kill -s USR1 "${SCHEDULER_PID}" 2>/dev/null
+		[ -n "${SCHEDULER_PID}" ] && {
+			kill -s USR1 "${SCHEDULER_PID}" 2>/dev/null
+			wait_on_pid "${SCHEDULER_PID}" 5
+		}
 		rm -rf "${ABL_TMP_DIR}"
 	fi
 
@@ -733,6 +736,17 @@ reg_success()
 	fi
 }
 
+wait_on_pid() {
+	local i=1 \
+		pid="${1}" max_kill_wait_s="${2}"
+
+	while [ -d "/proc/${pid}" ] && [ "${i}" -le "${max_kill_wait_s}" ]
+	do
+		sleep 1
+		i=$((i+1))
+	done
+}
+
 # kills any running adblock-lean instances
 kill_abl_pids()
 {
@@ -742,7 +756,7 @@ kill_abl_pids()
 	if [ ${lock_res} = 2 ]
 	then
 		kill "${LOCK_PID}" 2>/dev/null
-		sleep 3
+		wait_on_pid "${LOCK_PID}" 5
 
 		check_lock
 		lock_res=${?}
@@ -775,7 +789,7 @@ kill_abl_pids()
 # 2 - pid's to exclude
 kill_pids_recursive()
 {
-	get_alive_pids() {
+	get_running_pids() {
 		eval "${1}="
 		local _pid _pids=''
 		for _pid in ${2}
@@ -814,7 +828,7 @@ kill_pids_recursive()
 		done
 	}
 
-	local initial_pids='' alive_pids='' running_pids='' exclude_pids="${2}" pid max_pid_scan_depth=10 max_k_attempts=10
+	local initial_pids='' running_pids='' exclude_pids="${2}" pid max_pid_scan_depth=10 max_k_attempts=10
 
 	# compile a list of initial pids and recursively child pids
 	for pid in ${1}
@@ -823,12 +837,11 @@ kill_pids_recursive()
 		is_included "${pid}" "${exclude_pids}" " " && continue
 
 		initial_pids="${initial_pids}${pid} "
-		add_child_pids initial_pids "${pid}"
 	done
 	[ -n "${initial_pids}" ] || return 0
 
-	kill "${initial_pids}" 2>/dev/null
-	running_pids="${initial_pids}" k_attempt=0
+	running_pids="${initial_pids}"
+	k_attempt=0
 
 	while :
 	do
@@ -839,9 +852,8 @@ kill_pids_recursive()
 
 		kill "${running_pids}" 2>/dev/null
 
-		get_alive_pids alive_pids "${running_pids}"
+		get_running_pids running_pids "${running_pids}"
 
-		running_pids="${alive_pids}"
 		[ -n "${running_pids}" ] || return 0
 
 		k_attempt=$((k_attempt+1))
@@ -849,13 +861,11 @@ kill_pids_recursive()
 		sleep 1
 	done
 
-	[ -z "${running_pids}" ] && return 0
-
 	kill -9 "${running_pids}" 2>/dev/null
 	sleep 1
 
-	get_alive_pids alive_pids "${running_pids}"
-	[ -z "${alive_pids}" ] && return 0
+	get_running_pids running_pids "${running_pids}"
+	[ -z "${running_pids}" ] && return 0
 	return 1
 }
 
