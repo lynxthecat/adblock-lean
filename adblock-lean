@@ -755,6 +755,7 @@ kill_abl_pids()
 	lock_res=${?}
 	if [ ${lock_res} = 2 ]
 	then
+		reg_msg "Another adblock-lean instance is running. Stopping it..."
 		kill "${LOCK_PID}" 2>/dev/null
 		wait_on_pid "${LOCK_PID}" 5
 
