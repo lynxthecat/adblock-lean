@@ -1,4 +1,5 @@
 #!/bin/sh /etc/rc.common
+# shellcheck source=/dev/null
 # shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003,SC3060
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
@@ -1057,7 +1058,6 @@ source_libs()
 	do
 		file="${file##*/}"
 		[ -f "${ABL_LIB_DIR}/${file}" ] || { libs_source_failed=1 libs_missing=1; break; }
-		# shellcheck source=/dev/null
 		. "${ABL_LIB_DIR}/${file}" || { libs_source_failed=1; break; }
 	done
 
@@ -1273,7 +1273,6 @@ init_command()
 			if [ -n "${custom_script}" ]
 			then
 				custom_scr_sourced=
-				# shellcheck source=/dev/null
 				[ -f "${custom_script}" ] && . "${custom_script}" && custom_scr_sourced=1 ||
 					reg_failure "Custom script '${custom_script}' doesn't exist or it returned an error."
 			fi
@@ -1502,7 +1501,6 @@ abl_post_update_1()
 			(
 				unset -f clean_dnsmasq_dir restart_dnsmasq
 				unset action ABL_CMD
-				# shellcheck source=/dev/null
 				. "${ABL_SERVICE_PATH}"
 				check_func clean_dnsmasq_dir && clean_dnsmasq_dir &&
 				check_func restart_dnsmasq && restart_dnsmasq
@@ -2002,7 +2000,6 @@ update()
 			# v0.7.3 or higher - call install_abl_files() from fetched installer
 			(
 				clean_abl_env
-				# shellcheck source=/dev/null
 				INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
 					{ reg_failure "Failed to source fetched install script."; exit 1; }
 				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}"
@@ -2023,7 +2020,6 @@ update()
 	if [ "${REPLY}" = y ]
 	then
 		clean_abl_env
-		# shellcheck source=/dev/null
 		. "${ABL_SERVICE_PATH}" || return 1
 		start
 	else
