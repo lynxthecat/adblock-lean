@@ -27,7 +27,7 @@ _NL_='
 DEFAULT_IFS="	 ${_NL_}"
 IFS="${DEFAULT_IFS}"
 
-CONFIG_FORMAT=v11
+CONFIG_FORMAT=v12
 
 if [ -z "${MSGS_DEST}" ]
 then
@@ -452,67 +452,99 @@ detect_main_utils()
 	:
 }
 
-# 1: (optional) '-[color]'
-# prints each argument into a separate line
 print_msg()
-{
-	local m color=
-	case "${1}" in -blue|-red|-green|-purple|-yellow) eval "color=\"\${${1#-}}\""; shift; esac
-	for m in "${@}"
-	do
-		printf '%s\n' "${color}${m}${n_c}" > "$MSGS_DEST"
-	done
-}
+{ reg_msg -4 "${@}"; }
 
-# logs each message argument separately and prints to a separate line
-# optional arguments: '-noprint', '-nolog', '-err', '-warn', '-[color]'
 log_msg()
+{ reg_msg -1 "${@}"; }
+
+debug()
+{ reg_msg -5 "${@}"; }
+
+# Depending on msg-specific log level, on global ${ABL_LOG_LEVEL} and on ${ABL_DEBUG}:
+# Prints each msg separately to console [ and to log file ] [ and sends to system log ]
+# -[0|1|2|3|4|5] : specifies log level (default: 3)
+# Optional arguments: '-noprint', '-nolog', '-err', '-warn', '-[color]'
+reg_msg()
 {
-	local m msgs='' msgs_prefix='' _arg err_l=info color='' noprint='' nolog=''
+	append_msg()
+	{
+		msgs="${msgs}${msgs_prefix}${1}${_DELIM_}"
+		[ -n "${msgs_prefix}" ] && msgs_prefix=
+	}
+
+	local m msgs='' msgs_prefix='' _arg err_l=info color='' _n_c='' noprint='' \
+		log_level='' nolog=''
+
+	# Default log levels:
+	# 1 - syslog and session log
+	# 2 - session log (more important messages)
+	# 3 - session log (less important messages)
+	# 4 - print to /dev/tty
+	# 5 - debug messages: print to /dev/stderr
+
+	# ${ABL_LOG_LEVEL} <n> modifies which levels are sent to syslog
+
+	local msgs_dest="${MSGS_DEST}" session_log_thresh=3 \
+		sys_log_thresh="${ABL_LOG_LEVEL:-"1"}" print_thresh=4
+	
+	[ -n "${ABL_DEBUG}" ] && print_thresh=5
 
 	local IFS="${DEFAULT_IFS}"
-	for _arg in "$@"
+	for _arg in "${@}"
 	do
 		case "${_arg}" in
+			-[0-9])
+				if [ -z "${log_level}" ]
+				then
+					log_level="${_arg#"-"}"
+				else
+					append_msg "${_arg}"
+				fi ;;
 			"-noprint") noprint=1 ;;
 			"-nolog") nolog=1 ;;
-			"-err") err_l=err color="-red" msgs_prefix="Error: " ;;
-			"-warn") err_l=warn color="-yellow" msgs_prefix="Warning: " ;;
-			-blue|-red|-green|-purple|-yellow) color="${_arg}" ;;
+			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
+			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
+			-blue|-red|-green|-purple|-yellow) eval "color=\"\$${_arg#"-"}\"" ;;
 			'') msgs="${msgs}dummy${_DELIM_}" ;;
-			*) msgs="${msgs}${msgs_prefix}${_arg}${_DELIM_}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
+			*) append_msg "${_arg}"
 		esac
 	done
 	msgs="${msgs%"${_DELIM_}"}"
-	IFS="${_DELIM_}"
+	[ -n "${color}" ] && _n_c="${n_c}"
 
+	: "${log_level:=3}"
+
+	[ "${log_level}" = 5 ] && msgs_dest="/dev/stderr" # Debug
+
+	set -f
+	IFS="${_DELIM_}"
 	for m in ${msgs}
 	do
 		IFS="${DEFAULT_IFS}"
 		case "${m}" in
-			dummy) printf '\n' > "${MSGS_DEST}" ;;
+			dummy) printf '\n' > "${msgs_dest}" ;;
 			*)
-				[ -z "${noprint}" ] && print_msg ${color} "${m}"
-				[ -z "${nolog}" ] && logger -t adblock-lean -p user."${err_l}" "${m}"
-				write_log_file "${m}" "${err_l}"
+				[ -z "${noprint}" ] && [ "${log_level}" -le "${print_thresh}" ] &&
+					printf '%s\n' "${color}${m}${_n_c}" > "${msgs_dest}"
+
+				[ -z "${nolog}" ] && [ "${log_level}" -le "${sys_log_thresh}" ] &&
+					logger -t adblock-lean -p user."${err_l}" "${m}"
+
+				[ "${log_level}" -le "${session_log_thresh}" ] &&
+					write_log_file "${m}" "${err_l}"
 		esac
 	done
-	:
-}
-
-# Prints msg to console and to log file, doesn't send to system log unless ${ABL_DEBUG_LOG} is set
-reg_msg()
-{
-	local nolog='-nolog'
-	[ -n "${ABL_DEBUG_LOG}" ] && nolog=''
-	log_msg ${nolog} "${@}"
+	IFS="${DEFAULT_IFS}"
+	set +f
 }
 
 # 1 - msg
 # 2 - err level
 write_log_file()
 {
-	[ -n "${LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${2:-info}: ${1}" >> "${LOG_FILE}" &
+# echo "Write '${2:-info}: ${1}' to file '${ABL_CURR_LOG_FILE}'" >&2
+	[ -n "${ABL_CURR_LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${2:-info}: ${1}" >> "${ABL_CURR_LOG_FILE}" &
 }
 
 graceful_exit()
@@ -546,7 +578,7 @@ cleanup_and_exit()
 
 	[ -n "${LOCK_REQ}" ] && rm_lock
 	local recent_log=
-	[ -n "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ] && read -rd '' recent_log < "${LOG_FILE}"
+	[ -n "${ABL_CURR_LOG_FILE}" ] && [ -s "${ABL_CURR_LOG_FILE}" ] && read -rd '' recent_log < "${ABL_CURR_LOG_FILE}"
 	luci_log="${recent_log}"
 
 	# execute custom script actions
@@ -592,7 +624,7 @@ restart_dnsmasq()
 		return 1
 	}
 
-	reg_msg -green "Restart of dnsmasq completed."
+	reg_msg -3 -green "Restart of dnsmasq completed."
 	:
 }
 
@@ -755,7 +787,7 @@ kill_abl_pids()
 	lock_res=${?}
 	if [ ${lock_res} = 2 ]
 	then
-		reg_msg "Another adblock-lean instance is running. Stopping it..."
+		reg_msg -3 "Another adblock-lean instance is running. Stopping it..."
 		kill "${LOCK_PID}" 2>/dev/null
 		wait_on_pid "${LOCK_PID}" 5
 
@@ -940,7 +972,7 @@ ver_upd_fixup()
 
 	[ -n "${1}" ] && [ -n "${2}" ] || { reg_failure "${me}: missing args."; return 1; }
 
-	reg_msg -purple "Completing adblock-lean version upgrade..."
+	log_msg -purple "Completing adblock-lean version upgrade..."
 
 	# fix version and upd channel strings in installed files, then make md5sum registry
 	case "${curr_upd_ch}" in
@@ -1118,7 +1150,8 @@ del_addnmounts()
 init_command()
 {
 	ABL_CMD="${1}"
-	local config_req='' work_dir_req='' init_action_msg='' process_vars_req=''
+	local config_req='' work_dir_req='' init_action_msg='' process_vars_req='' \
+		log_rotated='' log_rotate_req=''
 
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 		DO_DIALOGS=1
@@ -1146,8 +1179,6 @@ init_command()
 		start|resume) libs_req=1 work_dir_req=1 config_req=1 process_vars_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			init_action_msg="Stopping adblock-lean."
-			reg_action -purple "${init_action_msg}" || exit 1
-
 			source_libs || exit 1
 			kill_abl_pids
 			check_lock
@@ -1161,7 +1192,8 @@ init_command()
 			libs_req=1 LOCK_REQ=1
 			[ "${action}" = select_dnsmasq_instances ] && config_req=1 # require config when called directly
 			;;
-		reload|restart) reg_action -purple "Restarting adblock-lean." || exit 1 ;;
+		reload|restart)
+			init_action_msg="Restarting adblock-lean." ;;
 		update) work_dir_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		*) reg_failure "Invalid action '${ABL_CMD}'."; exit 1
 	esac
@@ -1172,13 +1204,6 @@ init_command()
 	if [ -n "${libs_req}" ]
 	then
 		source_libs || exit 1
-	fi
-
-	# report installed utils
-	if [ "${ABL_CMD}" = start ]
-	then
-		detect_pkg_manager
-		report_utils
 	fi
 
 	# register lock status at init
@@ -1192,17 +1217,41 @@ init_command()
 		update_action_file "${ABL_CMD}"
 	fi
 
-	# enable writing session log if we have the lock
-	LOG_FILE=
+	# enable writing session log for commands which require it if we have the lock
 	case ${init_lock_status} in 0|3)
-		LOG_FILE="${ABL_SESSION_LOG_FILE}"
-		[ "${ABL_CMD}" = update ] && LOG_FILE="${ABL_UPDATE_LOG_FILE}"
+		case "${ABL_CMD}" in
+			boot|start|setup|gen_config|reload|restart)
+				export ABL_CURR_LOG_FILE="${ABL_SESSION_LOG_FILE}"
+				log_rotate_req=1
+				log_rotated="${ABL_SESSION_LOG_ROTATED}" ;;
+			stop|pause|resume|upd_cron_job|select_dnsmasq_instances)
+				export ABL_CURR_LOG_FILE="${ABL_SESSION_LOG_FILE}"
+				log_rotate_req='' ;;
+			update)
+				export ABL_CURR_LOG_FILE="${ABL_UPDATE_LOG_FILE}"
+				log_rotate_req=1
+				log_rotated="${ABL_UPD_LOG_ROTATED}" ;;
+		esac
 	esac
 
 	# if creating new session, rotate the old session log file
-	[ "${init_lock_status}" = 0 ] && [ -n "${LOG_FILE}" ] && [ -f "${LOG_FILE}" ] && mv "${LOG_FILE}" "${LOG_FILE}.0"
+	if [ -n "${log_rotate_req}" ] && [ -n "${ABL_CURR_LOG_FILE}" ] && [ -z "${log_rotated}" ]
+	then
+		[ -f "${ABL_CURR_LOG_FILE}" ] && mv "${ABL_CURR_LOG_FILE}" "${ABL_CURR_LOG_FILE}.0"
+		case "${ABL_CMD}" in
+			update) ABL_UPD_LOG_ROTATED=1 ;;
+			*) ABL_SESSION_LOG_ROTATED=1
+		esac
+	fi
 
-	[ -n "${init_action_msg}" ] && write_log_file "${init_action_msg}" "info"
+	[ -n "${init_action_msg}" ] && { reg_action -purple "${init_action_msg}" || exit 1; }
+
+	# report installed utils
+	if [ "${ABL_CMD}" = start ]
+	then
+		detect_pkg_manager
+		report_utils
+	fi
 
 	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_TMP_DIR}" || exit 1; }
 
@@ -1590,8 +1639,9 @@ setup()
 
 print_log()
 {
-	[ ! -s "${ABL_SESSION_LOG_FILE}" ] && { log_msg -err "Session log file '${ABL_SESSION_LOG_FILE}' doesn't exist or is empty."; exit 1; }
-	echo "Most recent session log:"
+	[ -s "${ABL_SESSION_LOG_FILE}" ] ||
+		{ print_msg -err "Session log file '${ABL_SESSION_LOG_FILE}' doesn't exist or is empty."; exit 1; }
+	printf '%s\n' "Most recent session log:"
 	cat "${ABL_SESSION_LOG_FILE}"
 	:
 }
@@ -1607,7 +1657,7 @@ upd_cron_job()
 	case "${cron_schedule}" in
 		'') reg_failure "${me}: the \$cron_schedule variable is unset."; return 1 ;;
 		disable)
-			reg_msg -yellow "cron_schedule is set to 'disable' in config."
+			reg_msg -3 -yellow "cron_schedule is set to 'disable' in config."
 			rm_cron_job
 			return 0
 	esac
@@ -1658,8 +1708,8 @@ boot()
 
 start()
 {
-	reg_action -purple "Starting adblock-lean, version ${ABL_VERSION}."
 	init_command start || exit 1
+	reg_action -purple "Starting adblock-lean, version ${ABL_VERSION}."
 
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
@@ -1714,7 +1764,7 @@ stop()
 
 	init_command stop || { FAIL_STOP_REQ=''; exit 1; }
 
-	reg_msg "" "Removing any adblock-lean blocklist files."
+	reg_msg -3 "" "Removing any adblock-lean blocklist files."
 	rm -f "${ABL_RUN_DIR}/prev_blocklist"*
 	clean_dnsmasq_dir || stop_rc=1
 	restart_dnsmasq -nostop &&
@@ -1808,8 +1858,8 @@ pause()
 	case ${?} in
 		0) ;;
 		1) exit 1 ;;
-		3) reg_msg -err "adblock-lean is already paused."; exit 1 ;;
-		4) reg_msg -err "adblock-lean is currently stopped."; exit 1;
+		3) reg_msg -3 -err "adblock-lean is already paused."; exit 1 ;;
+		4) reg_msg -3 -err "adblock-lean is currently stopped."; exit 1;
 	esac
 	FAIL_STOP_REQ=1
 	reg_action -purple "Pausing adblock-lean." &&
@@ -1825,10 +1875,10 @@ resume()
 	init_command resume || exit 1
 	get_abl_run_state
 	case ${?} in
-		0) reg_msg -err "adblock-lean is already running."; exit 1 ;;
+		0) reg_msg -3 -err "adblock-lean is already running."; exit 1 ;;
 		1) exit 1 ;;
 		3) ;;
-		4) reg_msg -err "adblock-lean is currently stopped, not paused. Can not resume."; exit 1;
+		4) reg_msg -3 -err "adblock-lean is currently stopped, not paused. Can not resume."; exit 1;
 	esac
 
 	reg_action -purple "Resuming adblock-lean." || exit 1
@@ -2004,7 +2054,7 @@ uninstall()
 
 	if [ "${REPLY}" = y ]
 	then
-		reg_msg -purple "" "Deleting the config directory."
+		print_msg -purple "" "Deleting the config directory."
 		rm -rf "${ABL_CONFIG_DIR:-???}"
 	fi
 
@@ -2026,7 +2076,7 @@ uninstall()
 	then
 		if uci commit dhcp
 		then
-			reg_msg "Note: the adblock-lean developers are not aware of any other software that requires the specific addnmount entry created by adblock-lean." \
+			print_msg "Note: the adblock-lean developers are not aware of any other software that requires the specific addnmount entry created by adblock-lean." \
 				"Should the addnmount entry be required for any reason then you will need to manually re-add it."
 		else
 			uci revert dhcp
@@ -2034,13 +2084,13 @@ uninstall()
 		fi
 	fi
 
-	[ -n "${addnm_del_fail}" ] && log_msg "Some addnmount entries were not deleted. Please delete manually."
+	[ -n "${addnm_del_fail}" ] && log_msg -warn "Some addnmount entries were not deleted. Please delete manually."
 
-	reg_msg -purple "" "Deleting the scripts."
+	print_msg -purple "" "Deleting the scripts."
 	rm -f "${ABL_SERVICE_PATH}"
 	rm -rf "${ABL_LIB_DIR}"
 
-	log_msg -purple "" "Uninstall complete."
+	print_msg -purple "" "Uninstall complete."
 	exit 0
 }
 
@@ -2048,7 +2098,7 @@ enable()
 {
 	if rc_enabled
 	then
-		reg_msg -green "The adblock-lean service is already enabled."
+		reg_msg -3 -green "The adblock-lean service is already enabled."
 		return 0
 	fi
 	log_msg -purple "" "Enabling the adblock-lean service."
@@ -2070,7 +2120,7 @@ disable()
 			{ reg_failure "Failed to disable the adblock-lean service"; local rv=1; }
 		stop -noexit
 	else
-		reg_msg "The adblock-lean service is already disabled."
+		reg_msg -3 "The adblock-lean service is already disabled."
 	fi
 	return "$rv"
 }

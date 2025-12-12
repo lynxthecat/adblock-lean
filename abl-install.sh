@@ -56,6 +56,16 @@ else
 fi
 
 
+# sets global variables for colors, tab delimiter and cr_lf
+set_ansi()
+{
+	local IFS=" "
+	# shellcheck disable=SC2046
+	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[0m \35 \t \r')
+	# shellcheck disable=SC2034
+	red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" n_c="${6}" _DELIM_="${7}" TAB="${8}" CR="${9}" CR_LF="${9}${_NL_}"
+}
+
 # exit with code ${1}
 # if function 'abl_luci_exit' is defined, execute it before exit
 cleanup_and_exit()
@@ -134,43 +144,96 @@ try_mkdir()
 	:
 }
 
-# prints each argument into a separate line
 print_msg()
-{
-	local m
-	for m in "${@}"
-	do
-		printf '%s\n' "${m}" > "$MSGS_DEST"
-	done
-}
+{ reg_msg -4 "${@}"; }
 
 log_msg()
+{ reg_msg -1 "${@}"; }
+
+# Depending on msg-specific log level, on global ${ABL_LOG_LEVEL} and on ${ABL_DEBUG}:
+# Prints each msg separately to console [ and to log file ] [ and sends to system log ]
+# -[0|1|2|3|4|5] : specifies log level (default: 3)
+# Optional arguments: '-noprint', '-nolog', '-err', '-warn', '-[color]'
+reg_msg()
 {
-	local m msgs='' msgs_prefix='' _arg err_l=info
+	append_msg()
+	{
+		msgs="${msgs}${msgs_prefix}${1}${_DELIM_}"
+		[ -n "${msgs_prefix}" ] && msgs_prefix=
+	}
+
+	local m msgs='' msgs_prefix='' _arg err_l=info color='' _n_c='' noprint='' \
+		log_level='' nolog=''
+
+	# Default log levels:
+	# 1 - syslog and session log
+	# 2 - session log (more important messages)
+	# 3 - session log (less important messages)
+	# 4 - print to /dev/tty
+	# 5 - debug messages: print to /dev/stderr
+
+	# ${ABL_LOG_LEVEL} <n> modifies which levels are sent to syslog
+
+	local msgs_dest="${MSGS_DEST}" session_log_thresh=3 \
+		sys_log_thresh="${ABL_LOG_LEVEL:-"1"}" print_thresh=4
+	
+	[ -n "${ABL_DEBUG}" ] && print_thresh=5
 
 	local IFS="${DEFAULT_IFS}"
-	for _arg in "$@"
+	for _arg in "${@}"
 	do
 		case "${_arg}" in
-			"-err") err_l=err msgs_prefix="Error: " ;;
+			-[0-9])
+				if [ -z "${log_level}" ]
+				then
+					log_level="${_arg#"-"}"
+				else
+					append_msg "${_arg}"
+				fi ;;
+			"-noprint") noprint=1 ;;
+			"-nolog") nolog=1 ;;
+			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
+			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
+			-blue|-red|-green|-purple|-yellow) eval "color=\"\$${_arg#"-"}\"" ;;
 			'') msgs="${msgs}dummy${_DELIM_}" ;;
-			*) msgs="${msgs}${msgs_prefix}${_arg}${_DELIM_}"; [ -n "${msgs_prefix}" ] && msgs_prefix=
+			*) append_msg "${_arg}"
 		esac
 	done
 	msgs="${msgs%"${_DELIM_}"}"
-	IFS="${_DELIM_}"
+	[ -n "${color}" ] && _n_c="${n_c}"
 
+	: "${log_level:=3}"
+
+	[ "${log_level}" = 5 ] && msgs_dest="/dev/stderr" # Debug
+
+	set -f
+	IFS="${_DELIM_}"
 	for m in ${msgs}
 	do
 		IFS="${DEFAULT_IFS}"
 		case "${m}" in
-			dummy) echo ;;
+			dummy) printf '\n' > "${msgs_dest}" ;;
 			*)
-				print_msg "${m}"
-				logger -t abl-install -p user."${err_l}" "${m}"
+				[ -z "${noprint}" ] && [ "${log_level}" -le "${print_thresh}" ] &&
+					printf '%s\n' "${color}${m}${_n_c}" > "${msgs_dest}"
+
+				[ -z "${nolog}" ] && [ "${log_level}" -le "${sys_log_thresh}" ] &&
+					logger -t adblock-lean -p user."${err_l}" "${m}"
+
+				[ "${log_level}" -le "${session_log_thresh}" ] &&
+					write_log_file "${m}" "${err_l}"
 		esac
 	done
-	:
+	IFS="${DEFAULT_IFS}"
+	set +f
+}
+
+# 1 - msg
+# 2 - err level
+write_log_file()
+{
+# echo "Write '${2:-info}: ${1}' to file '${ABL_CURR_LOG_FILE}'" >&2
+	[ -n "${ABL_CURR_LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${2:-info}: ${1}" >> "${ABL_CURR_LOG_FILE}" &
 }
 
 reg_failure()
@@ -261,6 +324,7 @@ failsafe_log()
 {
 	printf '%s\n' "${1}" > "${MSGS_DEST:-/dev/tty}"
 	logger -t adblock-lean "${1}"
+	write_log_file "${1}" info
 }
 
 # shellcheck disable=SC2120

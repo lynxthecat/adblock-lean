@@ -449,7 +449,7 @@ schedule_jobs()
 		trap ':' USR1
 		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] &&
 		{
-			reg_msg -yellow "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
+			reg_msg -3 -yellow "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
 			kill_pids_recursive "${RUNNING_PIDS}"
 			rm -rf "${PROCESSED_PARTS_DIR}" 2>/dev/null
 		}
@@ -528,7 +528,7 @@ process_list_part()
 				msg1="Successfully processed list:  "
 				msg2="${stats_pad}[ ${list_size_human} - ${suffix_pad}${line_count_human} lines ]"
 				print_msg "${msg1}${green}${print_id}${n_c} ${msg2}"
-				reg_msg -noprint "${msg1}${print_id} ${msg2}" ;;
+				log_msg -noprint "${msg1}${print_id} ${msg2}" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] && handle_fatal "${curr_job_pid}" "${print_id}"
@@ -663,7 +663,7 @@ process_list_part()
 		get_pad pad "${msg}" 28
 
 		print_msg "${msg}: ${pad}${blue}${print_id}${n_c}${msg_mirr}"
-		reg_msg -noprint "${msg}: ${pad}${print_id}${msg_mirr}"
+		reg_msg -3 -noprint "${msg}: ${pad}${print_id}${msg_mirr}"
 
 		# Download or cat the list
 		${fetch_cmd} "${list_path}" |
@@ -866,7 +866,7 @@ gen_list_parts()
 				then
 					if [ ! -f "${local_list_path}" ]
 					then
-						reg_msg "No local ${list_type}list identified."
+						reg_msg -3 "No local ${list_type}list identified."
 					elif [ ! -s "${local_list_path}" ]
 					then
 						log_msg -warn "" "Local ${list_type}list file is empty."
@@ -921,14 +921,14 @@ gen_list_parts()
 						[ "${whitelist_mode}" = 0 ] && return 1
 						log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
 					allow)
-						reg_msg "Not using any allowlist for blocklist processing."
+						reg_msg -3 "Not using any allowlist for blocklist processing."
 				esac
 			elif [ "${list_type}" = ipv4_block ]
 			then
 				use_ipv4_blocklist=1
 			elif [ "${list_type}" = allow ]
 			then
-				reg_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
+				reg_msg -3 "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 				use_allowlist=1
 			fi
 			preprocessed_line_count="$((preprocessed_line_count+list_line_count))"
@@ -936,7 +936,7 @@ gen_list_parts()
 	done
 
 	int2human preprocessed_line_count_human "${preprocessed_line_count}"
-	reg_msg -green "" "Successfully generated preprocessed blocklist file with ${preprocessed_line_count_human} entries."
+	reg_msg -3 -green "" "Successfully generated preprocessed blocklist file with ${preprocessed_line_count_human} entries."
 	:
 }
 
@@ -1180,15 +1180,15 @@ gen_and_process_blocklist()
 		return 1
 	fi
 
-	reg_msg -green "New blocklist file check passed."
+	reg_msg -3 -green "New blocklist file check passed."
 	local msg="Final list uncompressed file size: "
 	print_msg "${msg}${blue}${final_list_size_human}${n_c}"
-	reg_msg -noprint "${msg}${final_list_size_human}"
+	reg_msg -3 -noprint "${msg}${final_list_size_human}"
 
 	import_blocklist "${out_f}" "${FINAL_BLOCKLIST_FILE}" || return 1
 
 	get_elapsed_time_s elapsed_time_s "${INITIAL_UPTIME_S}"
-	reg_msg "" "Processing time for blocklist generation and import: $((elapsed_time_s/60))m:$((elapsed_time_s%60))s."
+	reg_msg -3 "" "Processing time for blocklist generation and import: $((elapsed_time_s/60))m:$((elapsed_time_s%60))s."
 
 	if ! check_active_blocklist
 	then
@@ -1196,7 +1196,7 @@ gen_and_process_blocklist()
 		return 1
 	fi
 
-	reg_msg -green "" "Active blocklist check passed with the new blocklist."
+	reg_msg -3 -green "" "Active blocklist check passed with the new blocklist."
 
 	local msg="New blocklist installed with entries count: "
 	print_msg -green "${msg}${blue}${final_entries_cnt_human}${n_c}"
@@ -1233,7 +1233,7 @@ export_blocklist()
 
 	if [ -f "${bk_path}" ]
 	then
-		reg_msg "" "Blocklist backup file already exists."
+		reg_msg -3 "" "Blocklist backup file already exists."
 		bk_exists=1
 	fi
 
@@ -1329,7 +1329,7 @@ try_import_blocklist()
 	local dir src_compressed='' src_compat='' dest_compressed='' \
 		src_file="${1}"
 
-	reg_msg -blue "" "Importing the blocklist file."
+	reg_msg -3 -blue "" "Importing the blocklist file."
 
 	[ -n "${src_file}" ] || { reg_failure "import_blocklist: missing argument."; return 1; }
 	[ -n "${FINAL_BLOCKLIST_FILE}" ] || { reg_failure "import_blocklist: \$FINAL_BLOCKLIST_FILE is not set."; return 1; }
@@ -1378,7 +1378,7 @@ try_import_blocklist()
 	final_size=$(get_file_size_human "${FINAL_BLOCKLIST_FILE}")
 	msg="Successfully imported new ${dest_compressed}blocklist file for use by dnsmasq with size: "
 	print_msg "${msg}${blue}${final_size}${n_c}"
-	reg_msg -noprint "${msg}${final_size}"
+	reg_msg -3 -noprint "${msg}${final_size}"
 
 	:
 }
@@ -1448,13 +1448,13 @@ check_active_blocklist()
 			done
 		done
 
-		reg_msg "" "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
-		reg_msg -blue "Testing adblocking."
+		reg_msg -3 "" "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
+		reg_msg -3 -blue "Testing adblocking."
 
 		try_lookup_domain "${ABL_TEST_DOMAIN}" "${ns_ips}" 15 -n ||
 			{ reg_failure "Lookup of test domain '${ABL_TEST_DOMAIN}' failed with the new blocklist."; return 4; }
 
-		reg_msg -blue "Testing DNS resolution."
+		reg_msg -3 -blue "Testing DNS resolution."
 		for domain in ${test_domains}
 		do
 			try_lookup_domain "${domain}" "${ns_ips}" 5 ||
