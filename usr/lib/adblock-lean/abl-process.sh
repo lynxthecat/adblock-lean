@@ -2,12 +2,15 @@
 # shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045,SC3003,SC3060,SC3057
 
 # silence shellcheck warnings
-: "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}" \
+: "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}" "${compression_util:=}" "${intermediate_compression_options:=}" "${final_compression_options:=}" \
 	"${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" \
-	"${intermediate_compression_options:=}" "${final_compression_options:=}" \
 	"${blue:=}" "${green:=}" "${n_c:=}"
 
+BUSYBOX_PATH="/bin/busybox"
+
 PROCESSED_PARTS_DIR="${ABL_TMP_DIR}/list_parts"
+
+ERR_F="${ABL_TMP_DIR}/process-errors"
 
 SCHEDULE_DIR="${ABL_TMP_DIR}/schedule"
 
@@ -43,25 +46,114 @@ stevenblack_mirrors="github sbc_io" \
 
 # UTILITY FUNCTIONS
 
-try_compress()
+get_compr_util_spec()
 {
-	${COMPR_CMD} ${2} "${1}" || { rm -f "${1}${COMPR_EXT}"; reg_failure "Failed to compress '${1}'."; return 1; }
+	local gcu_util_path='' gcu_ext='' \
+		util_path_out_var="${1}" ext_out_var="${2}" gcu_util_name="${3}"
+
+	unset_vars "${1}" "${2}" &&
+	assert_set F_get_compr_util_spec util_path_out_var ext_out_var gcu_util_name || return 1
+
+	case "${gcu_util_name}" in
+		gzip)
+			detect_util gcu_util_path gzip "" "/usr/libexec/gzip-gnu" -b &&
+			gcu_ext=.gz ;;
+		pigz)
+			detect_util gcu_util_path "" pigz "/usr/bin/pigz" &&
+			gcu_ext=.gz ;;
+		zstd)
+			detect_util gcu_util_path "" zstd "/usr/bin/zstd" &&
+			gcu_ext=.zst ;;
+		none) : ;;
+		*) reg_failure "Unexpected compression utility '${gcu_util_name}'."; false
+	esac ||
+	{
+		gcu_util_path='' gcu_ext=''
+		reg_failure "Compression utility '${gcu_util_name}' can not be used."
+		if detect_util gcu_util_path "gzip" "" "/usr/libexec/gzip-gnu" -b
+		then
+			log_msg "Falling back to gzip compression."
+			gcu_ext=.gz
+		else
+			log_msg "Intermediate and final blocklist compression will be disabled."
+			gcu_ext=
+		fi
+	}
+
+	eval "${util_path_out_var}"='${gcu_util_path}' "${ext_out_var}"='${gcu_ext}'
+	: "${gcu_util_path}" "${gcu_ext}"
+
+	:
 }
 
+# 1: input file
+# 2: command including options
+# 3: (optional) var name to output path to compressed file
+try_compress()
+{
+	fail_msg() { reg_failure "${1}${1:+" "}Failed to compress '${tc_inp_file}'."; }
+	compr_fail() { fail_msg; rm_if_volatile "${tc_inp_file}"; }
+
+	local me=try_compress tc_cmd tc_ext opts='' \
+		tc_inp_file="${1}" tc_cmd="${2}" out_file_var="${3}"
+
+	[ -f "${tc_inp_file}" ] || { fail_msg "${me}: file '${tc_inp_file}' not found."; return 1; }
+
+	unset_vars "${out_file_var}" || { fail_msg; return 1; }
+
+	case "${tc_cmd}" in
+		*gzip*|*pigz*) tc_ext=.gz ;;
+		*zstd*) tc_ext=.zst ;;
+		*) fail_msg "${me}: unexpected command '${tc_cmd}'."; return 1
+	esac
+
+	${tc_cmd} "${tc_inp_file}" || { compr_fail; return 1; }
+
+	[ -n "${out_file_var}" ] && eval "${out_file_var}"='${tc_inp_file}${tc_ext}'
+
+	: "${tc_ext}"
+	:
+}
+
+# 0 (optional): '-stdout' (does not remove source file)
+# 1: path to file to extract
 try_extract()
 {
-	case "${1}" in
+	extr_failed()
+	{
+		[ -n "${stdout}" ] || rm_if_volatile "${1}"
+		reg_failure "Failed to extract '${1}'."
+	}
+
+	local stdout='' \
+		ext cmd='' opts='' \
+		file_opts='' \
+		stdout_opts=''
+
+	[ "${1}" = '-stdout' ] && { stdout=1; shift; }
+
+	get_compr_spec ext cmd "${1}" || { extr_failed; return 1; }
+
+	case "${ext}" in
 		*.gz)
-			case "${EXTR_CMD}" in *gzip*|*pigz*) ;; *)
-				local EXTR_CMD="gzip -fd"
-			esac ;;
+			file_opts="-fd"
+			stdout_opts="-cd" ;;
 		*.zst)
-			case "${EXTR_CMD}" in *zstd*) ;; *)
-				local EXTR_CMD="zstd -fd --rm -q --no-progress"
-			esac ;;
-		*) reg_failure "try_extract: file '${1}' has unexpected extension."; false
-	esac &&
-	${EXTR_CMD} "${1}" || { rm -f "${1%.*}"; reg_failure "Failed to extract '${1}'."; return 1; }
+			file_opts=" -fd --rm -q --no-progress"
+			stdout_opts="-cd" ;;
+		*)
+			[ -n "${stdout}" ] || { reg_failure "try_extract: file '${1}' has unexpected extension."; extr_failed "${1}"; return 1; }
+			cmd="/bin/busybox cat"
+	esac
+
+	if [ -n "${stdout}" ]
+	then
+		opts="${stdout_opts}"
+	else
+		opts="${file_opts}"
+	fi
+
+	${cmd} ${opts} "${1}" || { extr_failed "${1}"; return 1; }
 }
 
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
@@ -82,33 +174,700 @@ subtract_a_from_b() {
 	return ${rv_su}
 }
 
-# 1 - var name for output
-get_uptime_s()
+# 1 - var name for ms output
+get_uptime_ms()
 {
-	local __uptime
+	unset_vars "${1}" || return 1
+	local __uptime __s __ms
 	read -r __uptime _ < /proc/uptime &&
-	__uptime="${__uptime%.*}" &&
 	case "${__uptime}" in
-		''|*[!0-9]*) false ;;
+		''|*.*.*) false ;;
 		*) :
-	esac || { reg_failure "Failed to get uptime from /proc/uptime."; eval "${1}"=0; return 1; }
-	eval "${1}"='${__uptime:-0}'
+	esac &&
+	{
+		__s="${__uptime%.*}"
+		__ms="${__uptime##*.}"
+		# normalize ms to 3 digits
+		case "${__ms}" in
+			'') __ms=000 ;;
+			?) __ms="${__ms}00" ;;
+			??) __ms="${__ms}0" ;;
+			???) ;;
+			???*) __ms="${__ms%"${__ms#${???}}"}"
+		esac
+	} &&
+	is_uint "${__s}" "${__ms}" ||
+	{
+		reg_failure "Failed to get uptime from /proc/uptime."
+		eval "${1:-_}"=0000
+		return 1
+	}
+	eval "${1:-_}"='${__s:-0}${__ms:-000}'
 }
 
-# To use, first get initial uptime: 'get_uptime_s INITIAL_UPTIME_S'
+# To use, first get initial uptime: 'get_uptime_ms INITIAL_UPTIME_MS'
 # Then call this function to get elapsed time string at desired intervals, e.g.:
-# get_elapsed_time_s elapsed_time "${INITIAL_UPTIME_S}"
+# get_elapsed_time_ms elapsed_time "${INITIAL_UPTIME_MS}"
 # 1 - var name for output
-# 2 - initial uptime in seconds
-get_elapsed_time_s()
+# 2 - initial uptime in ms
+get_elapsed_time_ms()
 {
-	local ge_uptime_s
-	get_uptime_s ge_uptime_s || return 1
-	eval "${1}"=$(( ge_uptime_s-${2:-ge_uptime_s} ))
+	local ge_uptime_ms
+	get_uptime_ms ge_uptime_ms || return 1
+	: "${ge_uptime_ms}"
+	eval "${1}"='$(( ge_uptime_ms - ${2:-ge_uptime_ms} ))'
+}
+
+get_elapsed_time_human()
+{
+	local geh_elapsed _elapsed_ms _elapsed_m _elapsed_s elapsed_fp _elapsed_human
+	get_elapsed_time_ms geh_elapsed "${2}" || return 1
+	_elapsed_m=$(( geh_elapsed / 60000 ))
+	_elapsed_ms=$(( geh_elapsed % 60000 ))
+	_elapsed_s=$(( _elapsed_ms / 1000 ))
+	elapsed_fp=$(( _elapsed_ms % 1000 ))
+	elapsed_fp="${elapsed_fp%0}"
+	elapsed_fp="${elapsed_fp%0}"
+	: "${elapsed_fp:=0}"
+	is_uint "${_elapsed_m}" "${_elapsed_s}" "${elapsed_fp}" && _elapsed_human="${_elapsed_m} m, ${_elapsed_s}.${elapsed_fp} s" || _elapsed_human=unknown
+	eval "${1}"='${_elapsed_human}'
+	: "${_elapsed_m}" "${_elapsed_s}" "${elapsed_fp}" "${_elapsed_human}"
 }
 
 
 # HELPER FUNCTIONS
+
+get_active_entries_cnt()
+{
+	local cnt ext rv=1 \
+		ga_out_var="${1}" file="${2}"
+
+	unset_vars "${ga_out_var}" &&
+	assert_set F_get_active_entries_cnt ga_out_var file &&
+	get_compr_spec ext _ "${file}" || return 1
+
+	# ipv4_block prefix doesn't need to be added for counting
+	cnt="$(
+		if [ -n "${ext}" ]
+		then
+			try_extract -stdout "${file}"
+		else
+			/bin/busybox cat "${file}"
+		fi |
+		${SED_CMD} -E "s~^(server|local)=/~~;/${ABL_TEST_DOMAIN}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w
+	)"
+
+	[ "${whitelist_mode}" = 1 ] && cnt=$((cnt-26)) # ignore alphabet entries
+
+	if is_uint "${cnt}"
+	then
+		rv=0
+	else
+		cnt=0
+	fi
+
+	eval "${ga_out_var}"='${cnt}'
+	return ${rv}
+}
+
+# Env vars:
+#   CA_CHECK_DNS: test DNS resolution
+#   CA_NOERR: do not print/register errors
+#   CA_NOPROGRESS: do not print progress messages
+# return values:
+# 0 - All checks passed
+# 1 - General error
+# 2 - The blocklist test domain failed to resolve (blocklist not loaded)
+# 3 - One of the test domains failed to resolve
+check_active_blocklist()
+{
+	lookup_failed() { [ -n "${CA_NOERR}" ] || reg_failure "Lookup of test domain '${1}' failed."; }
+	cab_print() { [ -n "${CA_NOPROGRESS}" ] || reg_msg "${@}"; }
+
+	reg_action -3 -blue "Checking the active blocklist." || return 1
+
+	local family ip index instance_ns def_ns ns_ips ns_ips_sp
+
+	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
+
+	assert_set F_check_active_blocklist DNSMASQ_INDEXES DNSMASQ_INST_SET || return 1
+
+	for index in ${DNSMASQ_INDEXES}
+	do
+		ns_ips='' ns_ips_sp=''
+		get_dnsmasq_instance_ns "${index}"
+
+		for family in 4 6
+		do
+			case "${family}" in
+				4) def_ns=127.0.0.1 ;;
+				6) def_ns=::1
+			esac
+			eval "instance_ns=\"\${NS_${family}_${index}}\""
+			for ip in ${instance_ns:-"${def_ns}"}
+			do
+				add2list ns_ips "${ip}"
+				add2list ns_ips_sp "${blue}${ip}${n_c}" ", "
+			done
+		done
+
+		cab_print -3 "Testing dnsmasq instance ${index}."
+		cab_print -3 "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
+
+		cab_print -3 -blue "Testing adblocking."
+
+		try_lookup_domain "${ABL_TEST_DOMAIN}" "${ns_ips}" 1 -n || { lookup_failed "${ABL_TEST_DOMAIN}"; return 2; }
+
+		[ -n "${CA_CHECK_DNS}" ] &&
+		{
+			cab_print -3 -blue "Testing DNS resolution."
+			for domain in ${test_domains}
+			do
+				try_lookup_domain "${domain}" "${ns_ips}" 5 || { lookup_failed "${domain}"; return 3; }
+			done
+		}
+	done
+
+	:
+}
+
+get_abl_run_state()
+{
+	local rv grs_out_var="${1}"
+	are_var_names_safe "${grs_out_var}" &&
+	assert_set F_get_abl_run_state grs_out_var || return 1
+
+	export "${grs_out_var}=1"
+	try_get_abl_run_state
+	rv=${?}
+	export "${grs_out_var}=${rv}"
+	return ${rv}
+}
+
+# return codes:
+# 0 - running
+# 1 - error
+# 2 - (reserved)
+# 3 - paused
+# 4 - stopped
+try_get_abl_run_state()
+{
+	check_fail() { reg_failure "${1}${1:+ }Failed to check adblock-lean run state."; }
+	unexp_state() { reg_failure "Inconsistent run state. Adblocking check result: '${dns_check_res}', blocklist file check result: '${file_check_res}'."; }
+
+	[ -n "${DNSMASQ_CONF_DIRS}" ] || { check_fail "\$DNSMASQ_CONF_DIRS is not set."; return 1; }
+	local me=get_abl_run_state dir dns_check_res file_check_res
+
+	assert_set "F_${me}" ABL_ENV_SET || return 1
+
+	[ -f "${BL_FILE_CURR}" ]
+	file_check_res=${?}
+
+	CA_NOERR=1 check_active_blocklist
+	dns_check_res=${?}
+	case "${dns_check_res}${file_check_res}" in
+		00) return 0 ;;
+		01) unexp_state; return 1 ;;
+		11|10) check_fail; return 1 ;;
+		21) ;;
+		20)
+			[ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR}" = "${PERM_BL_FILE_CURR}" ] && return 3
+			unexp_state; return 1 ;;
+		*) check_fail "${me}: unexpected dns check code '${dns_check_res}${file_check_res}'."; return 1
+	esac
+
+	[ -n "${PAUSE_FILE_CURR}" ] && return 3
+
+	return 4
+}
+
+# TODO: update comment
+# Output via optional vars:
+# 1: state var for processing setup (see code for format)
+# 2: all required addnmounts (newline-separated)
+# 3: printable missing addnmounts
+check_process_features()
+{
+	feature_unavail() {
+		[ -z "${CPF_QUIET}" ] && reg_failure "${1} can not be used because of missing addnmounts in /etc/config/dhcp: ${2}" \
+			"Please run 'service adblock-lean setup' to create required addnmount entries."
+	}
+
+	local me=check_process_features \
+		IFS="${DEFAULT_IFS}" \
+		first_conf_dir \
+		\
+		cpf_paths='' \
+		\
+		cpf_missing='' \
+		\
+		cpf_all_req_recomm='' \
+		cpf_all_missing_recomm='' \
+		\
+		compr_allowed=0 \
+		perm_allowed=0 \
+		multi_inst_allowed=0 \
+		\
+		cpf_compr_util_path='' \
+		cpf_compr_ext='' \
+		\
+		cpf_conf_req=1 \
+		\
+		bl_full_fname='' \
+		cpf_bl_path_ram='' \
+		cpf_bl_path_perm='' \
+		\
+		bl_full_fname_check='' \
+		bl_path_ram_check='' \
+		\
+		ok_paths='' \
+		\
+		bl_full_fname_recomm='' \
+		cpf_bl_path_ram_recomm='' \
+		\
+		perm_dir="${PERM_BLOCKLIST_DIR%"/"}" \
+		\
+		state_var="${1}" \
+		all_req_addnm_var="${2}" \
+		missing_recomm_var="${3}" \
+		bl_path_ram_var="${4}" \
+		bl_path_perm_var="${5}" \
+		compr_util_path_var="${6}" \
+		compr_ext_var="${7}" \
+		conf_req_var="${8}"
+
+	debug_msg "Checking processing features${CPF_QUIET:+" (QUIET)"}." 
+
+	unset_vars "${state_var}" "${all_req_addnm_var}" "${missing_recomm_var}" "${bl_path_ram_var}" "${bl_path_perm_var}" "${compr_util_path_var}" "${compr_ext_var}" "${conf_req_var}" &&
+	assert_set "F_${me}" DNSMASQ_INDEXES compression_util || return 1
+
+
+	# Compression
+	get_compr_util_spec cpf_compr_util_path cpf_compr_ext "${compression_util}" || return 1
+
+	if [ -n "${cpf_compr_ext}" ]
+	then
+		bl_full_fname_check=${BLOCKLIST_BASE_FNAME:?}${cpf_compr_ext}
+		bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
+		cpf_paths="${BUSYBOX_PATH:?}${_NL_}${cpf_compr_util_path%% *}${_NL_}${bl_path_ram_check}"
+		check_addnmounts cpf_missing "${cpf_paths}" || return 1
+
+		if [ -z "${cpf_missing}" ]
+		then
+			compr_allowed=1
+			bl_full_fname=${bl_full_fname_check}
+			cpf_bl_path_ram=${bl_path_ram_check}
+		else
+			feature_unavail "Final blocklist compression" "${cpf_missing}"
+		fi
+
+		[ -n "${CPF_QUIET}" ] &&
+		{
+			bl_full_fname_recomm=${BLOCKLIST_BASE_FNAME:?}${cpf_compr_ext}
+			cpf_bl_path_ram_recomm=${ABL_RUN_DIR:?}/${bl_full_fname_recomm}
+			add2list cpf_all_req_recomm "${cpf_paths}" "${_NL_}" &&
+			add2list cpf_all_missing_recomm "${cpf_missing}" ", " || return 1
+		}
+	fi
+
+	: "${bl_full_fname_recomm:="${BLOCKLIST_BASE_FNAME:?}"}"
+	: "${bl_full_fname:="${BLOCKLIST_BASE_FNAME:?}"}"
+
+
+	# Multiple dnsmasq instances
+	case "${DNSMASQ_INDEXES}" in
+		*[0-9]*" "*[0-9]*)
+			[ -n "${CPF_QUIET}" ] &&
+			{
+				cpf_bl_path_ram_recomm=${ABL_RUN_DIR:?}/${bl_full_fname_recomm}
+				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${cpf_bl_path_ram_recomm}"
+				check_addnmounts cpf_missing "${cpf_paths}" &&
+				add2list cpf_all_req_recomm "${cpf_paths}" "${_NL_}" &&
+				add2list cpf_all_missing_recomm "${cpf_missing}" ", " || return 1
+			}
+
+			bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname:?}
+			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${bl_path_ram_check}"
+			check_addnmounts cpf_missing "${cpf_paths}" || return 1
+			if [ -z "${cpf_missing}" ]
+			then
+				cpf_bl_path_ram=${bl_path_ram_check}
+				multi_inst_allowed=1
+			else
+				feature_unavail "Multiple dnsmasq instances" "${cpf_missing}"
+			fi ;;
+		*)
+			first_conf_dir="${DNSMASQ_CONF_DIRS%% *}"
+			is_valid_dir "${first_conf_dir}" || return 1
+			ok_paths="${first_conf_dir}/${bl_full_fname}${_NL_}${first_conf_dir}/${bl_full_fname_recomm}"
+
+			[ -n "${cpf_bl_path_ram}" ] ||
+			{
+				cpf_bl_path_ram="${first_conf_dir}/${bl_full_fname}"
+				cpf_conf_req=0
+			}
+
+			: "${cpf_bl_path_ram_recomm:="${first_conf_dir}/${bl_full_fname_recomm}"}"
+	esac
+
+	assert_set "F_${me}" cpf_bl_path_ram_recomm || return 1
+
+	# Permanent blocklist
+	case "${PERM_BLOCKLIST_MODE}" in manual|managed)
+		[ -n "${CPF_QUIET}" ] &&
+		{
+			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${perm_dir}"
+			is_included "${cpf_bl_path_ram_recomm}" "${ok_paths}" "${_NL_}" ||
+				cpf_paths="${cpf_paths}${_NL_}${cpf_bl_path_ram_recomm}"
+			check_addnmounts cpf_missing "${cpf_paths}" &&
+			add2list cpf_all_req_recomm "${cpf_paths}" "${_NL_}" &&
+			add2list cpf_all_missing_recomm "${cpf_missing}" ", " || return 1
+		}
+
+		if [ -n "${cpf_bl_path_ram}" ]
+		then
+			local perm_fail perm_dir_pr="permanent blocklist directory"
+			if [ -d "${perm_dir}" ] ||
+				{
+					case "${PERM_BLOCKLIST_DIR}" in
+						'') perm_fail="No path specified in config option PERM_BLOCKLIST_DIR." ;;
+						/) perm_fail="Invalid ${perm_dir_pr}: /" ;;
+						*) perm_fail="Can not find ${perm_dir_pr}: ${perm_dir}."
+					esac
+					false
+				}
+			then
+				# alternative path on ramdisk required for fallback
+				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${perm_dir}"
+				is_included "${cpf_bl_path_ram}" "${ok_paths}" "${_NL_}" ||
+					cpf_paths="${cpf_paths}${_NL_}${cpf_bl_path_ram}"
+				check_addnmounts cpf_missing "${cpf_paths}" || return 1
+				if [ -z "${cpf_missing}" ]
+				then
+					perm_allowed=1
+					[ "${PERM_BLOCKLIST_MODE}" = managed ] && cpf_bl_path_perm="${perm_dir}/${bl_full_fname}"
+				else
+					feature_unavail "Permanent blocklist" "${cpf_missing}"
+				fi
+			else
+				log_msg -warn "" "${perm_fail}${perm_fail:+ }Permanent blocklist can not be used or updated."
+			fi
+		fi
+	esac
+
+	eval "${state_var:-_}=\"final_compr:\${compr_allowed}\${_NL_}multi_inst:\${multi_inst_allowed}\${_NL_}perm_bl:\${perm_allowed}\""	
+	eval "${all_req_addnm_var:-_}"='${cpf_all_req_recomm}'
+	eval "${missing_recomm_var:-_}"='${cpf_all_missing_recomm}'
+	eval "${conf_req_var:-_}"='${cpf_conf_req}'
+	eval "${bl_path_ram_var:-_}"='${cpf_bl_path_ram}'
+	eval "${bl_path_perm_var:-_}"='${cpf_bl_path_perm}'
+	eval "${compr_util_path_var:-_}"='${cpf_compr_util_path}'
+	eval "${compr_ext_var:-_}"='${cpf_compr_ext}'
+
+	: "${cpf_all_req_recomm}" "${multi_inst_allowed}" "${perm_allowed}" "${compr_allowed}" "${cpf_all_missing_recomm}" "${cpf_bl_path_perm}" "${cpf_conf_req}"
+
+	:
+}
+
+# Env vars:
+#   SAE_FORCE: force env re-processing
+#   SAE_FORCE_ONCE: force env re-processing only once
+#   SAE_QUIET: do not print errors
+# 1 (optional): var name to output all required addnmounts (only when some are missing)
+set_abl_env()
+{
+	[ -n "${SAE_FORCE_ONCE}" ] && { unset SAE_FORCE_ONCE; local SAE_FORCE=1; }
+	[ -z "${SAE_FORCE}" ] && [ -n "${ABL_ENV_SET}" ] && return 0
+	[ -n "${SAE_QUIET}" ] && SAE_FORCE_ONCE=1 # ensure errors are printed at next non-quiet call
+
+	local me=set_abl_env \
+		IFS="${DEFAULT_IFS}" \
+		\
+		compr_util_path='' \
+		compr_ext='' \
+		\
+		extr_cmd_stdout='' \
+		compr_cmd_to_file='' \
+		extra_compr_cmd_to_file_opts='' \
+		compr_cmd_stdout='' \
+		\
+		interm_compr_opts='' \
+		\
+		final_compr_opts='' \
+		\
+		pause_dir="${ABL_RUN_DIR:?}" \
+		\
+		bl_dir_new='' \
+		\
+		par_opt='' \
+		cpu_cnt \
+		rebuild_perm_bl='' \
+		\
+		perm_bl_size_b='' \
+		perm_bl_entries_cnt=0 \
+		perm_bl_cnt_human=''
+
+	export \
+		START_ACTION=gen \
+		\
+		PERM_BLOCKLIST_DIR="${PERM_BLOCKLIST_DIR%"/"}" \
+		\
+		CONF_FILES_REQ=0 \
+		CONF_FILES_REQ_FALLBACK=0 \
+		\
+		BL_FILE_NEW='' \
+		BL_FILE_NEW_FALLBACK='' \
+		BL_FILE_CURR='' \
+		\
+		PAUSE_FILE_CURR='' \
+		PAUSE_FILE_NEW="${pause_dir:?}/${PAUSE_BASE_FNAME:?}" \
+		\
+		BK_BL_FILE='' \
+		\
+		PERM_BL_FILE_CURR='' \
+		\
+		LOAD_BL_PATH='' \
+		LOAD_BL_SIZE_B='' \
+		LOAD_BL_ENTRIES_CNT='' \
+		LOAD_BL_DESC='' \
+		\
+		PARALLEL_JOBS='' \
+		\
+		PART_EXTR_OR_CAT_STDOUT="/bin/busybox cat" \
+		\
+		INTERM_COMPR_OR_CAT_STDOUT="/bin/busybox cat" \
+		INTERM_COMPR_EXT='' \
+		INTERM_COMPR_TO_FILE='' \
+		\
+		FINAL_COMPRESS='' \
+		FINAL_EXTR_OR_CAT_STDOUT="/bin/busybox cat" \
+		FINAL_COMPR_OR_CAT_STDOUT="/bin/busybox cat" \
+		FINAL_COMPR_EXT='' \
+		FINAL_COMPR_TO_FILE=''
+
+	debug_msg "Preparing environment." 
+
+	assert_set "F_${me}" DNSMASQ_INDEXES || return 1
+
+	# Parallel processing
+	case "${MAX_PARALLEL_JOBS}" in
+		auto)
+			cpu_cnt="$(grep -c '^processor\s*:' /proc/cpuinfo)"
+			if is_uint "${cpu_cnt}"
+			then
+				# cap PARALLEL_JOBS to 4 in 'auto' mode
+				PARALLEL_JOBS=$(( (cpu_cnt>4)*4 + (cpu_cnt<=4)*cpu_cnt ))
+			else
+				log_msg "Failed to detect CPU core count. Parallel processing will be disabled."
+				PARALLEL_JOBS=1
+			fi ;;
+		*)
+			PARALLEL_JOBS="${MAX_PARALLEL_JOBS}"
+	esac
+
+	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and permanent blocklist creation,
+	#   get final blocklist paths,
+	#   compression util path and extension
+	local state bl_path_ram bl_path_perm compr_util_path compr_ext \
+		final_compr_req='' multi_inst_req='' perm_bl_req='' CPF_QUIET=''
+
+	[ -n "${SAE_QUIET}" ] && CPF_QUIET=1
+	check_process_features state _ _ bl_path_ram bl_path_perm compr_util_path compr_ext CONF_FILES_REQ || return 1
+
+	CONF_FILES_REQ_FALLBACK=${CONF_FILES_REQ}
+
+	# Parse state
+	local feature_state
+	for feature in final_compr multi_inst perm_bl
+	do
+		feature_state="${state##*"${feature}:"}"
+		feature_state="${feature_state%%"${_NL_}"*}"
+		case "${feature_state}" in
+			[01]) ;;
+			*) reg_failure "${me}: invalid state '${feature_state}' for feature '${feature}'."; return 1
+		esac
+		eval "${feature}_req"='${feature_state}'
+	done
+
+	# Interm compr commands
+	[ -n "${compr_ext}" ] &&
+	{
+		# set compr parallelization options, unless specified by the user
+		case "${compr_util_path}" in *zstd*|*pigz*)
+			case "${compr_util_path}" in
+				*zstd*) par_opt=T extra_compr_cmd_to_file_opts="--rm -q --no-progress" ;;
+				*pigz*) par_opt=p
+			esac
+			case "${intermediate_compression_options}" in
+				*" -${par_opt}"*) interm_compr_opts="${intermediate_compression_options}" ;;
+				*) interm_compr_opts="${intermediate_compression_options} -${par_opt}$((PARALLEL_JOBS/2 + (PARALLEL_JOBS/2<1) ))" # not less than 1
+			esac
+			case "${final_compression_options}" in
+				*" -${par_opt}"*) final_compr_opts="${final_compression_options}" ;;
+				*) final_compr_opts="${final_compression_options} -${par_opt}${PARALLEL_JOBS}"
+			esac
+		esac
+
+		compr_cmd_to_file="${compr_util_path} -f ${extra_compr_cmd_to_file_opts}"
+		compr_cmd_stdout="${compr_util_path} -c"
+		extr_cmd_stdout="${compr_util_path} -cd"
+
+		# Interm compr commands
+		PART_EXTR_OR_CAT_STDOUT="try_extract -stdout"
+		INTERM_COMPR_OR_CAT_STDOUT="${compr_cmd_stdout} ${interm_compr_opts}"
+		INTERM_COMPR_TO_FILE="${compr_cmd_to_file} ${interm_compr_opts}"
+		INTERM_COMPR_EXT="${compr_ext}"
+	}
+
+	# Compr final commands, extension and filenames
+	[ "${final_compr_req}" = 1 ] &&
+	{
+		FINAL_COMPRESS=1
+		FINAL_COMPR_EXT=${compr_ext}
+		FINAL_COMPR_TO_FILE="${compr_cmd_to_file} ${final_compr_opts}"
+		FINAL_COMPR_OR_CAT_STDOUT="${compr_cmd_stdout} ${final_compr_opts}"
+		FINAL_EXTR_OR_CAT_STDOUT=${extr_cmd_stdout}
+	}
+
+	[ "${final_compr_req}" = 1 ] || [ "${multi_inst_req}" = 1 ] &&
+		CONF_FILES_REQ=1
+
+
+	BK_BL_FILE="${BK_BL_BASE_PATH:?}${INTERM_COMPR_EXT}"
+
+	# Perm blocklist
+	if [ "${perm_bl_req}" = 1 ]
+	then
+		if [ "${ABL_INIT_ACTION}" = boot ] || [ "${ABL_INIT_ACTION}" = status ]
+		then
+			reg_action -3 -blue "Checking the permanent blocklist."
+			local file='' perm_ext='' compr_util='' perm_fail='' min_good_line_count_human='' perm_bl_entries_cnt='' perm_bl_cnt_human=''
+
+			if
+				{
+					FF_RM_EXTRA=1 find_files file "${PERM_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}" ||
+						{
+							[ "${PERM_BLOCKLIST_MODE}" = manual ] && PERM_BLOCKLIST_MODE=disable
+							perm_fail="Permanent blocklist not found in directory '${PERM_BLOCKLIST_DIR}'."
+							false
+						}
+				} &&
+
+				{
+					get_compr_spec perm_ext _ "${file}" ||
+						{ perm_fail="Can not find utility to extract permanent blocklist file '${file}'."; false; }
+				} &&
+
+				{
+					[ "${perm_ext}" = "${FINAL_COMPR_EXT}" ] ||
+						{
+							perm_fail="Extension '${perm_ext}' of permanent blocklist file '${file}' does not match required extension '${FINAL_COMPR_EXT}'."
+							false
+						}
+				} &&
+
+				perm_bl_size_b="$(get_file_size "${file}")" &&
+				{
+					[ $(( perm_bl_size_b/1024 )) -le "${max_blocklist_file_size_KB}" ] ||
+					{ perm_fail="Permanent blocklist file '${file}' is larger than the maximum value set in config (${max_blocklist_file_size_KB} KiB)."; false; }
+				} &&
+
+				{
+					get_active_entries_cnt perm_bl_entries_cnt "${file}" ||
+						{ perm_fail="Failed to get entries count in the permanent blocklist file '${file}'."; false; }
+				} &&
+
+				{
+					int2human perm_bl_cnt_human "${perm_bl_entries_cnt}" &&
+					int2human min_good_line_count_human "${min_good_line_count}" || return 1
+				} &&
+
+				{
+					[ "${perm_bl_entries_cnt}" -ge "${min_good_line_count}" ] ||
+						{
+							perm_fail="Entries count (${perm_bl_cnt_human}) in the permanent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
+							false
+						}
+				}
+			then
+				START_ACTION=load
+
+				PERM_BL_FILE_CURR=${file}
+				LOAD_BL_PATH=${PERM_BL_FILE_CURR}
+				LOAD_BL_SIZE_B=${perm_bl_size_b}
+				LOAD_BL_ENTRIES_CNT=${perm_bl_entries_cnt}
+				LOAD_BL_DESC="permanent"
+				BL_FILE_NEW_FALLBACK=${bl_path_ram}
+			else
+				local warn_act_msg=''
+				[ "${ABL_CMD}" = start ] && [ -z "${SAE_QUIET}" ] && warn_act_msg="Will create a new blocklist on the ramdisk."
+				[ "${PERM_BLOCKLIST_MODE}" = managed ] &&
+				{
+					rebuild_perm_bl=1
+					[ "${ABL_CMD}" = start ] &&
+					{
+						[ -z "${SAE_QUIET}" ] && warn_act_msg="Will rebuild the permanent blocklist."
+						rm -f "${file}"
+					}
+					BL_FILE_NEW=${bl_path_perm}
+					BL_FILE_NEW_FALLBACK=${bl_path_ram}
+				}
+				local warn_msg="${perm_fail}${perm_fail:+ }${warn_act_msg}"
+				[ -n "${warn_msg}" ] && log_msg -warn "" "${warn_msg}"
+			fi
+		elif [ "${PERM_BLOCKLIST_MODE}" = managed ]
+		then
+			pause_dir=${PERM_BLOCKLIST_DIR:?}
+			rebuild_perm_bl=1
+			[ "${ABL_CMD}" = start ] && reg_msg -3 "" "Will update the permanent blocklist."
+			BL_FILE_NEW=${bl_path_perm}
+			BL_FILE_NEW_FALLBACK=${bl_path_ram}
+		fi
+
+		[ "${START_ACTION}" = load ] || [ -n "${rebuild_perm_bl}" ] &&
+			CONF_FILES_REQ=1
+	fi
+
+	: "${BL_FILE_NEW:="${bl_path_ram}"}"
+
+	[ "${START_ACTION}" = load ] || [ -n "${BL_FILE_NEW}" ] ||
+		{ reg_failure "No usable path to install or load the blocklist."; return 1; }
+
+
+	# Get current blocklist file if any
+	local path
+	if read_str_from_file -v path -f "${LAST_BLOCKLIST_PATH_FILE}" -q -n 512 &&
+		is_valid_dir "${path%/*}" &&
+		[ -f "${path}" ]
+	then
+		BL_FILE_CURR="${path}"
+	fi
+
+	# Get current pause file if any
+	if read_str_from_file -v path -f "${LAST_PAUSE_PATH_FILE}" -q -n 512 &&
+		is_valid_dir "${path%/*}" &&
+		[ -f "${path}" ]
+	then
+		PAUSE_FILE_CURR="${path}"
+	fi
+
+	PAUSE_FILE_NEW=${pause_dir:?}/${PAUSE_BASE_FNAME:?}${FINAL_COMPR_EXT}
+
+	export ABL_ENV_SET=1
+
+	debug_msg \
+		"Run state: ${ABL_RUN_STATE}" \
+		"Shared dir: '${bl_dir_new}'" \
+		"Curr blocklist: '${BL_FILE_CURR}'" \
+		"New blocklist: '${BL_FILE_NEW}'" \
+		"BK file: '${BK_BL_FILE}'" \
+		"Curr pause file: '${PAUSE_FILE_CURR}'" \
+		"New pause file: '${PAUSE_FILE_NEW}'" \
+		"CONF_FILES_REQ: '${CONF_FILES_REQ}'"
+
+	:
+}
+
 
 # 1 - var name for output
 # 2 - list URL or short identifier
@@ -122,7 +881,7 @@ get_list_url()
 		mirrors first_mirror \
 		out_var="${1}" list_id="${2}" list_format="${3}" mirror="${4}"
 
-	are_var_names_safe "${out_var}" || return 1
+	unset_vars "${out_var}" || return 1
 
 	case "${list_format}" in raw|dnsmasq|hosts) ;; *) reg_failure "Unexpected list format '${list_format}'."; return 1; esac
 
@@ -131,12 +890,10 @@ get_list_url()
 		*) list_id_lc="${list_id}"
 	esac
 	case "${list_id_lc}" in hagezi:*|oisd:*|stevenblack:*) ;; *)
-		eval "${out_var}=\"${list_id}\""
+		eval "${out_var}"='${list_id}'
 		return 0
 	esac
 	list_id="${list_id_lc}"
-
-	eval "${out_var}=''"
 
 	list_author="${list_id%%\:*}" list_name="${list_id#*\:}"
 
@@ -184,140 +941,7 @@ get_list_url()
 	[ -n "${res_url}" ] || { reg_failure "Failed to construct URL for list identifier '${list_id}'."; return 1; }
 
 	: "${raw_suffix}" "${dnsmasq_suffix}" "${hosts_suffix}"
-	eval "${out_var}=\"${res_url}\""
-}
-
-check_confscript_support()
-{
-	dnsmasq --help | grep -qe "--conf-script" ||
-	{
-		reg_failure "The version of dnsmasq installed on this system is too old." \
-			"To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
-		return 1
-	}
-	:
-}
-
-# exports PROCESS_UTILS_SET COMPR_CMD COMPR_CMD_STDOUT COMPR_EXT EXTR_CMD EXTR_CMD_STDOUT
-detect_processing_utils()
-{
-	[ -n "${PROCESS_UTILS_SET}" ] && return 0
-
-	unset PROCESS_UTILS_SET COMPR_CMD COMPR_CMD_STDOUT COMPR_EXT EXTR_CMD EXTR_CMD_STDOUT
-
-	local compr_cmd_opts='' compr_util_path='' extr_cmd_opts=''
-	: "${compression_util:=gzip}"
-	case "${compression_util}" in
-		gzip)
-			detect_util compr_util_path gzip "" "/usr/libexec/gzip-gnu" -b &&
-			COMPR_EXT=.gz ;;
-		pigz)
-			detect_util compr_util_path "" pigz "/usr/bin/pigz" &&
-			COMPR_EXT=.gz ;;
-		zstd)
-			detect_util compr_util_path "" zstd "/usr/bin/zstd" &&
-			COMPR_EXT=.zst &&
-			compr_cmd_opts="--rm -q --no-progress" &&
-			extr_cmd_opts="--rm -q --no-progress" ;;
-		none) : ;;
-		*) reg_failure "Unexpected compression utility '${compression_util}'."; false
-	esac || return 1
-
-	[ "${compression_util}" != none ] &&
-	{
-		COMPR_CMD="${compr_util_path} -f ${compr_cmd_opts}"
-		COMPR_CMD_STDOUT="${compr_util_path} -c"
-		EXTR_CMD="${compr_util_path} -fd ${extr_cmd_opts}"
-		EXTR_CMD_STDOUT="${compr_util_path} -cd"
-	}
-	export PROCESS_UTILS_SET=1 COMPR_CMD COMPR_CMD_STDOUT COMPR_EXT EXTR_CMD EXTR_CMD_STDOUT
-}
-
-# exports USE_COMPRESSION, FINAL_COMPRESS, FINAL_BLOCKLIST_FILE, PARALLEL_JOBS, INTERM_COMPR_OPTS,
-#    FINAL_COMPR_OR_CAT, FINAL_COMPR_OPTS
-set_processing_vars()
-{
-	local par_opt='' cpu_cnt compression_util="${compression_util:-gzip}" addnmounts_rv missing_addnmounts \
-		please_run_setup="Please run 'service adblock-lean setup' to create the required addnmount entries."
-	unset USE_COMPRESSION FINAL_COMPRESS PARALLEL_JOBS INTERM_COMPR_OPTS FINAL_COMPR_OPTS
-
-	case "${MAX_PARALLEL_JOBS}" in
-		auto)
-			cpu_cnt="$(grep -c '^processor\s*:' /proc/cpuinfo)"
-			case "${cpu_cnt}" in
-				''|*[!0-9]*|0)
-					log_msg "Failed to detect CPU core count. Parallel processing will be disabled."
-					PARALLEL_JOBS=1 ;;
-				*)
-					# cap PARALLEL_JOBS to 4 in 'auto' mode
-					PARALLEL_JOBS=$(( (cpu_cnt>4)*4 + (cpu_cnt<=4)*cpu_cnt ))
-			esac ;;
-		*)
-			PARALLEL_JOBS="${MAX_PARALLEL_JOBS}"
-	esac
-
-	FINAL_COMPR_OR_CAT="/bin/busybox cat"
-	FINAL_EXTR_OR_CAT="/bin/busybox cat"
-	FINAL_BLOCKLIST_FILE="${SHARED_BLOCKLIST_PATH}"
-
-	case "${compression_util}" in none) ;; *)
-		USE_COMPRESSION=1
-
-		# set compression parallelization, unless specified by the user
-		case "${COMPR_CMD}" in *zstd*|*pigz*)
-			case "${COMPR_CMD}" in
-				*zstd*) par_opt=T ;;
-				*pigz*) par_opt=p
-			esac
-			case "${intermediate_compression_options}" in
-				*" -${par_opt}"*) INTERM_COMPR_OPTS="${intermediate_compression_options}" ;;
-				*) INTERM_COMPR_OPTS="${intermediate_compression_options} -${par_opt}$((PARALLEL_JOBS/2 + (PARALLEL_JOBS/2<1) ))" # not less than 1
-			esac
-			case "${final_compression_options}" in
-				*" -${par_opt}"*) FINAL_COMPR_OPTS="${final_compression_options}" ;;
-				*) FINAL_COMPR_OPTS="${final_compression_options} -${par_opt}${PARALLEL_JOBS}"
-			esac
-		esac
-	esac
-
-	if [ -n "${USE_COMPRESSION}" ] || multi_inst_needed
-	then
-		check_confscript_support || return 1
-		check_addnmounts missing_addnmounts
-		addnmounts_rv=${?}
-
-		[ -n "${missing_addnmounts}" ] && log_msg -warn "" "Missing addnmount entries in /etc/config/dhcp for paths: ${missing_addnmounts}"
-
-		case ${addnmounts_rv} in
-			0)
-				if [ -n "${USE_COMPRESSION}" ]
-				then
-					FINAL_COMPRESS=1
-					FINAL_COMPR_OR_CAT="${COMPR_CMD_STDOUT} ${FINAL_COMPR_OPTS}"
-					FINAL_EXTR_OR_CAT="${EXTR_CMD_STDOUT}"
-					FINAL_BLOCKLIST_FILE="${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
-				fi ;;
-			1) return 1 ;;
-			2) ! multi_inst_needed && FINAL_BLOCKLIST_FILE="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist" ;;
-			3)
-				multi_inst_needed &&
-				{
-					reg_failure "adblock-lean is configured to adblock on multiple dnsmasq instances but required addnmount entries are missing. ${please_run_setup}"
-					return 1
-				}
-				FINAL_BLOCKLIST_FILE="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist"
-		esac
-
-		case ${addnmounts_rv} in 2|3)
-			[ -n "${USE_COMPRESSION}" ] && log_msg -warn "Final blocklist compression is disabled because of missing addnmount entries." \
-				"${please_run_setup}"
-		esac
-	else
-		FINAL_BLOCKLIST_FILE="${DNSMASQ_CONF_DIRS%% *}/abl-blocklist"
-	fi
-
-	export USE_COMPRESSION FINAL_COMPRESS FINAL_BLOCKLIST_FILE FINAL_COMPR_OR_CAT FINAL_EXTR_OR_CAT FINAL_COMPR_OPTS \
-		INTERM_COMPR_OPTS PARALLEL_JOBS
+	eval "${out_var}"='${res_url}'
 }
 
 
@@ -331,8 +955,8 @@ get_curr_job_pid()
 	unset "${1}"
 	IFS="${_NL_}" read -r -n512 -d '' _ _ _ _ _ pid_line _ < /proc/self/status
 	__pid="${pid_line##*[^0-9]}"
-	case "${__pid}" in ''|*[!0-9]*) reg_failure "Failed to get current job PID."; return 1; esac
-	eval "${1}=\"${__pid}\""
+	is_uint "${__pid}" || { reg_failure "Failed to get current job PID."; return 1; }
+	eval "${1}"='${__pid}'
 }
 
 # 1 - PID of the job throwing the fatal error
@@ -383,10 +1007,11 @@ handle_done_job()
 # 1 - var name to output remaining time
 get_remaining_time()
 {
-	local ct_curr_time_s ct_total_time_s ct_remaining_time_s
+	local ct_curr_time_ms ct_curr_time_s ct_total_time_s ct_remaining_time_s
 	eval "${1}"=0
 
-	get_uptime_s ct_curr_time_s || return 1
+	get_uptime_ms ct_curr_time_ms || return 1
+	ct_curr_time_s=$((ct_curr_time_ms/1000))
 	ct_total_time_s=$((INITIAL_UPTIME_S-ct_curr_time_s))
 
 	ct_remaining_time_s=$((PROCESSING_TIMEOUT_S-ct_total_time_s))
@@ -433,7 +1058,7 @@ schedule_job()
 	get_remaining_time remaining_time_s || return 1
 
 	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
-	process_list_part "${@}" &
+	process_list_part "${@}" "${print_id}" &
 
 	RUNNING_PIDS="${RUNNING_PIDS} ${!}"
 	export "JOB_PRINT_ID_${!}"="${print_id}"
@@ -447,6 +1072,7 @@ schedule_jobs()
 	finalize_scheduler()
 	{
 		trap ':' USR1
+		[ -n "${USR_TRIG}" ] && log_msg -yellow "" "Job scheduler is stopping on receipt of USR1 signal."
 		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] &&
 		{
 			reg_msg -3 -yellow "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
@@ -465,7 +1091,7 @@ schedule_jobs()
 	RUNNING_PIDS=
 	RUNNING_JOBS_CNT=0
 
-	trap 'finalize_scheduler 1' USR1
+	trap 'USR_TRIG=1 finalize_scheduler 1' USR1
 
 	local SCHED_CB_FIFO="${SCHEDULE_DIR}/scheduler_callback_${SCHEDULER_PID}"
 	mkfifo "${SCHED_CB_FIFO}" &&
@@ -506,6 +1132,7 @@ schedule_jobs()
 # 1 - list index
 # 2 - list type (block|ipv4_block|allow)
 # 3 - list format (raw|dnsmasq|hosts)
+# 4 - job print id
 # the rest of the args passed as-is to workers
 #
 # return codes:
@@ -521,14 +1148,11 @@ process_list_part()
 		[ -n "${2}" ] && reg_failure "process_list_part: ${2}"
 		case "${1}" in
 			0)
-				local list_size_human stats_pad suffix_pad msg1 msg2
+				local list_size_human stats_pad suffix_pad
 				bytes2human list_size_human "${part_size_B}" -p
 				get_pad stats_pad "${print_id}" 38
 				get_pad suffix_pad "${line_count_human}" 8
-				msg1="Successfully processed list:  "
-				msg2="${stats_pad}[ ${list_size_human} - ${suffix_pad}${line_count_human} lines ]"
-				print_msg "${msg1}${green}${print_id}${n_c} ${msg2}"
-				log_msg -noprint "${msg1}${print_id} ${msg2}" ;;
+				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${list_size_human} - ${suffix_pad}${line_count_human} lines ]" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] && handle_fatal "${curr_job_pid}" "${print_id}"
@@ -569,19 +1193,12 @@ process_list_part()
 
 	local curr_job_pid msg msg_mirr pad \
 		list_origin='' list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
-		index="${1}" list_type="${2}" list_format="${3}"
+		index="${1}" list_type="${2}" list_format="${3}" print_id="${4}"
 
 	get_curr_job_pid curr_job_pid || finalize_job 1
 
-	for v in 1 2 3; do
-		eval "[ -n \"\${${v}}\" ]" || finalize_job 1 "Missing argument ${v}."
-	done
-
-	eval "list_origin=\"\${${list_format}_${list_type}_${index}_origin}\""
-
-	for v in list_origin print_id; do
-		eval "[ -n \"\${${v}}\" ]" || finalize_job 1 "Missing param: '${v}'."
-	done
+	eval "list_origin=\"\${${list_format}_${list_type}_${index}_origin}\"" &&
+	ASSERT_NOEXIT=1 assert_set F_process_list_part index list_type list_format print_id list_origin || finalize_job 1
 
 	list_path="${print_id}"
 
@@ -628,11 +1245,8 @@ process_list_part()
 	esac
 
 	case ${list_type} in block|ipv4_block)
-		[ -n "${USE_COMPRESSION}" ] &&
-		{
-			dest_file="${dest_file}${COMPR_EXT}"
-			part_compr_or_cat="${COMPR_CMD_STDOUT} ${INTERM_COMPR_OPTS}"
-		}
+		dest_file="${dest_file}${INTERM_COMPR_EXT}"
+		part_compr_or_cat="${INTERM_COMPR_OR_CAT_STDOUT}"
 	esac
 
 	case "${list_format}" in
@@ -662,8 +1276,7 @@ process_list_part()
 		msg="Processing ${list_format} ${list_type}list"
 		get_pad pad "${msg}" 28
 
-		print_msg "${msg}: ${pad}${blue}${print_id}${n_c}${msg_mirr}"
-		reg_msg -3 -noprint "${msg}: ${pad}${print_id}${msg_mirr}"
+		reg_msg "${msg}: ${pad}${blue}${print_id}${n_c}${msg_mirr}"
 
 		# Download or cat the list
 		${fetch_cmd} "${list_path}" |
@@ -738,12 +1351,12 @@ process_list_part()
 			finalize_job 2
 		fi
 
-		int2human line_count_human "${part_line_count}"
+		int2human line_count_human "${part_line_count}" || finalize_job 1
 
 		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
 		then
 			lines_cnt_low=1
-			int2human min_line_count_human "${min_line_count}"
+			int2human min_line_count_human "${min_line_count}" || finalize_job 1
 			reg_failure "Line count in downloaded ${list_type}list part '${print_id}' is ${line_count_human}, which is less than configured minimum: ${min_line_count_human}."
 		fi
 
@@ -786,9 +1399,27 @@ process_list_part()
 
 gen_list_parts()
 {
+	# shellcheck disable=SC2329
+	read_stats_cb()
+	{
+		read_str_from_file -v "part_line_count _" -f "${1}" -a 1 -V 0 || return 1
+		list_line_count=$((list_line_count+part_line_count))
+	}
+
+	# shellcheck disable=SC2329
+	concat_allow_cb()
+	{
+		/bin/busybox cat "${1}" >> "${PROCESSED_PARTS_DIR}/allow"
+		local rv=${?}
+		rm -f "${1}"
+		return "${rv}"
+	}
+
 	local lists schedule_req local_list_path list_format list_type \
 		preprocessed_line_count=0 preprocessed_line_count_human \
-		invalid_urls bad_hagezi_urls
+		invalid_urls bad_hagezi_urls \
+		list_line_count list_types
+
 
 	[ -n "${raw_block_lists}${dnsmasq_block_lists}${hosts_block_lists}" ] ||
 		log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
@@ -796,7 +1427,6 @@ gen_list_parts()
 	# clean up before processing
 	rm -rf "${PROCESSED_PARTS_DIR}" "${SCHEDULE_DIR}"
 
-	local file list_line_count list_types
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" || return 1
 
@@ -811,7 +1441,7 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
-	reg_action -blue "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
+	reg_action -1 -blue "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	for list_types in allow "block ipv4_block"
@@ -895,24 +1525,19 @@ gen_list_parts()
 		if [ "${list_types}" = allow ]
 		then
 			# consolidate allowlist parts into one file
-			for file in "${PROCESSED_PARTS_DIR}/allow-"*
-			do
-				case "${file}" in ''|*"*") continue; esac
-				cat "${file}" >> "${PROCESSED_PARTS_DIR}/allow" || { reg_failure "Failed to merge allowlist part."; return 1; }
-				rm -f "${file}"
-			done
+			FF_EXEC="concat_allow_cb {}" \
+				find_files _ "${PROCESSED_PARTS_DIR}" "allow-" || [ ${?} != 1 ] ||
+					{ reg_failure "Failed to merge allowlist part."; return 1; }
 		fi
 
+		# process results
 		for list_type in ${list_types}
 		do
 			# count lines for current list type
-			local file part_line_count=0 list_line_count=0
-			for file in "${ABL_TMP_DIR}/stats_${list_type}-"*
-			do
-				case "${file}" in ''|*"*") continue; esac
-				read_str_from_file -v "part_line_count _" -f "${file}" -a 1 -V 0 || return 1
-				list_line_count=$((list_line_count+part_line_count))
-			done
+			local part_line_count=0 list_line_count=0
+			FF_EXEC="read_stats_cb {}" \
+				find_files _ "${ABL_TMP_DIR}" "stats_${list_type}-" || [ ${?} != 1 ] ||
+					{ reg_failure "Failed to read processed ${list_type}list parts stats."; return 1; }
 
 			if [ "${list_line_count}" = 0 ]
 			then
@@ -935,21 +1560,14 @@ gen_list_parts()
 		done
 	done
 
-	int2human preprocessed_line_count_human "${preprocessed_line_count}"
+	int2human preprocessed_line_count_human "${preprocessed_line_count}" || return 1
 	reg_msg -3 -green "" "Successfully generated preprocessed blocklist file with ${preprocessed_line_count_human} entries."
 	:
 }
 
-gen_and_process_blocklist()
+# shellcheck disable=SC2329
+gen_blocklist()
 {
-	convert_entries()
-	{
-		case "${AWK_CMD}" in
-			*gawk) pack_entries_awk "$@" ;;
-			*) pack_entries_sed "$@"
-		esac
-	}
-
 	# convert to dnsmasq format and pack 4 input lines into 1 output line
 	# intput from STDIN, output to STDOUT
 	# 1 - block|allow
@@ -993,12 +1611,24 @@ gen_and_process_blocklist()
 	}
 
 	# 1 - list type (block|ipv4_block)
-	# 2 - <.gz|.zst|>
+	# 2 - <.gz|.zst|''>
 	# 3 - decompression command or 'cat'
 	print_list_parts()
 	{
-		local find_name="${1}-*${2}" find_cmd="${3}"
-		find "${PROCESSED_PARTS_DIR}/" -type f -name "${find_name}" -exec ${find_cmd} {} \; -exec rm -f {} \;
+		local prefix="${1}" suffix="${2}" print_cmd="${3}"
+
+		# shellcheck disable=SC2329
+		print_file_cb()
+		{
+			local rv=1
+			${print_cmd} "${1}"
+			rv=${?}
+			rm -f "${1}"
+			return "${rv}"
+		}
+
+		FF_EXEC="print_file_cb {}" \
+			find_files _ "${PROCESSED_PARTS_DIR}" "${prefix}-" "${suffix}" || printf ''
 	}
 
 	# 1 - var name for output
@@ -1009,128 +1639,94 @@ gen_and_process_blocklist()
 		eval ": \"\${${1}:=0}\""
 	}
 
-	dedup()
-	{
-		if [ "${deduplication}" = 1 ]
-		then
-			${SORT_CMD} -u -
-		else
-			cat
-		fi
-	}
+	local me=gen_blocklist \
+		final_entries_cnt min_good_line_count_human list_type \
+		errors max_blocklist_file_size_B=$((max_blocklist_file_size_KB*1024)) \
+		dedup_cmd_or_cat="/bin/busybox cat" \
+		pack_cmd="pack_entries_sed" \
+		entries_cnt_out_var="${1}" out_f="${2}" INITIAL_UPTIME_S="$(( ${3} / 1000 ))"
 
-	local elapsed_time_s list_type out_f="${ABL_TMP_DIR}/processed-blocklist" \
-		dnsmasq_err max_blocklist_file_size_B=$((max_blocklist_file_size_KB*1024)) \
-		find_ext='' part_extr_or_cat="cat"
+	unset_vars "${entries_cnt_out_var}" &&
+	assert_set "F_${me}" entries_cnt_out_var out_f PART_EXTR_OR_CAT_STDOUT FINAL_EXTR_OR_CAT_STDOUT FINAL_COMPR_OR_CAT_STDOUT &&
+	case "${PART_EXTR_OR_CAT_STDOUT}" in
+		cat|*" cat") ;;
+		*) assert_set "F_${me}" INTERM_COMPR_EXT || false
+	esac || return 1
 
-	[ -n "${USE_COMPRESSION}" ] && part_extr_or_cat="${EXTR_CMD_STDOUT}"
+	[ "${deduplication}" = 1 ] && dedup_cmd_or_cat="${SORT_CMD} -u -"
 
-	if [ -n "${FINAL_COMPRESS}" ]
-	then
-		find_ext="${COMPR_EXT}"
-		out_f="${out_f}${COMPR_EXT}"
-	fi
-
-	get_abl_run_state
-	case ${?} in
-		1) unload_blocklist_before_update=1 ;;
-		3|4) unload_blocklist_before_update=0 ;;
+	case "${AWK_CMD}" in
+		*gawk) pack_cmd="pack_entries_awk"
 	esac
 
-	if [ "${unload_blocklist_before_update}" = auto ]
-	then
-		local totalmem
-		read -r _ totalmem _ < /proc/meminfo
-		case "${totalmem}" in
-			''|*[!0-9]*) unload_blocklist_before_update=1 ;;
-			*)
-				if [ "${totalmem}" -ge 410000 ]
-				then
-					unload_blocklist_before_update=0
-				else
-					unload_blocklist_before_update=1
-				fi
-		esac
-	fi
-
-	if [ "${unload_blocklist_before_update}" != 1 ]
-	then
-		reg_action -nolog -blue "Testing connectivity." || exit 1
-		test_url_domains || unload_blocklist_before_update=1
-	fi
-
-	if [ "${unload_blocklist_before_update}" = 1 ]
-	then
-		clean_dnsmasq_dir
-		restart_dnsmasq || exit 1
-	fi
-
-	get_uptime_s INITIAL_UPTIME_S || return 1
-
-	if ! gen_list_parts
-	then
+	gen_list_parts ||
+	{
 		reg_failure "Failed to generate preprocessed blocklist file with at least one entry."
 		return 1
-	fi
+	}
 
-	reg_action -nolog -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
-
-	rm -f "${ABL_TMP_DIR}/dnsmasq_err"
-
+	reg_action -3 -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 	{
-		# print blocklist parts
-		print_list_parts block "${find_ext}" "${part_extr_or_cat}" |
-		# optional deduplication
-		dedup |
-		# count entries
-		tee >(wc -w > "${ABL_TMP_DIR}/block_entries") |
-		# pack entries in 1024 characters long lines
-		convert_entries block
-
-		# print ipv4 blocklist parts
-		if [ -n "${use_ipv4_blocklist}" ]
-		then
-			print_list_parts ipv4_block "${find_ext}" "${part_extr_or_cat}" |
+		{
+			# print blocklist parts
+			print_list_parts block "${INTERM_COMPR_EXT}" "${PART_EXTR_OR_CAT_STDOUT}" |
 			# optional deduplication
-			dedup |
-			tee >(wc -w > "${ABL_TMP_DIR}/ipv4_block_entries") |
-			# add prefix
-			${SED_CMD} 's/^/bogus-nxdomain=/'
-		fi
-
-		# print allowlist parts
-		if [ -n "${use_allowlist}" ]
-		then
-			# optional deduplication
-			dedup < "${PROCESSED_PARTS_DIR}/allow" |
-			tee >(wc -w > "${ABL_TMP_DIR}/allow_entries") |
+			${dedup_cmd_or_cat} |
+			# count entries
+			tee >(wc -w > "${ABL_TMP_DIR}/block_entries") |
 			# pack entries in 1024 characters long lines
-			convert_entries allow
-			rm -f "${PROCESSED_PARTS_DIR}/allow"
-		fi
+			${pack_cmd} block || exit 1
 
-		# add the optional whitelist entry
-		if [ "${whitelist_mode}" = 1 ]
-		then
-			# add block-everything entry: local=/*a/*b/*c/.../*z/
-			printf 'local=/'
-			${AWK_CMD} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}'
-			printf '\n'
-		fi
+			# print ipv4 blocklist parts
+			if [ -n "${use_ipv4_blocklist}" ]
+			then
+				print_list_parts ipv4_block "${INTERM_COMPR_EXT}" "${PART_EXTR_OR_CAT_STDOUT}" |
+				# optional deduplication
+				${dedup_cmd_or_cat} |
+				tee >(wc -w > "${ABL_TMP_DIR}/ipv4_block_entries") |
+				# add prefix
+				${SED_CMD} 's/^/bogus-nxdomain=/' || exit 1
+			fi
 
-		# add the blocklist test entry
-		printf '%s\n' "address=/${ABL_TEST_DOMAIN}/#"
-	} |
+			# print allowlist parts
+			if [ -n "${use_allowlist}" ]
+			then
+				# optional deduplication
+				${dedup_cmd_or_cat} < "${PROCESSED_PARTS_DIR}/allow" |
+				tee >(wc -w > "${ABL_TMP_DIR}/allow_entries") |
+				# pack entries in 1024 characters long lines
+				${pack_cmd} allow || exit 1
 
-	# count bytes
-	tee >(wc -c > "${ABL_TMP_DIR}/final_list_bytes") |
+				rm -f "${PROCESSED_PARTS_DIR}/allow"
+			fi
 
-	# limit size
-	{ head -c "${max_blocklist_file_size_B}"; read -rn1 -d '' && { touch "${ABL_TMP_DIR}/abl-too-big.tmp"; cat 1>/dev/null; }; } |
+			# add the optional whitelist entry
+			if [ "${whitelist_mode}" = 1 ]
+			then
+				# add block-everything entry: local=/*a/*b/*c/.../*z/
+				printf 'local=/'
+				${AWK_CMD} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}' || exit 1
+				printf '\n'
+			fi
 
-	# compress or cat
-	${FINAL_COMPR_OR_CAT} > "${out_f}" ||
-		{ reg_failure "Failed to write to output file '${out_f}'."; rm -f "${out_f}"; return 1; }
+			# add the blocklist test entry
+			printf '%s\n' "address=/${ABL_TEST_DOMAIN}/#"
+		} |
+
+		# limit size
+		{ head -c "${max_blocklist_file_size_B}"; read -rn1 -d '' && { touch "${ABL_TMP_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } || true; } |
+
+		# compress or cat
+		${FINAL_COMPR_OR_CAT_STDOUT} > "${out_f}"
+	} 2>"${ERR_F}" ||
+		{
+			reg_failure "Failed to merge blocklist parts into output file '${out_f}'."
+			errors="$(head -n10 "${ERR_F}" 2>/dev/null | ${SED_CMD} '/^$/d')"
+			rm -f "${out_f}" "${ERR_F}"
+			[ -n "${errors}" ] && log_msg "STDERR output:${_NL_}${errors}"
+			return 1
+		}
+	rm -f "${ERR_F}"
 
 	if [ -f "${ABL_TMP_DIR}/abl-too-big.tmp" ]
 	then
@@ -1140,27 +1736,7 @@ gen_and_process_blocklist()
 		return 1
 	fi
 
-	reg_action -nolog -blue "Stopping dnsmasq." || return 1
-	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
-
-	# check the final blocklist with dnsmasq --test
-	reg_action -nolog -blue "Checking the resulting blocklist with 'dnsmasq --test'." || return 1
-
-	${FINAL_EXTR_OR_CAT} "${out_f}" |
-	dnsmasq --test -C - 2> "${ABL_TMP_DIR}/dnsmasq_err"
-	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ABL_TMP_DIR}/dnsmasq_err"
-	then
-		dnsmasq_err="$(head -n10 "${ABL_TMP_DIR}/dnsmasq_err" | ${SED_CMD} '/^$/d')"
-		rm -f "${out_f}" "${ABL_TMP_DIR}/dnsmasq_err"
-		reg_failure "The dnsmasq test on the final blocklist failed."
-		log_msg "dnsmasq --test errors:" "${dnsmasq_err:-"No specifics: probably killed because of OOM."}"
-		return 2
-	fi
-
-	rm -f "${ABL_TMP_DIR}/dnsmasq_err"
-
-	local block_entries_cnt ipv4_block_entries_cnt allow_entries_cnt final_list_size_B \
-		final_entries_cnt final_entries_cnt_human final_list_size_human min_good_line_count_human
+	local block_entries_cnt ipv4_block_entries_cnt allow_entries_cnt
 
 	for list_type in block ipv4_block allow
 	do
@@ -1168,217 +1744,259 @@ gen_and_process_blocklist()
 	done
 
 	final_entries_cnt=$(( block_entries_cnt + ipv4_block_entries_cnt + allow_entries_cnt ))
-	int2human final_entries_cnt_human "${final_entries_cnt}"
 
-	read_list_stats final_list_size_B "${ABL_TMP_DIR}/final_list_bytes"
-	bytes2human final_list_size_human "${final_list_size_B}"
+	eval "${entries_cnt_out_var}"='${final_entries_cnt}'
+	: "${final_entries_cnt}"
+}
 
-	if [ "${final_entries_cnt}" -lt "${min_good_line_count}" ]
+
+stop_dnsmasq()
+{
+	reg_action -3 -blue "Stopping dnsmasq." || return 1
+	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
+}
+
+# 1 - blocklist path
+# 2 - entries count
+# 3 - printable description
+test_blocklist()
+{
+	local entries_cnt_human errors
+		test_path="${1}" entries_cnt="${2}" desc="${3}"
+
+	int2human entries_cnt_human "${entries_cnt}" || return 1
+
+	if [ "${entries_cnt}" -lt "${min_good_line_count}" ]
 	then
-		int2human min_good_line_count_human "${min_good_line_count}"
-		reg_failure "Entries count (${final_entries_cnt_human}) is below the minimum value set in config (${min_good_line_count_human})."
+		int2human min_good_line_count_human "${min_good_line_count}" || return 1
+		reg_failure "Entries count (${entries_cnt_human}) is below the minimum value set in config (${min_good_line_count_human})."
 		return 1
 	fi
+
+	# check the final blocklist with dnsmasq --test
+	reg_action -3 -blue "Checking the ${desc}${desc:+ }blocklist file with 'dnsmasq --test'." || return 1
+
+	rm -f "${ERR_F}"
+
+	{
+		try_extract -stdout "${test_path}" |
+		dnsmasq --test -C -
+	} 2> "${ERR_F}"
+
+	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ERR_F}"
+	then
+		errors="$(head -n10 "${ERR_F}" | ${SED_CMD} '/^$/d')"
+		rm -f "${ERR_F}"
+		rm_if_volatile "${test_path}"
+		reg_failure "dnsmasq test on the ${desc}${desc:+ }blocklist failed."
+		log_msg "Errors:" "${errors:-"No specifics: probably killed because of OOM."}"
+		return 2
+	fi
+
+	rm -f "${ERR_F}"
 
 	reg_msg -3 -green "New blocklist file check passed."
-	local msg="Final list uncompressed file size: "
-	print_msg "${msg}${blue}${final_list_size_human}${n_c}"
-	reg_msg -3 -noprint "${msg}${final_list_size_human}"
+	:
+}
 
-	import_blocklist "${out_f}" "${FINAL_BLOCKLIST_FILE}" || return 1
+# Env vars:
+# CONF_FILES_REQ (0|1): create conf files in dnsmasq dirs
+#
+# Args:
+# 1: final blocklist path
+# 2: blocklist size
+# 3: entries count
+# 4: description
+install_blocklist()
+{
+	local size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir \
+		final_file="${1}" entries_cnt="${2}" desc="${3}"
 
-	get_elapsed_time_s elapsed_time_s "${INITIAL_UPTIME_S}"
-	reg_msg -3 "" "Processing time for blocklist generation and import: $((elapsed_time_s/60))m:$((elapsed_time_s%60))s."
+	assert_set F_install_blocklist final_file desc DNSMASQ_CONF_DIRS FINAL_EXTR_OR_CAT_STDOUT || return 1
 
-	if ! check_active_blocklist
-	then
-		reg_failure "Active blocklist check failed with the new blocklist."
-		return 1
-	fi
+	reg_msg -3 -blue "" "Installing ${desc} blocklist file."
 
-	reg_msg -3 -green "" "Active blocklist check passed with the new blocklist."
+	[ -z "${entries_cnt}" ] || int2human entries_cnt_human "${entries_cnt}" || return 1
 
-	local msg="New blocklist installed with entries count: "
-	print_msg -green "${msg}${blue}${final_entries_cnt_human}${n_c}"
-	reg_success "${msg}${final_entries_cnt_human}"
+	size_b="$(get_file_size "${final_file}")" &&
+	bytes2human list_size_human "${size_b}" || return 1
 
-	rm -f "${ABL_RUN_DIR}/prev_blocklist"*
+	get_compr_spec cpf_compr_ext compr_util "${final_file}" || return 1
+	[ -n "${cpf_compr_ext}" ] && compr_pr="${compr_util}${compr_util:+"-"}compressed"
+
+	[ "${CONF_FILES_REQ}" = 1 ] && {
+		for dir in ${DNSMASQ_CONF_DIRS}
+		do
+			is_valid_dir "${dir}" || return 1
+			printf '%s\n' "conf-script=\"/bin/busybox sh ${dir}/.abl-extract_blocklist\"" > "${dir}/abl-conf-script" &&
+			printf '%s\n%s\n' "${FINAL_EXTR_OR_CAT_STDOUT} \"${final_file}\"" "exit 0" > "${dir}/.abl-extract_blocklist" ||
+				{ reg_failure "Failed to create conf-script in directory '${dir}'."; return 1; }
+		done
+	}
+
+	restart_dnsmasq || return 1
+
+	CA_CHECK_DNS=1 check_active_blocklist || { reg_failure "Active blocklist check failed with the ${desc} blocklist."; return 1; }
+	reg_msg -3 -green "" "Active blocklist check passed."
+
+	reg_success "${green}Successfully loaded ${desc} blocklist${n_c}." \
+		"Final blocklist file: ${blue}${final_file}${n_c} (${compr_pr}, size: ${blue}${list_size_human}${n_c}${entries_cnt_human:+", entries count: ${blue}${entries_cnt_human}${n_c}"}).${n_c}"
+
+	BL_FILE_CURR="${final_file}"
+	printf '%s\n' "${BL_FILE_CURR}" > "${LAST_BLOCKLIST_PATH_FILE}"
 
 	:
 }
 
-# return codes:
-# 0 - success
-# 1 - failure
-# 2 - blocklist file not found (nothing to export)
-export_blocklist()
+# Move file ${1} to path ${2} while compressing/extracting/recompressing if required
+conv_compr()
 {
-	export_failed() {
-		rm -f "${prev_file}" "${prev_file%.*}" "${prev_file}${COMPR_EXT}" "${bk_path}"
-		reg_failure "Failed to export the blocklist."
-	}
+	try_conv_compr "${@}" && return 0
 
-	reg_export() { reg_action -nolog -blue "Creating ${1} backup of existing blocklist." || return 1; }
+	local src_path="${1}" dest_path="${2}"
+	rm_if_volatile "${src_path}" "${dest_path}"
+	return 1
+}
 
-	local bk_path="${ABL_RUN_DIR}/prev_blocklist" file prev_file='' prev_file_compat='' prev_file_compressed='' bk_exists=''
-	[ -n "${USE_COMPRESSION}" ] && bk_path="${bk_path}${COMPR_EXT}"
+try_conv_compr()
+{
+	local me=conv_compr src_ext='' dest_ext='' src_dir='' dest_dir='' \
+		src_path="${1}" dest_path="${2}" compr_cmd="${3}"
 
-	local dir IFS="${_NL_}"
-	for dir in ${ALL_CONF_DIRS}
-	do
-		IFS="${DEFAULT_IFS}"
-		rm -f "${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
-	done
-	IFS="${DEFAULT_IFS}"
+	assert_set "F_${me}" src_path dest_path || return 1
 
-	if [ -f "${bk_path}" ]
+	src_dir="${src_path%/*}"
+	dest_dir="${dest_path%/*}"
+
+	is_valid_dir "${src_dir}" && is_valid_dir "${dest_dir}" || { reg_failure "${me}: unexpected src dir '${src_dir}' or dest dir '${dest_dir}'."; return 1; }
+
+	[ -f "${src_path}" ] || { reg_failure "File not found at path '${src_path}'."; return 2; }
+
+	[ "${src_path}" = "${dest_path}" ] && return 0
+
+	get_compr_spec src_ext _ "${src_path}" &&
+	get_compr_spec dest_ext _ "${dest_path}" || return 1
+
+	[ -z "${dest_ext}" ] || assert_set "F_${me}" compr_cmd || return 1
+
+	if [ -n "${src_ext}" ] && [ "${src_ext}" != "${dest_ext}" ]
 	then
-		reg_msg -3 "" "Blocklist backup file already exists."
-		bk_exists=1
+		try_extract "${src_path}" || return 1
+		src_path="${src_path%.*}"
+		src_ext=
 	fi
 
-	for src_d in "${ABL_RUN_DIR}" ${DNSMASQ_CONF_DIRS}
-	do
-		for file in "${src_d}/prev_blocklist"* "${src_d}/abl-blocklist"*
-		do
-			case "${file}" in ''|*"*") continue; esac
-
-			# delete extra copies if any
-			[ -n "${prev_file}" ] && { rm -f "${file}"; continue; }
-
-			prev_file="${file}"
-			case "${prev_file}" in *".gz"|*".zst") prev_file_compressed=1; esac
-			if
-				{ [ -n "${USE_COMPRESSION}" ] && case "${prev_file}" in *"${COMPR_EXT:-?}") : ;; *) false; esac; } ||
-				{ [ -z "${USE_COMPRESSION}" ] && [ -z "${prev_file_compressed}" ]; }
-			then
-				prev_file_compat=1
-			fi
-		done
-	done
-
-	[ -n "${bk_exists}" ] && return 0
-
-	[ -n "${prev_file}" ] || { log_msg "" "No existing blocklist found."; return 2; }
-
-	if [ -n "${USE_COMPRESSION}" ]
+	if [ -n "${dest_ext}" ] && [ -z "${src_ext}" ]
 	then
-		reg_export compressed
+		try_compress "${src_path}" "${compr_cmd}" src_path || return 1
+	fi
+
+	# Avoid writing into PERM_BLOCKLIST_DIR unless mode is 'main'
+	if [ "${src_dir}" = "${PERM_BLOCKLIST_DIR}" ] && [ "${dest_dir}" != "${src_dir}" ] && [ "${PERM_BLOCKLIST_MODE}" != managed ]
+	then
+		cp "${src_path}" "${dest_path}"
 	else
-		reg_export uncompressed
+		try_mv "${src_path}" "${dest_path}"
 	fi || return 1
 
-	if [ -n "${prev_file_compressed}" ] && { [ -z "${prev_file_compat}" ] || [ -z "${USE_COMPRESSION}" ]; }
-	then
-		try_extract "${prev_file}" || { export_failed; return 1; }
-		prev_file="${prev_file%.*}"
-		prev_file_compressed=
-	fi
-
-	if [ -n "${USE_COMPRESSION}" ] && [ -z "${prev_file_compressed}" ]
-	then
-		try_compress "${prev_file}" "${FINAL_COMPR_OPTS}" || { export_failed; return 1; }
-		prev_file="${prev_file}${COMPR_EXT}"
-	fi
-
-	try_mv "${prev_file}" "${bk_path}" || { export_failed; return 1; }
 	:
+}
+
+export_blocklist()
+{
+	try_export_blocklist "${@}" && return 0
+
+	local src_path="${1}" dest_path="${2}"
+	rm_if_volatile "${src_path}" "${dest_path}"
+
+	reg_failure "Failed to export blocklist '${src_path}' to '${dest_path}'."
+	return 1
+}
+
+# 1: source file path
+# 2: dest file path
+# 3: compression command with options
+#
+# return codes:
+# 0: success
+# 1: failure
+# 2: blocklist file not found (nothing to export)
+try_export_blocklist()
+{
+	local IFS="${DEFAULT_IFS}" \
+		src_path="${1}" dest_path="${2}" compr_cmd="${3}"
+
+	assert_set "F_export_blocklist" src_path dest_path ALL_CONF_DIRS || return 1
+	[ -f "${src_path}" ] || { reg_failure "Blocklist not found at path '${src_path}'."; return 2; }
+
+	reg_action -3 -blue "Creating backup of current blocklist." || return 1
+
+	conv_compr "${src_path}" "${dest_path}" "${compr_cmd}" || return 1
+
+	:
+}
+
+# 1 - var name to output extension
+# 2 - var name to output compr util (gzip|zstd)
+# 3 - path
+get_compr_spec()
+{
+	local gcs_file='' gcs_ext='' gcs_util='' \
+		extn_out_var="${1}" util_out_var="${2}" gcs_path="${3}"
+
+	unset_vars "${extn_out_var}" "${util_out_var}" &&
+	assert_set F_get_compr_spec extn_out_var util_out_var gcs_path || return 1
+
+	gcs_file="${gcs_path##*"/"}"
+	case "${gcs_file}" in
+		*.gz) gcs_ext=.gz gcs_util=gzip ;;
+		*.zst) gcs_ext=.zst gcs_util=zstd ;;
+		*.*) reg_failure "Unexpected extension '${gcs_file##*.}' in file '${gcs_path}'."; return 1
+	esac
+	: "${gcs_ext}" "${gcs_util}"
+	eval "${extn_out_var}"='${gcs_ext}' "${util_out_var}"='${gcs_util}'
 }
 
 restore_saved_blocklist()
 {
-	local file backup_file=''
-	reg_action -blue "Restoring saved blocklist file." || return 1
+	try_restore_saved_blocklist "${@}" && return 0
 
-	for file in "${ABL_RUN_DIR}/prev_blocklist"*
-	do
-		case "${file}" in ''|*"*") continue; esac
-		[ -n "${backup_file}" ] && { rm -f "${file}"; continue; } # delete extra files if any
-		backup_file="${file}"
-	done
+	local src_file="${1}" dest_file="${2}"
 
-	[ -z "${backup_file}" ] && { reg_failure "No previous blocklist file found."; return 1; }
+	rm_if_volatile "${src_file}" "${dest_file}"
+	rm_conf_scripts
+	rm_main_bl
 
-	import_blocklist "${backup_file}" ||
-	{
-		reg_failure "Failed to restore saved blocklist."
-		return 1
-	}
-
-	:
+	reg_failure "Failed to restore saved blocklist '${src_file}'."
+	BL_FILE_CURR=
+	return 1
 }
 
-import_blocklist()
+# Env vars:
+# RESTORE_FROM_PERM: do not convert or move source file - try to install as is
+#
+# 1 - source file
+# 2 - dest file
+try_restore_saved_blocklist()
 {
-	local dir
-	try_import_blocklist "${@}" ||
-	{
-		rm -f "${1:-???}"
-		for dir in ${DNSMASQ_CONF_DIRS}
-		do
-			rm -f "${dir}/abl-conf-script" "${dir}/.abl-extract_blocklist" "${dir}/abl-blocklist"
-		done
-		reg_failure "Failed to import the blocklist file '${1}'."
-		return 1
-	}
-}
+	local me="restore_saved_blocklist" \
+		src_file="${1}" dest_file="${2}"
 
-# 1 - file to import
-try_import_blocklist()
-{
-	local dir src_compressed='' src_compat='' dest_compressed='' \
-		src_file="${1}"
+	reg_action -1 -blue "Restoring saved blocklist file." || return 1
 
-	reg_msg -3 -blue "" "Importing the blocklist file."
+	assert_set "F_${me}" src_file dest_file LAST_BLOCKLIST_PATH_FILE || return 1
 
-	[ -n "${src_file}" ] || { reg_failure "import_blocklist: missing argument."; return 1; }
-	[ -n "${FINAL_BLOCKLIST_FILE}" ] || { reg_failure "import_blocklist: \$FINAL_BLOCKLIST_FILE is not set."; return 1; }
+	reg_msg -3 "" "${blue}Importing blocklist file: ${n_c}'${src_file}'."
 
-	if [ -f "${src_file}" ]
-	then
-		case "${src_file}" in *.gz|*.zst) src_compressed=1; esac
-		case "${src_file}" in *"${COMPR_EXT}") src_compat=1; esac
-	else
-		reg_failure "import_blocklist: file '${src_file}' not found."
-		return 1
-	fi
+	rm_conf_scripts
+	rm_main_bl
 
-	clean_dnsmasq_dir
+	[ -n "${RESTORE_FROM_PERM}" ] && [ "${src_file}" != "${dest_file}" ] &&
+		{ reg_failure "${me}: \$RESTORE_FROM_PERM is set but source file '${src_file}' is not the same as dest file '${dest_file}'"; return 1; }
 
-	if [ -n "${src_compressed}" ] && { [ -z "${src_compat}" ] || [ -z "${FINAL_COMPRESS}" ]; }
-	then
-		try_extract "${src_file}" || return 1
-		src_file="${src_file%.*}"
-		src_compressed=''
-	fi
+	[ -n "${RESTORE_FROM_PERM}" ] || conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" ""
 
-	if [ -z "${src_compressed}" ] && [ -n "${FINAL_COMPRESS}" ]
-	then
-		try_compress "${src_file}" "${FINAL_COMPR_OPTS}" || return 1
-		src_file="${src_file}${COMPR_EXT}"
-	fi
-
-	[ "${src_file}" = "${FINAL_BLOCKLIST_FILE}" ] || try_mv "${src_file}" "${FINAL_BLOCKLIST_FILE}" || return 1
-
-	if [ -n "${FINAL_COMPRESS}" ] || multi_inst_needed
-	then
-		for dir in ${DNSMASQ_CONF_DIRS}
-		do
-			printf '%s\n' "conf-script=\"busybox sh ${dir}/.abl-extract_blocklist\"" > "${dir}/abl-conf-script" &&
-			printf '%s\n%s\n' "${FINAL_EXTR_OR_CAT} \"${FINAL_BLOCKLIST_FILE}\"" "exit 0" > "${dir}/.abl-extract_blocklist" ||
-				{ reg_failure "Failed to create conf-script in directory '${dir}'."; return 1; }
-		done
-	fi
-
-	restart_dnsmasq || return 1
-
-	[ -n "${FINAL_COMPRESS}" ] && dest_compressed="compressed "
-
-	local final_size msg
-	final_size=$(get_file_size_human "${FINAL_BLOCKLIST_FILE}")
-	msg="Successfully imported new ${dest_compressed}blocklist file for use by dnsmasq with size: "
-	print_msg "${msg}${blue}${final_size}${n_c}"
-	reg_msg -3 -noprint "${msg}${final_size}"
+	install_blocklist "${dest_file}" "" "saved" || return 1
 
 	:
 }
@@ -1415,56 +2033,7 @@ get_dnsmasq_instance_ns()
 	:
 }
 
-# return values:
-# 0 - dnsmasq is running, and all checks passed
-# 1 - dnsmasq is not running
-# 2 - dnsmasq is running, but one of the test domains failed to resolve
-# 3 - dnsmasq is running, but one of the test domains resolved to 0.0.0.0
-# 4 - dnsmasq is running, but the blocklist test domain failed to resolve (blocklist not loaded)
-check_active_blocklist()
-{
-	reg_action -nolog -blue "Checking the active blocklist." || return 1
-
-	local family ip index instance_ns def_ns ns_ips ns_ips_sp
-
-	check_dnsmasq_instances || return 1
-
-	for index in ${DNSMASQ_INDEXES}
-	do
-		ns_ips='' ns_ips_sp=''
-		get_dnsmasq_instance_ns "${index}"
-
-		for family in 4 6
-		do
-			case "${family}" in
-				4) def_ns=127.0.0.1 ;;
-				6) def_ns=::1
-			esac
-			eval "instance_ns=\"\${NS_${family}_${index}}\""
-			for ip in ${instance_ns:-"${def_ns}"}
-			do
-				add2list ns_ips "${ip}"
-				add2list ns_ips_sp "${ip}" ", "
-			done
-		done
-
-		reg_msg -3 "" "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
-		reg_msg -3 -blue "Testing adblocking."
-
-		try_lookup_domain "${ABL_TEST_DOMAIN}" "${ns_ips}" 15 -n ||
-			{ reg_failure "Lookup of test domain '${ABL_TEST_DOMAIN}' failed with the new blocklist."; return 4; }
-
-		reg_msg -3 -blue "Testing DNS resolution."
-		for domain in ${test_domains}
-		do
-			try_lookup_domain "${domain}" "${ns_ips}" 5 ||
-				{ reg_failure "Lookup of test domain '${domain}' failed with the new blocklist."; return 1; }
-		done
-	done
-
-	:
-}
-
+# TODO: Parallelize domains lookup
 test_url_domains()
 {
 	local list lists list_author url mirror mirrors all_urls='' list_type list_format dom IFS="${DEFAULT_IFS}"
@@ -1517,7 +2086,7 @@ try_lookup_domain()
 			ns_res="$(nslookup "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break 2; }
 		done
 		i=$((i+1))
-		[ "${i}" -gt "${3}" ] && break
+		[ "${i}" -ge "${3}" ] && break
 		sleep 1
 	done
 
@@ -1525,35 +2094,8 @@ try_lookup_domain()
 
 	[ "${4}" = '-n' ] && return 0
 
-	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^(Address: *0\.0\.0\.0|Address: *127\.0\.0\.1)$' &&
+	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^Address: *(0\.0\.0\.0|127\.0\.0\.1)$' &&
 		{ reg_failure "Lookup of '${1}' resulted in 0.0.0.0 or 127.0.0.1."; return 3; }
-	:
-}
-
-get_active_entries_cnt()
-{
-	local cnt
-
-	# ipv4_block prefix doesn't need to be added for counting
-	cnt="$(
-		if [ -n "${COMPR_EXT}" ] && [ -f "${SHARED_BLOCKLIST_PATH}${COMPR_EXT}" ]
-		then
-			${EXTR_CMD_STDOUT} "${SHARED_BLOCKLIST_PATH}${COMPR_EXT}"
-		elif ! multi_inst_needed && [ -f "${DNSMASQ_CONF_DIRS}/abl-blocklist" ]
-		then
-			cat "${DNSMASQ_CONF_DIRS}/abl-blocklist"
-		else
-			rm -f "${SHARED_BLOCKLIST_PATH:-?}"*
-			printf ''
-		fi |
-		${SED_CMD} -E "s~^(server|local)=/~~;/${ABL_TEST_DOMAIN}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w
-	)"
-
-	: "${cnt:=0}"
-	[ "${whitelist_mode}" = 1 ] && cnt=$((cnt-26)) # ignore alphabet entries
-
-	case "${cnt}" in *[!0-9]*|'') printf 0; return 1; esac
-	printf %s "${cnt}"
 	:
 }
 
