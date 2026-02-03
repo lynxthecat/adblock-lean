@@ -650,6 +650,17 @@ set_abl_env()
 
 	debug_msg "Preparing environment." 
 
+	# Get current blocklist file if any
+	local path
+	read_str_from_file -v path -f "${LAST_BLOCKLIST_PATH_FILE}" -q -n 512 &&
+		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
+			BL_FILE_CURR="${path}"
+
+	# Get current pause file if any
+	read_str_from_file -v path -f "${LAST_PAUSE_PATH_FILE}" -q -n 512 &&
+		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
+			PAUSE_FILE_CURR="${path}"
+
 	assert_set "F_${me}" DNSMASQ_INDEXES || return 1
 
 	# Parallel processing
@@ -835,24 +846,6 @@ set_abl_env()
 
 	[ "${START_ACTION}" = load ] || [ -n "${BL_FILE_NEW}" ] ||
 		{ reg_failure "No usable path to install or load the blocklist."; return 1; }
-
-
-	# Get current blocklist file if any
-	local path
-	if read_str_from_file -v path -f "${LAST_BLOCKLIST_PATH_FILE}" -q -n 512 &&
-		is_valid_dir "${path%/*}" &&
-		[ -f "${path}" ]
-	then
-		BL_FILE_CURR="${path}"
-	fi
-
-	# Get current pause file if any
-	if read_str_from_file -v path -f "${LAST_PAUSE_PATH_FILE}" -q -n 512 &&
-		is_valid_dir "${path%/*}" &&
-		[ -f "${path}" ]
-	then
-		PAUSE_FILE_CURR="${path}"
-	fi
 
 	PAUSE_FILE_NEW=${pause_dir:?}/${PAUSE_BASE_FNAME:?}${FINAL_COMPR_EXT}
 
