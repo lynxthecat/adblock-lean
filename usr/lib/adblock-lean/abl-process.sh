@@ -1319,10 +1319,16 @@ process_list_part()
 		# compress or cat
 		${part_compr_or_cat} > "${dest_file}"
 
-		local lines_cnt_low='' dl_completed=''
+		# size-exceeded check
+		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
+		if [ -f "${size_exceeded_file}" ]
+		then
+			reg_failure "Size of ${list_type}list part '${print_id}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
+			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type}list part path or URL from config."
+			finalize_job 2
+		fi
 
-		[ -f "${ucl_err_file}" ] && grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
-
+		# rogue elements check
 		if [ -s "${rogue_el_file}" ]
 		then
 			read_str_from_file -d -n 512 -v "rogue_element" -f "${rogue_el_file}" -a 2 -D "rogue element"
@@ -1343,24 +1349,17 @@ process_list_part()
 			finalize_job 3
 		fi
 
-		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
-		if [ -f "${size_exceeded_file}" ]
-		then
-			reg_failure "Size of ${list_type}list part '${print_id}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
-			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type}list part path or URL from config."
-			finalize_job 2
-		fi
-
-		int2human line_count_human "${part_line_count}" || finalize_job 1
-
+		# min_line_count check
+		local lines_cnt_low=''
 		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
 		then
 			lines_cnt_low=1
+			int2human line_count_human "${part_line_count}" &&
 			int2human min_line_count_human "${min_line_count}" || finalize_job 1
 			reg_failure "Line count in downloaded ${list_type}list part '${print_id}' is ${line_count_human}, which is less than configured minimum: ${min_line_count_human}."
 		fi
 
-		if [ "${list_origin}" = DL ] && { [ -z "${dl_completed}" ] || [ -n "${lines_cnt_low}" ]; }
+		if [ "${list_origin}" = DL ] && { ! grep -q "Download completed" "${ucl_err_file}" || [ -n "${lines_cnt_low}" ]; }
 		then
 			reg_failure "Failed download attempt for list '${print_id}'."
 			[ -s "${ucl_err_file}" ] && log_msg "uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
