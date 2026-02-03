@@ -39,7 +39,7 @@ trim_spaces()
 is_valid_dir()
 {
 	case "${1}" in
-		''|"/"|[!/]*) error_out "Unexpected or invalid dir '${1}'."; return 1
+		''|"/"|[!/]*) reg_failure "Unexpected or invalid dir '${1}'."; return 1
 	esac
 	:
 }
