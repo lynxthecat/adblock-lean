@@ -1353,11 +1353,12 @@ process_list_part()
 		fi
 
 		# min_line_count check
+		int2human line_count_human "${part_line_count}" || finalize_job 1    # ${line_count_human} also used in finalize_job()
+
 		local lines_cnt_low=''
 		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
 		then
 			lines_cnt_low=1
-			int2human line_count_human "${part_line_count}" &&
 			int2human min_line_count_human "${min_line_count}" || finalize_job 1
 			reg_failure "Line count in downloaded ${list_type}list part '${print_id}' is ${line_count_human}, which is less than configured minimum: ${min_line_count_human}."
 		fi
