@@ -381,11 +381,14 @@ try_get_abl_run_state()
 	return 4
 }
 
-# TODO: update comment
 # Output via optional vars:
-# 1: state var for processing setup (see code for format)
-# 2: all required addnmounts (newline-separated)
-# 3: printable missing addnmounts
+# 1: state var for processing setup: <final_compr:[0|1]${_NL_}multi_inst:[0|1]${_NL_}perm_bl:[0|1]>
+# 2: printable missing addnmounts for addnmounts suggestion
+# 3: path on ramdisk for new blocklist creation
+# 4: path for permanent blocklist creation/loading
+# 5: compr util path
+# 6: compr extension
+# 7: conf_req: 1 if conf-files are required, 0 if not
 check_process_features()
 {
 	feature_unavail() {
