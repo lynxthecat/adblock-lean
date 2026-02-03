@@ -1255,10 +1255,10 @@ load_config()
 	# check for missing addnmounts during version update
 	if [ -n "${ABL_IN_INSTALL}" ]
 	then
-		local all_req_addnmounts=''
+		local all_req_addnmounts='' missing_addnmounts=''
 		get_dnsmasq_instances &&
-		SAE_QUIET=1 set_abl_env all_req_addnmounts &&
-		suggest_addnmounts "${all_req_addnmounts}"
+		CPF_QUIET=1 check_process_features _ all_req_addnmounts missing_addnmounts &&
+		suggest_addnmounts "${all_req_addnmounts}" "${missing_addnmounts}"
 	fi
 	:
 }
