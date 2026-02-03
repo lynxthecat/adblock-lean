@@ -2034,7 +2034,7 @@ start()
 					reg_failure "Failed to restore blocklist file '${BK_BL_FILE}'."
 				fi
 			else
-				log_msg "Previous blocklist file does not exist - can not restore."
+				log_msg -yellow "" "Previous blocklist file does not exist - can not restore."
 			fi
 			[ -n "${restore_failed}" ] && stop 1 -noexit
 		fi
