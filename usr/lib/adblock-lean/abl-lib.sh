@@ -1555,7 +1555,7 @@ check_for_updates()
 		*) no_upd="update channel is '${upd_channel}'" ;;
 	esac
 	[ -n "${no_upd}" ] && { print_msg "" "adblock-lean ${no_upd}. Automatic updates check is disabled."; return 3; }
-	reg_action -3 -blue "Checking for adblock-lean updates."
+	reg_action -3 -blue "" "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
 	get_gh_ref "${upd_channel}" "" upd_ver tarball_url _

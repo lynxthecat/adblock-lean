@@ -1453,7 +1453,7 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
-	reg_action -1 -blue "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
+	reg_action -1 -blue "" "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	for list_types in allow "block ipv4_block"
@@ -1679,7 +1679,7 @@ gen_blocklist()
 		return 1
 	}
 
-	reg_action -3 -blue "Sorting and merging the blocklist parts into a single blocklist file." || return 1
+	reg_action -3 -blue "" "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 	{
 		{
 			# print blocklist parts
@@ -1828,7 +1828,7 @@ install_blocklist()
 
 	assert_set F_install_blocklist final_file desc DNSMASQ_CONF_DIRS FINAL_EXTR_OR_CAT_STDOUT || return 1
 
-	reg_msg -3 -blue "" "Installing ${desc} blocklist file."
+	reg_msg -3 -blue "Installing ${desc} blocklist file."
 
 	[ -z "${entries_cnt}" ] || int2human entries_cnt_human "${entries_cnt}" || return 1
 
@@ -1943,7 +1943,7 @@ try_export_blocklist()
 	assert_set "F_export_blocklist" src_path dest_path ALL_CONF_DIRS || return 1
 	[ -f "${src_path}" ] || { reg_failure "Blocklist not found at path '${src_path}'."; return 2; }
 
-	reg_action -3 -blue "Creating backup of current blocklist." || return 1
+	reg_action -3 -blue "" "Creating backup of current blocklist." || return 1
 
 	conv_compr "${src_path}" "${dest_path}" "${compr_cmd}" || return 1
 
@@ -1996,11 +1996,9 @@ try_restore_saved_blocklist()
 	local me="restore_saved_blocklist" \
 		src_file="${1}" dest_file="${2}"
 
-	reg_action -1 -blue "Restoring saved blocklist file." || return 1
-
 	assert_set "F_${me}" src_file dest_file LAST_BLOCKLIST_PATH_FILE || return 1
 
-	reg_msg -3 "" "${blue}Importing blocklist file: ${n_c}'${src_file}'."
+	reg_action -1 "" "${blue}Restoring saved blocklist file: ${n_c}'${src_file}'."
 
 	rm_conf_scripts
 	rm_main_bl

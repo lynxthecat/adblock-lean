@@ -1871,7 +1871,7 @@ select_dnsmasq_instances() {
 gen_stats()
 {
 	source_libs &&
-	reg_action -3 -blue "Generating dnsmasq stats." || exit 1
+	reg_action -3 -blue "" "Generating dnsmasq stats." || exit 1
 	local dnsmasq_pid
 	dnsmasq_pid="$(pidof /usr/sbin/dnsmasq)" || { reg_failure "Failed to detect dnsmasq PID or dnsmasq is not running."; exit 1; }
 	kill -USR1 "${dnsmasq_pid}"
