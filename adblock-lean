@@ -659,10 +659,9 @@ reg_failure()
 	luci_errors="${failure_msg}"
 }
 
-reg_success()
-{
-	log_msg -report "${@}"
-}
+reg_success() { log_msg -report "${@}"; }
+
+reg_action() { reg_msg -action "${@}"; }
 
 print_msg() { reg_msg -4 "${@}"; }
 
@@ -678,9 +677,9 @@ debug_msg()
 }
 
 # Depending on msg-specific log level, on global ${ABL_LOG_LEVEL} and on ${ABL_DEBUG}:
-# Prints each msg separately to console [ and to log file ] [ and sends to system log ]
+# Prints each msg separately to console [ and to log file ] [ and sends to system log ] [ and registers action ]
 # -[0|1|2|3|4|5] : specifies log level (default: 3)
-# Optional arguments: '-noprint', '-err', '-warn', '-[color]'
+# Optional arguments: '-action', '-report', -noprint', '-err', '-warn', '-[color]'
 reg_msg()
 {
 	append_msg()
@@ -699,7 +698,7 @@ reg_msg()
 	# ${ABL_LOG_LEVEL} modifies which levels are sent to syslog
 
 	local m msgs='' msgs_nc='' msgs_prefix='' _arg err_l=info color='' _n_c='' \
-		report_req='' noprint='' log_level='' \
+		action_req='' report_req='' noprint='' log_level='' \
 		msgs_dest="${MSGS_DEST}" session_log_thresh=3 print_req='' sys_log_req='' log_file_req='' \
 		sys_log_thresh="${ABL_LOG_LEVEL:-"1"}" print_thresh=4
 
@@ -716,10 +715,11 @@ reg_msg()
 				else
 					append_msg "${_arg}"
 				fi ;;
-			"-noprint") noprint=1 ;;
-			"-report") report_req=1 ;;
-			"-err") err_l=err color="${red}" msgs_prefix="Error: " ;;
-			"-warn") err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
+			-noprint) noprint=1 ;;
+			-report) report_req=1 ;;
+			-action) action_req=1 ;;
+			-err) err_l=err color="${red}" msgs_prefix="Error: " ;;
+			-warn) err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) eval "color=\"\$${_arg#"-"}\"" ;;
 			'') msgs="${msgs}dummy${_DELIM_}" ;;
 			*) append_msg "${_arg}"
@@ -757,7 +757,7 @@ reg_msg()
 		IFS="${DEFAULT_IFS}"
 	fi
 
-	if [ -n "${sys_log_req}" ] || [ -n "${log_file_req}" ] || [ -n "${report_req}" ]
+	if [ -n "${sys_log_req}" ] || [ -n "${log_file_req}" ] || [ -n "${report_req}" ] || [ -n "${action_req}" ]
 	then
 		msgs_nc="${msgs//"${red}"/}"
 		msgs_nc="${msgs_nc//"${green}"/}"
@@ -778,6 +778,7 @@ reg_msg()
 		done
 		IFS="${DEFAULT_IFS}"
 		[ -n "${report_req}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_success && report_success "${msgs_nc//"${_DELIM_}"/"${_NL_}"}"
+		[ -n "${action_req}" ] && [ -n "${LOCK_REQ}" ] && { update_action_file "${msgs_nc//"${_DELIM_}"/" "}" || { set +f; return 1; }; }
 	fi
 
 	set +f
@@ -968,28 +969,6 @@ report_curr_action()
 
 	${report_cmd} "adblock-lean (PID: ${reported_pid}) is performing action '${curr_action}'."
 	luci_pid_action=${curr_action}
-	:
-}
-
-# (optional): '-[0-9]' specifies log level
-# (optional): '-[color]'
-# other args: action
-reg_action()
-{
-	local arg msg=''
-	for arg in "$@"
-	do
-		case "${arg}" in
-			-blue|-red|-green|-purple|-yellow|-[0-9]) ;;
-			*) msg="${msg}${arg} "
-		esac
-	done
-
-	reg_msg "${@}"
-	if [ -n "${LOCK_REQ}" ]
-	then
-		update_action_file "${msg% }" || return 1
-	fi
 	:
 }
 
