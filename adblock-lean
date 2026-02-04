@@ -985,7 +985,7 @@ reg_action()
 		esac
 	done
 
-	reg_msg "" "${@}"
+	reg_msg "${@}"
 	if [ -n "${LOCK_REQ}" ]
 	then
 		update_action_file "${msg% }" || return 1
