@@ -2179,22 +2179,18 @@ status()
 		then
 			luci_good_line_count=${active_entries_cnt}
 			int2human active_entries_cnt_human "${active_entries_cnt}" || return 1
-			print_msg -green "" \
-				"The dnsmasq check passed and the presently installed blocklist has entries count: ${blue}${active_entries_cnt_human}${n_c}" \
-				"adblock-lean is active."
-			timestamp="$(get_blocklist_timestamp -h)" &&
-				print_msg "" "Blocklist was updated on: ${blue}${timestamp}${n_c}"
+			timestamp="$(get_blocklist_timestamp -h)"
+			print_msg "" \
+				"${green}adblock-lean is active.${n_c}" \
+				"Installed blocklist file: ${blue}${BL_FILE_CURR}${n_c}" \
+				"Entries count: ${blue}${active_entries_cnt_human}${n_c}" \
+				"Blocklist was updated on: ${blue}${timestamp:-"${red}Unknown"}${n_c}"
 			gen_stats -noexit
 		else
-			reg_failure "No entries found in the blocklist file."
+			log_msg -warn "No entries found in the blocklist file."
 			run_state=1
 		fi
 	fi
-
-	case "${run_state}" in
-		3|4) ;;
-		*) print_msg "" "Installed blocklist file: ${blue}${BL_FILE_CURR:-"${red}none"}${n_c}"
-	esac
 
 	[ -n "${PERM_BLOCKLIST_DIR}" ] && [ "${PERM_BLOCKLIST_MODE}" = managed ] && [ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR%/*}" != "${PERM_BLOCKLIST_DIR}" ] &&
 		print_msg -warn "" "Permanent blocklist directory is configured but not currently used."
