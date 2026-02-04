@@ -333,15 +333,14 @@ check_active_blocklist()
 
 get_abl_run_state()
 {
-	local rv grs_out_var="${1}"
+	local grs_out_var="${1}"
 	are_var_names_safe "${grs_out_var}" &&
 	assert_set F_get_abl_run_state grs_out_var || return 1
 
 	export "${grs_out_var}=1"
 	try_get_abl_run_state
-	rv=${?}
-	export "${grs_out_var}=${rv}"
-	return ${rv}
+	export "${grs_out_var}=${?}"
+	return 0
 }
 
 # return codes:
@@ -575,10 +574,14 @@ check_process_features()
 # Env vars:
 #   SAE_FORCE: force env re-processing
 #   SAE_FORCE_ONCE: force env re-processing only once
-#   SAE_QUIET: do not print errors
+#   SAE_QUIET: do not print errors and warnings
+#   SAE_STATUS: do not exit on errors
 # 1 (optional): var name to output all required addnmounts (only when some are missing)
 set_abl_env()
 {
+	sae_err() { [ -n "${SAE_QUIET}" ] || reg_failure "${@}"; }
+	sae_msg() { [ -n "${SAE_QUIET}" ] || reg_msg "${@}"; }
+
 	[ -n "${SAE_FORCE_ONCE}" ] && { unset SAE_FORCE_ONCE; local SAE_FORCE=1; }
 	[ -z "${SAE_FORCE}" ] && [ -n "${ABL_ENV_SET}" ] && return 0
 	[ -n "${SAE_QUIET}" ] && SAE_FORCE_ONCE=1 # ensure errors are printed at next non-quiet call
@@ -630,7 +633,6 @@ set_abl_env()
 		PERM_BL_FILE_CURR='' \
 		\
 		LOAD_BL_PATH='' \
-		LOAD_BL_SIZE_B='' \
 		LOAD_BL_ENTRIES_CNT='' \
 		LOAD_BL_DESC='' \
 		\
@@ -672,7 +674,7 @@ set_abl_env()
 				# cap PARALLEL_JOBS to 4 in 'auto' mode
 				PARALLEL_JOBS=$(( (cpu_cnt>4)*4 + (cpu_cnt<=4)*cpu_cnt ))
 			else
-				log_msg "Failed to detect CPU core count. Parallel processing will be disabled."
+				sae_err "Failed to detect CPU core count. Parallel processing will be disabled."
 				PARALLEL_JOBS=1
 			fi ;;
 		*)
@@ -698,7 +700,7 @@ set_abl_env()
 		feature_state="${feature_state%%"${_NL_}"*}"
 		case "${feature_state}" in
 			[01]) ;;
-			*) reg_failure "${me}: invalid state '${feature_state}' for feature '${feature}'."; return 1
+			*) [ -n "${SAE_QUIET}" ] || { reg_failure "${me}: invalid state '${feature_state}' for feature '${feature}'."; [ -n "${SAE_STATUS}" ] || return 1; }
 		esac
 		eval "${feature}_req"='${feature_state}'
 	done
@@ -752,7 +754,7 @@ set_abl_env()
 	# Perm blocklist
 	if [ "${perm_bl_req}" = 1 ]
 	then
-		if [ "${ABL_INIT_ACTION}" = boot ] || [ "${ABL_INIT_ACTION}" = status ]
+		if [ -z "${PAUSE_FILE_CURR}" ] && { [ "${ABL_INIT_ACTION}" = boot ] || [ "${ABL_INIT_ACTION}" = status ]; }
 		then
 			reg_action -3 -blue "Checking the permanent blocklist."
 			local file='' perm_ext='' compr_util='' perm_fail='' min_good_line_count_human='' perm_bl_entries_cnt='' perm_bl_cnt_human=''
@@ -808,32 +810,31 @@ set_abl_env()
 
 				PERM_BL_FILE_CURR=${file}
 				LOAD_BL_PATH=${PERM_BL_FILE_CURR}
-				LOAD_BL_SIZE_B=${perm_bl_size_b}
 				LOAD_BL_ENTRIES_CNT=${perm_bl_entries_cnt}
 				LOAD_BL_DESC="permanent"
 				BL_FILE_NEW_FALLBACK=${bl_path_ram}
 			else
 				local warn_act_msg=''
-				[ "${ABL_CMD}" = start ] && [ -z "${SAE_QUIET}" ] && warn_act_msg="Will create a new blocklist on the ramdisk."
+				[ "${ABL_CMD}" = start ] && warn_act_msg="Will create a new blocklist on the ramdisk."
 				[ "${PERM_BLOCKLIST_MODE}" = managed ] &&
 				{
 					rebuild_perm_bl=1
 					[ "${ABL_CMD}" = start ] &&
 					{
-						[ -z "${SAE_QUIET}" ] && warn_act_msg="Will rebuild the permanent blocklist."
+						[ "${ABL_CMD}" = start ] && warn_act_msg="Will rebuild the permanent blocklist."
 						rm -f "${file}"
 					}
 					BL_FILE_NEW=${bl_path_perm}
 					BL_FILE_NEW_FALLBACK=${bl_path_ram}
 				}
 				local warn_msg="${perm_fail}${perm_fail:+ }${warn_act_msg}"
-				[ -n "${warn_msg}" ] && log_msg -warn "" "${warn_msg}"
+				[ -n "${warn_msg}" ] && sae_msg -1 -warn "" "${warn_msg}"
 			fi
 		elif [ "${PERM_BLOCKLIST_MODE}" = managed ]
 		then
 			pause_dir=${PERM_BLOCKLIST_DIR:?}
 			rebuild_perm_bl=1
-			[ "${ABL_CMD}" = start ] && reg_msg -3 "" "Will update the permanent blocklist."
+			[ "${ABL_CMD}" = start ] && sae_msg -3 "" "Will update the permanent blocklist."
 			BL_FILE_NEW=${bl_path_perm}
 			BL_FILE_NEW_FALLBACK=${bl_path_ram}
 		fi
@@ -845,7 +846,7 @@ set_abl_env()
 	: "${BL_FILE_NEW:="${bl_path_ram}"}"
 
 	[ "${START_ACTION}" = load ] || [ -n "${BL_FILE_NEW}" ] ||
-		{ reg_failure "No usable path to install or load the blocklist."; return 1; }
+		{ sae_err "No usable path to install or load the blocklist."; [ -n "${SAE_STATUS}" ] || return 1; }
 
 	PAUSE_FILE_NEW=${pause_dir:?}/${PAUSE_BASE_FNAME:?}${FINAL_COMPR_EXT}
 
