@@ -229,7 +229,7 @@ get_elapsed_time_human()
 	elapsed_fp="${elapsed_fp%0}"
 	elapsed_fp="${elapsed_fp%0}"
 	: "${elapsed_fp:=0}"
-	is_uint "${_elapsed_m}" "${_elapsed_s}" "${elapsed_fp}" && _elapsed_human="${_elapsed_m} m, ${_elapsed_s}.${elapsed_fp} s" || _elapsed_human=unknown
+	is_uint "${_elapsed_m}" "${_elapsed_s}" "${elapsed_fp}" && _elapsed_human="${_elapsed_m}m:${_elapsed_s}.${elapsed_fp}s" || _elapsed_human=unknown
 	eval "${1}"='${_elapsed_human}'
 	: "${_elapsed_m}" "${_elapsed_s}" "${elapsed_fp}" "${_elapsed_human}"
 }
