@@ -134,34 +134,6 @@ int2human()
 	eval "${1}"='${in_num:-0}${out_num}'
 }
 
-# Splits path to file into dir, filename, ext
-split_path()
-{
-	local sp_file='' sp_fname='' sp_ext='' sp_dir='' \
-		sp_dir_out_var="${1}" sp_fname_out_var="${2}" sp_ext_out_var="${3}" sp_path="${4}"
-
-	unset_vars "${sp_dir_out_var}" "${sp_fname_out_var}" "${sp_ext_out_var}" || return 1
-
-	case "${sp_path}" in
-		# ignore files directly in /
-		/[!/]*)
-			sp_file="${sp_path##*"/"}"
-			sp_fname="${sp_file%.*}"
-			case "${sp_file}" in
-				*.*) sp_ext="${sp_file##*.}" ;;
-			esac
-	esac
-
-	[ -n "${sp_fname}" ] || return 1
-
-	sp_dir="${sp_path%"${sp_file}"}"
-	sp_dir="${sp_dir%"/"}"
-	: "${sp_ext}"
-
-	[ -n "${sp_dir}" ] && [ -n "${sp_fname}" ] &&
-	eval "${sp_dir_out_var}"='${sp_dir}' "${sp_fname_out_var}"='${sp_fname}' "${sp_ext_out_var}"='${sp_ext}'
-}
-
 
 ### SETUP AND CONFIG MANAGEMENT
 
