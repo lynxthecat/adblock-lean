@@ -1222,12 +1222,12 @@ process_list_part()
 		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${job_id}" \
 		rogue_el_file="${ABL_TMP_DIR}/rogue_el_${job_id}" \
 		list_stats_file="${ABL_TMP_DIR}/stats_${job_id}" \
-		size_exceeded_file="${ABL_TMP_DIR}/size_exceeded_${job_id}" \
 		part_line_count='' line_count_human min_line_count='' min_line_count_human \
 		part_size_B='' retry=1 \
 		part_compr_or_cat="cat" fetch_cmd \
 		format_conv_or_cat="cat" \
-		case_conv_or_cat="cat"
+		case_conv_or_cat="cat" \
+		pipeline_rv
 
 	case "${list_origin}" in
 		DL) fetch_cmd=dl_list ;;
@@ -1268,7 +1268,7 @@ process_list_part()
 		msg_mirr=
 		[ -n "${curr_mirror}" ] && msg_mirr=" (mirror: ${curr_mirror})"
 
-		rm -f "${rogue_el_file}" "${list_stats_file}" "${size_exceeded_file}" "${ucl_err_file}"
+		rm -f "${rogue_el_file}" "${list_stats_file}" "${ucl_err_file}"
 
 		msg="Processing ${list_format} ${list_type}list"
 		get_pad pad "${msg}" 28
@@ -1279,7 +1279,13 @@ process_list_part()
 		${fetch_cmd} "${list_path}" |
 
 		# Limit size
-		{ head -c "${max_file_part_size_KB}k"; read -rn1 -d '' && { touch "${size_exceeded_file}"; cat 1>/dev/null; }; } |
+		{
+			head -c "${max_file_part_size_KB}k"
+			if read -rn1 -d ''
+			then cat 1>/dev/null; false
+			else :
+			fi
+		} |
 
 		# Remove comment lines and trailing comments, remove whitespaces
 		${SED_CMD} 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
@@ -1316,14 +1322,20 @@ process_list_part()
 		# compress or cat
 		${part_compr_or_cat} > "${dest_file}"
 
-		# size-exceeded check
+		pipeline_rv=${?}
+
+		# read stats
 		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
-		if [ -f "${size_exceeded_file}" ]
+
+		# size-exceeded check
+		if ! [ $(( 1 + part_size_B / 1024)) -lt "${max_file_part_size_KB}" ]
 		then
 			reg_failure "Size of ${list_type}list part '${print_id}' reached the maximum value set in config (${max_file_part_size_KB} KB)."
 			log_msg "Consider either increasing this value in the config or removing the corresponding ${list_type}list part path or URL from config."
 			finalize_job 2
 		fi
+
+		[ "${pipeline_rv}" = 0 ] || { reg_failure "Processing pipeline for list part '${print_id}' returned error code ${pipeline_rv}."; finalize_job 1; }
 
 		# rogue elements check
 		if [ -s "${rogue_el_file}" ]
@@ -1399,8 +1411,10 @@ gen_list_parts()
 	# shellcheck disable=SC2329
 	read_stats_cb()
 	{
-		read_str_from_file -v "part_line_count _" -f "${1}" -a 1 -V 0 || return 1
+		read_str_from_file -v "part_line_count part_size_B" -f "${1}" -a 1 -V 0 &&
+		is_uint "${part_line_count}" "${part_size_B}" || return 1
 		list_line_count=$((list_line_count+part_line_count))
+		list_size_B=$((list_size_B+part_size_B))
 	}
 
 	# shellcheck disable=SC2329
@@ -1414,6 +1428,7 @@ gen_list_parts()
 
 	local lists schedule_req local_list_path list_format list_type \
 		preprocessed_line_count=0 preprocessed_line_count_human \
+		preprocessed_size_B=0 preprocessed_list_size_human \
 		invalid_urls bad_hagezi_urls \
 		list_line_count list_types
 
@@ -1531,12 +1546,12 @@ gen_list_parts()
 		for list_type in ${list_types}
 		do
 			# count lines for current list type
-			local part_line_count=0 list_line_count=0
+			local part_line_count=0 list_line_count=0 part_size_B=0 list_size_B=0
 			FF_EXEC="read_stats_cb {}" \
 				find_files _ "${ABL_TMP_DIR}" "stats_${list_type}-" || [ ${?} != 1 ] ||
 					{ reg_failure "Failed to read processed ${list_type}list parts stats."; return 1; }
 
-			if [ "${list_line_count}" = 0 ]
+			if ! [ "${list_line_count}" -gt 0 ] || ! [ "${list_size_B}" -gt 0 ]
 			then
 				case "${list_type}" in
 					block)
@@ -1553,12 +1568,14 @@ gen_list_parts()
 				reg_msg -3 "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 				use_allowlist=1
 			fi
-			preprocessed_line_count="$((preprocessed_line_count+list_line_count))"
+			preprocessed_line_count=$((preprocessed_line_count+list_line_count))
+			preprocessed_size_B=$((preprocessed_size_B+list_size_B))
 		done
 	done
 
-	int2human preprocessed_line_count_human "${preprocessed_line_count}" || return 1
-	reg_msg -3 -green "" "Successfully generated preprocessed blocklist file with ${preprocessed_line_count_human} entries."
+	int2human preprocessed_line_count_human "${preprocessed_line_count}" &&
+	bytes2human preprocessed_list_size_human "${preprocessed_size_B}" || return 1
+	reg_msg -3 "" "${green}Successfully generated preprocessed blocklist file${n_c} (size: ${blue}${preprocessed_list_size_human}${n_c}, entries count: ${blue}${preprocessed_line_count_human}${n_c})."
 	:
 }
 
