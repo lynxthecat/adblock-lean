@@ -340,7 +340,8 @@ get_abl_run_state()
 	export "${grs_out_var}=1"
 	try_get_abl_run_state
 	export "${grs_out_var}=${?}"
-	return 0
+	debug_msg "Run state: ${ABL_RUN_STATE}"
+	:
 }
 
 # return codes:
@@ -603,8 +604,6 @@ set_abl_env()
 		\
 		pause_dir="${ABL_RUN_DIR:?}" \
 		\
-		bl_dir_new='' \
-		\
 		par_opt='' \
 		cpu_cnt \
 		rebuild_perm_bl='' \
@@ -853,8 +852,6 @@ set_abl_env()
 	export ABL_ENV_SET=1
 
 	debug_msg \
-		"Run state: ${ABL_RUN_STATE}" \
-		"Shared dir: '${bl_dir_new}'" \
 		"Curr blocklist: '${BL_FILE_CURR}'" \
 		"New blocklist: '${BL_FILE_NEW}'" \
 		"BK file: '${BK_BL_FILE}'" \
@@ -1611,7 +1608,7 @@ gen_blocklist()
 
 		len_lim=$((len_lim-${#entry_type}-${#allow_char}-2))
 		# shellcheck disable=SC2016
-		${AWK_CMD} -v ORS="" -v m=${len_lim} -v a="${allow_char}" -v t=${entry_type} '
+		${AWK_CMD} -v ORS="" -v m="${len_lim}" -v a="${allow_char}" -v t="${entry_type}" '
 			BEGIN {al=0; r=0; s=""}
 			NF {
 				r=r+1

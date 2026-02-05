@@ -676,10 +676,17 @@ debug_msg()
 	esac	
 }
 
-# Depending on msg-specific log level, on global ${ABL_LOG_LEVEL} and on ${ABL_DEBUG}:
+# Depending on msg-specific log level, on global ${LOG_VERBOSITY} and on ${ABL_DEBUG}:
 # Prints each msg separately to console [ and to log file ] [ and sends to system log ] [ and registers action ]
-# -[0|1|2|3|4|5] : specifies log level (default: 3)
-# Optional arguments: '-action', '-report', -noprint', '-err', '-warn', '-[color]'
+
+# Log/print thresholds:
+# console:     [ msg_level <= 4 ]  ( or if ${ABL_DEBUG} is set: [ msg_level <= 5 ] )
+# session log: [ msg_level <= 3 ]
+# syslog:      [ msg_level <= 1 ]  (configurable via ${LOG_VERBOSITY} option)
+
+# Optional args:
+# -[0|1|2|3|4|5] : message level (default: 3)
+# -[action|report|noprint|err|warn|[color]
 reg_msg()
 {
 	append_msg()
@@ -688,36 +695,32 @@ reg_msg()
 		[ -n "${msgs_prefix}" ] && msgs_prefix=
 	}
 
-	# Default log levels:
-	# 1 - syslog and session log
-	# 2 - session log (more important messages)
-	# 3 - session log (less important messages)
-	# 4 - print to /dev/tty
-	# 5 - debug messages: print to /dev/stderr
-
-	# ${ABL_LOG_LEVEL} modifies which levels are sent to syslog
-
 	local m msgs='' msgs_nc='' msgs_prefix='' _arg err_l=info color='' _n_c='' \
-		action_req='' report_req='' noprint='' log_level='' \
-		msgs_dest="${MSGS_DEST}" session_log_thresh=3 print_req='' sys_log_req='' log_file_req='' \
-		sys_log_thresh="${ABL_LOG_LEVEL:-"1"}" print_thresh=4
+		print_req='' sys_log_req='' log_file_req='' action_req='' report_req='' noprint='' \
+		msg_level='' msgs_dest="${MSGS_DEST}" \
+		\
+		sys_log_thresh="${LOG_VERBOSITY:-"1"}" \
+		session_log_thresh=3 \
+		print_thresh=4 \
+		debug_thresh=5 # debug_thresh must be > print_thresh
 
-	[ -n "${ABL_DEBUG}" ] && print_thresh=5
+	[ -n "${ABL_DEBUG}" ] && print_thresh=${debug_thresh}
 
 	local IFS="${DEFAULT_IFS}"
 	for _arg in "${@}"
 	do
 		case "${_arg}" in
 			-[0-9])
-				if [ -z "${log_level}" ]
+				if [ -z "${msg_level}" ]
 				then
-					log_level="${_arg#"-"}"
+					msg_level="${_arg#"-"}"
+					[ "${msg_level}" -lt ${debug_thresh} ] || [ -n "${ABL_DEBUG}" ] || return 0 # short path for debug messages when ABL_DEBUG is not set
 				else
 					append_msg "${_arg}"
 				fi ;;
 			-noprint) noprint=1 ;;
 			-report) report_req=1 ;;
-			-action) action_req=1 ;;
+			-action) [ -n "${LOCK_REQ}" ] && action_req=1 ;;
 			-err) err_l=err color="${red}" msgs_prefix="Error: " ;;
 			-warn) err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-red|-green|-purple|-yellow) eval "color=\"\$${_arg#"-"}\"" ;;
@@ -727,13 +730,13 @@ reg_msg()
 	done
 	msgs="${msgs%"${_DELIM_}"}"
 
-	: "${log_level:=3}"
+	: "${msg_level:=3}"
 
-	[ "${log_level}" = 5 ] && msgs_dest="/dev/stderr" # Debug
+	[ "${msg_level}" = 5 ] && msgs_dest="/dev/stderr" # Debug
 
-	[ -z "${noprint}" ] && [ "${log_level}" -le "${print_thresh}" ] && [ "${msgs_dest}" != "/dev/null" ] && print_req=1
-	[ "${log_level}" -le "${sys_log_thresh}" ] && sys_log_req=1
-	[ "${log_level}" -le "${session_log_thresh}" ] && log_file_req=1
+	[ -z "${noprint}" ] && [ "${msg_level}" -le "${print_thresh}" ] && [ "${msgs_dest}" != "/dev/null" ] && print_req=1
+	[ "${msg_level}" -le "${sys_log_thresh}" ] && sys_log_req=1
+	[ "${msg_level}" -le "${session_log_thresh}" ] && log_file_req=1
 
 	set -f
 
@@ -778,7 +781,7 @@ reg_msg()
 		done
 		IFS="${DEFAULT_IFS}"
 		[ -n "${report_req}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_success && report_success "${msgs_nc//"${_DELIM_}"/"${_NL_}"}"
-		[ -n "${action_req}" ] && [ -n "${LOCK_REQ}" ] && { update_action_file "${msgs_nc//"${_DELIM_}"/" "}" || { set +f; return 1; }; }
+		[ -n "${action_req}" ] && { update_action_file "${msgs_nc//"${_DELIM_}"/" "}" || { set +f; return 1; }; }
 	fi
 
 	set +f
@@ -1924,7 +1927,7 @@ start()
 		*) reg_failure "Unexpected start action '${START_ACTION}'."; exit 1
 	esac
 
-	local size_B entries_cnt conn_check_req=1 rv=1 initial_uptime_ms elapsed_time totalmem
+	local entries_cnt conn_check_req=1 rv=1 initial_uptime_ms elapsed_time totalmem
 
 	case ${ABL_RUN_STATE} in
 		1) unload_blocklist_before_update=1 ;;

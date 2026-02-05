@@ -748,7 +748,7 @@ print_def_config()
 	DNSMASQ_CONF_DIRS="${dnsmasq_conf_dirs}" @ string
 
 	# Level of messages sent to the system log (0-5, default is 1)
-	ABL_LOG_LEVEL="1" @ 0|1|2|3|4|5
+	LOG_VERBOSITY="1" @ 0|1|2|3|4|5
 
 	EOT
 }
