@@ -747,7 +747,7 @@ print_def_config()
 	DNSMASQ_INDEXES="${dnsmasq_indexes}" @ integer_list
 	DNSMASQ_CONF_DIRS="${dnsmasq_conf_dirs}" @ string
 
-	# Level of messages sent to the system log (0-5, default is 1)
+	# Log verbosity (0-5). Higher values send more messages to the syslog. Default is 1.
 	LOG_VERBOSITY="1" @ 0|1|2|3|4|5
 
 	EOT
