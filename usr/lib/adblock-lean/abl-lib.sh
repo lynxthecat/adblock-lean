@@ -463,7 +463,7 @@ get_preset()
 
 	unset_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}" || return 1
 
-	CL_VARS=1 do_calculate_limits "${gp_entr_cnt}" "${gp_lists_cnt}" "${gp_lim_coeff}" gp_min_lines gp_max_bl_size gp_max_part_size || return 1
+	do_calculate_limits "${gp_entr_cnt}" "${gp_lists_cnt}" "${gp_lim_coeff}" gp_min_lines gp_max_bl_size gp_max_part_size || return 1
 
 	[ -n "${GP_PRINT_DESC}" ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${gp_mem} MB of memory."
 
@@ -489,7 +489,6 @@ get_preset()
 }
 
 # Env vars:
-#  CL_VARS: set output vars
 #  CL_PRINT: print results
 #  CL_INTERACTIVE: use dialogs if needed
 # Input:
@@ -526,10 +525,7 @@ do_calculate_limits()
 		cl_min_lines cl_max_bl_size_kb cl_max_part_size_kb \
 		tgt_entries_cnt="${1}" lists_cnt="${2}" lim_coeff="${3:-1}"
 
-	[ -n "${CL_VARS}" ] &&
-	{
-		unset_vars "${4}" "${5}" "${6}" || return 1
-	}
+	unset_vars "${4}" "${5}" "${6}" || return 1
 
 	[ -z "${tgt_entries_cnt}" ] && [ -n "${CL_INTERACTIVE}" ] &&
 	while :
@@ -586,10 +582,7 @@ do_calculate_limits()
 			"${blue}min_good_line_count${n_c}=\"${cl_min_lines}\""
 	}
 
-	[ -n "${CL_VARS}" ] &&
-	{
-		eval "${4}"='${cl_min_lines}' "${5}"='${cl_max_bl_size_kb}' "${6}"='${cl_max_part_size_kb}' || return 1
-	}
+	eval "${4:-_}"='${cl_min_lines}' "${5:-_}"='${cl_max_bl_size_kb}' "${6:-_}"='${cl_max_part_size_kb}' || return 1
 	:
 }
 
