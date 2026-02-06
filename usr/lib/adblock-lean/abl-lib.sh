@@ -1128,11 +1128,11 @@ parse_config()
 		local awk_rv=${?} inval_entry=''
 		[ -s "${awk_err_file}" ] && reg_failure "awk errors encountered while parsing config:${_NL_}$(cat "${awk_err_file}")"
 		[ -s "${parser_err_file}" ] && reg_failure "$(cat "${parser_err_file}")"
-		[ -s "${inval_entry_file}" ] && inval_entry=": $(cat "${inval_entry_file}")"
+		[ -s "${inval_entry_file}" ] && inval_entry=": '$(cat "${inval_entry_file}")'"
 
 		case "${awk_rv}" in
-			253) reg_failure "Invalid entry in config (check double-quotes)${inval_entry}." ;;
-			254) reg_failure "Invalid entry in config${inval_entry}." ;;
+			253) reg_failure "Invalid entry in config (check double-quotes)${inval_entry}" ;;
+			254) reg_failure "Invalid entry in config${inval_entry}" ;;
 			*) reg_failure "Failed to parse config."; return 3
 		esac
 
