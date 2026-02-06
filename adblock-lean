@@ -208,20 +208,23 @@ find_files()
 	for ff_file in "${ff_dir}/${ff_prefix}"*"${ff_suffix}"
 	do
 		case "${ff_file}" in ''|*"*") continue; esac
-		if [ -n "${ff_found}" ]
-		then
-			[ -n "${FF_RM_EXTRA}" ] && { rm -f "${ff_file}"; continue; }
-			[ -n "${FF_FIRST}" ] && continue
-			ff_found="${ff_found}${_NL_}${ff_file}"
-		else
-			[ -n "${FF_FIRST}" ] && [ -z "${FF_RM_EXTRA}" ] && { [ -n "${ff_path_out_var}" ] && eval "${ff_path_out_var}"='${ff_file}'; return 0; }
-			ff_found="${ff_file}"
-		fi
-		[ -n "${FF_EXEC}" ] && { exec="${FF_EXEC//"{}"/"${ff_file}"}"; eval "${exec}" || { reg_failure "${me}: '${exec}' returned code ${?}"; return 1; }; }
+		[ -f "${ff_file}" ] || continue # ignore dirs and symlinks
+		[ -n "${ff_found}" ] && [ -n "${FF_RM_EXTRA}" ] && { rm -f "${ff_file}"; continue; }
+
+		[ -n "${FF_EXEC}" ] &&
+		{
+			exec="${FF_EXEC//"{}"/"\"${ff_file}\""}"
+			eval "${exec}" || { reg_failure "${me}: '${exec}' returned code ${?}"; return 1; }
+		}
+
+		ff_found="${ff_found}${ff_found:+"${_NL_}"}${ff_file}"
+
+		[ -n "${FF_FIRST}" ] && [ -z "${FF_RM_EXTRA}" ] && break
 	done
 
 	[ -n "${ff_found}" ] || return 2
-	[ -n "${ff_path_out_var}" ] && { eval "${ff_path_out_var}"='${ff_found}' || return 1; }
+
+	eval "${ff_path_out_var:-_}"='${ff_found}' || return 1
 	:
 }
 
