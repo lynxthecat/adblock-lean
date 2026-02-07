@@ -410,7 +410,7 @@ is_dir_volatile()
 {
 	is_valid_dir "${1}" &&
 	{
-		[ "${1}" != "${PERM_BLOCKLIST_DIR}" ] || { [ "${PERM_BLOCKLIST_MODE}" = managed ] && [ -z "${KEEP_PERMANENT}" ]; }
+		[ "${1}" != "${PERSIST_BLOCKLIST_DIR}" ] || { [ "${PERSIST_BLOCKLIST_MODE}" = managed ] && [ -z "${KEEP_PERSIST}" ]; }
 	}
 }
 
@@ -430,12 +430,12 @@ rm_if_volatile()
 rm_pause_bl()
 {
 	local dir ext
-	[ -n "${PERM_BLOCKLIST_DIR}" ] && [ "${PERM_BLOCKLIST_MODE}" = manual ] && FF_RM_EXTRA=1 find_files file "${PERM_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME}" &&
+	[ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${PERSIST_BLOCKLIST_MODE}" = manual ] && FF_RM_EXTRA=1 find_files file "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME}" &&
 		split_path dir _ ext "${file}" &&
 		[ -n "${dir}" ] &&
 		try_mv "${file}" "${dir}/${BLOCKLIST_BASE_FNAME:?}${ext:+"."}${ext}"
 
-	KEEP_PERMANENT='' rm_if_volatile "${PAUSE_FILE_CURR}" "${SHARED_BLOCKLIST_DIR:-???}/${PAUSE_BASE_FNAME}"*
+	KEEP_PERSIST='' rm_if_volatile "${PAUSE_FILE_CURR}" "${SHARED_BLOCKLIST_DIR:-???}/${PAUSE_BASE_FNAME}"*
 	rm -f "${ABL_RUN_DIR:-???}/${PAUSE_BASE_FNAME}"* "${LAST_PAUSE_PATH_FILE}"
 	PAUSE_FILE_CURR=
 }
@@ -820,7 +820,7 @@ cleanup_and_exit()
 		}
 		rm -rf "${ABL_TMP_DIR}"
 	fi
-	KEEP_PERMANENT=1 rm_if_volatile "${BK_BL_FILE}"
+	KEEP_PERSIST=1 rm_if_volatile "${BK_BL_FILE}"
 
 	if [ -n "${FAIL_STOP_REQ}" ]
 	then
@@ -1307,7 +1307,7 @@ del_addnmounts()
 		do
 			IFS="${DEFAULT_IFS}"
 			case "${path}" in
-				/bin/busybox*|*gzip*|*pigz*|*zstd*|*/"${BLOCKLIST_BASE_FNAME:?}"*|"${ABL_RUN_DIR:-???}"*|"${PERM_BLOCKLIST_DIR:-???}"*) ;;
+				/bin/busybox*|*gzip*|*pigz*|*zstd*|*/"${BLOCKLIST_BASE_FNAME:?}"*|"${ABL_RUN_DIR:-???}"*|"${PERSIST_BLOCKLIST_DIR:-???}"*) ;;
 				*) continue # ignore addnmounts possibly created not by us
 			esac
 			log_msg -purple "Deleting addnmount entry for '${path}' for dnsmasq instance ${index}."
@@ -2002,7 +2002,7 @@ start()
 			elif [ -f "${BL_FILE_CURR}" ]
 			then
 				BK_BL_FILE=${BL_FILE_CURR}
-				export RESTORE_FROM_PERM=1
+				export RESTORE_FROM_PERSIST=1
 			fi
 		else
 			log_msg "" "No existing blocklist found."
@@ -2033,7 +2033,7 @@ start()
 			local restore_failed=1
 			if [ -f "${BK_BL_FILE}" ]
 			then
-				[ -n "${RESTORE_FROM_PERM}" ] && BL_FILE_NEW="${BK_BL_FILE}"
+				[ -n "${RESTORE_FROM_PERSIST}" ] && BL_FILE_NEW="${BK_BL_FILE}"
 				if restore_saved_blocklist "${BK_BL_FILE}" "${BL_FILE_NEW}"
 				then
 					if CA_CHECK_DNS=1 check_active_blocklist
@@ -2053,7 +2053,7 @@ start()
 		fi
 	fi
 
-	[ -n "${RESTORE_FROM_PERM}" ] || rm -f "${BK_BL_FILE}"
+	[ -n "${RESTORE_FROM_PERSIST}" ] || rm -f "${BK_BL_FILE}"
 
 	[ "${rv}" = 0 ] &&
 	{
@@ -2071,7 +2071,7 @@ start()
 # 1/2 - (optional) '-noexit' to return to the calling function
 stop()
 {
-	local file dir ext stop_rc=0 ASSERT_NOEXIT=1 KEEP_PERMANENT=1 noexit=
+	local file dir ext stop_rc=0 ASSERT_NOEXIT=1 KEEP_PERSIST=1 noexit=
 	for _arg in "$@"
 	do
 		case "${_arg}" in
@@ -2177,8 +2177,8 @@ status()
 		fi
 	fi
 
-	[ -n "${PERM_BLOCKLIST_DIR}" ] && [ "${PERM_BLOCKLIST_MODE}" = managed ] && [ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR%/*}" != "${PERM_BLOCKLIST_DIR}" ] &&
-		print_msg -warn "" "Permanent blocklist directory is configured but not currently used."
+	[ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${PERSIST_BLOCKLIST_MODE}" = managed ] && [ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR%/*}" != "${PERSIST_BLOCKLIST_DIR}" ] &&
+		print_msg -warn "" "Persistent blocklist directory is configured but not currently used."
 
 	luci_dnsmasq_status=${run_state}
 

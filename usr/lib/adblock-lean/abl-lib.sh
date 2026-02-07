@@ -647,19 +647,19 @@ print_def_config()
 	local_allowlist_path="${ABL_CONFIG_DIR}/allowlist" @ string
 	local_blocklist_path="${ABL_CONFIG_DIR}/blocklist" @ string
 
-	# Governs whether and how permanent blocklist is used
-	# 'disable' (default): permanent blocklist will not be used. The blocklist file will be stored on the ramdisk.
-	# 'manual': directory specified in PERM_BLOCKLIST_DIR will be checked for file named '${BLOCKLIST_BASE_FNAME:?}' (with or without extension '.gz' or '.zst') -
+	# Governs whether and how persistent blocklist is used
+	# 'disable' (default): persistent blocklist will not be used. The blocklist file will be stored on the ramdisk.
+	# 'manual': directory specified in PERSIST_BLOCKLIST_DIR will be checked for file named '${BLOCKLIST_BASE_FNAME:?}' (with or without extension '.gz' or '.zst') -
 	#   if found, that blocklist will be loaded at boot (rather than downloading, processing and loading a new blocklist)
-	#   but adblock-lean will not create or update that file (useful to prevent flash wear, e.g. when the permanent blocklist is stored on the built-in flash of a router).
+	#   but adblock-lean will not create or update that file (useful to prevent flash wear, e.g. when the persistent blocklist is stored on the built-in flash of a router).
 	#   If not found, adblock-lean will act as if mode is 'disable'.
-	# 'managed': adblock-lean will use the directory specified in PERM_BLOCKLIST_DIR to store and update the blocklist file
+	# 'managed': adblock-lean will use the directory specified in PERSIST_BLOCKLIST_DIR to store and update the blocklist file
 	#   and no additional blocklist will be stored on the ramdisk.
 	#   If the directory is inaccessible, adblock-lean will fall back to using the ramdisk.
-	PERM_BLOCKLIST_MODE="disable" @ disable|manual|managed
+	PERSIST_BLOCKLIST_MODE="disable" @ disable|manual|managed
 
-	# Optional path to directory on non-volatile storage device where permanent blocklist should be stored
-	PERM_BLOCKLIST_DIR="" @ string
+	# Optional path to directory on non-volatile storage device where persistent blocklist should be stored
+	PERSIST_BLOCKLIST_DIR="" @ string
 
 	# Test domains are automatically querried after loading the blocklist into dnsmasq,
 	# in order to verify that the blocklist didn't break DNS resolution

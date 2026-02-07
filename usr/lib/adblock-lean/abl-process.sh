@@ -371,7 +371,7 @@ try_get_abl_run_state()
 		11|10) check_fail; return 1 ;;
 		21) ;;
 		20)
-			[ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR}" = "${PERM_BL_FILE_CURR}" ] && return 3
+			[ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR}" = "${PERSIST_BL_FILE_CURR}" ] && return 3
 			unexp_state; return 1 ;;
 		*) check_fail "${me}: unexpected dns check code '${dns_check_res}${file_check_res}'."; return 1
 	esac
@@ -382,10 +382,10 @@ try_get_abl_run_state()
 }
 
 # Output via optional vars:
-# 1: state var for processing setup: <final_compr:[0|1]${_NL_}multi_inst:[0|1]${_NL_}perm_bl:[0|1]>
+# 1: state var for processing setup: <final_compr:[0|1]${_NL_}multi_inst:[0|1]${_NL_}persist_bl:[0|1]>
 # 2: printable missing addnmounts for addnmounts suggestion
 # 3: path on ramdisk for new blocklist creation
-# 4: path for permanent blocklist creation/loading
+# 4: path for persistent blocklist creation/loading
 # 5: compr util path
 # 6: compr extension
 # 7: conf_req: 1 if conf-files are required, 0 if not
@@ -408,7 +408,7 @@ check_process_features()
 		cpf_all_missing_recomm='' \
 		\
 		compr_allowed=0 \
-		perm_allowed=0 \
+		persist_allowed=0 \
 		multi_inst_allowed=0 \
 		\
 		cpf_compr_util_path='' \
@@ -428,20 +428,20 @@ check_process_features()
 		bl_full_fname_recomm='' \
 		cpf_bl_path_ram_recomm='' \
 		\
-		perm_dir="${PERM_BLOCKLIST_DIR%"/"}" \
+		persist_dir="${PERSIST_BLOCKLIST_DIR%"/"}" \
 		\
 		state_var="${1}" \
 		all_req_addnm_var="${2}" \
 		missing_recomm_var="${3}" \
 		bl_path_ram_var="${4}" \
-		bl_path_perm_var="${5}" \
+		bl_path_persist_var="${5}" \
 		compr_util_path_var="${6}" \
 		compr_ext_var="${7}" \
 		conf_req_var="${8}"
 
 	debug_msg "Checking processing features${CPF_QUIET:+" (QUIET)"}." 
 
-	unset_vars "${state_var}" "${all_req_addnm_var}" "${missing_recomm_var}" "${bl_path_ram_var}" "${bl_path_perm_var}" "${compr_util_path_var}" "${compr_ext_var}" "${conf_req_var}" &&
+	unset_vars "${state_var}" "${all_req_addnm_var}" "${missing_recomm_var}" "${bl_path_ram_var}" "${bl_path_persist_var}" "${compr_util_path_var}" "${compr_ext_var}" "${conf_req_var}" &&
 	assert_set "F_${me}" DNSMASQ_INDEXES compression_util || return 1
 
 
@@ -515,11 +515,11 @@ check_process_features()
 
 	assert_set "F_${me}" cpf_bl_path_ram_recomm || return 1
 
-	# Permanent blocklist
-	case "${PERM_BLOCKLIST_MODE}" in manual|managed)
+	# Persistent blocklist
+	case "${PERSIST_BLOCKLIST_MODE}" in manual|managed)
 		[ -n "${CPF_QUIET}" ] &&
 		{
-			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${perm_dir}"
+			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${persist_dir}"
 			is_included "${cpf_bl_path_ram_recomm}" "${ok_paths}" "${_NL_}" ||
 				cpf_paths="${cpf_paths}${_NL_}${cpf_bl_path_ram_recomm}"
 			check_addnmounts cpf_missing "${cpf_paths}" &&
@@ -529,45 +529,45 @@ check_process_features()
 
 		if [ -n "${cpf_bl_path_ram}" ]
 		then
-			local perm_fail perm_dir_pr="permanent blocklist directory"
-			if [ -d "${perm_dir}" ] ||
+			local persist_fail persist_dir_pr="persistent blocklist directory"
+			if [ -d "${persist_dir}" ] ||
 				{
-					case "${PERM_BLOCKLIST_DIR}" in
-						'') perm_fail="No path specified in config option PERM_BLOCKLIST_DIR." ;;
-						/) perm_fail="Invalid ${perm_dir_pr}: /" ;;
-						*) perm_fail="Can not find ${perm_dir_pr}: ${perm_dir}."
+					case "${PERSIST_BLOCKLIST_DIR}" in
+						'') persist_fail="No path specified in config option PERSIST_BLOCKLIST_DIR." ;;
+						/) persist_fail="Invalid ${persist_dir_pr}: /" ;;
+						*) persist_fail="Can not find ${persist_dir_pr}: ${persist_dir}."
 					esac
 					false
 				}
 			then
 				# alternative path on ramdisk required for fallback
-				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${perm_dir}"
+				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${persist_dir}"
 				is_included "${cpf_bl_path_ram}" "${ok_paths}" "${_NL_}" ||
 					cpf_paths="${cpf_paths}${_NL_}${cpf_bl_path_ram}"
 				check_addnmounts cpf_missing "${cpf_paths}" || return 1
 				if [ -z "${cpf_missing}" ]
 				then
-					perm_allowed=1
-					[ "${PERM_BLOCKLIST_MODE}" = managed ] && cpf_bl_path_perm="${perm_dir}/${bl_full_fname}"
+					persist_allowed=1
+					[ "${PERSIST_BLOCKLIST_MODE}" = managed ] && cpf_bl_path_perm="${persist_dir}/${bl_full_fname}"
 				else
-					feature_unavail "Permanent blocklist" "${cpf_missing}"
+					feature_unavail "Persistent blocklist" "${cpf_missing}"
 				fi
 			else
-				log_msg -warn "" "${perm_fail}${perm_fail:+ }Permanent blocklist can not be used or updated."
+				log_msg -warn "" "${persist_fail}${persist_fail:+ }Persistent blocklist can not be used or updated."
 			fi
 		fi
 	esac
 
-	eval "${state_var:-_}=\"final_compr:\${compr_allowed}\${_NL_}multi_inst:\${multi_inst_allowed}\${_NL_}perm_bl:\${perm_allowed}\""	
+	eval "${state_var:-_}=\"final_compr:\${compr_allowed}\${_NL_}multi_inst:\${multi_inst_allowed}\${_NL_}persist_bl:\${persist_allowed}\""
 	eval "${all_req_addnm_var:-_}"='${cpf_all_req_recomm}'
 	eval "${missing_recomm_var:-_}"='${cpf_all_missing_recomm}'
 	eval "${conf_req_var:-_}"='${cpf_conf_req}'
 	eval "${bl_path_ram_var:-_}"='${cpf_bl_path_ram}'
-	eval "${bl_path_perm_var:-_}"='${cpf_bl_path_perm}'
+	eval "${bl_path_persist_var:-_}"='${cpf_bl_path_perm}'
 	eval "${compr_util_path_var:-_}"='${cpf_compr_util_path}'
 	eval "${compr_ext_var:-_}"='${cpf_compr_ext}'
 
-	: "${cpf_all_req_recomm}" "${multi_inst_allowed}" "${perm_allowed}" "${compr_allowed}" "${cpf_all_missing_recomm}" "${cpf_bl_path_perm}" "${cpf_conf_req}"
+	: "${cpf_all_req_recomm}" "${multi_inst_allowed}" "${persist_allowed}" "${compr_allowed}" "${cpf_all_missing_recomm}" "${cpf_bl_path_perm}" "${cpf_conf_req}"
 
 	:
 }
@@ -606,16 +606,16 @@ set_abl_env()
 		\
 		par_opt='' \
 		cpu_cnt \
-		rebuild_perm_bl='' \
+		rebuild_persist_bl='' \
 		\
-		perm_bl_size_b='' \
-		perm_bl_entries_cnt=0 \
-		perm_bl_cnt_human=''
+		persist_bl_size_b='' \
+		persist_bl_entries_cnt=0 \
+		persist_bl_cnt_human=''
 
 	export \
 		START_ACTION=gen \
 		\
-		PERM_BLOCKLIST_DIR="${PERM_BLOCKLIST_DIR%"/"}" \
+		PERSIST_BLOCKLIST_DIR="${PERSIST_BLOCKLIST_DIR%"/"}" \
 		\
 		CONF_FILES_REQ=0 \
 		CONF_FILES_REQ_FALLBACK=0 \
@@ -629,7 +629,7 @@ set_abl_env()
 		\
 		BK_BL_FILE='' \
 		\
-		PERM_BL_FILE_CURR='' \
+		PERSIST_BL_FILE_CURR='' \
 		\
 		LOAD_BL_PATH='' \
 		LOAD_BL_ENTRIES_CNT='' \
@@ -680,11 +680,11 @@ set_abl_env()
 			PARALLEL_JOBS="${MAX_PARALLEL_JOBS}"
 	esac
 
-	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and permanent blocklist creation,
+	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and persistent blocklist creation,
 	#   get final blocklist paths,
 	#   compression util path and extension
 	local state bl_path_ram bl_path_perm compr_util_path compr_ext \
-		final_compr_req='' multi_inst_req='' perm_bl_req='' CPF_QUIET=''
+		final_compr_req='' multi_inst_req='' persist_bl_req='' CPF_QUIET=''
 
 	[ -n "${SAE_QUIET}" ] && CPF_QUIET=1
 	check_process_features state _ _ bl_path_ram bl_path_perm compr_util_path compr_ext CONF_FILES_REQ || return 1
@@ -693,7 +693,7 @@ set_abl_env()
 
 	# Parse state
 	local feature_state
-	for feature in final_compr multi_inst perm_bl
+	for feature in final_compr multi_inst persist_bl
 	do
 		feature_state="${state##*"${feature}:"}"
 		feature_state="${feature_state%%"${_NL_}"*}"
@@ -750,95 +750,95 @@ set_abl_env()
 
 	BK_BL_FILE="${BK_BL_BASE_PATH:?}${INTERM_COMPR_EXT}"
 
-	# Perm blocklist
-	if [ "${perm_bl_req}" = 1 ]
+	# Persistent blocklist
+	if [ "${persist_bl_req}" = 1 ]
 	then
 		if [ -z "${PAUSE_FILE_CURR}" ] && { [ "${ABL_INIT_ACTION}" = boot ] || [ "${ABL_INIT_ACTION}" = status ]; }
 		then
-			reg_action -3 -blue "Checking the permanent blocklist."
-			local file='' perm_ext='' compr_util='' perm_fail='' min_good_line_count_human='' perm_bl_entries_cnt='' perm_bl_cnt_human=''
+			reg_action -3 -blue "Checking the persistent blocklist."
+			local file='' persist_ext='' compr_util='' persist_fail='' min_good_line_count_human='' persist_bl_entries_cnt='' persist_bl_cnt_human=''
 
 			if
 				{
-					FF_RM_EXTRA=1 find_files file "${PERM_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}" ||
+					FF_RM_EXTRA=1 find_files file "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}" ||
 						{
-							[ "${PERM_BLOCKLIST_MODE}" = manual ] && PERM_BLOCKLIST_MODE=disable
-							perm_fail="Permanent blocklist not found in directory '${PERM_BLOCKLIST_DIR}'."
+							[ "${PERSIST_BLOCKLIST_MODE}" = manual ] && PERSIST_BLOCKLIST_MODE=disable
+							persist_fail="Persistent blocklist not found in directory '${PERSIST_BLOCKLIST_DIR}'."
 							false
 						}
 				} &&
 
 				{
-					get_compr_spec perm_ext _ "${file}" ||
-						{ perm_fail="Can not find utility to extract permanent blocklist file '${file}'."; false; }
+					get_compr_spec persist_ext _ "${file}" ||
+						{ persist_fail="Can not find utility to extract persistent blocklist file '${file}'."; false; }
 				} &&
 
 				{
-					[ "${perm_ext}" = "${FINAL_COMPR_EXT}" ] ||
+					[ "${persist_ext}" = "${FINAL_COMPR_EXT}" ] ||
 						{
-							perm_fail="Extension '${perm_ext}' of permanent blocklist file '${file}' does not match required extension '${FINAL_COMPR_EXT}'."
+							persist_fail="Extension '${persist_ext}' of persistent blocklist file '${file}' does not match required extension '${FINAL_COMPR_EXT}'."
 							false
 						}
 				} &&
 
-				perm_bl_size_b="$(get_file_size "${file}")" &&
+				persist_bl_size_b="$(get_file_size "${file}")" &&
 				{
-					[ $(( perm_bl_size_b/1024 )) -le "${max_blocklist_file_size_KB}" ] ||
-					{ perm_fail="Permanent blocklist file '${file}' is larger than the maximum value set in config (${max_blocklist_file_size_KB} KiB)."; false; }
+					[ $(( persist_bl_size_b/1024 )) -le "${max_blocklist_file_size_KB}" ] ||
+					{ persist_fail="Persistent blocklist file '${file}' is larger than the maximum value set in config (${max_blocklist_file_size_KB} KiB)."; false; }
 				} &&
 
 				{
-					get_active_entries_cnt perm_bl_entries_cnt "${file}" ||
-						{ perm_fail="Failed to get entries count in the permanent blocklist file '${file}'."; false; }
+					get_active_entries_cnt persist_bl_entries_cnt "${file}" ||
+						{ persist_fail="Failed to get entries count in the persistent blocklist file '${file}'."; false; }
 				} &&
 
 				{
-					int2human perm_bl_cnt_human "${perm_bl_entries_cnt}" &&
+					int2human persist_bl_cnt_human "${persist_bl_entries_cnt}" &&
 					int2human min_good_line_count_human "${min_good_line_count}" || return 1
 				} &&
 
 				{
-					[ "${perm_bl_entries_cnt}" -ge "${min_good_line_count}" ] ||
+					[ "${persist_bl_entries_cnt}" -ge "${min_good_line_count}" ] ||
 						{
-							perm_fail="Entries count (${perm_bl_cnt_human}) in the permanent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
+							persist_fail="Entries count (${persist_bl_cnt_human}) in the persistent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
 							false
 						}
 				}
 			then
 				START_ACTION=load
 
-				PERM_BL_FILE_CURR=${file}
-				LOAD_BL_PATH=${PERM_BL_FILE_CURR}
-				LOAD_BL_ENTRIES_CNT=${perm_bl_entries_cnt}
-				LOAD_BL_DESC="permanent"
+				PERSIST_BL_FILE_CURR=${file}
+				LOAD_BL_PATH=${PERSIST_BL_FILE_CURR}
+				LOAD_BL_ENTRIES_CNT=${persist_bl_entries_cnt}
+				LOAD_BL_DESC="persistent"
 				BL_FILE_NEW_FALLBACK=${bl_path_ram}
 			else
 				local warn_act_msg=''
 				[ "${ABL_CMD}" = start ] && warn_act_msg="Will create a new blocklist on the ramdisk."
-				[ "${PERM_BLOCKLIST_MODE}" = managed ] &&
+				[ "${PERSIST_BLOCKLIST_MODE}" = managed ] &&
 				{
-					rebuild_perm_bl=1
+					rebuild_persist_bl=1
 					[ "${ABL_CMD}" = start ] &&
 					{
-						[ "${ABL_CMD}" = start ] && warn_act_msg="Will rebuild the permanent blocklist."
+						[ "${ABL_CMD}" = start ] && warn_act_msg="Will rebuild the persistent blocklist."
 						rm -f "${file}"
 					}
 					BL_FILE_NEW=${bl_path_perm}
 					BL_FILE_NEW_FALLBACK=${bl_path_ram}
 				}
-				local warn_msg="${perm_fail}${perm_fail:+ }${warn_act_msg}"
+				local warn_msg="${persist_fail}${persist_fail:+ }${warn_act_msg}"
 				[ -n "${warn_msg}" ] && sae_msg -1 -warn "" "${warn_msg}"
 			fi
-		elif [ "${PERM_BLOCKLIST_MODE}" = managed ]
+		elif [ "${PERSIST_BLOCKLIST_MODE}" = managed ]
 		then
-			pause_dir=${PERM_BLOCKLIST_DIR:?}
-			rebuild_perm_bl=1
-			[ "${ABL_CMD}" = start ] && sae_msg -3 "" "Will update the permanent blocklist."
+			pause_dir=${PERSIST_BLOCKLIST_DIR:?}
+			rebuild_persist_bl=1
+			[ "${ABL_CMD}" = start ] && sae_msg -3 "" "Will update the persistent blocklist."
 			BL_FILE_NEW=${bl_path_perm}
 			BL_FILE_NEW_FALLBACK=${bl_path_ram}
 		fi
 
-		[ "${START_ACTION}" = load ] || [ -n "${rebuild_perm_bl}" ] &&
+		[ "${START_ACTION}" = load ] || [ -n "${rebuild_persist_bl}" ] &&
 			CONF_FILES_REQ=1
 	fi
 
@@ -1902,8 +1902,8 @@ try_conv_compr()
 		try_compress "${src_path}" "${compr_cmd}" src_path || return 1
 	fi
 
-	# Avoid writing into PERM_BLOCKLIST_DIR unless mode is 'main'
-	if [ "${src_dir}" = "${PERM_BLOCKLIST_DIR}" ] && [ "${dest_dir}" != "${src_dir}" ] && [ "${PERM_BLOCKLIST_MODE}" != managed ]
+	# Avoid writing into PERSIST_BLOCKLIST_DIR unless mode is 'main'
+	if [ "${src_dir}" = "${PERSIST_BLOCKLIST_DIR}" ] && [ "${dest_dir}" != "${src_dir}" ] && [ "${PERSIST_BLOCKLIST_MODE}" != managed ]
 	then
 		cp "${src_path}" "${dest_path}"
 	else
@@ -1984,7 +1984,7 @@ restore_saved_blocklist()
 }
 
 # Env vars:
-# RESTORE_FROM_PERM: do not convert or move source file - try to install as is
+# RESTORE_FROM_PERSIST: do not convert or move source file - try to install as is
 #
 # 1 - source file
 # 2 - dest file
@@ -2000,10 +2000,10 @@ try_restore_saved_blocklist()
 	rm_conf_scripts
 	rm_main_bl
 
-	[ -n "${RESTORE_FROM_PERM}" ] && [ "${src_file}" != "${dest_file}" ] &&
-		{ reg_failure "${me}: \$RESTORE_FROM_PERM is set but source file '${src_file}' is not the same as dest file '${dest_file}'"; return 1; }
+	[ -n "${RESTORE_FROM_PERSIST}" ] && [ "${src_file}" != "${dest_file}" ] &&
+		{ reg_failure "${me}: \$RESTORE_FROM_PERSIST is set but source file '${src_file}' is not the same as dest file '${dest_file}'"; return 1; }
 
-	[ -n "${RESTORE_FROM_PERM}" ] || conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" ""
+	[ -n "${RESTORE_FROM_PERSIST}" ] || conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" ""
 
 	install_blocklist "${dest_file}" "" "saved" || return 1
 
