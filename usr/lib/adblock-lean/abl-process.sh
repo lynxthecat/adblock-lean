@@ -17,7 +17,9 @@ SCHEDULE_DIR="${ABL_TMP_DIR}/schedule"
 PROCESSING_TIMEOUT_S=900 # 15 minutes
 IDLE_TIMEOUT_S=300 # 5 minutes
 
-ABL_TEST_DOMAIN="adblocklean-test123.totallybogus"
+ABL_TEST_DOM_BASE="adblocklean-test.totallybogus"
+
+MAC_SHARED_FILE="${ABL_RUN_DIR}/mac-shared"
 
 ALL_LIST_FORMATS="raw dnsmasq hosts"
 
@@ -254,7 +256,7 @@ get_active_entries_cnt()
 		else
 			/bin/busybox cat "${file}"
 		fi |
-		${SED_CMD} -E "s~^(server|local)=/~~;/${ABL_TEST_DOMAIN}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w
+		${SED_CMD} -E "s~^(server|local)=/~~;/${ABL_TEST_DOM_BASE//./\\.}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w
 	)"
 
 	[ "${whitelist_mode}" = 1 ] && cnt=$((cnt-26)) # ignore alphabet entries
@@ -274,11 +276,14 @@ get_active_entries_cnt()
 #   CA_CHECK_DNS: test DNS resolution
 #   CA_NOERR: do not print/register errors
 #   CA_NOPROGRESS: do not print progress messages
+# Args:
+# 1: -[curr|new]
+#
 # return values:
-# 0 - All checks passed
-# 1 - General error
-# 2 - The blocklist test domain failed to resolve (blocklist not loaded)
-# 3 - One of the test domains failed to resolve
+# 0: All checks passed
+# 1: General error
+# 2: The blocklist test domain failed to resolve (blocklist not loaded)
+# 3: One of the test domains failed to resolve
 check_active_blocklist()
 {
 	lookup_failed() { [ -n "${CA_NOERR}" ] || reg_failure "Lookup of test domain '${1}' failed."; }
@@ -286,15 +291,21 @@ check_active_blocklist()
 
 	reg_action -3 -blue "Checking the active blocklist." || return 1
 
-	local family ip index instance_ns def_ns ns_ips ns_ips_sp
+	local me=check_active_blocklist family ip index instance_ns def_ns ns_ips ns_ips_sp test_dom mac_shared
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
-	assert_set F_check_active_blocklist DNSMASQ_INDEXES DNSMASQ_INST_SET || return 1
+	assert_set "F_${me}" DNSMASQ_INDEXES DNSMASQ_INST_SET || return 1
+
+	case "${1}" in
+		-curr) mac_shared="${MAC_SHARED_CURR}" ;;
+		-new) mac_shared="${MAC_SHARED_NEW}" ;;
+		*) bad_args "${me}" "${@}"; return 1 # TODO
+	esac
 
 	for index in ${DNSMASQ_INDEXES}
 	do
-		ns_ips='' ns_ips_sp=''
+		ns_ips='' ns_ips_sp='' test_dom="${mac_shared}${mac_shared:+"-"}${ABL_TEST_DOM_BASE}"
 		get_dnsmasq_instance_ns "${index}"
 
 		for family in 4 6
@@ -316,14 +327,14 @@ check_active_blocklist()
 
 		cab_print -3 -blue "Testing adblocking."
 
-		try_lookup_domain "${ABL_TEST_DOMAIN}" "${ns_ips}" 1 -n || { lookup_failed "${ABL_TEST_DOMAIN}"; return 2; }
+		try_lookup_domain "${test_dom}" "${ns_ips}" 1 -n || { lookup_failed "'${test_dom//"${mac_shared}"/NNNN}'${mac_shared:+" (MAC address redacted)"}"; return 2; }
 
 		[ -n "${CA_CHECK_DNS}" ] &&
 		{
 			cab_print -3 -blue "Testing DNS resolution."
 			for domain in ${test_domains}
 			do
-				try_lookup_domain "${domain}" "${ns_ips}" 5 || { lookup_failed "${domain}"; return 3; }
+				try_lookup_domain "${domain}" "${ns_ips}" 5 || { lookup_failed "'${domain}'"; return 3; }
 			done
 		}
 	done
@@ -340,7 +351,8 @@ get_abl_run_state()
 	export "${grs_out_var}=1"
 	try_get_abl_run_state
 	export "${grs_out_var}=${?}"
-	debug_msg "Run state: ${ABL_RUN_STATE}"
+	debug_msg "Run state: ${ABL_RUN_STATE}" "Mac shared curr: '${MAC_SHARED_CURR}', new: '${MAC_SHARED_NEW}'"
+
 	:
 }
 
@@ -363,7 +375,7 @@ try_get_abl_run_state()
 	[ -f "${BL_FILE_CURR}" ]
 	file_check_res=${?}
 
-	CA_NOERR=1 check_active_blocklist
+	CA_NOERR=1 check_active_blocklist -curr
 	dns_check_res=${?}
 	case "${dns_check_res}${file_check_res}" in
 		00) return 0 ;;
@@ -879,10 +891,7 @@ get_list_url()
 
 	case "${list_format}" in raw|dnsmasq|hosts) ;; *) reg_failure "Unexpected list format '${list_format}'."; return 1; esac
 
-	case "${list_id}" in
-		*[A-Z]*) list_id_lc="$(printf '%s' "${list_id}" | tr 'A-Z' 'a-z')" ;;
-		*) list_id_lc="${list_id}"
-	esac
+	tolower list_id_lc "${list_id}"
 	case "${list_id_lc}" in hagezi:*|oisd:*|stevenblack:*) ;; *)
 		eval "${out_var}"='${list_id}'
 		return 0
@@ -1721,7 +1730,7 @@ gen_blocklist()
 			fi
 
 			# add the blocklist test entry
-			printf '%s\n' "address=/${ABL_TEST_DOMAIN}/#"
+			printf '%s\n' "address=/${MAC_SHARED_NEW}${MAC_SHARED_NEW:+"-"}${ABL_TEST_DOM_BASE}/#"
 		} |
 
 		# limit size
@@ -1847,7 +1856,9 @@ install_blocklist()
 
 	restart_dnsmasq || return 1
 
-	CA_CHECK_DNS=1 check_active_blocklist || { reg_failure "Active blocklist check failed with the ${desc} blocklist."; return 1; }
+	debug_msg "Mac shared curr: '${MAC_SHARED_CURR}', new: '${MAC_SHARED_NEW}'"
+
+	CA_CHECK_DNS=1 check_active_blocklist -new || { reg_failure "Active blocklist check failed with the ${desc} blocklist."; return 1; }
 	reg_msg -3 -green "" "Active blocklist check passed."
 
 	reg_success "${green}Successfully loaded ${desc} blocklist${n_c}." \
@@ -1855,6 +1866,8 @@ install_blocklist()
 
 	BL_FILE_CURR="${final_file}"
 	printf '%s\n' "${BL_FILE_CURR}" > "${LAST_BLOCKLIST_PATH_FILE}"
+	MAC_SHARED_CURR="${MAC_SHARED_NEW}"
+	printf '%s\n' "${MAC_SHARED_CURR}" > "${MAC_SHARED_FILE}"
 
 	:
 }
@@ -2005,6 +2018,8 @@ try_restore_saved_blocklist()
 
 	[ -n "${RESTORE_FROM_PERSIST}" ] || conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" ""
 
+	MAC_SHARED_NEW=${MAC_SHARED_CURR}
+
 	install_blocklist "${dest_file}" "" "saved" || return 1
 
 	:
@@ -2031,7 +2046,7 @@ get_dnsmasq_instance_ns()
 			do
 				iface="${line%% *}"
 				[ -n "${iface}" ] &&
-				is_included "${iface}" "${instance_ifaces}" ", " || continue
+				is_included "${iface}" "${instance_ifaces}" " " || continue
 				ip_tmp="${line##*inet"${family#4}" }"
 				ip="${ip_tmp%%/*}"
 				[ -n "${ip}" ] && printf '%s\n' "${ip}"

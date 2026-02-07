@@ -167,6 +167,17 @@ assert_set()
 	:
 }
 
+bad_args()
+{
+	local arg args func="${1}"
+	shift
+	for arg in "${@}"
+	do
+		args="${args}${args:, }'${arg}'"
+	done
+	reg_failure "${func}: bad args: ${args}"
+}
+
 unset_vars()
 {
 	are_var_names_safe "${@}" || return 1
@@ -314,7 +325,7 @@ read_str_from_file()
 		esac
 	done
 
-	[ -n "${rs_outvars}" ] && [ -n "${rs_file}" ] || { reg_failure "${me}: missing args"; return 1; }
+	[ -n "${rs_outvars}" ] && [ -n "${rs_file}" ] || { bad_args "${me}" "${@}"; return 1; }
 	unset_vars ${rs_outvars} || return 1
 
 	rs_attempt=0
@@ -569,7 +580,7 @@ detect_util()
 		res_cmd='' res_name='' _util _util_path='' busybox_variant_avail='' skip_links='' path_exists='' path_is_symlink='' \
 		opt me=detect_util
 
-	[ ${#} -ge 4 ] || { reg_failure "${me}: not enough arguments"; return 1; }
+	[ ${#} -ge 4 ] || { bad_args "${me}" "${@}"; return 1; }
 	shift 4
 
 	while getopts :bs opt
@@ -1117,7 +1128,7 @@ print_file_list()
 	local me=print_file_list file_type files='' IFS="${DEFAULT_IFS}" \
 		file_types="${1}"
 
-	[ -n "$1" ] || { reg_failure "${me}: missing args."; return 1; }
+	[ -n "$1" ] || { bad_args "${me}" "${@}"; return 1; }
 
 	if [ "${file_types}" = ALL ]
 	then
@@ -1143,7 +1154,7 @@ ver_upd_fixup()
 	local me=ver_upd_fixup fix_ver='' fix_upd_channel='' md5sums='' \
 		curr_ver="${1}" curr_upd_ch="${2}"
 
-	[ -n "${1}" ] && [ -n "${2}" ] || { reg_failure "${me}: missing args."; return 1; }
+	[ -n "${1}" ] && [ -n "${2}" ] || { bad_args "${me}" "${@}"; return 1; }
 
 	log_msg -purple "Completing adblock-lean version upgrade..."
 
@@ -1335,6 +1346,15 @@ del_addnmounts()
 ### Commands init
 init_command()
 {
+	get_shared_mac_addr()
+	{
+		local mac
+		assert_set F_get_shared_mac_addr MAC_SHARED_FILE || return 1
+		read_str_from_file -v mac -f "${MAC_SHARED_FILE}" -q -a 1
+		eval "${1}"='${mac}'
+		: "${mac}"
+	}
+
 	ABL_CMD="${1}"
 	local config_req=''  work_dir_req='' act_pr='' init_action_pr='' init_action_short='' env_req='' \
 		log_rotated='' log_rotate_req=''
@@ -1357,7 +1377,7 @@ init_command()
 	case ${ABL_CMD} in
 		help|enabled|enable|disable|print_log|'') ;;
 		gen_stats) ;;
-		status) libs_req=1 work_dir_req=1 ;;
+		status) libs_req=1 config_req=1 env_req=1 work_dir_req=1 ;;
 		upd_cron_job) libs_req=1 config_req=1 ;;
 		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
 		boot) libs_req=1 config_req=1 LOCK_REQ=1 ;;
@@ -1373,6 +1393,7 @@ init_command()
 			esac
 			load_config
 			GDI_NOFORCE=1 get_dnsmasq_instances
+			[ -n "${MAC_SHARED_CURR}" ] || get_shared_mac_addr MAC_SHARED_CURR
 			CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
 			libs_req=1 LOCK_REQ=1
@@ -1383,10 +1404,8 @@ init_command()
 		*) reg_failure "Invalid action '${ABL_CMD}'."; exit 1
 	esac
 
-	[ -n "${env_req}" ] && libs_req=1 # ensure that libs are loaded
-
 	# source library scripts
-	if [ -n "${libs_req}" ]
+	if [ -n "${libs_req}" ] || [ -n "${env_req}" ] || [ -n "${config_req}" ]
 	then
 		source_libs || exit 1
 	fi
@@ -1464,14 +1483,15 @@ init_command()
 		[ -n "${ABL_LUCI_SOURCED}" ] && force_config_fix='-f'
 		load_config ${force_config_fix} || { reg_failure "Failed to load config."; exit 1; }
 		CONFIG_LOADED=1
-		get_dnsmasq_instances &&
-		check_dnsmasq_instances || exit 1
 	fi
 
 	# Prepare environment
 	[ -n "${env_req}" ] &&
 	{
 		set -o pipefail
+		get_dnsmasq_instances &&
+		check_dnsmasq_instances &&
+		{ [ -n "${MAC_SHARED_CURR}" ] || get_shared_mac_addr MAC_SHARED_CURR; } &&
 		set_abl_env || exit 1
 		get_abl_run_state ABL_RUN_STATE
 	}
@@ -1728,7 +1748,7 @@ abl_post_update_2()
 # 2 - distribution directory
 fetch_abl_dist()
 {
-	[ -n "${1}" ] && [ -n "${2}" ] || { reg_failure "fetch_abl_dist: missing arguments."; return 1; }
+	[ -n "${1}" ] && [ -n "${2}" ] || { bad_args "fetch_abl_dist" "${@}"; return 1; }
 
 	local tarball_url_fetch="${1}" dist_dir_fetch="${2}"
 
@@ -1864,7 +1884,9 @@ upd_cron_job()
 	:
 }
 
-select_dnsmasq_instances() {
+select_dnsmasq_instances()
+{
+	init_command select_dnsmasq_instances &&
 	do_select_dnsmasq_instances "${@}" || return 1
 
 	local all_req_addnmounts missing_addnmounts
@@ -2093,6 +2115,8 @@ stop()
 
 	restart_dnsmasq -nostop || stop_rc=1
 
+	rm -f "${MAC_SHARED_FILE}"
+
 	[ -n "${noexit}" ] &&
 		{ SAE_FORCE=1 SAE_QUIET=1 set_abl_env && get_abl_run_state ABL_RUN_STATE; }
 
@@ -2125,8 +2149,6 @@ reload()
 # 4 - adblock-lean is stopped
 status()
 {
-	local run_state active_entries_cnt=0 timestamp active_entries_cnt_human
-	init_command status || exit 1
 	check_lock
 	case ${?} in
 		1) exit 1 ;;
@@ -2135,20 +2157,15 @@ status()
 			exit 2
 	esac
 
-	load_config || { reg_failure "Failed to load config."; return 1; }
-
 	rc_enabled
 	case ${?} in
 		0) print_msg -green "" "adblock-lean service is enabled." ;;
 		1) print_msg -yellow "" "adblock-lean service is disabled."
 	esac
 
-	get_dnsmasq_instances &&
-	check_dnsmasq_instances &&
-	SAE_STATUS=1 set_abl_env &&
-	get_abl_run_state ABL_RUN_STATE || run_state=1
+	SAE_STATUS=1 init_command status || exit 1
 
-	: "${run_state:="${ABL_RUN_STATE}"}"
+	local run_state="${ABL_RUN_STATE}" active_entries_cnt=0 timestamp active_entries_cnt_human
 
 	case ${run_state} in
 		0) ;;

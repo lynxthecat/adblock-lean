@@ -27,6 +27,17 @@ ALL_PRESETS="mini small medium large large_relaxed"
 
 ### UTILITY FUNCTIONS
 
+tolower()
+{
+	local tl_str
+	case "${2}" in
+		*[A-Z]*) tl_str="$(printf '%s' "${2}" | tr 'A-Z' 'a-z' )" ;;
+		*) tl_str="${2}"
+	esac
+	eval "${1}"='${tl_str}'
+	: "${tl_str}"
+}
+
 trim_spaces()
 {
 	local tr_in tr_out
@@ -46,7 +57,7 @@ is_valid_dir()
 
 try_mv()
 {
-	[ -z "${1}" ] || [ -z "${2}" ] && { reg_failure "try_mv(): bad arguments."; return 1; }
+	[ -z "${1}" ] || [ -z "${2}" ] && { bad_args "try_mv" "${@}"; return 1; }
 	mv -f "${1}" "${2}" || { reg_failure "Failed to move '${1}' to '${2}'."; return 1; }
 	:
 }
@@ -1631,8 +1642,6 @@ do_select_dnsmasq_instances() {
 		esac
 	}
 
-	init_command select_dnsmasq_instances || return 1
-
 	FORCE_DHCP=1 get_dnsmasq_instances && is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] ||
 	{
 		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
@@ -1680,6 +1689,7 @@ do_select_dnsmasq_instances() {
 				do
 					eval "instance=\"\${INST_NAME_${index}}\"" \
 						"ifaces=\"\${IFACES_${index}}\""
+					ifaces="${ifaces// /, }"
 					reg_msg -3 "${index}. Instance '${instance}': interfaces '${ifaces}'"
 					indexes="${indexes}${index}|"
 				done
@@ -1707,7 +1717,15 @@ do_select_dnsmasq_instances() {
 			DNSMASQ_INDEXES="${REPLY}"
 		fi
 	fi
-	log_msg "Selected dnsmasq indexes: '${DNSMASQ_INDEXES}'."
+
+	local select_ifaces=
+	for index in ${DNSMASQ_INDEXES}
+	do
+		eval "ifaces=\"\${IFACES_${index}}\""
+		add2list select_ifaces "${ifaces}" " "
+	done
+
+	log_msg "Selected dnsmasq indexes: '${DNSMASQ_INDEXES}' (network intefaces: ${select_ifaces// /, })."
 
 	DNSMASQ_CONF_DIRS=
 	for index in ${DNSMASQ_INDEXES}
@@ -1755,7 +1773,8 @@ do_select_dnsmasq_instances() {
 #   GDI_NOFORCE: skip re-processing instances if DNSMASQ_INST_SET is non-empty
 # populates global vars:
 #   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
-#   INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}, ADDNMOUNTS_SET, DNSMASQ_INST_SET
+#   INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}, MAC_${index}
+#   MAC_SHARED_NEW, ADDNMOUNTS_SET, DNSMASQ_INST_SET
 get_dnsmasq_instances() {
 	# shellcheck disable=SC2317,SC2329
 	add_conf_dir_and_addnmounts()
@@ -1771,9 +1790,9 @@ get_dnsmasq_instances() {
 		is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] && return 0
 
 	local me=get_dnsmasq_instances \
-		nonempty='' instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir
+		nonempty='' instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir first_iface mac_addr mac_shared=''
 
-	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
+	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET MAC_SHARED_NEW
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -3 -blue "Checking dnsmasq instances."
 
@@ -1811,7 +1830,7 @@ get_dnsmasq_instances() {
 	index=0
 	for instance in ${instances}
 	do
-		unset "INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}"
+		unset "INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}" "MAC_${index}"
 
 		case "${instance}" in
 			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
@@ -1844,7 +1863,12 @@ get_dnsmasq_instances() {
 		IFS="${DEFAULT_IFS}"
 
 		# get ifaces for instance
-		ifaces="$(${AWK_CMD} -F= '/^\s*interface=/ {if (!seen[$2]++) {ifaces = ifaces $2 ", "} } END {print ifaces}' "${@}")"
+		ifaces="$(${AWK_CMD} -F= '/^\s*interface=/ {if ($2 != "" && !seen[$2]++) {ifaces = ifaces $2 " "} } END {print ifaces}' "${@}")"
+		[ -n "${ifaces}" ] ||
+		{
+			ifaces="$(fw4 zone lan)"
+			ifaces="${ifaces//"${_NL_}"/ }"
+		}
 
 		# get conf-dirs for instance
 		conf_dirs="$(
@@ -1861,14 +1885,31 @@ get_dnsmasq_instances() {
 		do
 			add2list ALL_CONF_DIRS "${dir}"
 		done
+
+		# get mac address for instance
+		mac_addr=
+		first_iface="${ifaces%% *}"
+		[ -n "${first_iface}" ] &&
+		read_str_from_file -v "mac_addr _" -f "/sys/class/net/${first_iface}/address" -a 1 -n 17 &&
+		mac_addr="${mac_addr//:/}" &&
+		case "${mac_addr}" in
+			''|*[!0-9a-fA-F]*) mac_addr='' ;;
+			*) add2list mac_shared "${mac_addr}" " "
+		esac
+
 		eval "INST_NAME_${index}=\"${instance}\"
 			CONF_DIRS_${index}=\"${conf_dirs}\"
-			IFACES_${index}=\"${ifaces%, }\""
+			IFACES_${index}=\"${ifaces% }\"
+			MAC_${index}=\"${mac_addr}\""
 		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
 		index=$((index+1))
 	done
 	json_cleanup
 	cnt_lines DNSMASQ_INSTANCES_CNT "${running_instances}"
+
+	mac_shared="${mac_shared// /}"
+	tolower mac_shared "${mac_shared}"
+	export MAC_SHARED_NEW="${mac_shared:0:24}" # trim to 24 chars (2 first addresses)
 
 	export DNSMASQ_INST_SET=1
 
