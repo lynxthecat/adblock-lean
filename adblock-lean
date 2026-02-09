@@ -389,6 +389,20 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
+get_curr_blocklist_paths()
+{
+	# Get current blocklist file if any
+	local path
+	read_str_from_file -v path -f "${LAST_BLOCKLIST_PATH_FILE:?}" -q -n 512 &&
+		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
+			BL_FILE_CURR="${path}"
+
+	# Get current pause file if any
+	read_str_from_file -v path -f "${LAST_PAUSE_PATH_FILE:?}" -q -n 512 &&
+		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
+			PAUSE_FILE_CURR="${path}"
+}
+
 # Splits path to file into dir, filename, ext
 split_path()
 {
@@ -417,9 +431,19 @@ split_path()
 	eval "${sp_dir_out_var}"='${sp_dir}' "${sp_fname_out_var}"='${sp_fname}' "${sp_ext_out_var}"='${sp_ext}'
 }
 
+is_valid_dir()
+{
+	local fail_cmd="reg_failure"
+	[ "${1}" = '-q' ] && { fail_cmd="debug_msg"; shift; }
+	case "${1}" in
+		''|"/"|[!/]*) ${fail_cmd} "Unexpected or invalid dir '${1}'."; return 1
+	esac
+	:
+}
+
 is_dir_volatile()
 {
-	is_valid_dir "${1}" &&
+	is_valid_dir -q "${1}" &&
 	{
 		[ "${1}" != "${PERSIST_BLOCKLIST_DIR}" ] || { [ "${PERSIST_BLOCKLIST_MODE}" = managed ] && [ -z "${KEEP_PERSIST}" ]; }
 	}
@@ -431,7 +455,7 @@ rm_if_volatile()
 	for path in "${@}"
 	do
 		split_path dir filename _ "${path}" &&
-		[ -n "${filename}" ] &&
+		[ -n "${dir}" ] && [ -n "${filename}" ] &&
 		is_dir_volatile "${dir}" || continue
 
 		rm -f "${dir}/${filename}" "${dir}/${filename}."*
@@ -440,27 +464,24 @@ rm_if_volatile()
 
 rm_pause_bl()
 {
-	local dir ext
-	[ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${PERSIST_BLOCKLIST_MODE}" = manual ] && FF_RM_EXTRA=1 find_files file "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME}" &&
-		split_path dir _ ext "${file}" &&
-		[ -n "${dir}" ] &&
-		try_mv "${file}" "${dir}/${BLOCKLIST_BASE_FNAME:?}${ext:+"."}${ext}"
-
-	KEEP_PERSIST='' rm_if_volatile "${PAUSE_FILE_CURR}" "${SHARED_BLOCKLIST_DIR:-???}/${PAUSE_BASE_FNAME}"*
-	rm -f "${ABL_RUN_DIR:-???}/${PAUSE_BASE_FNAME}"* "${LAST_PAUSE_PATH_FILE}"
+	local base_fname="${PAUSE_BASE_FNAME:?}"
+	KEEP_PERSIST='' rm_if_volatile "${PAUSE_FILE_CURR}" "${SHARED_BLOCKLIST_DIR:-"${ABL_RUN_DIR}"}/${base_fname}"* \
+		"${PAUSE_FILE_CURR%/*}/.${base_fname}.md5"
+	rm -f "${ABL_RUN_DIR:-???}/${base_fname}"* "${ABL_RUN_DIR}/.${base_fname}.md5" "${LAST_PAUSE_PATH_FILE}"
 	PAUSE_FILE_CURR=
 }
 
 rm_main_bl() {
-	rm_if_volatile "${BL_FILE_CURR}" "${BL_FILE_NEW}"
-	[ -n "${SHARED_BLOCKLIST_DIR}" ] && rm_if_volatile "${SHARED_BLOCKLIST_DIR}/${BLOCKLIST_BASE_FNAME:?}"*
-	rm -f "${ABL_RUN_DIR:-???}/${BLOCKLIST_BASE_FNAME:?}"* "${LAST_BLOCKLIST_PATH_FILE}"
+	local base_fname="${BLOCKLIST_BASE_FNAME:?}"
+	KEEP_PERSIST='' rm_if_volatile "${BL_FILE_CURR}" "${BL_FILE_NEW}" "${SHARED_BLOCKLIST_DIR:-"${ABL_RUN_DIR}"}/${base_fname}"*
+	KEEP_PERSIST=1 rm_if_volatile "${BL_FILE_CURR%/*}/.${base_fname}.md5"
+	rm -f "${ABL_RUN_DIR:?}/${base_fname}"* "${LAST_BLOCKLIST_PATH_FILE}" "${ABL_RUN_DIR:?}/.${base_fname}.md5"
 	local dir IFS="${_NL_}"
 	for dir in ${ALL_CONF_DIRS}${_NL_}/tmp/dnsmasq.d${_NL_}/tmp/dnsmasq.cfg01411c.d
 	do
 		[ -n "${dir}" ] || continue
 		IFS="${DEFAULT_IFS}"
-		rm -f "${dir}/${BLOCKLIST_BASE_FNAME:?}"*
+		rm -f "${dir}/${base_fname}"* "${dir}/.${base_fname}.md5"
 	done
 	IFS="${DEFAULT_IFS}"
 	BL_FILE_CURR=
@@ -831,7 +852,9 @@ cleanup_and_exit()
 		}
 		rm -rf "${ABL_TMP_DIR}"
 	fi
-	KEEP_PERSIST=1 rm_if_volatile "${BK_BL_FILE}"
+	local bk_dir bk_fname bk_file="${BK_BL_FILE:-"${BK_BL_BASE_PATH}"}"
+	split_path bk_dir bk_fname _ "${bk_file}"
+	KEEP_PERSIST=1 rm_if_volatile "${bk_file:-???}"* "${bk_dir:-???}/.${bk_fname:-???}.md5"
 
 	if [ -n "${FAIL_STOP_REQ}" ]
 	then
@@ -1391,9 +1414,7 @@ init_command()
 				1) exit 1 ;;
 				2) reg_failure "Failed to kill running adblock-lean processes."; exit 1
 			esac
-			load_config
 			GDI_NOFORCE=1 get_dnsmasq_instances
-			[ -n "${MAC_SHARED_CURR}" ] || get_shared_mac_addr MAC_SHARED_CURR
 			CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
 			libs_req=1 LOCK_REQ=1
@@ -1477,12 +1498,11 @@ init_command()
 
 	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_TMP_DIR}" || exit 1; }
 
-	if [ -n "${config_req}" ] && [ -z "${CONFIG_LOADED}" ]
+	if [ -n "${config_req}" ]
 	then
 		local force_config_fix=
 		[ -n "${ABL_LUCI_SOURCED}" ] && force_config_fix='-f'
 		load_config ${force_config_fix} || { reg_failure "Failed to load config."; exit 1; }
-		CONFIG_LOADED=1
 	fi
 
 	# Prepare environment
@@ -1493,7 +1513,6 @@ init_command()
 		check_dnsmasq_instances &&
 		{ [ -n "${MAC_SHARED_CURR}" ] || get_shared_mac_addr MAC_SHARED_CURR; } &&
 		set_abl_env || exit 1
-		get_abl_run_state ABL_RUN_STATE
 	}
 
 	# check dnsmasq, source custom script
@@ -1816,7 +1835,7 @@ get_blocklist_timestamp()
 	fi
 }
 
-inval_run_state() { reg_failure "${2}${2:+": "}Unexpected run state code '${1}'."; }
+inval_run_state() { reg_failure "${2}${2:+"(): "}Unexpected run state code '${1}'."; }
 
 
 ### MAIN COMMAND FUNCTIONS
@@ -1931,14 +1950,6 @@ start()
 		exit 1
 	fi
 
-	case "${ABL_RUN_STATE}" in
-		0) ;;
-		1) stop 1 -noexit ;;
-		3) reg_msg -3 -purple "" "adblock-lean is currently paused. "; resume ;;
-		4) ;;
-		*) inval_run_state "${ABL_RUN_STATE}" "start()"; exit 1
-	esac
-
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
 		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
@@ -1952,29 +1963,7 @@ start()
 		*) reg_failure "Unexpected start action '${START_ACTION}'."; exit 1
 	esac
 
-	local entries_cnt conn_check_req=1 rv=1 initial_uptime_ms elapsed_time totalmem
-
-	case ${ABL_RUN_STATE} in
-		1) unload_blocklist_before_update=1 ;;
-		3|4) unload_blocklist_before_update=0 conn_check_req='' ;;
-	esac
-
-	if [ "${unload_blocklist_before_update}" = auto ]
-	then
-		read -r _ totalmem _ < /proc/meminfo
-		if is_uint "${totalmem}" && [ "${totalmem}" -ge 410000 ]
-		then
-			unload_blocklist_before_update=0
-		else
-			unload_blocklist_before_update=1
-		fi
-	fi
-
-	if [ "${unload_blocklist_before_update}" != 1 ] && [ -n "${conn_check_req}" ]
-	then
-		reg_action -3 -blue "Testing connectivity." || exit 1
-		test_url_domains || unload_blocklist_before_update=1
-	fi
+	local run_state entries_cnt conn_check_req=1 rv=1 initial_uptime_ms elapsed_time totalmem
 
 	get_uptime_ms initial_uptime_ms
 
@@ -1990,15 +1979,7 @@ start()
 
 		[ -z "${BL_FILE_CURR}" ] || [ "${BL_FILE_CURR}" = "${LOAD_BL_PATH}" ] || rm_main_bl
 
-		if [ "${unload_blocklist_before_update}" = 1 ]
-		then
-			reg_action -3 -blue "Unloading current blocklist."
-			[ -z "${BL_FILE_CURR}" ] || [ "${BL_FILE_CURR}" = "${LOAD_BL_PATH}" ] || rm_main_bl
-			restart_dnsmasq || exit 1
-		fi
-
 		if stop_dnsmasq &&
-			test_blocklist "${LOAD_BL_PATH}" "${LOAD_BL_ENTRIES_CNT}" "${LOAD_BL_DESC}" &&
 			install_blocklist "${LOAD_BL_PATH}" "${LOAD_BL_ENTRIES_CNT}" "${LOAD_BL_DESC}"
 		then
 			rv=0
@@ -2016,6 +1997,38 @@ start()
 
 	if [ "${START_ACTION}" = gen ]
 	then
+
+		get_abl_run_state run_state
+		case "${run_state}" in
+			0) ;;
+			1) stop 1 -noexit; get_abl_run_state run_state ;;
+			3) reg_msg -3 -purple "" "adblock-lean is currently paused. "; resume ;;
+			4) ;;
+			*) inval_run_state "${run_state}" "start"; exit 1
+		esac
+
+		case ${run_state} in
+			1) unload_blocklist_before_update=1 ;;
+			3|4) unload_blocklist_before_update=0 conn_check_req='' ;;
+		esac
+
+		if [ "${unload_blocklist_before_update}" = auto ]
+		then
+			read -r _ totalmem _ < /proc/meminfo
+			if is_uint "${totalmem}" && [ "${totalmem}" -ge 410000 ]
+			then
+				unload_blocklist_before_update=0
+			else
+				unload_blocklist_before_update=1
+			fi
+		fi
+
+		if [ "${unload_blocklist_before_update}" != 1 ] && [ -n "${conn_check_req}" ]
+		then
+			reg_action -3 -blue "Testing connectivity." || exit 1
+			test_url_domains || unload_blocklist_before_update=1
+		fi
+
 		if [ -n "${BL_FILE_CURR}" ]
 		then
 			if is_dir_volatile "${BL_FILE_CURR%/*}"
@@ -2024,7 +2037,7 @@ start()
 			elif [ -f "${BL_FILE_CURR}" ]
 			then
 				BK_BL_FILE=${BL_FILE_CURR}
-				export RESTORE_FROM_PERSIST=1
+				export RESTORE_FROM_PERSIST=1 # for persistent blocklist in 'manual' mode, the original file is used as a backup
 			fi
 		else
 			log_msg "" "No existing blocklist found."
@@ -2045,10 +2058,10 @@ start()
 
 		if gen_blocklist entries_cnt "${processed_bl_file}" "${initial_uptime_ms}" &&
 			stop_dnsmasq &&
-			test_blocklist "${processed_bl_file}" "${entries_cnt}" "processed" &&
 			conv_compr "${processed_bl_file}" "${BL_FILE_NEW}" "${FINAL_COMPR_TO_FILE}" &&
 			install_blocklist "${BL_FILE_NEW}" "${entries_cnt}" "processed"
 		then
+			[ "${BL_FILE_NEW%/*}" = "${PERSIST_BLOCKLIST_DIR}" ] && mk_blocklist_md5 "${BL_FILE_NEW}"
 			rv=0
 		else
 			reg_failure "Failed to generate new blocklist."
@@ -2058,7 +2071,7 @@ start()
 				[ -n "${RESTORE_FROM_PERSIST}" ] && BL_FILE_NEW="${BK_BL_FILE}"
 				if restore_saved_blocklist "${BK_BL_FILE}" "${BL_FILE_NEW}"
 				then
-					if CA_CHECK_DNS=1 check_active_blocklist
+					if CA_CHECK_DNS=1 check_active_blocklist -new
 					then
 						log_msg -green "Previous blocklist restored successfully."
 						restore_failed=
@@ -2093,7 +2106,7 @@ start()
 # 1/2 - (optional) '-noexit' to return to the calling function
 stop()
 {
-	local file dir ext stop_rc=0 ASSERT_NOEXIT=1 KEEP_PERSIST=1 noexit=
+	local file dir stop_rc=0 ASSERT_NOEXIT=1 KEEP_PERSIST=1 noexit=
 	for _arg in "$@"
 	do
 		case "${_arg}" in
@@ -2106,8 +2119,9 @@ stop()
 
 	init_command stop || { FAIL_STOP_REQ=''; exit 1; }
 
+	get_curr_blocklist_paths
+
 	reg_msg -3 -blue "" "Unloading blocklist and removing any adblock-lean blocklist files."
-	SAE_QUIET=1 set_abl_env
 
 	rm_conf_scripts || stop_rc=1
 	rm_pause_bl
@@ -2117,16 +2131,12 @@ stop()
 
 	rm -f "${MAC_SHARED_FILE}"
 
-	[ -n "${noexit}" ] &&
-		{ SAE_FORCE=1 SAE_QUIET=1 set_abl_env && get_abl_run_state ABL_RUN_STATE; }
-
 	log_msg -purple "" "Stopped adblock-lean." || stop_rc=1
 
 	[ -n "${noexit}" ] && return "${stop_rc}"
 
 	FAIL_STOP_REQ=
 	exit "${stop_rc}"
-
 }
 
 restart()
@@ -2165,14 +2175,15 @@ status()
 
 	SAE_STATUS=1 init_command status || exit 1
 
-	local run_state="${ABL_RUN_STATE}" active_entries_cnt=0 timestamp active_entries_cnt_human
+	local run_state active_entries_cnt=0 timestamp active_entries_cnt_human
 
+	get_abl_run_state run_state
 	case ${run_state} in
 		0) ;;
 		1) reg_failure "adblock-lean is not working correctly. Consider running 'service adblock-lean restart' in order to restore adblocking." ;;
 		3) print_msg -yellow "" "adblock-lean is paused." ;;
 		4) print_msg -yellow "" "adblock-lean is stopped." ;;
-		*) inval_run_state "${run_state}" "status()"
+		*) inval_run_state "${run_state}" "status"
 	esac
 
 	if [ "${run_state}" = 0 ]
@@ -2207,18 +2218,21 @@ status()
 
 pause()
 {
+	local run_state
 	init_command pause || exit 1
-	case "${ABL_RUN_STATE}" in
+	get_abl_run_state run_state
+	case "${run_state}" in
 		0) ;;
 		1) stop 1 ;;
 		3) reg_msg -3 -green "adblock-lean is already paused."; exit 0 ;;
 		4) reg_msg -3 -err "adblock-lean is currently stopped."; exit 1 ;;
-		*) inval_run_state "${ABL_RUN_STATE}" "pause()"; exit 1
+		*) inval_run_state "${run_state}" "pause"; exit 1
 	esac
 
 	local FAIL_STOP_REQ=1
 	export_blocklist "${BL_FILE_CURR}" "${PAUSE_FILE_NEW}" "${FINAL_COMPR_TO_FILE}" || exit 1
 	printf '%s\n' "${PAUSE_FILE_NEW}" > "${LAST_PAUSE_PATH_FILE}"
+	mk_blocklist_md5 "${PAUSE_FILE_NEW}"
 	rm_conf_scripts
 	rm_main_bl
 	restart_dnsmasq || exit 1
@@ -2229,13 +2243,15 @@ pause()
 
 resume()
 {
+	local run_state
 	init_command resume || exit 1
-	case "${ABL_RUN_STATE}" in
+	get_abl_run_state run_state
+	case "${run_state}" in
 		0) reg_msg -3 -green "adblock-lean is already running."; exit 0 ;;
 		1) stop 1 ;;
 		3) ;;
 		4) reg_msg -3 -err "adblock-lean is currently stopped, not paused. Can not resume."; exit 1 ;;
-		*) inval_run_state "${ABL_RUN_STATE}" "resume()"; exit 1
+		*) inval_run_state "${run_state}" "resume"; exit 1
 	esac
 
 	FAIL_STOP_REQ=1
@@ -2256,7 +2272,7 @@ update()
 	# unset vars and functions from current version to have a clean slate with the new version
 	clean_abl_env()
 	{
-		unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT
+		unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED
 		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 	}
 

@@ -239,6 +239,15 @@ get_elapsed_time_human()
 
 # HELPER FUNCTIONS
 
+mk_blocklist_md5()
+{
+	local me=mk_blocklist_md5 bl_dir bl_fname bl_file="${1}"
+	split_path bl_dir bl_fname _ "${bl_file}" &&
+	assert_set "F_${me}" bl_dir bl_fname || return 1
+	[ -f "${bl_file}" ] || { reg_failure "${me}: file '${bl_file}' not found"; }
+	md5sum "${bl_file}" > "${bl_dir}/.${bl_fname}.md5" || rm -f "${bl_dir}/.${bl_fname}.md5"
+}
+
 get_active_entries_cnt()
 {
 	local cnt ext rv=1 \
@@ -348,11 +357,8 @@ get_abl_run_state()
 	are_var_names_safe "${grs_out_var}" &&
 	assert_set F_get_abl_run_state grs_out_var || return 1
 
-	export "${grs_out_var}=1"
 	try_get_abl_run_state
 	export "${grs_out_var}=${?}"
-	debug_msg "Run state: ${ABL_RUN_STATE}" "Mac shared curr: '${MAC_SHARED_CURR}', new: '${MAC_SHARED_NEW}'"
-
 	:
 }
 
@@ -663,16 +669,7 @@ set_abl_env()
 
 	debug_msg "Preparing environment." 
 
-	# Get current blocklist file if any
-	local path
-	read_str_from_file -v path -f "${LAST_BLOCKLIST_PATH_FILE}" -q -n 512 &&
-		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
-			BL_FILE_CURR="${path}"
-
-	# Get current pause file if any
-	read_str_from_file -v path -f "${LAST_PAUSE_PATH_FILE}" -q -n 512 &&
-		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
-			PAUSE_FILE_CURR="${path}"
+	get_curr_blocklist_paths
 
 	assert_set "F_${me}" DNSMASQ_INDEXES || return 1
 
@@ -739,7 +736,6 @@ set_abl_env()
 		compr_cmd_stdout="${compr_util_path} -c"
 		extr_cmd_stdout="${compr_util_path} -cd"
 
-		# Interm compr commands
 		PART_EXTR_OR_CAT_STDOUT="try_extract -stdout"
 		INTERM_COMPR_OR_CAT_STDOUT="${compr_cmd_stdout} ${interm_compr_opts}"
 		INTERM_COMPR_TO_FILE="${compr_cmd_to_file} ${interm_compr_opts}"
@@ -1776,49 +1772,6 @@ stop_dnsmasq()
 	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
 }
 
-# 1 - blocklist path
-# 2 - entries count
-# 3 - printable description
-test_blocklist()
-{
-	local entries_cnt_human errors
-		test_path="${1}" entries_cnt="${2}" desc="${3}"
-
-	int2human entries_cnt_human "${entries_cnt}" || return 1
-
-	if [ "${entries_cnt}" -lt "${min_good_line_count}" ]
-	then
-		int2human min_good_line_count_human "${min_good_line_count}" || return 1
-		reg_failure "Entries count (${entries_cnt_human}) is below the minimum value set in config (${min_good_line_count_human})."
-		return 1
-	fi
-
-	# check the final blocklist with dnsmasq --test
-	reg_action -3 -blue "Checking the ${desc}${desc:+ }blocklist file with 'dnsmasq --test'." || return 1
-
-	rm -f "${ERR_F}"
-
-	{
-		try_extract -stdout "${test_path}" |
-		dnsmasq --test -C -
-	} 2> "${ERR_F}"
-
-	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ERR_F}"
-	then
-		errors="$(head -n10 "${ERR_F}" | ${SED_CMD} '/^$/d')"
-		rm -f "${ERR_F}"
-		rm_if_volatile "${test_path}"
-		reg_failure "dnsmasq test on the ${desc}${desc:+ }blocklist failed."
-		log_msg "Errors:" "${errors:-"No specifics: probably killed because of OOM."}"
-		return 2
-	fi
-
-	rm -f "${ERR_F}"
-
-	reg_msg -3 -green "New blocklist file check passed."
-	:
-}
-
 # Env vars:
 # CONF_FILES_REQ (0|1): create conf files in dnsmasq dirs
 #
@@ -1829,14 +1782,62 @@ test_blocklist()
 # 4: description
 install_blocklist()
 {
-	local size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir \
+	local size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir errors bl_md5_file \
 		final_file="${1}" entries_cnt="${2}" desc="${3}"
 
 	assert_set F_install_blocklist final_file desc DNSMASQ_CONF_DIRS FINAL_EXTR_OR_CAT_STDOUT || return 1
 
-	reg_msg -3 -blue "Installing ${desc} blocklist file."
-
 	[ -z "${entries_cnt}" ] || int2human entries_cnt_human "${entries_cnt}" || return 1
+
+	if [ -n "${entries_cnt}" ] && [ "${entries_cnt}" -lt "${min_good_line_count}" ]
+	then
+		int2human min_good_line_count_human "${min_good_line_count}" || return 1
+		reg_failure "Entries count (${entries_cnt_human}) is below the minimum value set in config (${min_good_line_count_human})."
+		return 1
+	fi
+
+	# Check blocklist
+	split_path bl_dir bl_fname _ "${final_file}"
+	bl_md5_file="${bl_dir}/.${bl_fname}.md5"
+
+
+
+	[ -s "${bl_md5_file}" ] &&
+	md5sum "${final_file}" |
+	${AWK_CMD} '
+		BEGIN{rv=1}
+		NR==FNR { if (NR==1) new=$1; next}
+		{if ($1 && $1==new) rv=0; exit}
+		END{exit rv}
+	' "${bl_md5_file}" - ||
+	{
+		rm_if_volatile "${bl_md5_file}"
+		# check the final blocklist with dnsmasq --test
+		reg_action -3 -blue "Checking the ${desc}${desc:+ }blocklist file with 'dnsmasq --test'." || return 1
+
+		rm -f "${ERR_F}"
+
+		{
+			try_extract -stdout "${final_file}" |
+			dnsmasq --test -C -
+		} 2> "${ERR_F}"
+
+		if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ERR_F}"
+		then
+			errors="$(head -n10 "${ERR_F}" | ${SED_CMD} '/^$/d')"
+			rm -f "${ERR_F}"
+			rm_if_volatile "${final_file}"
+			reg_failure "dnsmasq test on the ${desc}${desc:+ }blocklist failed."
+			log_msg "Errors:" "${errors:-"No specifics: probably killed because of OOM."}"
+			return 2
+		fi
+
+		rm -f "${ERR_F}"
+	}
+
+	reg_msg -3 -green "Blocklist file check passed."
+
+	reg_msg -3 -blue "Installing ${desc} blocklist file."
 
 	size_b="$(get_file_size "${final_file}")" &&
 	bytes2human list_size_human "${size_b}" || return 1
@@ -1884,22 +1885,18 @@ conv_compr()
 
 try_conv_compr()
 {
-	local me=conv_compr src_ext='' dest_ext='' src_dir='' dest_dir='' \
+	local me=conv_compr src_dir src_fname src_ext dest_dir dest_fname dest_ext \
 		src_path="${1}" dest_path="${2}" compr_cmd="${3}"
 
 	assert_set "F_${me}" src_path dest_path || return 1
 
-	src_dir="${src_path%/*}"
-	dest_dir="${dest_path%/*}"
-
+	split_path src_dir src_fname src_ext "${src_path}" &&
+	split_path dest_dir dest_fname dest_ext "${dest_path}" || return 1
 	is_valid_dir "${src_dir}" && is_valid_dir "${dest_dir}" || { reg_failure "${me}: unexpected src dir '${src_dir}' or dest dir '${dest_dir}'."; return 1; }
 
 	[ -f "${src_path}" ] || { reg_failure "File not found at path '${src_path}'."; return 2; }
 
 	[ "${src_path}" = "${dest_path}" ] && return 0
-
-	get_compr_spec src_ext _ "${src_path}" &&
-	get_compr_spec dest_ext _ "${dest_path}" || return 1
 
 	[ -z "${dest_ext}" ] || assert_set "F_${me}" compr_cmd || return 1
 
@@ -1916,12 +1913,12 @@ try_conv_compr()
 	fi
 
 	# Avoid writing into PERSIST_BLOCKLIST_DIR unless mode is 'main'
-	if [ "${src_dir}" = "${PERSIST_BLOCKLIST_DIR}" ] && [ "${dest_dir}" != "${src_dir}" ] && [ "${PERSIST_BLOCKLIST_MODE}" != managed ]
-	then
-		cp "${src_path}" "${dest_path}"
-	else
-		try_mv "${src_path}" "${dest_path}"
-	fi || return 1
+	local transfer_cmd="try_mv"
+	[ "${src_dir}" = "${PERSIST_BLOCKLIST_DIR}" ] && [ "${dest_dir}" != "${src_dir}" ] && [ "${PERSIST_BLOCKLIST_MODE}" != managed ] &&
+		transfer_cmd="cp"
+
+	${transfer_cmd} "${src_path}" "${dest_path}" &&
+	[ ! -f "${src_dir}/.${src_fname}.md5" ] || ${transfer_cmd} "${src_dir}/.${src_fname}.md5" "${dest_dir}/.${dest_fname}.md5" || return 1
 
 	:
 }
@@ -2013,10 +2010,11 @@ try_restore_saved_blocklist()
 	rm_conf_scripts
 	rm_main_bl
 
-	[ -n "${RESTORE_FROM_PERSIST}" ] && [ "${src_file}" != "${dest_file}" ] &&
+	[ -n "${RESTORE_FROM_PERSIST}" ] &&
+		[ "${src_file}" != "${dest_file}" ] &&
 		{ reg_failure "${me}: \$RESTORE_FROM_PERSIST is set but source file '${src_file}' is not the same as dest file '${dest_file}'"; return 1; }
 
-	[ -n "${RESTORE_FROM_PERSIST}" ] || conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" ""
+	conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" ""
 
 	MAC_SHARED_NEW=${MAC_SHARED_CURR}
 

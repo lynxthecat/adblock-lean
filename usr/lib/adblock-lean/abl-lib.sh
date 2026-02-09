@@ -47,14 +47,6 @@ trim_spaces()
 	eval "${1}=\"\${tr_out}\""
 }
 
-is_valid_dir()
-{
-	case "${1}" in
-		''|"/"|[!/]*) reg_failure "Unexpected or invalid dir '${1}'."; return 1
-	esac
-	:
-}
-
 try_mv()
 {
 	[ -z "${1}" ] || [ -z "${2}" ] && { bad_args "try_mv" "${@}"; return 1; }
@@ -856,7 +848,7 @@ do_gen_config()
 	fi
 	[ "${REPLY}" = n ] && cron_schedule=disable
 
-	reg_action -3 -purple "Generating new default config for adblock-lean from preset '${preset}'." || return 1
+	reg_action -3 -purple "" "Generating new default config for adblock-lean from preset '${preset}'." || return 1
 	write_config "$(print_def_config -p "${preset}" -n "${DNSMASQ_INDEXES}" -c "${DNSMASQ_CONF_DIRS}")" || return 1
 
 	:
@@ -1227,6 +1219,7 @@ parse_config()
 load_config()
 {
 	try_load_config || { log_msg "Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."; return 1; }
+	export CONFIG_LOADED=1
 
 	# check for missing addnmounts during version update
 	if [ -n "${ABL_IN_INSTALL}" ]
