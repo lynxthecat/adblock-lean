@@ -1,6 +1,6 @@
 #!/bin/sh /etc/rc.common
 # shellcheck source=/dev/null
-# shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003,SC3060,SC3040
+# shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003,SC3060
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
 # Project homepage: https://github.com/lynxthecat/adblock-lean
@@ -79,7 +79,8 @@ export ABL_GEN_FILES="${ABL_SERVICE_PATH}" \
 	ABL_CRON_CMD="/etc/init.d/adblock-lean start" \
 	\
 	LAST_BLOCKLIST_PATH_FILE="${ABL_RUN_DIR}/last-blocklist-path.txt" \
-	LAST_PAUSE_PATH_FILE="${ABL_RUN_DIR}/pause-blocklist-path.txt"
+	LAST_PAUSE_PATH_FILE="${ABL_RUN_DIR}/pause-blocklist-path.txt" \
+	PROCESSED_BL_BASE_FNAME="processed-blocklist"
 
 : "${ABL_REPO_AUTHOR:=lynxthecat}"
 ABL_GH_URL_API="https://api.github.com/repos/${ABL_REPO_AUTHOR}/adblock-lean"
@@ -325,7 +326,7 @@ read_str_from_file()
 		esac
 	done
 
-	[ -n "${rs_outvars}" ] && [ -n "${rs_file}" ] || { bad_args "${me}" "${@}"; return 1; }
+	assert_set "F_${me}" rs_outvars rs_file &&
 	unset_vars ${rs_outvars} || return 1
 
 	rs_attempt=0
@@ -389,18 +390,29 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
+# Populates globl vars: BL_FILE_CURR PAUSE_FILE_CURR PERSIST_BL_FILE_CURR
 get_curr_blocklist_paths()
 {
-	# Get current blocklist file if any
+	debug_msg "Looking for existing blocklist files."
 	local path
+	export \
+		BL_FILE_CURR='' \
+		PAUSE_FILE_CURR='' \
+		PERSIST_BL_FILE_CURR=''
+
+	# Current blocklist file path
 	read_str_from_file -v path -f "${LAST_BLOCKLIST_PATH_FILE:?}" -q -n 512 &&
 		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
 			BL_FILE_CURR="${path}"
 
-	# Get current pause file if any
+	# Current pause file path
 	read_str_from_file -v path -f "${LAST_PAUSE_PATH_FILE:?}" -q -n 512 &&
 		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
 			PAUSE_FILE_CURR="${path}"
+
+	# Current persistent blocklist path
+	FF_RM_EXTRA=1 find_files PERSIST_BL_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}"
+	:
 }
 
 # Splits path to file into dir, filename, ext
@@ -445,7 +457,17 @@ is_dir_volatile()
 {
 	is_valid_dir -q "${1}" &&
 	{
-		[ "${1}" != "${PERSIST_BLOCKLIST_DIR}" ] || { [ "${PERSIST_BLOCKLIST_MODE}" = managed ] && [ -z "${KEEP_PERSIST}" ]; }
+		{ [ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${1}" != "${PERSIST_BLOCKLIST_DIR}" ]; } ||
+
+		{ [ "${PERSIST_BLOCKLIST_MODE}" = managed ] && [ "${KEEP_PERSIST}" != 1 ]; } ||
+
+		{
+			[ -z "${PERSIST_BLOCKLIST_DIR}" ] &&
+			case "${1}" in
+				/tmp|/tmp/*|"${ABL_RUN_DIR:?}"*) : ;;
+				*) false
+			esac
+		}
 	}
 }
 
@@ -464,8 +486,22 @@ rm_if_volatile()
 
 rm_pause_bl()
 {
-	local base_fname="${PAUSE_BASE_FNAME:?}"
-	KEEP_PERSIST='' rm_if_volatile "${PAUSE_FILE_CURR}" "${SHARED_BLOCKLIST_DIR:-"${ABL_RUN_DIR}"}/${base_fname}"* \
+	local file found_file dir ext base_fname="${PAUSE_BASE_FNAME:?}"
+	[ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${PERSIST_BLOCKLIST_MODE}" != manual ] &&
+	{
+		FF_RM_EXTRA=1 find_files found_file "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME}"
+		for file in "${CURR_PAUSE_FILE}" "${found_file}"
+		do
+			[ -n "${file}" ] || continue
+			split_path dir _ ext "${file}" &&
+			[ "${dir}" = "${PERSIST_BLOCKLIST_DIR}" ] &&
+			[ -f "${file}" ] &&
+			conv_compr "${file}" "${dir}/${BLOCKLIST_BASE_FNAME:?}${ext:+"."}${ext}"
+		done
+	}
+	KEEP_PERSIST=0 rm_if_volatile \
+		"${PAUSE_FILE_CURR}" \
+		"${SHARED_BLOCKLIST_DIR:-"${ABL_RUN_DIR}"}/${base_fname}"* \
 		"${PAUSE_FILE_CURR%/*}/.${base_fname}.md5"
 	rm -f "${ABL_RUN_DIR:-???}/${base_fname}"* "${ABL_RUN_DIR}/.${base_fname}.md5" "${LAST_PAUSE_PATH_FILE}"
 	PAUSE_FILE_CURR=
@@ -473,8 +509,11 @@ rm_pause_bl()
 
 rm_main_bl() {
 	local base_fname="${BLOCKLIST_BASE_FNAME:?}"
-	KEEP_PERSIST='' rm_if_volatile "${BL_FILE_CURR}" "${BL_FILE_NEW}" "${SHARED_BLOCKLIST_DIR:-"${ABL_RUN_DIR}"}/${base_fname}"*
-	KEEP_PERSIST=1 rm_if_volatile "${BL_FILE_CURR%/*}/.${base_fname}.md5"
+	KEEP_PERSIST=1 rm_if_volatile \
+		"${BL_FILE_CURR}" \
+		"${BL_FILE_NEW}" \
+		"${SHARED_BLOCKLIST_DIR:-"${ABL_RUN_DIR}"}/${base_fname}"* \
+		"${BL_FILE_CURR%/*}/.${base_fname}.md5"
 	rm -f "${ABL_RUN_DIR:?}/${base_fname}"* "${LAST_BLOCKLIST_PATH_FILE}" "${ABL_RUN_DIR:?}/.${base_fname}.md5"
 	local dir IFS="${_NL_}"
 	for dir in ${ALL_CONF_DIRS}${_NL_}/tmp/dnsmasq.d${_NL_}/tmp/dnsmasq.cfg01411c.d
@@ -704,7 +743,7 @@ log_msg() { reg_msg -1 "${@}"; }
 
 debug_msg()
 {
-	local prefix="${purple}debug:${n_c}"
+	local prefix="${yellow}debug:${n_c}"
 	case ${#} in
 		1) reg_msg -5 "${prefix} ${1}" ;;
 		*) reg_msg -5 "" "${prefix}" "${@}" ""
@@ -856,13 +895,14 @@ cleanup_and_exit()
 	split_path bk_dir bk_fname _ "${bk_file}"
 	KEEP_PERSIST=1 rm_if_volatile "${bk_file:-???}"* "${bk_dir:-???}/.${bk_fname:-???}.md5"
 
+	rm -rf "${ABL_CONF_STAGING_DIR}"
+	rm -f "${ABL_RUN_DIR:-???}/${PROCESSED_BL_BASE_FNAME:-???}"*
+
 	if [ -n "${FAIL_STOP_REQ}" ]
 	then
 		ABL_NOTRAPS=1 stop "${1}" -noexit
 		rm -rf "${ABL_RUN_DIR}"
 	fi
-
-	rm -rf "${ABL_CONF_STAGING_DIR}"
 
 	[ -n "${LOCK_REQ}" ] && rm_lock
 	local recent_log=
@@ -1151,7 +1191,7 @@ print_file_list()
 	local me=print_file_list file_type files='' IFS="${DEFAULT_IFS}" \
 		file_types="${1}"
 
-	[ -n "$1" ] || { bad_args "${me}" "${@}"; return 1; }
+	assert_set "F_${me}" file_types || return 1
 
 	if [ "${file_types}" = ALL ]
 	then
@@ -1177,7 +1217,7 @@ ver_upd_fixup()
 	local me=ver_upd_fixup fix_ver='' fix_upd_channel='' md5sums='' \
 		curr_ver="${1}" curr_upd_ch="${2}"
 
-	[ -n "${1}" ] && [ -n "${2}" ] || { bad_args "${me}" "${@}"; return 1; }
+	assert_set "F_${me}" curr_ver curr_upd_ch || return 1
 
 	log_msg -purple "Completing adblock-lean version upgrade..."
 
@@ -1369,15 +1409,6 @@ del_addnmounts()
 ### Commands init
 init_command()
 {
-	get_shared_mac_addr()
-	{
-		local mac
-		assert_set F_get_shared_mac_addr MAC_SHARED_FILE || return 1
-		read_str_from_file -v mac -f "${MAC_SHARED_FILE}" -q -a 1
-		eval "${1}"='${mac}'
-		: "${mac}"
-	}
-
 	ABL_CMD="${1}"
 	local config_req=''  work_dir_req='' act_pr='' init_action_pr='' init_action_short='' env_req='' \
 		log_rotated='' log_rotate_req=''
@@ -1506,14 +1537,7 @@ init_command()
 	fi
 
 	# Prepare environment
-	[ -n "${env_req}" ] &&
-	{
-		set -o pipefail
-		get_dnsmasq_instances &&
-		check_dnsmasq_instances &&
-		{ [ -n "${MAC_SHARED_CURR}" ] || get_shared_mac_addr MAC_SHARED_CURR; } &&
-		set_abl_env || exit 1
-	}
+	[ -n "${env_req}" ] && { set_abl_env || exit 1; }
 
 	# check dnsmasq, source custom script
 	case ${ABL_CMD} in
@@ -1767,13 +1791,11 @@ abl_post_update_2()
 # 2 - distribution directory
 fetch_abl_dist()
 {
-	[ -n "${1}" ] && [ -n "${2}" ] || { bad_args "fetch_abl_dist" "${@}"; return 1; }
-
-	local tarball_url_fetch="${1}" dist_dir_fetch="${2}"
-
 	local fetch_rv extract_dir fetch_dir="${dist_dir_fetch}/fetch"
 	local  tarball="${fetch_dir}/remote_abl.tar.gz" ucl_err_file="${fetch_dir}/ucl_err" \
+		tarball_url_fetch="${1}" dist_dir_fetch="${2}"
 
+	assert_set F_fetch_abl_dist tarball_url_fetch dist_dir_fetch || return 1
 
 	rm -f "${ucl_err_file}" "${tarball}"
 	rm -rf "${fetch_dir}/${ABL_REPO_AUTHOR}-adblock-lean-"*
@@ -1963,7 +1985,7 @@ start()
 		*) reg_failure "Unexpected start action '${START_ACTION}'."; exit 1
 	esac
 
-	local run_state entries_cnt conn_check_req=1 rv=1 initial_uptime_ms elapsed_time totalmem
+	local run_state entries_cnt conn_check_req=1 rv=1 initial_uptime_ms elapsed_time totalmem restore_from_persist=''
 
 	get_uptime_ms initial_uptime_ms
 
@@ -2037,7 +2059,7 @@ start()
 			elif [ -f "${BL_FILE_CURR}" ]
 			then
 				BK_BL_FILE=${BL_FILE_CURR}
-				export RESTORE_FROM_PERSIST=1 # for persistent blocklist in 'manual' mode, the original file is used as a backup
+				restore_from_persist=1 # for persistent blocklist in 'manual' mode, the original file is used as a backup
 			fi
 		else
 			log_msg "" "No existing blocklist found."
@@ -2054,7 +2076,7 @@ start()
 
 		assert_set F_start BL_FILE_NEW || return 1
 
-		processed_bl_file="${ABL_TMP_DIR}/processed-blocklist${FINAL_COMPR_EXT}"
+		processed_bl_file="${ABL_TMP_DIR}/${PROCESSED_BL_BASE_FNAME:?}${FINAL_COMPR_EXT}"
 
 		if gen_blocklist entries_cnt "${processed_bl_file}" "${initial_uptime_ms}" &&
 			stop_dnsmasq &&
@@ -2068,7 +2090,7 @@ start()
 			local restore_failed=1
 			if [ -f "${BK_BL_FILE}" ]
 			then
-				[ -n "${RESTORE_FROM_PERSIST}" ] && BL_FILE_NEW="${BK_BL_FILE}"
+				[ -n "${restore_from_persist}" ] && BL_FILE_NEW="${BK_BL_FILE}"
 				if restore_saved_blocklist "${BK_BL_FILE}" "${BL_FILE_NEW}"
 				then
 					if CA_CHECK_DNS=1 check_active_blocklist -new
@@ -2088,7 +2110,7 @@ start()
 		fi
 	fi
 
-	[ -n "${RESTORE_FROM_PERSIST}" ] || rm -f "${BK_BL_FILE}"
+	[ -n "${restore_from_persist}" ] || rm -f "${BK_BL_FILE}"
 
 	[ "${rv}" = 0 ] &&
 	{
@@ -2118,6 +2140,7 @@ stop()
 	msg="${msg% }"
 
 	init_command stop || { FAIL_STOP_REQ=''; exit 1; }
+	load_config
 
 	get_curr_blocklist_paths
 

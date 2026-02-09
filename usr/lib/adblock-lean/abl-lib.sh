@@ -49,7 +49,7 @@ trim_spaces()
 
 try_mv()
 {
-	[ -z "${1}" ] || [ -z "${2}" ] && { bad_args "try_mv" "${@}"; return 1; }
+	[ -n "${1}" ] && [ -n "${2}" ] || { bad_args "try_mv" "${@}"; return 1; }
 	mv -f "${1}" "${2}" || { reg_failure "Failed to move '${1}' to '${2}'."; return 1; }
 	:
 }
@@ -1270,6 +1270,9 @@ try_load_config()
 		2) ;; # config error(s) with automatic fix
 		3) return 1 # internal parser error
 	esac
+
+	# remove trailing '/' from dir paths
+	PERSIST_BLOCKLIST_DIR="${PERSIST_BLOCKLIST_DIR%/}"
 
 	if [ -z "${parse_ok}" ]
 	then

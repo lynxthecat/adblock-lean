@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045,SC3003,SC3060,SC3057
+# shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045,SC3003,SC3060,SC3057,SC3040
 
 # silence shellcheck warnings
 : "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}" "${compression_util:=}" "${intermediate_compression_options:=}" "${final_compression_options:=}" \
@@ -127,14 +127,15 @@ try_extract()
 		reg_failure "Failed to extract '${1}'."
 	}
 
-	local stdout='' \
-		ext cmd='' opts='' \
-		file_opts='' \
-		stdout_opts=''
-
+	local stdout=
 	[ "${1}" = '-stdout' ] && { stdout=1; shift; }
 
-	get_compr_spec ext cmd "${1}" || { extr_failed; return 1; }
+	local ext cmd='' opts='' \
+		file_opts='' \
+		stdout_opts='' \
+		file="${1}"
+
+	get_compr_spec ext cmd "${file}" || { extr_failed; return 1; }
 
 	case "${ext}" in
 		*.gz)
@@ -446,7 +447,7 @@ check_process_features()
 		bl_full_fname_recomm='' \
 		cpf_bl_path_ram_recomm='' \
 		\
-		persist_dir="${PERSIST_BLOCKLIST_DIR%"/"}" \
+		persist_dir="${PERSIST_BLOCKLIST_DIR}" \
 		\
 		state_var="${1}" \
 		all_req_addnm_var="${2}" \
@@ -551,8 +552,7 @@ check_process_features()
 			if [ -d "${persist_dir}" ] ||
 				{
 					case "${PERSIST_BLOCKLIST_DIR}" in
-						'') persist_fail="No path specified in config option PERSIST_BLOCKLIST_DIR." ;;
-						/) persist_fail="Invalid ${persist_dir_pr}: /" ;;
+						''|/) persist_fail="Empty or invalid ${persist_dir_pr} '${persist_dir}' specified in config option PERSIST_BLOCKLIST_DIR." ;;
 						*) persist_fail="Can not find ${persist_dir_pr}: ${persist_dir}."
 					esac
 					false
@@ -590,10 +590,19 @@ check_process_features()
 	:
 }
 
+# Populates global vars required for processing, status and cleanup
 # Env vars:
 #   SAE_STATUS: do not exit on non-critical errors
 set_abl_env()
 {
+	get_shared_mac_addr()
+	{
+		local mac
+		read_str_from_file -v mac -f "${MAC_SHARED_FILE:?}" -q -a 1
+		eval "${1}"='${mac}'
+		: "${mac}"
+	}
+
 	[ -n "${ABL_ENV_SET}" ] && return 0
 
 	local me=set_abl_env \
@@ -624,21 +633,15 @@ set_abl_env()
 	export \
 		START_ACTION=gen \
 		\
-		PERSIST_BLOCKLIST_DIR="${PERSIST_BLOCKLIST_DIR%"/"}" \
-		\
 		CONF_FILES_REQ=0 \
 		CONF_FILES_REQ_FALLBACK=0 \
 		\
 		BL_FILE_NEW='' \
 		BL_FILE_NEW_FALLBACK='' \
-		BL_FILE_CURR='' \
 		\
-		PAUSE_FILE_CURR='' \
 		PAUSE_FILE_NEW="${pause_dir:?}/${PAUSE_BASE_FNAME:?}" \
 		\
 		BK_BL_FILE='' \
-		\
-		PERSIST_BL_FILE_CURR='' \
 		\
 		LOAD_BL_PATH='' \
 		LOAD_BL_ENTRIES_CNT='' \
@@ -659,6 +662,12 @@ set_abl_env()
 		FINAL_COMPR_TO_FILE=''
 
 	debug_msg "Preparing environment." 
+
+	set -o pipefail
+	get_dnsmasq_instances &&
+	check_dnsmasq_instances &&
+	{ [ -n "${MAC_SHARED_CURR}" ] || get_shared_mac_addr MAC_SHARED_CURR; } ||
+		return 1
 
 	get_curr_blocklist_paths
 
@@ -756,11 +765,11 @@ set_abl_env()
 		if [ -z "${PAUSE_FILE_CURR}" ] && { [ "${ABL_INIT_ACTION}" = boot ] || [ "${ABL_INIT_ACTION}" = status ]; }
 		then
 			reg_action -3 -blue "Checking the persistent blocklist."
-			local file='' persist_ext='' compr_util='' persist_fail='' min_good_line_count_human='' persist_bl_entries_cnt='' persist_bl_cnt_human=''
+			local file="${PERSIST_BL_FILE_CURR}" persist_ext='' compr_util='' persist_fail='' min_good_line_count_human='' persist_bl_entries_cnt='' persist_bl_cnt_human=''
 
 			if
 				{
-					FF_RM_EXTRA=1 find_files file "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}" ||
+					[ -n "${file}" ] ||
 						{
 							[ "${PERSIST_BLOCKLIST_MODE}" = manual ] && PERSIST_BLOCKLIST_MODE=disable
 							persist_fail="Persistent blocklist not found in directory '${PERSIST_BLOCKLIST_DIR}'."
@@ -833,7 +842,7 @@ set_abl_env()
 		then
 			pause_dir=${PERSIST_BLOCKLIST_DIR:?}
 			rebuild_persist_bl=1
-			[ "${ABL_CMD}" = start ] && reg_msg -3 "" "Will update the persistent blocklist."
+			[ "${ABL_CMD}" = start ] && reg_msg -3 "" "Will update the persistent blocklist." ""
 			BL_FILE_NEW=${bl_path_perm}
 			BL_FILE_NEW_FALLBACK=${bl_path_ram}
 		fi
@@ -1860,7 +1869,7 @@ install_blocklist()
 	BL_FILE_CURR="${final_file}"
 	printf '%s\n' "${BL_FILE_CURR}" > "${LAST_BLOCKLIST_PATH_FILE}"
 	MAC_SHARED_CURR="${MAC_SHARED_NEW}"
-	printf '%s\n' "${MAC_SHARED_CURR}" > "${MAC_SHARED_FILE}"
+	printf '%s\n' "${MAC_SHARED_CURR}" > "${MAC_SHARED_FILE:?}"
 
 	:
 }
@@ -1985,9 +1994,6 @@ restore_saved_blocklist()
 	return 1
 }
 
-# Env vars:
-# RESTORE_FROM_PERSIST: do not convert or move source file - try to install as is
-#
 # 1 - source file
 # 2 - dest file
 try_restore_saved_blocklist()
@@ -2002,11 +2008,7 @@ try_restore_saved_blocklist()
 	rm_conf_scripts
 	rm_main_bl
 
-	[ -n "${RESTORE_FROM_PERSIST}" ] &&
-		[ "${src_file}" != "${dest_file}" ] &&
-		{ reg_failure "${me}: \$RESTORE_FROM_PERSIST is set but source file '${src_file}' is not the same as dest file '${dest_file}'"; return 1; }
-
-	conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" ""
+	conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" "" || return 1
 
 	MAC_SHARED_NEW=${MAC_SHARED_CURR}
 
