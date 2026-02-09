@@ -722,7 +722,7 @@ print_def_config()
 	unload_blocklist_before_update="auto" @ auto|0|1
 
 	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s="120" @ integer
+	boot_start_delay_s="30" @ integer
 
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
 	MAX_PARALLEL_JOBS="auto" @ auto|integer
