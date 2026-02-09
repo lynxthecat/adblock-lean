@@ -775,6 +775,7 @@ reg_msg()
 		print_req='' sys_log_req='' log_file_req='' action_req='' report_req='' noprint='' \
 		msg_level='' msgs_dest="${MSGS_DEST}" \
 		\
+		reg_req='' \
 		sys_log_thresh="${LOG_VERBOSITY:-"1"}" \
 		session_log_thresh=3 \
 		print_thresh=4 \
@@ -790,7 +791,11 @@ reg_msg()
 				if [ -z "${msg_level}" ]
 				then
 					msg_level="${_arg#"-"}"
-					[ "${msg_level}" -lt ${debug_thresh} ] || [ -n "${ABL_DEBUG}" ] || return 0 # short path for debug messages when ABL_DEBUG is not set
+					for thresh in "${print_thresh}" "${sys_log_thresh}" "${session_log_thresh}"
+					do
+						[ "${msg_level}" -le "${thresh}" ] && { reg_req=1; break; }
+					done
+					[ -n "${reg_req}" ] || return 0 # short path for debug messages when ABL_DEBUG is not set
 				else
 					append_msg "${_arg}"
 				fi ;;
