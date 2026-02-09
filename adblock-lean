@@ -891,14 +891,12 @@ cleanup_and_exit()
 			wait_on_pid "${SCHEDULER_PID}" 5
 			[ -d "/proc/${SCHEDULER_PID}" ] && kill_pids_recursive "${SCHEDULER_PID}"
 		}
-		rm -rf "${ABL_TMP_DIR}"
 	fi
 	local bk_dir bk_fname bk_file="${BK_BL_FILE:-"${BK_BL_BASE_PATH}"}"
 	split_path bk_dir bk_fname _ "${bk_file}"
 	KEEP_PERSIST=1 rm_if_volatile "${bk_file:-???}"* "${bk_dir:-???}/.${bk_fname:-???}.md5"
 
-	rm -rf "${ABL_CONF_STAGING_DIR}"
-	rm -f "${ABL_RUN_DIR:-???}/${PROCESSED_BL_BASE_FNAME:-???}"*
+	rm -rf "${ABL_TMP_DIR}" "${ABL_CONF_STAGING_DIR}"
 
 	if [ -n "${FAIL_STOP_REQ}" ]
 	then
