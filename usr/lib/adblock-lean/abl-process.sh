@@ -591,19 +591,10 @@ check_process_features()
 }
 
 # Env vars:
-#   SAE_FORCE: force env re-processing
-#   SAE_FORCE_ONCE: force env re-processing only once
-#   SAE_QUIET: do not print errors and warnings
-#   SAE_STATUS: do not exit on errors
-# 1 (optional): var name to output all required addnmounts (only when some are missing)
+#   SAE_STATUS: do not exit on non-critical errors
 set_abl_env()
 {
-	sae_err() { [ -n "${SAE_QUIET}" ] || reg_failure "${@}"; }
-	sae_msg() { [ -n "${SAE_QUIET}" ] || reg_msg "${@}"; }
-
-	[ -n "${SAE_FORCE_ONCE}" ] && { unset SAE_FORCE_ONCE; local SAE_FORCE=1; }
-	[ -z "${SAE_FORCE}" ] && [ -n "${ABL_ENV_SET}" ] && return 0
-	[ -n "${SAE_QUIET}" ] && SAE_FORCE_ONCE=1 # ensure errors are printed at next non-quiet call
+	[ -n "${ABL_ENV_SET}" ] && return 0
 
 	local me=set_abl_env \
 		IFS="${DEFAULT_IFS}" \
@@ -682,7 +673,7 @@ set_abl_env()
 				# cap PARALLEL_JOBS to 4 in 'auto' mode
 				PARALLEL_JOBS=$(( (cpu_cnt>4)*4 + (cpu_cnt<=4)*cpu_cnt ))
 			else
-				sae_err "Failed to detect CPU core count. Parallel processing will be disabled."
+				reg_failure "Failed to detect CPU core count. Parallel processing will be disabled."
 				PARALLEL_JOBS=1
 			fi ;;
 		*)
@@ -695,7 +686,6 @@ set_abl_env()
 	local state bl_path_ram bl_path_perm compr_util_path compr_ext \
 		final_compr_req='' multi_inst_req='' persist_bl_req='' CPF_QUIET=''
 
-	[ -n "${SAE_QUIET}" ] && CPF_QUIET=1
 	check_process_features state _ _ bl_path_ram bl_path_perm compr_util_path compr_ext CONF_FILES_REQ || return 1
 
 	CONF_FILES_REQ_FALLBACK=${CONF_FILES_REQ}
@@ -708,7 +698,9 @@ set_abl_env()
 		feature_state="${feature_state%%"${_NL_}"*}"
 		case "${feature_state}" in
 			[01]) ;;
-			*) [ -n "${SAE_QUIET}" ] || { reg_failure "${me}: invalid state '${feature_state}' for feature '${feature}'."; [ -n "${SAE_STATUS}" ] || return 1; }
+			*)
+				reg_failure "${me}: invalid state '${feature_state}' for feature '${feature}'."
+				[ -n "${SAE_STATUS}" ] || return 1
 		esac
 		eval "${feature}_req"='${feature_state}'
 	done
@@ -835,13 +827,13 @@ set_abl_env()
 					BL_FILE_NEW_FALLBACK=${bl_path_ram}
 				}
 				local warn_msg="${persist_fail}${persist_fail:+ }${warn_act_msg}"
-				[ -n "${warn_msg}" ] && sae_msg -1 -warn "" "${warn_msg}"
+				[ -n "${warn_msg}" ] && reg_msg -1 -warn "" "${warn_msg}"
 			fi
 		elif [ "${PERSIST_BLOCKLIST_MODE}" = managed ]
 		then
 			pause_dir=${PERSIST_BLOCKLIST_DIR:?}
 			rebuild_persist_bl=1
-			[ "${ABL_CMD}" = start ] && sae_msg -3 "" "Will update the persistent blocklist."
+			[ "${ABL_CMD}" = start ] && reg_msg -3 "" "Will update the persistent blocklist."
 			BL_FILE_NEW=${bl_path_perm}
 			BL_FILE_NEW_FALLBACK=${bl_path_ram}
 		fi
@@ -853,7 +845,7 @@ set_abl_env()
 	: "${BL_FILE_NEW:="${bl_path_ram}"}"
 
 	[ "${START_ACTION}" = load ] || [ -n "${BL_FILE_NEW}" ] ||
-		{ sae_err "No usable path to install or load the blocklist."; [ -n "${SAE_STATUS}" ] || return 1; }
+		{ reg_failure "No usable path to install or load the blocklist."; [ -n "${SAE_STATUS}" ] || return 1; }
 
 	PAUSE_FILE_NEW=${pause_dir:?}/${PAUSE_BASE_FNAME:?}${FINAL_COMPR_EXT}
 
