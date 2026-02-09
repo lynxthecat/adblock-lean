@@ -829,7 +829,7 @@ set_abl_env()
 					rebuild_persist_bl=1
 					[ "${ABL_CMD}" = start ] &&
 					{
-						[ "${ABL_CMD}" = start ] && warn_act_msg="Will rebuild the persistent blocklist."
+						warn_act_msg="Will rebuild the persistent blocklist."
 						rm -f "${file}"
 					}
 					BL_FILE_NEW=${bl_path_perm}

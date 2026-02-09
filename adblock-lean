@@ -90,23 +90,25 @@ SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-export EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits"
+export EXTRA_COMMANDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits gen_persist_blocklist"
 export EXTRA_HELP="
 adblock-lean custom commands:
-	version                   print adblock-lean version
-	setup                     run automated setup for adblock-lean
-	status                    check dnsmasq and entries count of existing blocklist
-	pause                     pause adblock-lean
-	resume                    resume adblock-lean
-	gen_stats                 generate dnsmasq stats for system log
-	select_dnsmasq_instances  analyze dnsmasq instances and set dnsmasq conf-dir
-	gen_config                generate default config based on one of the pre-defined presets
-	upd_cron_job              create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	                          if config option set to 'disable', remove existing cron job if any
-	print_log                 print most recent session log
-	update                    update adblock-lean to the latest version
-	uninstall                 uninstall adblock-lean, remove all adblock-lean-related files and settings
-	calculate_limits          calculate recommended values for max_ and min_ config options based on target entries count"
+	version                   Print adblock-lean version
+	setup                     Run automated setup for adblock-lean
+	status                    Check dnsmasq and entries count of existing blocklist
+	pause                     Pause adblock-lean
+	resume                    Resume adblock-lean
+	gen_stats                 Generate dnsmasq stats for system log
+	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
+	gen_config                Generate default config based on one of the pre-defined presets
+	upd_cron_job              Create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+	                              If config option set to 'disable', remove existing cron job if any
+	print_log                 Print most recent session log
+	update                    Update adblock-lean to the latest version
+	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings
+	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
+	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
+	                              Use this command to create or update persistent blocklist when PERM_BLOCKLIST_MODE is 'manual'"
 
 # silence shellcheck warnings
 : "${action:=}" "${boot_start_delay_s:=}" "${CONFIG_FORMAT}"
@@ -1431,12 +1433,12 @@ init_command()
 	case ${ABL_CMD} in
 		help|enabled|enable|disable|print_log|'') ;;
 		gen_stats) ;;
-		status) libs_req=1 config_req=1 env_req=1 work_dir_req=1 ;;
-		upd_cron_job) libs_req=1 config_req=1 ;;
+		status) config_req=1 env_req=1 work_dir_req=1 ;;
+		upd_cron_job) config_req=1 ;;
 		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
-		boot) libs_req=1 config_req=1 LOCK_REQ=1 ;;
-		pause) libs_req=1 work_dir_req=1 config_req=1 env_req=1 LOCK_REQ=1 ;;
-		start|resume) libs_req=1 work_dir_req=1 config_req=1 env_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		boot|gen_persist_blocklist) config_req=1 LOCK_REQ=1 ;;
+		pause) work_dir_req=1 config_req=1 env_req=1 LOCK_REQ=1 ;;
+		start|resume) work_dir_req=1 config_req=1 env_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			source_libs || exit 1
 			kill_abl_pids
@@ -1509,6 +1511,7 @@ init_command()
 		stop) act_pr="Stopping" ;;
 		pause) act_pr="Pausing" ;;
 		resume) act_pr="Resuming" ;;
+		gen_persist_blocklist) init_action_pr="Generating persistent blocklist." ;;
 	esac
 	[ -n "${init_action_pr}" ] || init_action_pr="${act_pr}${act_pr:+" adblock-lean."}"
 
@@ -2122,6 +2125,27 @@ start()
 
 	check_for_updates
 	exit ${rv}
+}
+
+gen_persist_blocklist()
+{
+	init_command gen_persist_blocklist || exit 1
+
+	local err_msg
+	case "${PERSIST_BLOCKLIST_MODE}" in
+		manual|managed) : ;;
+		*) err_msg="'PERSIST_BLOCKLIST_MODE' config option is '${PERSIST_BLOCKLIST_MODE}'"; false
+	esac &&
+	{
+		[ -n "${PERSIST_BLOCKLIST_DIR}" ] || { err_msg="'PERSIST_BLOCKLIST_DIR' config option is not set"; false; }
+	} ||
+	{ reg_failure "${err_msg} - can not generate persitent blocklist."; exit 1; }
+
+	printf '\n' > "${MSGS_DEST}"
+	PERSIST_BLOCKLIST_MODE=managed # temporarily overrides the config value to enable updating the file
+	set_abl_env || exit 1
+	[ "${BL_FILE_NEW%/*}" = "${PERSIST_BLOCKLIST_DIR}" ] || { reg_failure "Unable to generate persistent blocklist."; exit 1; }
+	start
 }
 
 # 1 - (optional) exit code
