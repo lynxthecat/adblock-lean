@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057,SC3019,SC2018,SC2019,SC3060
+# shellcheck disable=SC3043,SC3003,SC3001,SC3020,SC3044,SC2016,SC3057,SC3019,SC2018,SC2019,SC3060,SC3045
 # shellcheck source=/dev/null
 
 # silence shellcheck warnings
@@ -392,7 +392,7 @@ do_setup()
 		# generate config
 		gen_config || return 2
 	else
-		load_config || return 3
+		load_config -force || return 3
 
 		get_dnsmasq_instances &&
 		check_dnsmasq_instances || return 1
@@ -1218,7 +1218,10 @@ parse_config()
 
 load_config()
 {
-	try_load_config || { log_msg "Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."; return 1; }
+	local force_load=
+	[ "${1}" = '-force' ] || [ -n "${ABL_IN_INSTALL}" ] && { force_load=1; shift; }
+	[ -n "${CONFIG_LOADED}" ] && [ -z "${force_load}" ] && return 0
+	try_load_config || { reg_failure "Failed to load config." "Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."; return 1; }
 	export CONFIG_LOADED=1
 
 	# check for missing addnmounts during version update
@@ -1250,7 +1253,7 @@ try_load_config()
 	}
 
 	local force_fix='' l_replace_keys='' l_migrated_keys='' l_conf_fixes=''
-	[ "${1}" = '-f' ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
+	[ -n "${ABL_LUCI_SOURCED}" ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] &&
 		DO_DIALOGS=1
@@ -1886,12 +1889,14 @@ get_dnsmasq_instances() {
 		mac_addr=
 		first_iface="${ifaces%% *}"
 		[ -n "${first_iface}" ] &&
-		read_str_from_file -v "mac_addr _" -f "/sys/class/net/${first_iface}/address" -a 1 -n 17 &&
-		mac_addr="${mac_addr//:/}" &&
-		case "${mac_addr}" in
-			''|*[!0-9a-fA-F]*) mac_addr='' ;;
-			*) add2list mac_shared "${mac_addr}" " "
-		esac
+		{
+			read -rn17 mac_addr _ < "/sys/class/net/${first_iface}/address"
+			mac_addr="${mac_addr//:/}" &&
+			case "${mac_addr}" in
+				''|*[!0-9a-fA-F]*) mac_addr='' ;;
+				*) add2list mac_shared "${mac_addr}" " "
+			esac
+		}
 
 		eval "INST_NAME_${index}=\"${instance}\"
 			CONF_DIRS_${index}=\"${conf_dirs}\"

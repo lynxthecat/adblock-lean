@@ -93,25 +93,31 @@ get_compr_util_spec()
 # 3: (optional) var name to output path to compressed file
 try_compress()
 {
-	fail_msg() { reg_failure "${1}${1:+" "}Failed to compress '${tc_inp_file}'."; }
-	compr_fail() { fail_msg; rm_if_volatile "${tc_inp_file}"; }
+	local IFS="${DEFAULT_IFS}" tc_cmd opts='' tc_err='' \
+		tc_dir tc_fname tc_ext \
+		tc_in_file="${1}" tc_cmd="${2}" out_file_var="${3}"
 
-	local me=try_compress tc_cmd tc_ext opts='' \
-		tc_inp_file="${1}" tc_cmd="${2}" out_file_var="${3}"
-
-	[ -f "${tc_inp_file}" ] || { fail_msg "${me}: file '${tc_inp_file}' not found."; return 1; }
-
-	unset_vars "${out_file_var}" || { fail_msg; return 1; }
+	unset_vars "${out_file_var}" &&
+	split_path tc_dir tc_fname _ "${tc_in_file}" && [ -n "${tc_fname}" ] && is_valid_dir "${tc_dir}" &&
+	{
+		is_dir_writable "${tc_dir}" ||
+			{ tc_err="Logic bug: attempted to compress file '${tc_in_file}' to protected dir '${tc_dir}'."; false; }
+	} &&
 
 	case "${tc_cmd}" in
 		*gzip*|*pigz*) tc_ext=.gz ;;
 		*zstd*) tc_ext=.zst ;;
-		*) fail_msg "${me}: unexpected command '${tc_cmd}'."; return 1
-	esac
+		*) tc_err="unexpected command '${tc_cmd}'."; false
+	esac &&
 
-	${tc_cmd} "${tc_inp_file}" || { compr_fail; return 1; }
+	${tc_cmd} "${tc_in_file}" ||
+		{
+			reg_failure "try_compress: ${tc_err}${tc_err:+ }Failed to compress '${tc_in_file}'."
+			rm_if_writable "${tc_in_file}";
+			return 1
+		}
 
-	[ -n "${out_file_var}" ] && eval "${out_file_var}"='${tc_inp_file}${tc_ext}'
+	[ -n "${out_file_var}" ] && eval "${out_file_var}"='${tc_in_file}${tc_ext}'
 
 	: "${tc_ext}"
 	:
@@ -121,42 +127,48 @@ try_compress()
 # 1: path to file to extract
 try_extract()
 {
-	extr_failed()
-	{
-		[ -n "${stdout}" ] || rm_if_volatile "${1}"
-		reg_failure "Failed to extract '${1}'."
-	}
-
 	local stdout=
 	[ "${1}" = '-stdout' ] && { stdout=1; shift; }
 
-	local ext cmd='' opts='' \
+	local IFS="${DEFAULT_IFS}" cmd='' opts='' \
 		file_opts='' \
 		stdout_opts='' \
-		file="${1}"
+		te_dir te_fname te_ext \
+		te_err='' \
+		te_file="${1}"
 
-	get_compr_spec ext cmd "${file}" || { extr_failed; return 1; }
+	split_path te_dir te_fname te_ext "${te_file}" && [ -n "${te_fname}" ] && is_valid_dir "${te_dir}" &&
+	{
+		[ -n "${stdout}" ] || is_dir_writable "${te_dir}" ||
+			{ te_err="Logic bug: attempted to extract file '${te_file}' to protected dir '${te_dir}'."; false; }
+	} &&
+	get_compr_spec _ cmd "${te_file}" &&
 
-	case "${ext}" in
-		*.gz)
+	case "${te_ext}" in
+		gz)
 			file_opts="-fd"
 			stdout_opts="-cd" ;;
-		*.zst)
+		zst)
 			file_opts=" -fd --rm -q --no-progress"
 			stdout_opts="-cd" ;;
-		*)
-			[ -n "${stdout}" ] || { reg_failure "try_extract: file '${1}' has unexpected extension."; extr_failed "${1}"; return 1; }
-			cmd="/bin/busybox cat"
-	esac
+		'') cmd="/bin/busybox cat" ;;
+		*) te_err="file '${te_file}' has unexpected extension."; false
+	esac &&
 
 	if [ -n "${stdout}" ]
 	then
 		opts="${stdout_opts}"
 	else
 		opts="${file_opts}"
-	fi
+	fi &&
 
-	${cmd} ${opts} "${1}" || { extr_failed "${1}"; return 1; }
+	${cmd} ${opts} "${te_file}" ||
+
+	{
+		[ -n "${stdout}" ] || rm_if_writable "${te_fname}"*
+		reg_failure "try_extract: ${te_err}${te_err:+ }Failed to extract '${te_file}'."
+		return 1
+	}
 }
 
 # subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
@@ -240,45 +252,34 @@ get_elapsed_time_human()
 
 # HELPER FUNCTIONS
 
-mk_blocklist_md5()
+get_entries_cnt()
 {
-	local me=mk_blocklist_md5 bl_dir bl_fname bl_file="${1}"
-	split_path bl_dir bl_fname _ "${bl_file}" &&
-	assert_set "F_${me}" bl_dir bl_fname || return 1
-	[ -f "${bl_file}" ] || { reg_failure "${me}: file '${bl_file}' not found"; }
-	md5sum "${bl_file}" > "${bl_dir}/.${bl_fname}.md5" || rm -f "${bl_dir}/.${bl_fname}.md5"
-}
+	local ec_cnt rv=1 \
+		ec_out_var="${1}" ec_bl_path="${2}"
 
-get_active_entries_cnt()
-{
-	local cnt ext rv=1 \
-		ga_out_var="${1}" file="${2}"
+	unset_vars "${ec_out_var}" &&
+	assert_set F_get_entries_cnt ec_out_var ec_bl_path || return 1
 
-	unset_vars "${ga_out_var}" &&
-	assert_set F_get_active_entries_cnt ga_out_var file &&
-	get_compr_spec ext _ "${file}" || return 1
+	check_blocklist_spec _ _ ec_cnt "${ec_bl_path}" ||
+	{
+		ec_cnt=
+		# ipv4_block prefix doesn't need to be added for counting
+		ec_cnt="$(
+			try_extract -stdout "${ec_bl_path}" |
+			${SED_CMD} -E "s~^(server|local)=/~~;/${ABL_TEST_DOM_BASE//./\\.}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w
+		)"
+	}
 
-	# ipv4_block prefix doesn't need to be added for counting
-	cnt="$(
-		if [ -n "${ext}" ]
-		then
-			try_extract -stdout "${file}"
-		else
-			/bin/busybox cat "${file}"
-		fi |
-		${SED_CMD} -E "s~^(server|local)=/~~;/${ABL_TEST_DOM_BASE//./\\.}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w
-	)"
+	[ "${whitelist_mode}" = 1 ] && ec_cnt=$((ec_cnt-26)) # ignore alphabet entries
 
-	[ "${whitelist_mode}" = 1 ] && cnt=$((cnt-26)) # ignore alphabet entries
-
-	if is_uint "${cnt}"
+	if is_uint "${ec_cnt}"
 	then
 		rv=0
 	else
-		cnt=0
+		ec_cnt=0
 	fi
 
-	eval "${ga_out_var}"='${cnt}'
+	eval "${ec_out_var}"='${ec_cnt}'
 	return ${rv}
 }
 
@@ -598,7 +599,7 @@ set_abl_env()
 	get_shared_mac_addr()
 	{
 		local mac
-		read_str_from_file -v mac -f "${MAC_SHARED_FILE:?}" -q -a 1
+		read -rn32 mac _ 2>/dev/null < "${MAC_SHARED_FILE:?}"
 		eval "${1}"='${mac}'
 		: "${mac}"
 	}
@@ -696,6 +697,13 @@ set_abl_env()
 		final_compr_req='' multi_inst_req='' persist_bl_req='' CPF_QUIET=''
 
 	check_process_features state _ _ bl_path_ram bl_path_perm compr_util_path compr_ext CONF_FILES_REQ || return 1
+	debug_msg \
+		"state: '${state//"${_NL_}"/ }'" \
+		"bl_path_ram: '${bl_path_ram}'" \
+		"bl_path_perm: '${bl_path_perm}'" \
+		"compr_util_path: '${compr_util_path}'" \
+		"compr_ext: '${compr_ext}'" \
+		"CONF_FILES_REQ: '${CONF_FILES_REQ}'"
 
 	CONF_FILES_REQ_FALLBACK=${CONF_FILES_REQ}
 
@@ -797,7 +805,7 @@ set_abl_env()
 				} &&
 
 				{
-					get_active_entries_cnt persist_bl_entries_cnt "${file}" ||
+					get_entries_cnt persist_bl_entries_cnt "${file}" ||
 						{ persist_fail="Failed to get entries count in the persistent blocklist file '${file}'."; false; }
 				} &&
 
@@ -861,12 +869,9 @@ set_abl_env()
 	export ABL_ENV_SET=1
 
 	debug_msg \
-		"Curr blocklist: '${BL_FILE_CURR}'" \
 		"New blocklist: '${BL_FILE_NEW}'" \
 		"BK file: '${BK_BL_FILE}'" \
-		"Curr pause file: '${PAUSE_FILE_CURR}'" \
-		"New pause file: '${PAUSE_FILE_NEW}'" \
-		"CONF_FILES_REQ: '${CONF_FILES_REQ}'"
+		"New pause file: '${PAUSE_FILE_NEW}'"
 
 	:
 }
@@ -1192,7 +1197,7 @@ process_list_part()
 	case_conv() { tr 'A-Z' 'a-z'; }
 
 	local curr_job_pid msg msg_mirr pad \
-		list_origin='' list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
+		list_origin='' list_path='' list_author='' mirrors='' mirror='' curr_mirror='' prev_mirror='' first_mirror='' loop_prev_mirror='' \
 		index="${1}" list_type="${2}" list_format="${3}" print_id="${4}"
 
 	get_curr_job_pid curr_job_pid || finalize_job 1
@@ -1414,7 +1419,7 @@ gen_list_parts()
 	# shellcheck disable=SC2329
 	read_stats_cb()
 	{
-		read_str_from_file -v "part_line_count part_size_B" -f "${1}" -a 1 -V 0 &&
+		read_str_from_file -v "part_line_count part_size_B" -f "${1}" -V 0 &&
 		is_uint "${part_line_count}" "${part_size_B}" || return 1
 		list_line_count=$((list_line_count+part_line_count))
 		list_size_B=$((list_size_B+part_size_B))
@@ -1767,11 +1772,75 @@ gen_blocklist()
 }
 
 
-stop_dnsmasq()
+get_md5()
 {
-	reg_action -3 -blue "Stopping dnsmasq." || return 1
-	/etc/init.d/dnsmasq stop || { reg_failure "Failed to stop dnsmasq."; return 1; }
+	unset_vars "${1}" || return 1
+	local g_md5
+	g_md5="$(md5sum "${2}")" &&
+	g_md5="${g_md5%% *}" &&
+	[ -n "${g_md5}" ] &&
+	eval "${1}"='${g_md5}' && return 0
+
+	reg_failure "Failed to get md5 sum for file '${2}'"
+	return 1
 }
+
+mk_spec_file()
+{
+	local spec_file="${1}" bl_file="${2}" md5="${3}" entries_cnt="${4}"
+	assert_set F_mk_spec_file spec_file bl_file md5 entries_cnt || return 1
+
+	is_dir_writable "${bl_file%/*}" &&
+	printf '%s\n%s\n%s\n' "${bl_file}" "${md5}" "${entries_cnt}" > "${spec_file}" ||
+		{ rm_if_writable "${spec_file}"; false; }
+}
+
+read_spec_file()
+{
+	local r_md5='' r_path='' r_entries_cnt \
+		r_path_out_var="${1}" r_md5_out_var="${2}" r_entries_out_var="${3}" r_spec_file="${4}"
+
+	: "${r_entries_cnt}" "${r_md5}" "${r_path}"
+
+	unset_vars "${r_path_out_var}" "${r_md5_out_var}" "${r_entries_out_var}" &&
+	assert_set F_read_spec_file r_spec_file &&
+	read_str_from_file -F "${_NL_}" -E '' -n512 -q -v "r_path r_md5 r_entries_cnt _" -f "${r_spec_file}" &&
+	eval "${r_path_out_var:-_}"='${r_path}' "${r_md5_out_var:-_}"='${r_md5}' "${r_entries_out_var:-_}"='${r_entries_cnt}'
+}
+
+check_blocklist_spec()
+{
+	local rv cs_spec_bl_path cs_spec_md5 \
+		cs_bl_md5 cs_cnt \
+		cs_spec_dir cs_spec_fname \
+		cs_spec_path_out_var="${1}" cs_md5_out_var="${2}" cs_cnt_out_var="${3}" cs_bl_path="${4}"
+
+	unset_vars "${cs_spec_path_out_var}" "${cs_md5_out_var}" "${cs_cnt_out_var}" &&
+
+	get_md5 cs_bl_md5 "${cs_bl_path}" &&
+
+	split_path cs_spec_dir cs_spec_fname _ "${cs_bl_path}" &&
+	cs_spec_path="${cs_spec_dir}/.${cs_spec_fname}.spec" &&
+	[ -f "${cs_spec_path}" ] &&
+
+	read_spec_file cs_spec_bl_path cs_spec_md5 cs_cnt "${cs_spec_path}" &&
+	[ -n "${cs_cnt}" ] &&
+
+	[ -n "${cs_bl_md5}" ] &&
+	[ "${cs_bl_md5}" = "${cs_spec_md5}" ] &&
+	[ -n "${cs_bl_path}" ] &&
+	[ "${cs_bl_path}" = "${cs_spec_bl_path}" ]
+
+	rv=${?}
+
+	eval "${cs_spec_path_out_var:-_}"='${cs_spec_path}' "${cs_md5_out_var:-_}"='${cs_bl_md5}' "${cs_cnt_out_var:-_}"='${cs_cnt}'
+
+	[ "${rv}" = 0 ] && return 0
+
+	rm_if_writable "${cs_spec_path}"
+	return 1
+}
+
 
 # Env vars:
 # CONF_FILES_REQ (0|1): create conf files in dnsmasq dirs
@@ -1783,14 +1852,19 @@ stop_dnsmasq()
 # 4: description
 install_blocklist()
 {
-	local size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir errors bl_md5_file \
+	local me=install_blocklist size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir errors \
+		spec_file md5_new \
 		final_file="${1}" entries_cnt="${2}" desc="${3}"
 
-	assert_set F_install_blocklist final_file desc DNSMASQ_CONF_DIRS FINAL_EXTR_OR_CAT_STDOUT || return 1
+	assert_set "F_${me}" final_file desc DNSMASQ_CONF_DIRS FINAL_EXTR_OR_CAT_STDOUT || return 1
 
-	[ -z "${entries_cnt}" ] || int2human entries_cnt_human "${entries_cnt}" || return 1
+	reg_action -3 -blue "Installing ${desc} blocklist file."
 
-	if [ -n "${entries_cnt}" ] && [ "${entries_cnt}" -lt "${min_good_line_count}" ]
+	# Get and check entries count
+	[ -n "${entries_cnt}" ] || get_entries_cnt entries_cnt "${final_file}" || return 1
+	int2human entries_cnt_human "${entries_cnt}" || return 1
+
+	if [ "${entries_cnt}" -lt "${min_good_line_count}" ]
 	then
 		int2human min_good_line_count_human "${min_good_line_count}" || return 1
 		reg_failure "Entries count (${entries_cnt_human}) is below the minimum value set in config (${min_good_line_count_human})."
@@ -1798,21 +1872,9 @@ install_blocklist()
 	fi
 
 	# Check blocklist
-	split_path bl_dir bl_fname _ "${final_file}"
-	bl_md5_file="${bl_dir}/.${bl_fname}.md5"
-
-
-
-	[ -s "${bl_md5_file}" ] &&
-	md5sum "${final_file}" |
-	${AWK_CMD} '
-		BEGIN{rv=1}
-		NR==FNR { if (NR==1) new=$1; next}
-		{if ($1 && $1==new) rv=0; exit}
-		END{exit rv}
-	' "${bl_md5_file}" - ||
+	check_blocklist_spec spec_file md5_new _ "${final_file}" ||
+	{ [ -n "${spec_file}" ] && [ -n "${md5_new}" ] || { reg_failure "Got invalid specs for final file '${final_file}'."; return 1; }; false; } ||
 	{
-		rm_if_volatile "${bl_md5_file}"
 		# check the final blocklist with dnsmasq --test
 		reg_action -3 -blue "Checking the ${desc}${desc:+ }blocklist file with 'dnsmasq --test'." || return 1
 
@@ -1827,7 +1889,7 @@ install_blocklist()
 		then
 			errors="$(head -n10 "${ERR_F}" | ${SED_CMD} '/^$/d')"
 			rm -f "${ERR_F}"
-			rm_if_volatile "${final_file}"
+			rm_if_writable "${final_file}"
 			reg_failure "dnsmasq test on the ${desc}${desc:+ }blocklist failed."
 			log_msg "Errors:" "${errors:-"No specifics: probably killed because of OOM."}"
 			return 2
@@ -1837,8 +1899,6 @@ install_blocklist()
 	}
 
 	reg_msg -3 -green "Blocklist file check passed."
-
-	reg_msg -3 -blue "Installing ${desc} blocklist file."
 
 	size_b="$(get_file_size "${final_file}")" &&
 	bytes2human list_size_human "${size_b}" || return 1
@@ -1866,6 +1926,9 @@ install_blocklist()
 	reg_success "${green}Successfully loaded ${desc} blocklist${n_c}." \
 		"Final blocklist file: ${blue}${final_file}${n_c} (${compr_pr}, size: ${blue}${list_size_human}${n_c}${entries_cnt_human:+", entries count: ${blue}${entries_cnt_human}${n_c}"}).${n_c}"
 
+	# Create .spec file next to the blocklist file
+	mk_spec_file "${spec_file}" "${final_file}" "${md5_new}" "${entries_cnt}"
+
 	BL_FILE_CURR="${final_file}"
 	printf '%s\n' "${BL_FILE_CURR}" > "${LAST_BLOCKLIST_PATH_FILE}"
 	MAC_SHARED_CURR="${MAC_SHARED_NEW}"
@@ -1875,18 +1938,20 @@ install_blocklist()
 }
 
 # Move file ${1} to path ${2} while compressing/extracting/recompressing if required
-conv_compr()
+# Also move the accompanying spec file
+# If src dir is protected, copy file instead of moving
+mv_blocklist()
 {
-	try_conv_compr "${@}" && return 0
+	try_mv_blocklist "${@}" && return 0
 
 	local src_path="${1}" dest_path="${2}"
-	rm_if_volatile "${src_path}" "${dest_path}"
+	rm_if_writable "${src_path}" "${dest_path}"
 	return 1
 }
 
-try_conv_compr()
+try_mv_blocklist()
 {
-	local me=conv_compr src_dir src_fname src_ext dest_dir dest_fname dest_ext \
+	local me=mv_blocklist transfer_cmd="try_mv" src_dir src_fname src_ext dest_dir dest_fname dest_ext file_changed='' \
 		src_path="${1}" dest_path="${2}" compr_cmd="${3}"
 
 	assert_set "F_${me}" src_path dest_path || return 1
@@ -1899,27 +1964,47 @@ try_conv_compr()
 
 	[ "${src_path}" = "${dest_path}" ] && return 0
 
-	[ -z "${dest_ext}" ] || assert_set "F_${me}" compr_cmd || return 1
+	is_dir_writable "${src_dir}" || transfer_cmd="cp"
 
 	if [ -n "${src_ext}" ] && [ "${src_ext}" != "${dest_ext}" ]
 	then
 		try_extract "${src_path}" || return 1
 		src_path="${src_path%.*}"
 		src_ext=
+		file_changed=1
 	fi
 
 	if [ -n "${dest_ext}" ] && [ -z "${src_ext}" ]
 	then
+		assert_set "F_${me}" compr_cmd || return 1
 		try_compress "${src_path}" "${compr_cmd}" src_path || return 1
+		file_changed=1
 	fi
 
-	# Avoid writing into PERSIST_BLOCKLIST_DIR unless mode is 'main'
-	local transfer_cmd="try_mv"
-	[ "${src_dir}" = "${PERSIST_BLOCKLIST_DIR}" ] && [ "${dest_dir}" != "${src_dir}" ] && [ "${PERSIST_BLOCKLIST_MODE}" != managed ] &&
-		transfer_cmd="cp"
+	${transfer_cmd} "${src_path}" "${dest_path}" || return 1
 
-	${transfer_cmd} "${src_path}" "${dest_path}" &&
-	[ ! -f "${src_dir}/.${src_fname}.md5" ] || ${transfer_cmd} "${src_dir}/.${src_fname}.md5" "${dest_dir}/.${dest_fname}.md5" || return 1
+	# Recreate the .spec file next to the blocklist file if old spec file exists
+	local bl_path_old src_md5 dest_md5 entries_cnt \
+		src_spec_file="${src_dir}/.${src_fname}.spec" \
+		dest_spec_file="${dest_dir}/.${dest_fname}.spec"
+
+	if
+		is_dir_writable "${dest_dir}" &&
+		read_spec_file bl_path_old src_md5 entries_cnt "${src_spec_file}" &&
+		[ -n "${entries_cnt}" ] &&
+		[ "${bl_path_old}" = "${src_path}" ]
+	then
+		if [ -n "${file_changed}" ]
+		then
+			get_md5 dest_md5 "${dest_file}" || rm_if_writable "${dest_spec_file}"
+		else
+			dest_md5="${src_md5}"
+		fi
+		[ -n "${dest_md5}" ] && mk_spec_file "${dest_spec_file}" "${dest_path}" "${dest_md5}" "${entries_cnt}"
+		[ "${transfer_cmd}" = "try_mv" ] && rm -f "${src_spec_file}"
+	else
+		rm_if_writable "${src_spec_file}"
+	fi
 
 	:
 }
@@ -1929,7 +2014,7 @@ export_blocklist()
 	try_export_blocklist "${@}" && return 0
 
 	local src_path="${1}" dest_path="${2}"
-	rm_if_volatile "${src_path}" "${dest_path}"
+	rm_if_writable "${src_path}" "${dest_path}"
 
 	reg_failure "Failed to export blocklist '${src_path}' to '${dest_path}'."
 	return 1
@@ -1953,7 +2038,7 @@ try_export_blocklist()
 
 	reg_action -3 -blue "" "Creating backup of current blocklist." || return 1
 
-	conv_compr "${src_path}" "${dest_path}" "${compr_cmd}" || return 1
+	mv_blocklist "${src_path}" "${dest_path}" "${compr_cmd}" || return 1
 
 	:
 }
@@ -1985,7 +2070,7 @@ restore_saved_blocklist()
 
 	local src_file="${1}" dest_file="${2}"
 
-	rm_if_volatile "${src_file}" "${dest_file}"
+	rm_if_writable "${src_file}" "${dest_file}"
 	rm_conf_scripts
 	rm_main_bl
 
@@ -2008,7 +2093,7 @@ try_restore_saved_blocklist()
 	rm_conf_scripts
 	rm_main_bl
 
-	conv_compr "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" "" || return 1
+	mv_blocklist "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" "" || return 1
 
 	MAC_SHARED_NEW=${MAC_SHARED_CURR}
 
