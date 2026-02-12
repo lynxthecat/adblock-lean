@@ -146,7 +146,7 @@ suggest_addnmounts()
 
 	[ -n "${missing_addnmounts}" ] ||
 	{
-		reg_msg -3 -green "" "All required dnsmasq addnmount entries already exist."
+		reg_msg -green "" "All required dnsmasq addnmount entries already exist."
 		return 0
 	}
 
@@ -272,7 +272,7 @@ do_setup()
 		for util in ${RECOMMENDED_UTILS}
 		do
 			case "${installed_pkgs}" in
-				*"${util}"*) reg_msg -3 -green "GNU ${util} is already installed." ;;
+				*"${util}"*) reg_msg -green "GNU ${util} is already installed." ;;
 				*)
 					get_pkg_name pkg_name "${util}" || return 1
 					add2list missing_utils "${util}" " "
@@ -367,10 +367,10 @@ do_setup()
 	# make the script executable
 	if [ ! -x "${ABL_SERVICE_PATH}" ]
 	then
-		reg_msg -3 -purple "" "Making ${ABL_SERVICE_PATH} executable."
+		reg_msg -purple "" "Making ${ABL_SERVICE_PATH} executable."
 		chmod +x "${ABL_SERVICE_PATH}" || { reg_failure "Failed to make '${ABL_SERVICE_PATH}' executable."; return 1; }
 	else
-		reg_msg -3 -green "" "${ABL_SERVICE_PATH} is already executable."
+		reg_msg -green "" "${ABL_SERVICE_PATH} is already executable."
 	fi
 
 	REPLY=n
@@ -416,7 +416,7 @@ do_setup()
 			install_packages && luci_pkgs_install_failed=
 			detect_main_utils -f || return 1 ;;
 		*)
-			reg_msg -3 -yellow "" "Can not automatically check and install recommended packages (${RECOMMENDED_PKGS})." \
+			reg_msg -yellow "" "Can not automatically check and install recommended packages (${RECOMMENDED_PKGS})." \
 				"Consider to check for their presence and install if needed."
 	esac
 
@@ -812,13 +812,13 @@ do_gen_config()
 	else
 		# determine preset for luci
 		case "${luci_preset}" in
-			''|auto) get_def_preset preset totalmem || { reg_msg -3 "Falling back to preset 'small'."; preset=small; } ;;
+			''|auto) get_def_preset preset totalmem || { reg_msg "Falling back to preset 'small'."; preset=small; } ;;
 			*) preset="${luci_preset}"
 		esac
 	fi
 
 	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "Invalid preset '${preset}'."; return 1; }
-	reg_msg -3 -blue "Selected preset '${preset}'."
+	reg_msg -blue "Selected preset '${preset}'."
 
 	do_select_dnsmasq_instances -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
 
@@ -848,7 +848,7 @@ do_gen_config()
 	fi
 	[ "${REPLY}" = n ] && cron_schedule=disable
 
-	reg_action -3 -purple "" "Generating new default config for adblock-lean from preset '${preset}'." || return 1
+	reg_action -purple "" "Generating new default config for adblock-lean from preset '${preset}'." || return 1
 	write_config "$(print_def_config -p "${preset}" -n "${DNSMASQ_INDEXES}" -c "${DNSMASQ_CONF_DIRS}")" || return 1
 
 	:
@@ -1366,7 +1366,7 @@ fix_config()
 			[ "${REPLY}" = n ] && return 1
 		fi
 	else
-		reg_msg -3 "" "Old config file was saved as ${old_config_f}."
+		reg_msg "" "Old config file was saved as ${old_config_f}."
 	fi
 
 	write_config "${fixed_config}" || return 1
@@ -1393,7 +1393,7 @@ write_config()
 	parse_config "${tmp_config}" ||
 		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
 
-	reg_msg -3 "" "Saving new config file to '${ABL_CONFIG_FILE}'."
+	reg_msg "" "Saving new config file to '${ABL_CONFIG_FILE}'."
 	try_mkdir -p "${ABL_CONFIG_DIR}" ||
 		{
 			rm -f "${tmp_config}"
@@ -1456,24 +1456,24 @@ report_utils()
 	done
 
 	case "${AWK_CMD}" in
-		*gawk*) reg_msg -3 -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
+		*gawk*) reg_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
 		*)
-			reg_msg -3 -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-			reg_msg -3 "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
+			reg_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
+			reg_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
 	esac
 
 	case "${SED_CMD}" in
-		*gnu*) reg_msg -3 -green "GNU sed detected so list processing will be fast." ;;
+		*gnu*) reg_msg -green "GNU sed detected so list processing will be fast." ;;
 		*)
-			reg_msg -3 -yellow "GNU sed not detected so list processing will be a little slower."
-			reg_msg -3 "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
+			reg_msg -yellow "GNU sed not detected so list processing will be a little slower."
+			reg_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
 	esac
 
 	case "${SORT_CMD}" in
-		*coreutils*) reg_msg -3 -green "coreutils-sort detected so sort will be fast." ;;
+		*coreutils*) reg_msg -green "coreutils-sort detected so sort will be fast." ;;
 		*)
-			reg_msg -3 -yellow "coreutils-sort not detected so sort will be a little slower."
-			reg_msg -3 "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
+			reg_msg -yellow "coreutils-sort not detected so sort will be a little slower."
+			reg_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
 	esac
 }
 
@@ -1558,7 +1558,7 @@ check_for_updates()
 		*) no_upd="update channel is '${upd_channel}'" ;;
 	esac
 	[ -n "${no_upd}" ] && { print_msg "" "adblock-lean ${no_upd}. Automatic updates check is disabled."; return 3; }
-	reg_action -3 -blue "" "Checking for adblock-lean updates."
+	reg_action -blue "" "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
 	get_gh_ref "${upd_channel}" "" upd_ver tarball_url _
@@ -1575,7 +1575,7 @@ check_for_updates()
 
 	if [ "${upd_ver}" = "${curr_ver}" ]
 	then
-		reg_msg -3 "The locally installed adblock-lean is the latest version."
+		reg_msg "The locally installed adblock-lean is the latest version."
 		return 0
 	else
 		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${upd_ver}')"
@@ -1652,7 +1652,7 @@ do_select_dnsmasq_instances() {
 
 	if [ "${DNSMASQ_INSTANCES_CNT}" = 1 ]
 	then
-		reg_msg -3 -blue "Detected only 1 dnsmasq instance - skipping manual instance selection."
+		reg_msg -blue "Detected only 1 dnsmasq instance - skipping manual instance selection."
 		DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
 	else
 		# check if all instances share same conf-dirs
@@ -1675,21 +1675,21 @@ do_select_dnsmasq_instances() {
 		# if conf-dirs are shared, attach to first instance
 		if [ -z "${diff}" ]
 		then
-			reg_msg -3 -blue "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
+			reg_msg -blue "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
 			DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
 		else
 			# if conf-dirs are not shared, ask the user
-			reg_msg -3 -blue "Multiple dnsmasq instances detected."
+			reg_msg -blue "Multiple dnsmasq instances detected."
 			REPLY=a
 			if [ "${DO_DIALOGS}" = 1 ]
 			then
-				reg_msg -3 "" "Existing dnsmasq instances and assigned network interfaces:"
+				reg_msg "" "Existing dnsmasq instances and assigned network interfaces:"
 				for index in ${DNSMASQ_RUNNING_INDEXES}
 				do
 					eval "instance=\"\${INST_NAME_${index}}\"" \
 						"ifaces=\"\${IFACES_${index}}\""
 					ifaces="${ifaces// /, }"
-					reg_msg -3 "${index}. Instance '${instance}': interfaces '${ifaces}'"
+					reg_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
 					indexes="${indexes}${index}|"
 				done
 				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort." \
@@ -1712,7 +1712,7 @@ do_select_dnsmasq_instances() {
 				return 1
 			fi
 
-			[ "${REPLY}" = a ] && { reg_msg -3 "Aborted config generation."; exit 0; }
+			[ "${REPLY}" = a ] && { reg_msg "Aborted config generation."; exit 0; }
 			DNSMASQ_INDEXES="${REPLY}"
 		fi
 	fi
@@ -1773,7 +1773,7 @@ do_select_dnsmasq_instances() {
 # populates global vars:
 #   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
 #   INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}, MAC_${index}
-#   MAC_SHARED_NEW, ADDNMOUNTS_SET, DNSMASQ_INST_SET
+#   BL_MAC_NEW, ADDNMOUNTS_SET, DNSMASQ_INST_SET
 get_dnsmasq_instances() {
 	# shellcheck disable=SC2317,SC2329
 	add_conf_dir_and_addnmounts()
@@ -1791,9 +1791,9 @@ get_dnsmasq_instances() {
 	local me=get_dnsmasq_instances \
 		nonempty='' instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir first_iface mac_addr mac_shared=''
 
-	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET MAC_SHARED_NEW
+	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET BL_MAC_NEW
 	DNSMASQ_INSTANCES_CNT=0
-	reg_action -3 -blue "Checking dnsmasq instances."
+	reg_action -blue "Checking dnsmasq instances."
 
 	# gather conf dirs from /etc/config/dhcp
 	if [ -z "${DHCP_LOADED}" ] || [ -n "${FORCE_DHCP}" ]
@@ -1910,7 +1910,7 @@ get_dnsmasq_instances() {
 
 	mac_shared="${mac_shared// /}"
 	tolower mac_shared "${mac_shared}"
-	export MAC_SHARED_NEW="${mac_shared:0:24}" # trim to 24 chars (2 first addresses)
+	export BL_MAC_NEW="${mac_shared:0:24}" # trim to 24 chars (2 first addresses)
 
 	export DNSMASQ_INST_SET=1
 

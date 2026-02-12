@@ -4,7 +4,7 @@
 # silence shellcheck warnings
 : "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}" "${compression_util:=}" "${intermediate_compression_options:=}" "${final_compression_options:=}" \
 	"${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" \
-	"${blue:=}" "${green:=}" "${n_c:=}"
+	"${blue:=}" "${green:=}" "${red:=}" "${n_c:=}"
 
 BUSYBOX_PATH="/bin/busybox"
 
@@ -18,8 +18,6 @@ PROCESSING_TIMEOUT_S=900 # 15 minutes
 IDLE_TIMEOUT_S=300 # 5 minutes
 
 ABL_TEST_DOM_BASE="adblocklean-test.totallybogus"
-
-MAC_SHARED_FILE="${ABL_RUN_DIR}/mac-shared"
 
 ALL_LIST_FORMATS="raw dnsmasq hosts"
 
@@ -252,43 +250,11 @@ get_elapsed_time_human()
 
 # HELPER FUNCTIONS
 
-get_entries_cnt()
-{
-	local ec_cnt rv=1 \
-		ec_out_var="${1}" ec_bl_path="${2}"
-
-	unset_vars "${ec_out_var}" &&
-	assert_set F_get_entries_cnt ec_out_var ec_bl_path || return 1
-
-	check_blocklist_spec _ _ ec_cnt "${ec_bl_path}" ||
-	{
-		ec_cnt=
-		# ipv4_block prefix doesn't need to be added for counting
-		ec_cnt="$(
-			try_extract -stdout "${ec_bl_path}" |
-			${SED_CMD} -E "s~^(server|local)=/~~;/${ABL_TEST_DOM_BASE//./\\.}/d;s~/#{0,1}$~~" | tr '/' '\n' | wc -w
-		)"
-	}
-
-	[ "${whitelist_mode}" = 1 ] && ec_cnt=$((ec_cnt-26)) # ignore alphabet entries
-
-	if is_uint "${ec_cnt}"
-	then
-		rv=0
-	else
-		ec_cnt=0
-	fi
-
-	eval "${ec_out_var}"='${ec_cnt}'
-	return ${rv}
-}
+rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${1}' to rebuild the ${2}${2:+ }blocklist."; }
 
 # Env vars:
 #   CA_CHECK_DNS: test DNS resolution
-#   CA_NOERR: do not print/register errors
 #   CA_NOPROGRESS: do not print progress messages
-# Args:
-# 1: -[curr|new]
 #
 # return values:
 # 0: All checks passed
@@ -297,26 +263,23 @@ get_entries_cnt()
 # 3: One of the test domains failed to resolve
 check_active_blocklist()
 {
-	lookup_failed() { [ -n "${CA_NOERR}" ] || reg_failure "Lookup of test domain '${1}' failed."; }
-	cab_print() { [ -n "${CA_NOPROGRESS}" ] || reg_msg "${@}"; }
+	lookup_failed() { reg_failure "Lookup of test domain '${1}' failed."; }
+	ca_print() { [ -n "${CA_NOPROGRESS}" ] || reg_msg "${@}"; }
 
-	reg_action -3 -blue "Checking the active blocklist." || return 1
+	reg_action -blue "Checking the active blocklist." || return 1
 
-	local me=check_active_blocklist family ip index instance_ns def_ns ns_ips ns_ips_sp test_dom mac_shared
+	local me=check_active_blocklist family ip index instance_ns def_ns ns_ips ns_ips_sp test_dom
+		ca_mac="${1}"
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
 	assert_set "F_${me}" DNSMASQ_INDEXES DNSMASQ_INST_SET || return 1
 
-	case "${1}" in
-		-curr) mac_shared="${MAC_SHARED_CURR}" ;;
-		-new) mac_shared="${MAC_SHARED_NEW}" ;;
-		*) bad_args "${me}" "${@}"; return 1 # TODO
-	esac
+	debug_msg "${me}: mac: '${ca_mac}'"
 
 	for index in ${DNSMASQ_INDEXES}
 	do
-		ns_ips='' ns_ips_sp='' test_dom="${mac_shared}${mac_shared:+"-"}${ABL_TEST_DOM_BASE}"
+		ns_ips='' ns_ips_sp='' test_dom="${ca_mac}${ca_mac:+"-"}${ABL_TEST_DOM_BASE}"
 		get_dnsmasq_instance_ns "${index}"
 
 		for family in 4 6
@@ -333,19 +296,19 @@ check_active_blocklist()
 			done
 		done
 
-		cab_print -3 "Testing dnsmasq instance ${index}."
-		cab_print -3 "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
+		ca_print "Testing dnsmasq instance ${index}."
+		ca_print "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
 
-		cab_print -3 -blue "Testing adblocking."
+		ca_print -blue "Testing adblocking."
 
-		try_lookup_domain "${test_dom}" "${ns_ips}" 1 -n || { lookup_failed "'${test_dom//"${mac_shared}"/NNNN}'${mac_shared:+" (MAC address redacted)"}"; return 2; }
+		try_lookup_domain "${test_dom}" "${ns_ips}" 1 -n || { lookup_failed "${test_dom//"${ca_mac}"/NNNN}'${ca_mac:+" (MAC address redacted)"}"; return 2; }
 
 		[ -n "${CA_CHECK_DNS}" ] &&
 		{
-			cab_print -3 -blue "Testing DNS resolution."
+			ca_print -blue "Testing DNS resolution."
 			for domain in ${test_domains}
 			do
-				try_lookup_domain "${domain}" "${ns_ips}" 5 || { lookup_failed "'${domain}'"; return 3; }
+				try_lookup_domain "${domain}" "${ns_ips}" 5 || { lookup_failed "${domain}"; return 3; }
 			done
 		}
 	done
@@ -355,12 +318,17 @@ check_active_blocklist()
 
 get_abl_run_state()
 {
-	local grs_out_var="${1}"
-	are_var_names_safe "${grs_out_var}" &&
-	assert_set F_get_abl_run_state grs_out_var || return 1
+	local me=get_abl_run_state state_cnt=0
+		grs_out_var="${1}" state_cnt_out_var="${2}"
+
+	unset_vars "${grs_out_var}" "${state_cnt_out_var}" &&
+	assert_set "F_${me}" ABL_ENV_SET grs_out_var || return 1
 
 	try_get_abl_run_state
 	export "${grs_out_var}=${?}"
+	eval "${state_cnt_out_var:-_}"='${state_cnt}'
+
+	: "${state_cnt}"
 	:
 }
 
@@ -372,29 +340,44 @@ get_abl_run_state()
 # 4 - stopped
 try_get_abl_run_state()
 {
-	check_fail() { reg_failure "${1}${1:+ }Failed to check adblock-lean run state."; }
-	unexp_state() { reg_failure "Inconsistent run state. Adblocking check result: '${dns_check_res}', blocklist file check result: '${file_check_res}'."; }
+	check_fail() { reg_failure "${1}${1:+ }Failed to check adblock-lean run state. ${diag_msg}"; }
 
 	[ -n "${DNSMASQ_CONF_DIRS}" ] || { check_fail "\$DNSMASQ_CONF_DIRS is not set."; return 1; }
-	local me=get_abl_run_state dir dns_check_res file_check_res
 
-	assert_set "F_${me}" ABL_ENV_SET || return 1
+	local dir state_mac dns_check_res=-1 bl_file_res=-1 spec_check_res=-1 diag_msg
 
-	[ -f "${BL_FILE_CURR}" ]
-	file_check_res=${?}
+	print_msg -blue "Checking adblock-lean run state."
 
-	CA_NOERR=1 check_active_blocklist -curr
-	dns_check_res=${?}
-	case "${dns_check_res}${file_check_res}" in
-		00) return 0 ;;
-		01) unexp_state; return 1 ;;
-		11|10) check_fail; return 1 ;;
-		21) ;;
-		20)
-			[ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR}" = "${PERSIST_BL_FILE_CURR}" ] && return 3
-			unexp_state; return 1 ;;
-		*) check_fail "${me}: unexpected dns check code '${dns_check_res}${file_check_res}'."; return 1
-	esac
+	if [ -f "${BL_FILE_CURR}" ]
+	then
+		bl_file_res=0
+		CS_QUIET=1 CS_PARAMS="md5 path" check_blocklist_spec "${BL_FILE_CURR}" "" _ _ state_cnt state_mac
+		spec_check_res=${?}
+		if [ -n "${state_mac}" ]
+		then
+			check_active_blocklist "${state_mac}"
+			dns_check_res=${?}
+		fi
+	else
+		dns_check_res=2
+	fi
+
+	diag_msg="Check results: file: '${bl_file_res}', spec: '${spec_check_res}', dns: '${dns_check_res}'."
+
+	[ -f "${BL_FILE_CURR}" ] &&
+	{
+		[ "${spec_check_res}" = 0 ] || { check_fail; return 1; }
+
+		case "${dns_check_res}" in
+			0|3) : ;;
+			1) check_fail "General error."; return 1 ;;
+			2) reg_failure "Inconsistent run state. ${diag_msg}"; return 1 ;;
+			*) check_fail "Unexpected DNS check code '${dns_check_res}'."
+		esac
+		return 0
+	}
+
+	debug_msg "${me}: ${diag_msg}"
 
 	[ -n "${PAUSE_FILE_CURR}" ] && return 3
 
@@ -596,14 +579,6 @@ check_process_features()
 #   SAE_STATUS: do not exit on non-critical errors
 set_abl_env()
 {
-	get_shared_mac_addr()
-	{
-		local mac
-		read -rn32 mac _ 2>/dev/null < "${MAC_SHARED_FILE:?}"
-		eval "${1}"='${mac}'
-		: "${mac}"
-	}
-
 	[ -n "${ABL_ENV_SET}" ] && return 0
 
 	local me=set_abl_env \
@@ -628,8 +603,8 @@ set_abl_env()
 		rebuild_persist_bl='' \
 		\
 		persist_bl_size_b='' \
-		persist_bl_entries_cnt=0 \
-		persist_bl_cnt_human=''
+		persist_cnt=0 \
+		persist_cnt_human=''
 
 	export \
 		START_ACTION=gen \
@@ -645,7 +620,6 @@ set_abl_env()
 		BK_BL_FILE='' \
 		\
 		LOAD_BL_PATH='' \
-		LOAD_BL_ENTRIES_CNT='' \
 		LOAD_BL_DESC='' \
 		\
 		PARALLEL_JOBS='' \
@@ -666,8 +640,7 @@ set_abl_env()
 
 	set -o pipefail
 	get_dnsmasq_instances &&
-	check_dnsmasq_instances &&
-	{ [ -n "${MAC_SHARED_CURR}" ] || get_shared_mac_addr MAC_SHARED_CURR; } ||
+	check_dnsmasq_instances ||
 		return 1
 
 	get_curr_blocklist_paths
@@ -770,10 +743,10 @@ set_abl_env()
 	# Persistent blocklist
 	if [ "${persist_bl_req}" = 1 ]
 	then
-		if [ -z "${PAUSE_FILE_CURR}" ] && { [ "${ABL_INIT_ACTION}" = boot ] || [ "${ABL_INIT_ACTION}" = status ]; }
+		if [ "${ABL_INIT_ACTION}" = boot ] || { [ -z "${PAUSE_FILE_CURR}" ] && [ "${ABL_INIT_ACTION}" = status ]; }
 		then
-			reg_action -3 -blue "Checking the persistent blocklist."
-			local file="${PERSIST_BL_FILE_CURR}" persist_ext='' compr_util='' persist_fail='' min_good_line_count_human='' persist_bl_entries_cnt='' persist_bl_cnt_human=''
+			reg_action -blue "Checking the persistent blocklist."
+			local file="${PERSIST_BL_FILE_CURR}" persist_ext='' compr_util='' persist_fail='' min_good_line_count_human='' persist_cnt='' persist_cnt_human=''
 
 			if
 				{
@@ -804,53 +777,49 @@ set_abl_env()
 					{ persist_fail="Persistent blocklist file '${file}' is larger than the maximum value set in config (${max_blocklist_file_size_KB} KiB)."; false; }
 				} &&
 
-				{
-					get_entries_cnt persist_bl_entries_cnt "${file}" ||
-						{ persist_fail="Failed to get entries count in the persistent blocklist file '${file}'."; false; }
-				} &&
+				CS_QUIET=1 CS_PARAMS="path md5" check_blocklist_spec "${file}" "" _ _ persist_cnt &&
 
 				{
-					int2human persist_bl_cnt_human "${persist_bl_entries_cnt}" &&
+					int2human persist_cnt_human "${persist_cnt}" &&
 					int2human min_good_line_count_human "${min_good_line_count}" || return 1
 				} &&
 
 				{
-					[ "${persist_bl_entries_cnt}" -ge "${min_good_line_count}" ] ||
+					[ "${persist_cnt}" -ge "${min_good_line_count}" ] ||
 						{
-							persist_fail="Entries count (${persist_bl_cnt_human}) in the persistent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
+							persist_fail="Entries count (${persist_cnt_human}) in the persistent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
 							false
 						}
 				}
 			then
 				START_ACTION=load
 
-				PERSIST_BL_FILE_CURR=${file}
 				LOAD_BL_PATH=${PERSIST_BL_FILE_CURR}
-				LOAD_BL_ENTRIES_CNT=${persist_bl_entries_cnt}
 				LOAD_BL_DESC="persistent"
 				BL_FILE_NEW_FALLBACK=${bl_path_ram}
 			else
+				[ "${BL_FILE_CURR}" = "${PERSIST_BL_FILE_CURR}" ] && export BL_FILE_BAD=1
+				export PERSIST_BL_FILE_BAD=1
 				local warn_act_msg=''
 				[ "${ABL_CMD}" = start ] && warn_act_msg="Will create a new blocklist on the ramdisk."
 				[ "${PERSIST_BLOCKLIST_MODE}" = managed ] &&
 				{
 					rebuild_persist_bl=1
-					[ "${ABL_CMD}" = start ] &&
-					{
-						warn_act_msg="Will rebuild the persistent blocklist."
-						rm -f "${file}"
-					}
+					[ "${ABL_CMD}" = start ] && warn_act_msg="Will rebuild the persistent blocklist."
+
 					BL_FILE_NEW=${bl_path_perm}
 					BL_FILE_NEW_FALLBACK=${bl_path_ram}
 				}
-				local warn_msg="${persist_fail}${persist_fail:+ }${warn_act_msg}"
-				[ -n "${warn_msg}" ] && reg_msg -1 -warn "" "${warn_msg}"
+
+				[ -n "${persist_fail}" ] && log_msg -warn "${persist_fail}"
+				[ -n "${warn_act_msg}" ] && log_msg "${warn_act_msg}"
+				[ "${PERSIST_BLOCKLIST_MODE}" = manual ] && rebuild_req_notice "gen_persist_blocklist" "persistent"
 			fi
 		elif [ "${PERSIST_BLOCKLIST_MODE}" = managed ]
 		then
 			pause_dir=${PERSIST_BLOCKLIST_DIR:?}
 			rebuild_persist_bl=1
-			[ "${ABL_CMD}" = start ] && reg_msg -3 "" "Will update the persistent blocklist." ""
+			[ "${ABL_CMD}" = start ] && reg_msg "" "Will update the persistent blocklist." ""
 			BL_FILE_NEW=${bl_path_perm}
 			BL_FILE_NEW_FALLBACK=${bl_path_ram}
 		fi
@@ -862,16 +831,16 @@ set_abl_env()
 	: "${BL_FILE_NEW:="${bl_path_ram}"}"
 
 	[ "${START_ACTION}" = load ] || [ -n "${BL_FILE_NEW}" ] ||
-		{ reg_failure "No usable path to install or load the blocklist."; [ -n "${SAE_STATUS}" ] || return 1; }
+		{ reg_failure "No usable path to install or load the blocklist."; rebuild_req_notice "restart"; [ -n "${SAE_STATUS}" ] || return 1; }
 
 	PAUSE_FILE_NEW=${pause_dir:?}/${PAUSE_BASE_FNAME:?}${FINAL_COMPR_EXT}
 
 	export ABL_ENV_SET=1
 
 	debug_msg \
-		"New blocklist: '${BL_FILE_NEW}'" \
-		"BK file: '${BK_BL_FILE}'" \
-		"New pause file: '${PAUSE_FILE_NEW}'"
+		"BL_FILE_NEW: '${BL_FILE_NEW}'" \
+		"BK_BL_FILE: '${BK_BL_FILE}'" \
+		"PAUSE_FILE_NEW: '${PAUSE_FILE_NEW}'"
 
 	:
 }
@@ -1080,7 +1049,7 @@ schedule_jobs()
 		[ -n "${USR_TRIG}" ] && log_msg -yellow "" "Job scheduler is stopping on receipt of USR1 signal."
 		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] &&
 		{
-			reg_msg -3 -yellow "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
+			reg_msg -yellow "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
 			kill_pids_recursive "${RUNNING_PIDS}"
 			rm -rf "${PROCESSED_PARTS_DIR}" 2>/dev/null
 		}
@@ -1197,7 +1166,7 @@ process_list_part()
 	case_conv() { tr 'A-Z' 'a-z'; }
 
 	local curr_job_pid msg msg_mirr pad \
-		list_origin='' list_path='' list_author='' mirrors='' mirror='' curr_mirror='' prev_mirror='' first_mirror='' loop_prev_mirror='' \
+		list_origin='' list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
 		index="${1}" list_type="${2}" list_format="${3}" print_id="${4}"
 
 	get_curr_job_pid curr_job_pid || finalize_job 1
@@ -1435,8 +1404,8 @@ gen_list_parts()
 	}
 
 	local lists schedule_req local_list_path list_format list_type \
-		preprocessed_line_count=0 preprocessed_line_count_human \
-		preprocessed_size_B=0 preprocessed_list_size_human \
+		preproc_cnt=0 preproc_cnt_human \
+		preproc_size_B=0 preproc_size_human \
 		invalid_urls bad_hagezi_urls \
 		list_line_count list_types
 
@@ -1456,7 +1425,7 @@ gen_list_parts()
 		for d in ${test_domains}
 		do
 			printf '%s\n' "${d}" >> "${PROCESSED_PARTS_DIR}/allow"
-			preprocessed_line_count=$((preprocessed_line_count+1))
+			preproc_cnt=$((preproc_cnt+1))
 		done
 		use_allowlist=1
 	fi
@@ -1516,7 +1485,7 @@ gen_list_parts()
 				then
 					if [ ! -f "${local_list_path}" ]
 					then
-						reg_msg -3 "No local ${list_type}list identified."
+						reg_msg "No local ${list_type}list identified."
 					elif [ ! -s "${local_list_path}" ]
 					then
 						log_msg -warn "" "Local ${list_type}list file is empty."
@@ -1566,24 +1535,24 @@ gen_list_parts()
 						[ "${whitelist_mode}" = 0 ] && return 1
 						log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
 					allow)
-						reg_msg -3 "Not using any allowlist for blocklist processing."
+						reg_msg "Not using any allowlist for blocklist processing."
 				esac
 			elif [ "${list_type}" = ipv4_block ]
 			then
 				use_ipv4_blocklist=1
 			elif [ "${list_type}" = allow ]
 			then
-				reg_msg -3 "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
+				reg_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 				use_allowlist=1
 			fi
-			preprocessed_line_count=$((preprocessed_line_count+list_line_count))
-			preprocessed_size_B=$((preprocessed_size_B+list_size_B))
+			preproc_cnt=$((preproc_cnt+list_line_count))
+			preproc_size_B=$((preproc_size_B+list_size_B))
 		done
 	done
 
-	int2human preprocessed_line_count_human "${preprocessed_line_count}" &&
-	bytes2human preprocessed_list_size_human "${preprocessed_size_B}" || return 1
-	reg_msg -3 "" "${green}Successfully generated preprocessed blocklist file${n_c} (size: ${blue}${preprocessed_list_size_human}${n_c}, entries count: ${blue}${preprocessed_line_count_human}${n_c})."
+	int2human preproc_cnt_human "${preproc_cnt}" &&
+	bytes2human preproc_size_human "${preproc_size_B}" || return 1
+	reg_msg "" "${green}Successfully generated preprocessed blocklist files${n_c} (total uncompressed size: ${blue}${preproc_size_human}${n_c}, entries count: ${blue}${preproc_cnt_human}${n_c})."
 	:
 }
 
@@ -1666,10 +1635,10 @@ gen_blocklist()
 		errors max_blocklist_file_size_B=$((max_blocklist_file_size_KB*1024)) \
 		dedup_cmd_or_cat="/bin/busybox cat" \
 		pack_cmd="pack_entries_sed" \
-		entries_cnt_out_var="${1}" out_f="${2}" INITIAL_UPTIME_S="$(( ${3} / 1000 ))"
+		bl_mac="${BL_MAC_NEW}" \
+		out_f="${1}" INITIAL_UPTIME_S="$(( ${2} / 1000 ))"
 
-	unset_vars "${entries_cnt_out_var}" &&
-	assert_set "F_${me}" entries_cnt_out_var out_f PART_EXTR_OR_CAT_STDOUT FINAL_EXTR_OR_CAT_STDOUT FINAL_COMPR_OR_CAT_STDOUT &&
+	assert_set "F_${me}" out_f PART_EXTR_OR_CAT_STDOUT FINAL_EXTR_OR_CAT_STDOUT FINAL_COMPR_OR_CAT_STDOUT &&
 	case "${PART_EXTR_OR_CAT_STDOUT}" in
 		cat|*" cat") ;;
 		*) assert_set "F_${me}" INTERM_COMPR_EXT || false
@@ -1687,7 +1656,7 @@ gen_blocklist()
 		return 1
 	}
 
-	reg_action -3 -blue "" "Sorting and merging the blocklist parts into a single blocklist file." || return 1
+	reg_action -blue "" "Sorting and merging the blocklist parts into a single blocklist file." || return 1
 	{
 		{
 			# print blocklist parts
@@ -1732,7 +1701,7 @@ gen_blocklist()
 			fi
 
 			# add the blocklist test entry
-			printf '%s\n' "address=/${MAC_SHARED_NEW}${MAC_SHARED_NEW:+"-"}${ABL_TEST_DOM_BASE}/#"
+			printf '%s\n' "address=/${bl_mac}${bl_mac:+"-"}${ABL_TEST_DOM_BASE}/#"
 		} |
 
 		# limit size
@@ -1758,6 +1727,30 @@ gen_blocklist()
 		return 1
 	fi
 
+	# check the final blocklist with dnsmasq --test
+	reg_action -blue "Checking the processed blocklist file with 'dnsmasq --test'." || return 1
+
+	rm -f "${ERR_F}"
+
+	{
+		try_extract -stdout "${out_f}" |
+		dnsmasq --test -C -
+	} 2> "${ERR_F}"
+
+	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ERR_F}"
+	then
+		errors="$(head -n10 "${ERR_F}" | ${SED_CMD} '/^$/d')"
+		rm -f "${ERR_F}" "${out_f}"
+		reg_failure "dnsmasq test on the processed blocklist failed."
+		log_msg "Errors:" "${errors:-"No specifics: probably killed because of OOM."}"
+		return 2
+	fi
+
+	rm -f "${ERR_F}"
+
+	reg_msg -green "Blocklist file check passed."
+
+
 	local block_entries_cnt ipv4_block_entries_cnt allow_entries_cnt
 
 	for list_type in block ipv4_block allow
@@ -1767,8 +1760,16 @@ gen_blocklist()
 
 	final_entries_cnt=$(( block_entries_cnt + ipv4_block_entries_cnt + allow_entries_cnt ))
 
-	eval "${entries_cnt_out_var}"='${final_entries_cnt}'
-	: "${final_entries_cnt}"
+	[ "${whitelist_mode}" = 1 ] && final_entries_cnt=$((final_entries_cnt-26)) # ignore alphabet entries
+
+	is_uint "${final_entries_cnt}" || final_entries_cnt=0
+
+	# Create .spec file next to the blocklist file
+	local processed_md5 spec_file
+	get_spec_file_path spec_file "${out_f}" &&
+	get_md5 processed_md5 "${out_f}" &&
+	mk_spec_file "${spec_file}" "${out_f}" "${processed_md5}" "${final_entries_cnt}" "${bl_mac}" || return 1
+	:
 }
 
 
@@ -1787,60 +1788,113 @@ get_md5()
 
 mk_spec_file()
 {
-	local spec_file="${1}" bl_file="${2}" md5="${3}" entries_cnt="${4}"
+	local spec_file="${1}" bl_file="${2}" md5="${3}" entries_cnt="${4}" mac="${5}"
 	assert_set F_mk_spec_file spec_file bl_file md5 entries_cnt || return 1
 
 	is_dir_writable "${bl_file%/*}" &&
-	printf '%s\n%s\n%s\n' "${bl_file}" "${md5}" "${entries_cnt}" > "${spec_file}" ||
+	printf '%s\n%s\n%s\n%s\n' "path=${bl_file}" "md5=${md5}" "cnt=${entries_cnt}" "mac=${mac}" > "${spec_file}" ||
 		{ rm_if_writable "${spec_file}"; false; }
 }
 
-read_spec_file()
+get_spec_file_path()
 {
-	local r_md5='' r_path='' r_entries_cnt \
-		r_path_out_var="${1}" r_md5_out_var="${2}" r_entries_out_var="${3}" r_spec_file="${4}"
-
-	: "${r_entries_cnt}" "${r_md5}" "${r_path}"
-
-	unset_vars "${r_path_out_var}" "${r_md5_out_var}" "${r_entries_out_var}" &&
-	assert_set F_read_spec_file r_spec_file &&
-	read_str_from_file -F "${_NL_}" -E '' -n512 -q -v "r_path r_md5 r_entries_cnt _" -f "${r_spec_file}" &&
-	eval "${r_path_out_var:-_}"='${r_path}' "${r_md5_out_var:-_}"='${r_md5}' "${r_entries_out_var:-_}"='${r_entries_cnt}'
-}
-
-check_blocklist_spec()
-{
-	local rv cs_spec_bl_path cs_spec_md5 \
-		cs_bl_md5 cs_cnt \
-		cs_spec_dir cs_spec_fname \
-		cs_spec_path_out_var="${1}" cs_md5_out_var="${2}" cs_cnt_out_var="${3}" cs_bl_path="${4}"
-
-	unset_vars "${cs_spec_path_out_var}" "${cs_md5_out_var}" "${cs_cnt_out_var}" &&
-
-	get_md5 cs_bl_md5 "${cs_bl_path}" &&
-
-	split_path cs_spec_dir cs_spec_fname _ "${cs_bl_path}" &&
-	cs_spec_path="${cs_spec_dir}/.${cs_spec_fname}.spec" &&
-	[ -f "${cs_spec_path}" ] &&
-
-	read_spec_file cs_spec_bl_path cs_spec_md5 cs_cnt "${cs_spec_path}" &&
-	[ -n "${cs_cnt}" ] &&
-
-	[ -n "${cs_bl_md5}" ] &&
-	[ "${cs_bl_md5}" = "${cs_spec_md5}" ] &&
-	[ -n "${cs_bl_path}" ] &&
-	[ "${cs_bl_path}" = "${cs_spec_bl_path}" ]
-
-	rv=${?}
-
-	eval "${cs_spec_path_out_var:-_}"='${cs_spec_path}' "${cs_md5_out_var:-_}"='${cs_bl_md5}' "${cs_cnt_out_var:-_}"='${cs_cnt}'
-
-	[ "${rv}" = 0 ] && return 0
-
-	rm_if_writable "${cs_spec_path}"
+	local me=get_spec_file_path sfp_path sfp_dir sfp_fname \
+		sfp_out_var="${1}" sfp_bl_file="${2}"
+	: "${sfp_path}"
+	unset_vars "${sfp_out_var}" &&
+	assert_set "F_${me}" sfp_out_var sfp_bl_file &&
+	split_path sfp_dir sfp_fname _ "${sfp_bl_file}" &&
+	[ -n "${sfp_fname}" ] &&
+	is_valid_dir "${sfp_dir}" &&
+	sfp_path="${sfp_dir}/.${sfp_fname}.spec" &&
+	eval "${sfp_out_var}"='${sfp_path}' &&
+	return 0
+	reg_failure "${me}: failed to get spec path for file '${sfp_bl_file}'"
 	return 1
 }
 
+# Env vars:
+#   CS_QUIET
+#   CS_PARAMS: whitespace-delimited, any combination of "path", "md5"
+check_blocklist_spec()
+{
+	inval_e() { fail_msg="Invalid entry '${1}' in spec file '${cs_spec_file}'."; }
+
+	local me=check_blocklist_spec IFS="${DEFAULT_IFS}" fail_msg rv \
+		cs_req_keys="path md5 cnt mac" \
+		cs_spec_file cs_bl_md5 \
+		cs_spec_path cs_spec_md5 cs_spec_cnt cs_spec_mac \
+		spec_cont='' entry spec_key spec_val spec_err='' \
+		param spec_val bl_val params_set='' \
+		cs_bl_path="${1}" desc="${2}" cs_spec_file_out_var="${3}" cs_md5_out_var="${4}" cs_spec_cnt_out_var="${5}" cs_spec_mac_out_var="${6}"
+
+	desc="${desc}${desc:+ }blocklist"
+
+	: "${cs_spec_path}" "${cs_spec_md5}" "${cs_bl_md5}" "${cs_spec_cnt}" "${cs_spec_mac}"
+
+	[ -n "${CS_QUIET}" ] || reg_msg -blue "Checking ${desc} file."
+
+	debug_msg "${me} start"
+
+	assert_set "F_${me}" cs_bl_path &&
+	unset_vars "${cs_spec_file_out_var}" "${cs_md5_out_var}" "${cs_spec_cnt_out_var}" "${cs_spec_mac_out_var}" || return 1
+
+	{ ! is_included md5 "${CS_PARAMS}" " " || get_md5 cs_bl_md5 "${cs_bl_path}"; } &&
+	get_spec_file_path cs_spec_file "${cs_bl_path}" &&
+	read_str_from_file -F '' -E '' -n1024 -v spec_cont -f "${cs_spec_file}" &&
+
+	# parse and validate the spec file
+	{
+		IFS="${_NL_}"
+		for entry in ${spec_cont}; do
+			IFS="${DEFAULT_IFS}"
+			case "${entry}" in
+				'') continue ;;
+				*=*=*) { inval_e "${entry}"; spec_err=1; break; } ;;
+				*=*) ;;
+				*) { inval_e "${entry}"; spec_err=1; break; } ;;
+			esac
+			spec_key="${entry%=*}"
+			[ -n "${spec_key}" ] &&
+			is_included "${spec_key}" "${cs_req_keys}" " " &&
+			eval "cs_spec_${spec_key}"='${entry#${spec_key}=}' || { spec_err=1; break; }
+			subtract_a_from_b "${spec_key}" "${cs_req_keys}" cs_req_keys " "
+		done
+		IFS="${DEFAULT_IFS}"
+
+		[ -z "${cs_req_keys}" ] && [ -z "${spec_err}" ] ||
+				{ fail_msg="Spec file '${cs_spec_file}' has missing or extra params. Contents: ${_NL_}'${spec_cont%"${_NL_}"}'"; false; }
+	} &&
+
+	# check params
+	for param in ${CS_PARAMS}
+	do
+		case "${param}" in
+			path|md5) ;;
+			*) fail_msg="Unexpected param '${param}'."; break
+		esac
+		params_set=1
+		eval "spec_val=\"\${cs_spec_${param}#\"${param}=\"}\" bl_val=\"\${cs_bl_${param}}\""
+		[ "${spec_val}" = "${bl_val}" ] || { fail_msg="${param} not matching in spec file '${cs_spec_file}'. Spec file has: '${spec_val}', ${desc} file has: '${bl_val}'."; break; }
+	done &&
+
+	[ -z "${fail_msg}" ] &&
+
+	{ [ -n "${params_set}" ] || { fail_msg="missing params."; false; }; }
+
+	rv=${?}
+
+	[ "${rv}" = 0 ] && [ -z "${fail_msg}" ] || {
+		rv=1
+		[ -n "${fail_msg}" ] && reg_failure "${fail_msg}"
+	}
+
+	eval "${cs_spec_file_out_var:-_}"='${cs_spec_file}' "${cs_md5_out_var:-_}"='${cs_spec_md5}' "${cs_spec_cnt_out_var:-_}"='${cs_spec_cnt}' "${cs_spec_mac_out_var:-_}"='${cs_spec_mac}'
+
+	debug_msg "${me} end"
+
+	return ${rv}
+}
 
 # Env vars:
 # CONF_FILES_REQ (0|1): create conf files in dnsmasq dirs
@@ -1852,16 +1906,15 @@ check_blocklist_spec()
 # 4: description
 install_blocklist()
 {
-	local me=install_blocklist size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir errors \
-		spec_file md5_new \
-		final_file="${1}" entries_cnt="${2}" desc="${3}"
+	local me=install_blocklist size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir errors inst_mac \
+		final_file="${1}" desc="${2}"
 
 	assert_set "F_${me}" final_file desc DNSMASQ_CONF_DIRS FINAL_EXTR_OR_CAT_STDOUT || return 1
 
-	reg_action -3 -blue "Installing ${desc} blocklist file."
+	CS_PARAMS="path md5" check_blocklist_spec "${final_file}" "${desc}" _ _ entries_cnt inst_mac || return 1
 
-	# Get and check entries count
-	[ -n "${entries_cnt}" ] || get_entries_cnt entries_cnt "${final_file}" || return 1
+	reg_action -blue "Installing ${desc} blocklist file."
+
 	int2human entries_cnt_human "${entries_cnt}" || return 1
 
 	if [ "${entries_cnt}" -lt "${min_good_line_count}" ]
@@ -1871,42 +1924,13 @@ install_blocklist()
 		return 1
 	fi
 
-	# Check blocklist
-	check_blocklist_spec spec_file md5_new _ "${final_file}" ||
-	{ [ -n "${spec_file}" ] && [ -n "${md5_new}" ] || { reg_failure "Got invalid specs for final file '${final_file}'."; return 1; }; false; } ||
-	{
-		# check the final blocklist with dnsmasq --test
-		reg_action -3 -blue "Checking the ${desc}${desc:+ }blocklist file with 'dnsmasq --test'." || return 1
-
-		rm -f "${ERR_F}"
-
-		{
-			try_extract -stdout "${final_file}" |
-			dnsmasq --test -C -
-		} 2> "${ERR_F}"
-
-		if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ERR_F}"
-		then
-			errors="$(head -n10 "${ERR_F}" | ${SED_CMD} '/^$/d')"
-			rm -f "${ERR_F}"
-			rm_if_writable "${final_file}"
-			reg_failure "dnsmasq test on the ${desc}${desc:+ }blocklist failed."
-			log_msg "Errors:" "${errors:-"No specifics: probably killed because of OOM."}"
-			return 2
-		fi
-
-		rm -f "${ERR_F}"
-	}
-
-	reg_msg -3 -green "Blocklist file check passed."
-
 	size_b="$(get_file_size "${final_file}")" &&
 	bytes2human list_size_human "${size_b}" || return 1
 
 	get_compr_spec cpf_compr_ext compr_util "${final_file}" || return 1
 	[ -n "${cpf_compr_ext}" ] && compr_pr="${compr_util}${compr_util:+"-"}compressed"
 
-	[ "${CONF_FILES_REQ}" = 1 ] && {
+	[ "${CONF_FILES_REQ}" = 1 ] &&
 		for dir in ${DNSMASQ_CONF_DIRS}
 		do
 			is_valid_dir "${dir}" || return 1
@@ -1914,25 +1938,17 @@ install_blocklist()
 			printf '%s\n%s\n' "${FINAL_EXTR_OR_CAT_STDOUT} \"${final_file}\"" "exit 0" > "${dir}/.abl-extract_blocklist" ||
 				{ reg_failure "Failed to create conf-script in directory '${dir}'."; return 1; }
 		done
-	}
 
 	restart_dnsmasq || return 1
 
-	debug_msg "Mac shared curr: '${MAC_SHARED_CURR}', new: '${MAC_SHARED_NEW}'"
-
-	CA_CHECK_DNS=1 check_active_blocklist -new || { reg_failure "Active blocklist check failed with the ${desc} blocklist."; return 1; }
-	reg_msg -3 -green "" "Active blocklist check passed."
+	CA_CHECK_DNS=1 check_active_blocklist "${inst_mac}" || { reg_failure "Active blocklist check failed with the ${desc} blocklist."; return 1; }
+	reg_msg -green "" "Active blocklist check passed."
 
 	reg_success "${green}Successfully loaded ${desc} blocklist${n_c}." \
 		"Final blocklist file: ${blue}${final_file}${n_c} (${compr_pr}, size: ${blue}${list_size_human}${n_c}${entries_cnt_human:+", entries count: ${blue}${entries_cnt_human}${n_c}"}).${n_c}"
 
-	# Create .spec file next to the blocklist file
-	mk_spec_file "${spec_file}" "${final_file}" "${md5_new}" "${entries_cnt}"
-
 	BL_FILE_CURR="${final_file}"
-	printf '%s\n' "${BL_FILE_CURR}" > "${LAST_BLOCKLIST_PATH_FILE}"
-	MAC_SHARED_CURR="${MAC_SHARED_NEW}"
-	printf '%s\n' "${MAC_SHARED_CURR}" > "${MAC_SHARED_FILE:?}"
+	printf '%s\n' "${BL_FILE_CURR}" > "${LAST_BLOCKLIST_PATH_FILE:?}"
 
 	:
 }
@@ -1942,69 +1958,71 @@ install_blocklist()
 # If src dir is protected, copy file instead of moving
 mv_blocklist()
 {
-	try_mv_blocklist "${@}" && return 0
+	local me=mv_blocklist mv_src_d mv_src_fname mv_src_ext mv_dest_d mv_dest_fname mv_dest_ext mv_rv \
+		mv_src_f="${1}" mv_dest_f="${2}" mv_compr_cmd="${3}"
 
-	local src_path="${1}" dest_path="${2}"
-	rm_if_writable "${src_path}" "${dest_path}"
+	debug_msg "${me} start: '${mv_src_f}' to '${mv_dest_f}'"
+
+	assert_set "F_${me}" mv_src_f mv_dest_f &&
+	split_path mv_src_d mv_src_fname mv_src_ext "${mv_src_f}" &&
+	split_path mv_dest_d mv_dest_fname mv_dest_ext "${mv_dest_f}" || return 1
+
+	local src_spec_f="${mv_src_d}/.${mv_src_fname}.spec" \
+		dest_spec_f="${mv_dest_d}/.${mv_dest_fname}.spec"
+
+	try_mv_blocklist "${@}"
+	mv_rv=${?}
+	
+	debug_msg "${me} end"
+	[ "${mv_rv}" = 0 ] && return 0
+
+	rm_if_writable "${mv_src_f}" "${mv_dest_f}" "${src_spec_f}" "${dest_spec_f}"
 	return 1
 }
 
 try_mv_blocklist()
 {
-	local me=mv_blocklist transfer_cmd="try_mv" src_dir src_fname src_ext dest_dir dest_fname dest_ext file_changed='' \
-		src_path="${1}" dest_path="${2}" compr_cmd="${3}"
+	local transfer_cmd="try_mv" rv src_md5 dest_md5 mv_cnt mv_mac \
+		file_changed=''
 
-	assert_set "F_${me}" src_path dest_path || return 1
+	is_valid_dir "${mv_src_d}" && is_valid_dir "${mv_dest_d}" || { reg_failure "${me}: unexpected src dir '${mv_src_d}' or dest dir '${mv_dest_d}'."; return 1; }
 
-	split_path src_dir src_fname src_ext "${src_path}" &&
-	split_path dest_dir dest_fname dest_ext "${dest_path}" || return 1
-	is_valid_dir "${src_dir}" && is_valid_dir "${dest_dir}" || { reg_failure "${me}: unexpected src dir '${src_dir}' or dest dir '${dest_dir}'."; return 1; }
+	[ -f "${mv_src_f}" ] || { reg_failure "File not found at path '${mv_src_f}'."; return 1; }
 
-	[ -f "${src_path}" ] || { reg_failure "File not found at path '${src_path}'."; return 2; }
+	[ "${mv_src_f}" = "${mv_dest_f}" ] && return 0
 
-	[ "${src_path}" = "${dest_path}" ] && return 0
+	CS_QUIET=1 CS_PARAMS="path" check_blocklist_spec "${mv_src_f}" "" _ src_md5 mv_cnt mv_mac || return 1
 
-	is_dir_writable "${src_dir}" || transfer_cmd="cp"
+	is_dir_writable "${mv_dest_d}" || { reg_failure "${me}: logic bug: attempted write into protected dir '${mv_dest_d}'."; return 1; }
 
-	if [ -n "${src_ext}" ] && [ "${src_ext}" != "${dest_ext}" ]
+	is_dir_writable "${mv_src_d}" || transfer_cmd="cp"
+
+	if [ -n "${mv_src_ext}" ] && [ "${mv_src_ext}" != "${mv_dest_ext}" ]
 	then
-		try_extract "${src_path}" || return 1
-		src_path="${src_path%.*}"
-		src_ext=
+		try_extract "${mv_src_f}" || return 1
+		mv_src_f="${mv_src_f%.*}"
+		mv_src_ext=
 		file_changed=1
 	fi
 
-	if [ -n "${dest_ext}" ] && [ -z "${src_ext}" ]
+	if [ -n "${mv_dest_ext}" ] && [ -z "${mv_src_ext}" ]
 	then
-		assert_set "F_${me}" compr_cmd || return 1
-		try_compress "${src_path}" "${compr_cmd}" src_path || return 1
+		assert_set "F_${me}" mv_compr_cmd &&
+		try_compress "${mv_src_f}" "${mv_compr_cmd}" mv_src_f || return 1
 		file_changed=1
 	fi
 
-	${transfer_cmd} "${src_path}" "${dest_path}" || return 1
+	${transfer_cmd} "${mv_src_f}" "${mv_dest_f}" &&
 
 	# Recreate the .spec file next to the blocklist file if old spec file exists
-	local bl_path_old src_md5 dest_md5 entries_cnt \
-		src_spec_file="${src_dir}/.${src_fname}.spec" \
-		dest_spec_file="${dest_dir}/.${dest_fname}.spec"
+	case "${file_changed}" in
+		'') dest_md5="${src_md5}" ;;
+		*) get_md5 dest_md5 "${mv_dest_f}"
+	esac &&
+	[ -n "${dest_md5}" ] &&
+	mk_spec_file "${dest_spec_f}" "${mv_dest_f}" "${dest_md5}" "${mv_cnt}" "${mv_mac}" || return 1
 
-	if
-		is_dir_writable "${dest_dir}" &&
-		read_spec_file bl_path_old src_md5 entries_cnt "${src_spec_file}" &&
-		[ -n "${entries_cnt}" ] &&
-		[ "${bl_path_old}" = "${src_path}" ]
-	then
-		if [ -n "${file_changed}" ]
-		then
-			get_md5 dest_md5 "${dest_file}" || rm_if_writable "${dest_spec_file}"
-		else
-			dest_md5="${src_md5}"
-		fi
-		[ -n "${dest_md5}" ] && mk_spec_file "${dest_spec_file}" "${dest_path}" "${dest_md5}" "${entries_cnt}"
-		[ "${transfer_cmd}" = "try_mv" ] && rm -f "${src_spec_file}"
-	else
-		rm_if_writable "${src_spec_file}"
-	fi
+	[ "${transfer_cmd}" = "try_mv" ] && rm -f "${src_spec_f}"
 
 	:
 }
@@ -2036,7 +2054,7 @@ try_export_blocklist()
 	assert_set "F_export_blocklist" src_path dest_path ALL_CONF_DIRS || return 1
 	[ -f "${src_path}" ] || { reg_failure "Blocklist not found at path '${src_path}'."; return 2; }
 
-	reg_action -3 -blue "" "Creating backup of current blocklist." || return 1
+	reg_action -blue "" "Creating backup of current blocklist." || return 1
 
 	mv_blocklist "${src_path}" "${dest_path}" "${compr_cmd}" || return 1
 
@@ -2095,9 +2113,7 @@ try_restore_saved_blocklist()
 
 	mv_blocklist "${src_file}" "${dest_file}" "${FINAL_COMPR_TO_FILE}" "" || return 1
 
-	MAC_SHARED_NEW=${MAC_SHARED_CURR}
-
-	install_blocklist "${dest_file}" "" "saved" || return 1
+	install_blocklist "${dest_file}" "saved" || return 1
 
 	:
 }
@@ -2160,6 +2176,8 @@ test_url_domains()
 	done
 
 	[ -n "${all_urls}" ] || return 0
+
+	reg_action -blue "Testing connectivity." || exit 1
 
 	printf '%s\n' "${all_urls}" |
 	${SED_CMD} -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}' |
