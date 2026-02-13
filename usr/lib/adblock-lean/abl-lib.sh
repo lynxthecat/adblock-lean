@@ -1591,12 +1591,13 @@ check_for_updates()
 # returns 0 if crontab is readable and the crond process is running, 1 otherwise
 check_cron_service()
 {
+	local IFS="${DEFAULT_IFS}"
 	# check if service is enabled
 	${ABL_CRON_SVC_PATH} enabled || return 1
 	# check reading crontab
 	crontab -u root -l &>/dev/null || return 1
 	# check for crond in running processes
-	pidof crond 1>/dev/null || return 1
+	${PIDOF_CMD} crond 1>/dev/null || return 1
 	:
 }
 

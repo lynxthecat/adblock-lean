@@ -56,7 +56,7 @@ get_compr_util_spec()
 
 	case "${gcu_util_name}" in
 		gzip)
-			detect_util gcu_util_path gzip "" "/usr/libexec/gzip-gnu" -b &&
+			detect_util gcu_util_path gzip "" "/usr/libexec/gzip-gnu" &&
 			gcu_ext=.gz ;;
 		pigz)
 			detect_util gcu_util_path "" pigz "/usr/bin/pigz" &&
@@ -70,7 +70,7 @@ get_compr_util_spec()
 	{
 		gcu_util_path='' gcu_ext=''
 		reg_failure "Compression utility '${gcu_util_name}' can not be used."
-		if detect_util gcu_util_path "gzip" "" "/usr/libexec/gzip-gnu" -b
+		if detect_util gcu_util_path "gzip" "" "/usr/libexec/gzip-gnu"
 		then
 			log_msg "Falling back to gzip compression."
 			gcu_ext=.gz
@@ -1776,8 +1776,8 @@ gen_blocklist()
 get_md5()
 {
 	unset_vars "${1}" || return 1
-	local g_md5
-	g_md5="$(md5sum "${2}")" &&
+	local IFS="${DEFAULT_IFS}" g_md5
+	g_md5="$(${MD5_CMD} "${2}")" &&
 	g_md5="${g_md5%% *}" &&
 	[ -n "${g_md5}" ] &&
 	eval "${1}"='${g_md5}' && return 0
@@ -2202,7 +2202,7 @@ try_lookup_domain()
 	do
 		for ip in ${2}
 		do
-			ns_res="$(nslookup "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break 2; }
+			ns_res="$(${NSLOOKUP_CMD} "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break 2; }
 		done
 		i=$((i+1))
 		[ "${i}" -ge "${3}" ] && break

@@ -1,10 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC3043,SC1090,SC3044
 
-# silence shellcheck warnings
-: "${LIBS_SOURCED}"
-
-ABL_INSTALLER_VER=2
+ABL_INSTALLER_VER=3
 
 ABL_SERVICE_PATH=/etc/init.d/adblock-lean
 ABL_TMP_DIR=/var/run/adblock-lean/tmp
@@ -578,7 +575,7 @@ fetch_abl_dist()
 
 clean_abl_env()
 {
-	unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED ABL_ENV_SET
+	unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED ABL_ENV_SET MAIN_UTILS_DETECTED
 	unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 }
 
@@ -1006,6 +1003,18 @@ fetch_and_install()
 		fi
 	fi
 }
+
+
+# Test process substitution support
+printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
+/bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null ||
+{
+	rm -f /tmp/abl-test
+	reg_failure "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
+	exit 1
+}
+rm -f /tmp/abl-test
+
 
 [ -s "${ABL_SERVICE_PATH}" ] && IS_UPDATE=1
 
