@@ -110,7 +110,7 @@ adblock-lean custom commands:
 	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings
 	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
 	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
-	                              Use this command to create or update persistent blocklist when PERM_BLOCKLIST_MODE is 'manual'"
+	                              Use this command to create or update persistent blocklist when PERSIST_BLOCKLIST_MODE is 'manual'"
 
 # silence shellcheck warnings
 : "${action:=}" "${boot_start_delay_s:=}" "${CONFIG_FORMAT}"
