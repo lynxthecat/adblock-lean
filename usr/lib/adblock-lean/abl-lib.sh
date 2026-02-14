@@ -199,7 +199,7 @@ create_addnmounts()
 
 	[ -n "${all_missing_addnm}" ] ||
 	{
-		reg_msg -green "" "All required dnsmasq addnmount entries already exist."
+		reg_msg -green "All required dnsmasq addnmount entries already exist."
 		return 0
 	}
 
@@ -207,10 +207,10 @@ create_addnmounts()
 	log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${all_missing_addnm}"
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ]
 	then
-		print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
+		print_msg -blue "Create missing addnmount entries automatically? (y|n)"
 		pick_opt "y|n" || return 1
 	else
-		log_msg -blue "" "Automatically creating missing addnmount entries."
+		log_msg -blue "Automatically creating missing addnmount entries."
 		REPLY=y
 	fi
 	[ "${REPLY}" = y ] || return 0
@@ -230,7 +230,7 @@ create_addnmounts()
 	do
 		del_addnmounts "${index}"
 		case ${?} in 0|3) ;; *) { add_list_failed=1; break; }; esac
-		log_msg -purple "" "Creating dnsmasq addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
+		log_msg -purple "Creating dnsmasq addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
 		IFS="${_NL_}"
 		for path in ${all_req_addnmounts}
 		do
@@ -247,7 +247,7 @@ create_addnmounts()
 		return 1
 	}
 
-	FORCE_DHCP=1 get_dnsmasq_instances || return 1
+	unset ADDNMOUNTS_SET DHCP_LOADED
 
 	:
 }
@@ -1261,15 +1261,14 @@ parse_config()
 
 load_config()
 {
-	detect_main_utils || return 1 # for abl-install.sh
-	local force_load=
-	[ "${1}" = '-force' ] || [ -n "${ABL_IN_INSTALL}" ] && { force_load=1; shift; }
-	[ -n "${CONFIG_LOADED}" ] && [ -z "${force_load}" ] && return 0
+	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
+	local in_install="${ABL_IN_INSTALL:-"${upd_channel}"}"
+	[ -n "${CONFIG_LOADED}" ] && [ "${1}" != '-force' ] && [ -z "${in_install}" ] && return 0
 	try_load_config || { reg_failure "Failed to load config." "Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."; return 1; }
 	export CONFIG_LOADED=1
 
 	# check for missing addnmounts during version update
-	if [ -n "${ABL_IN_INSTALL}" ]
+	if [ -n "${in_install}" ]
 	then
 		get_dnsmasq_instances &&
 		create_addnmounts
@@ -1684,7 +1683,7 @@ do_select_dnsmasq_instances() {
 		esac
 	}
 
-	FORCE_DHCP=1 get_dnsmasq_instances && is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] ||
+	get_dnsmasq_instances && is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] ||
 	{
 		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
 		stop -noexit
@@ -1811,7 +1810,6 @@ do_select_dnsmasq_instances() {
 }
 
 # Env vars:
-#   FORCE_DHCP: force re-read /etc/config/dhcp
 #   GDI_NOFORCE: skip re-processing instances if DNSMASQ_INST_SET is non-empty
 # populates global vars:
 #   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
@@ -1828,7 +1826,7 @@ get_dnsmasq_instances() {
 		index=$((index+1))
 	}
 
-	[ -n "${GDI_NOFORCE}" ] && [ -z "${FORCE_DHCP}" ] && [ -n "${DNSMASQ_INST_SET}" ] && [ -n "${ADDNMOUNTS_SET}" ] &&
+	[ -n "${GDI_NOFORCE}" ] && [ -n "${DNSMASQ_INST_SET}" ] && [ -n "${ADDNMOUNTS_SET}" ] &&
 		is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] && return 0
 
 	local me=get_dnsmasq_instances \
@@ -1838,14 +1836,14 @@ get_dnsmasq_instances() {
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -blue "Checking dnsmasq instances."
 
-	# gather conf dirs from /etc/config/dhcp
-	if [ -z "${DHCP_LOADED}" ] || [ -n "${FORCE_DHCP}" ]
-	then
-		{ check_func config_load 1>/dev/null || . /lib/functions.sh; } &&
+	[ -n "${DHCP_LOADED}" ] ||
+	{
+		# gather conf dirs from /etc/config/dhcp
+		{ check_func config_load 1>/dev/null || { [ -f /lib/functions.sh ] && . /lib/functions.sh; }; } &&
 		config_load dhcp ||
 			{ reg_failure "Failed to load /etc/config/dhcp"; return 1; }
 		DHCP_LOADED=1
-	fi
+	}
 
 	index=0
 	config_foreach add_conf_dir_and_addnmounts dnsmasq

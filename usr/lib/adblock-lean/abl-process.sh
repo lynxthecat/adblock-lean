@@ -1642,7 +1642,7 @@ gen_blocklist()
 
 	rm -f "${ERR_F}"
 
-	reg_msg -green "Blocklist file check passed."
+	reg_msg -green "Blocklist file check passed." ""
 
 
 	local block_entries_cnt ipv4_block_entries_cnt allow_entries_cnt

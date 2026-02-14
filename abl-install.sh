@@ -644,15 +644,13 @@ install_abl_files()
 	exec_files="$(get_file_list "${dist_dir}${ABL_SERVICE_PATH}" EXEC)"
 
 	# handle update
+	export ABL_IN_INSTALL=1
 	if [ -n "${IS_UPDATE}" ]
 	then
 		# get currently installed file list
 		old_files="$(get_file_list "${ABL_SERVICE_PATH}" ALL)"
 		prev_config_format="$(get_config_format < "${ABL_SERVICE_PATH}")"
 		upd_config_format="$(get_config_format < "${dist_dir}${ABL_SERVICE_PATH}")"
-		[ -n "${upd_config_format}" ] && [ -n "${prev_config_format}" ] && \
-			[ "${upd_config_format}" != "${prev_config_format}" ] &&
-			config_format_changed=1
 
 		local IFS="${_NL_}"
 
@@ -801,27 +799,7 @@ install_abl_files()
 		)
 	fi
 
-	if [ -n "${config_format_changed}" ]
-	then
-		(
-			clean_abl_env
-			failsafe_log "${_NL_}NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
-			export ABL_IN_INSTALL=1
-
-			# load config in new version
-			# shellcheck source=/dev/null
-			if  . "${ABL_SERVICE_PATH}" &&
-				{ ! check_func source_libs || source_libs; } &&
-				check_func load_config
-			then
-				load_config
-			else
-				failsafe_log "Please run 'service adblock-lean start' to initialize the new config."
-			fi
-		:
-		)
-	fi
-	ABL_IN_INSTALL=
+	[ -n "${config_format_changed}" ] && print_msg "" "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
 
 	:
 }

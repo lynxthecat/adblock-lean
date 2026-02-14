@@ -2477,6 +2477,7 @@ update()
 	if [ "${REPLY}" = y ]
 	then
 		clean_abl_env
+		export ABL_IN_INSTALL=1
 		. "${ABL_SERVICE_PATH}" || return 1
 		start
 	else
