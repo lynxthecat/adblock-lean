@@ -140,9 +140,13 @@ int2human()
 
 ### SETUP AND CONFIG MANAGEMENT
 
-suggest_addnmounts()
+create_addnmounts()
 {
-	local REPLY all_req_addnmounts="${1}" missing_addnmounts="${2}"
+	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
+
+	local IFS="${DEFAULT_IFS}" REPLY all_req_addnmounts='' missing_addnmounts=''
+
+	CPF_RECOMMEND=1 check_process_features _ all_req_addnmounts missing_addnmounts || return 1
 
 	[ -n "${missing_addnmounts}" ] ||
 	{
@@ -159,22 +163,12 @@ suggest_addnmounts()
 		log_msg -blue "" "Automatically creating missing addnmount entries."
 		REPLY=y
 	fi
-	[ "${REPLY}" = y ] && create_addnmounts "${all_req_addnmounts}"
+	[ "${REPLY}" = y ] || return 0
 
-	:
-}
-
-create_addnmounts()
-{
-	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
-
-	local IFS="${DEFAULT_IFS}" index path paths paths_pr add_list_failed='' \
-		paths="${1}"
-
-	[ -n "${paths}" ] || return 0
+	local index path paths_pr add_list_failed=''
 
 	IFS="${_NL_}"
-	for path in ${paths}
+	for path in ${all_req_addnmounts}
 	do
 		IFS="${DEFAULT_IFS}"
 		add2list paths_pr "'${path}'" ", "
@@ -187,7 +181,7 @@ create_addnmounts()
 		case ${?} in 0|3) ;; *) { add_list_failed=1; break; }; esac
 		log_msg -purple "" "Creating dnsmasq addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
 		IFS="${_NL_}"
-		for path in ${paths}
+		for path in ${all_req_addnmounts}
 		do
 			IFS="${DEFAULT_IFS}"
 			create_addnmount "${index}" "${path}" || { add_list_failed=1; break 2; }
@@ -421,9 +415,7 @@ do_setup()
 	esac
 
 	# create addnmount entries - enables blocklist compression and adblocking on multiple instances
-	local all_req_addnmounts missing_addnmounts
-	CPF_QUIET=1 check_process_features _ all_req_addnmounts missing_addnmounts &&
-	suggest_addnmounts "${all_req_addnmounts}" "${missing_addnmounts}" || return 1
+	create_addnmounts || return 1
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
@@ -1227,10 +1219,8 @@ load_config()
 	# check for missing addnmounts during version update
 	if [ -n "${ABL_IN_INSTALL}" ]
 	then
-		local all_req_addnmounts='' missing_addnmounts=''
 		get_dnsmasq_instances &&
-		CPF_QUIET=1 check_process_features _ all_req_addnmounts missing_addnmounts &&
-		suggest_addnmounts "${all_req_addnmounts}" "${missing_addnmounts}"
+		create_addnmounts
 	fi
 	:
 }

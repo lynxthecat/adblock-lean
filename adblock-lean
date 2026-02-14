@@ -399,7 +399,7 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
-# Populates globl vars: BL_FILE_CURR PAUSE_FILE_CURR PERSIST_BL_FILE_CURR
+# Populates global vars: BL_FILE_CURR PAUSE_FILE_CURR PERSIST_BL_FILE_CURR PERSIST_PAUSE_FILE_CURR
 get_curr_blocklist_paths()
 {
 	debug_msg "Looking for existing blocklist files."
@@ -407,7 +407,8 @@ get_curr_blocklist_paths()
 	export \
 		BL_FILE_CURR='' \
 		PAUSE_FILE_CURR='' \
-		PERSIST_BL_FILE_CURR=''
+		PERSIST_BL_FILE_CURR='' \
+		PERSIST_PAUSE_FILE_CURR=''
 
 	# Current blocklist file path
 	read_str_from_file -E "${_NL_}" -v path -f "${LAST_BLOCKLIST_PATH_FILE:?}" -q -n 512 &&
@@ -420,9 +421,11 @@ get_curr_blocklist_paths()
 			PAUSE_FILE_CURR="${path}"
 
 	# Current persistent blocklist path
-	FF_RM_EXTRA=1 find_files PERSIST_BL_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}"
+	FF_RM_EXTRA=1 find_files PERSIST_BL_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}" ||
+	FF_RM_EXTRA=1 find_files PERSIST_PAUSE_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME:?}"
 
-	debug_msg "BL_FILE_CURR: '${BL_FILE_CURR}'" "PAUSE_FILE_CURR: '${PAUSE_FILE_CURR}'" "PERSIST_BL_FILE_CURR: '${PERSIST_BL_FILE_CURR}'"
+	debug_msg "BL_FILE_CURR='${BL_FILE_CURR}'" "PAUSE_FILE_CURR='${PAUSE_FILE_CURR}'" \
+		"PERSIST_BL_FILE_CURR='${PERSIST_BL_FILE_CURR}'" "PERSIST_PAUSE_FILE_CURR='${PERSIST_PAUSE_FILE_CURR}'"
 	:
 }
 
@@ -1956,12 +1959,8 @@ upd_cron_job()
 select_dnsmasq_instances()
 {
 	init_command select_dnsmasq_instances &&
-	do_select_dnsmasq_instances "${@}" || return 1
-
-	local all_req_addnmounts missing_addnmounts
-	CPF_QUIET=1 check_process_features _ all_req_addnmounts missing_addnmounts &&
-	suggest_addnmounts "${all_req_addnmounts}" "${missing_addnmounts}" || return 1
-
+	do_select_dnsmasq_instances "${@}" &&
+	create_addnmounts || return 1
 }
 
 # 1 - (optional) '-noexit' to return to the calling function

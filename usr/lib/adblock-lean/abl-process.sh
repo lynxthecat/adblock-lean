@@ -395,7 +395,7 @@ try_get_abl_run_state()
 check_process_features()
 {
 	feature_unavail() {
-		[ -z "${CPF_QUIET}" ] && reg_failure "${1} can not be used because of missing addnmounts in /etc/config/dhcp: ${2}" \
+		[ -z "${CPF_RECOMMEND}" ] && reg_failure "${1} can not be used because of missing addnmounts in /etc/config/dhcp: ${2}" \
 			"Please run 'service adblock-lean setup' to create required addnmount entries."
 	}
 
@@ -421,7 +421,7 @@ check_process_features()
 		\
 		bl_full_fname='' \
 		cpf_bl_path_ram='' \
-		cpf_bl_path_perm='' \
+		cpf_bl_path_persist='' \
 		\
 		bl_full_fname_check='' \
 		bl_path_ram_check='' \
@@ -442,7 +442,7 @@ check_process_features()
 		compr_ext_var="${7}" \
 		conf_req_var="${8}"
 
-	debug_msg "Checking processing features${CPF_QUIET:+" (QUIET)"}." 
+	debug_msg "Checking processing features${CPF_RECOMMEND:+" (RECOMMEND)"}."
 
 	unset_vars "${state_var}" "${all_req_addnm_var}" "${missing_recomm_var}" "${bl_path_ram_var}" "${bl_path_persist_var}" "${compr_util_path_var}" "${compr_ext_var}" "${conf_req_var}" &&
 	assert_set "F_${me}" DNSMASQ_INDEXES compression_util || return 1
@@ -467,7 +467,7 @@ check_process_features()
 			feature_unavail "Final blocklist compression" "${cpf_missing}"
 		fi
 
-		[ -n "${CPF_QUIET}" ] &&
+		[ -n "${CPF_RECOMMEND}" ] &&
 		{
 			bl_full_fname_recomm=${BLOCKLIST_BASE_FNAME:?}${cpf_compr_ext}
 			cpf_bl_path_ram_recomm=${ABL_RUN_DIR:?}/${bl_full_fname_recomm}
@@ -483,7 +483,7 @@ check_process_features()
 	# Multiple dnsmasq instances
 	case "${DNSMASQ_INDEXES}" in
 		*[0-9]*" "*[0-9]*)
-			[ -n "${CPF_QUIET}" ] &&
+			[ -n "${CPF_RECOMMEND}" ] &&
 			{
 				cpf_bl_path_ram_recomm=${ABL_RUN_DIR:?}/${bl_full_fname_recomm}
 				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${cpf_bl_path_ram_recomm}"
@@ -520,7 +520,7 @@ check_process_features()
 
 	# Persistent blocklist
 	case "${PERSIST_BLOCKLIST_MODE}" in manual|managed)
-		[ -n "${CPF_QUIET}" ] &&
+		[ -n "${CPF_RECOMMEND}" ] &&
 		{
 			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${persist_dir}"
 			is_included "${cpf_bl_path_ram_recomm}" "${ok_paths}" "${_NL_}" ||
@@ -550,7 +550,7 @@ check_process_features()
 				if [ -z "${cpf_missing}" ]
 				then
 					persist_allowed=1
-					[ "${PERSIST_BLOCKLIST_MODE}" = managed ] && cpf_bl_path_perm="${persist_dir}/${bl_full_fname}"
+					[ "${PERSIST_BLOCKLIST_MODE}" = managed ] && cpf_bl_path_persist="${persist_dir}/${bl_full_fname}"
 				else
 					feature_unavail "Persistent blocklist" "${cpf_missing}"
 				fi
@@ -565,11 +565,11 @@ check_process_features()
 	eval "${missing_recomm_var:-_}"='${cpf_all_missing_recomm}'
 	eval "${conf_req_var:-_}"='${cpf_conf_req}'
 	eval "${bl_path_ram_var:-_}"='${cpf_bl_path_ram}'
-	eval "${bl_path_persist_var:-_}"='${cpf_bl_path_perm}'
+	eval "${bl_path_persist_var:-_}"='${cpf_bl_path_persist}'
 	eval "${compr_util_path_var:-_}"='${cpf_compr_util_path}'
 	eval "${compr_ext_var:-_}"='${cpf_compr_ext}'
 
-	: "${cpf_all_req_recomm}" "${multi_inst_allowed}" "${persist_allowed}" "${compr_allowed}" "${cpf_all_missing_recomm}" "${cpf_bl_path_perm}" "${cpf_conf_req}"
+	: "${cpf_all_req_recomm}" "${multi_inst_allowed}" "${persist_allowed}" "${compr_allowed}" "${cpf_all_missing_recomm}" "${cpf_bl_path_persist}" "${cpf_conf_req}"
 
 	:
 }
@@ -666,14 +666,14 @@ set_abl_env()
 	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and persistent blocklist creation,
 	#   get final blocklist paths,
 	#   compression util path and extension
-	local state bl_path_ram bl_path_perm compr_util_path compr_ext \
-		final_compr_req='' multi_inst_req='' persist_bl_req='' CPF_QUIET=''
+	local state bl_path_ram bl_path_persist compr_util_path compr_ext \
+		final_compr_req='' multi_inst_req='' persist_bl_req='' CPF_RECOMMEND=''
 
-	check_process_features state _ _ bl_path_ram bl_path_perm compr_util_path compr_ext CONF_FILES_REQ || return 1
+	check_process_features state _ _ bl_path_ram bl_path_persist compr_util_path compr_ext CONF_FILES_REQ || return 1
 	debug_msg \
 		"state: '${state//"${_NL_}"/ }'" \
 		"bl_path_ram: '${bl_path_ram}'" \
-		"bl_path_perm: '${bl_path_perm}'" \
+		"bl_path_persist: '${bl_path_persist}'" \
 		"compr_util_path: '${compr_util_path}'" \
 		"compr_ext: '${compr_ext}'" \
 		"CONF_FILES_REQ: '${CONF_FILES_REQ}'"
@@ -746,7 +746,8 @@ set_abl_env()
 		if [ "${ABL_INIT_ACTION}" = boot ] || { [ -z "${PAUSE_FILE_CURR}" ] && [ "${ABL_INIT_ACTION}" = status ]; }
 		then
 			reg_action -blue "Checking the persistent blocklist."
-			local file="${PERSIST_BL_FILE_CURR}" persist_ext='' compr_util='' persist_fail='' min_good_line_count_human='' persist_cnt='' persist_cnt_human=''
+			local file="${PERSIST_BL_FILE_CURR:-"${PERSIST_PAUSE_FILE_CURR}"}" \
+				compr_util='' min_good_line_count_human='' persist_ext='' persist_fail='' persist_cnt='' persist_cnt_human=''
 
 			if
 				{
@@ -790,15 +791,27 @@ set_abl_env()
 							persist_fail="Entries count (${persist_cnt_human}) in the persistent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
 							false
 						}
+				} &&
+
+				{
+					[ "${file}" != "${PERSIST_PAUSE_FILE_CURR}" ] ||
+					{
+						split_path persist_dir _ persist_ext "${file}" &&
+						local persist_moved="${persist_dir}/${BLOCKLIST_BASE_FNAME}${persist_ext:+.}${persist_ext}" &&
+						mv_blocklist "${file}" "${persist_moved}" &&
+						PERSIST_PAUSE_FILE_CURR='' file="${persist_moved}" &&
+						{ [ "${file}" != "${PAUSE_FILE_CURR}" ] || PAUSE_FILE_CURR=''; } ||
+							{ rm_pause_bl; rm_main_bl; false; }
+					}
 				}
 			then
 				START_ACTION=load
 
-				LOAD_BL_PATH=${PERSIST_BL_FILE_CURR}
+				LOAD_BL_PATH=${file}
 				LOAD_BL_DESC="persistent"
 				BL_FILE_NEW_FALLBACK=${bl_path_ram}
 			else
-				[ "${BL_FILE_CURR}" = "${PERSIST_BL_FILE_CURR}" ] && export BL_FILE_BAD=1
+				[ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR}" = "${file}" ] && export BL_FILE_BAD=1
 				export PERSIST_BL_FILE_BAD=1
 				local warn_act_msg=''
 				[ "${ABL_CMD}" = start ] && warn_act_msg="Will create a new blocklist on the ramdisk."
@@ -807,7 +820,7 @@ set_abl_env()
 					rebuild_persist_bl=1
 					[ "${ABL_CMD}" = start ] && warn_act_msg="Will rebuild the persistent blocklist."
 
-					BL_FILE_NEW=${bl_path_perm}
+					BL_FILE_NEW=${bl_path_persist}
 					BL_FILE_NEW_FALLBACK=${bl_path_ram}
 				}
 
@@ -820,7 +833,7 @@ set_abl_env()
 			pause_dir=${PERSIST_BLOCKLIST_DIR:?}
 			rebuild_persist_bl=1
 			[ "${ABL_CMD}" = start ] && reg_msg "" "Will update the persistent blocklist." ""
-			BL_FILE_NEW=${bl_path_perm}
+			BL_FILE_NEW=${bl_path_persist}
 			BL_FILE_NEW_FALLBACK=${bl_path_ram}
 		fi
 
@@ -1958,6 +1971,7 @@ install_blocklist()
 # If src dir is protected, copy file instead of moving
 mv_blocklist()
 {
+	mv_fail() { reg_failure "Failed to move blocklist from '${mv_src_f}' to '${mv_dest_f}'."; }
 	local me=mv_blocklist mv_src_d mv_src_fname mv_src_ext mv_dest_d mv_dest_fname mv_dest_ext mv_rv \
 		mv_src_f="${1}" mv_dest_f="${2}" mv_compr_cmd="${3}"
 
@@ -1965,7 +1979,7 @@ mv_blocklist()
 
 	assert_set "F_${me}" mv_src_f mv_dest_f &&
 	split_path mv_src_d mv_src_fname mv_src_ext "${mv_src_f}" &&
-	split_path mv_dest_d mv_dest_fname mv_dest_ext "${mv_dest_f}" || return 1
+	split_path mv_dest_d mv_dest_fname mv_dest_ext "${mv_dest_f}" || { mv_fail; return 1; }
 
 	local src_spec_f="${mv_src_d}/.${mv_src_fname}.spec" \
 		dest_spec_f="${mv_dest_d}/.${mv_dest_fname}.spec"
@@ -1977,6 +1991,7 @@ mv_blocklist()
 	[ "${mv_rv}" = 0 ] && return 0
 
 	rm_if_writable "${mv_src_f}" "${mv_dest_f}" "${src_spec_f}" "${dest_spec_f}"
+	mv_fail
 	return 1
 }
 
