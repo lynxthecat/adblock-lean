@@ -812,9 +812,9 @@ install_abl_files()
 			# shellcheck source=/dev/null
 			if  . "${ABL_SERVICE_PATH}" &&
 				{ ! check_func source_libs || source_libs; } &&
-				check_func load_config && load_config
+				check_func load_config
 			then
-				:
+				load_config
 			else
 				failsafe_log "Please run 'service adblock-lean start' to initialize the new config."
 			fi

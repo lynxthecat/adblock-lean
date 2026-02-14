@@ -2,13 +2,37 @@
 # shellcheck source=/dev/null
 # shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003,SC3060
 
-# adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
-# Project homepage: https://github.com/lynxthecat/adblock-lean
 ABL_VERSION=dev
 ABL_UPD_CHANNEL=release
 
 START=99
 STOP=04
+
+ABL_BUILTIN_CMDS="start stop restart reload enable disable"
+ABL_CUSTOM_CMDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits gen_persist_blocklist"
+
+export EXTRA_COMMANDS="${ABL_CUSTOM_CMDS}"
+export EXTRA_HELP="
+adblock-lean custom commands:
+	version                   Print adblock-lean version
+	setup                     Run automated setup for adblock-lean
+	status                    Check dnsmasq and entries count of existing blocklist
+	pause                     Pause adblock-lean
+	resume                    Resume adblock-lean
+	gen_stats                 Generate dnsmasq stats for system log
+	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
+	gen_config                Generate default config based on one of the pre-defined presets
+	upd_cron_job              Create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
+	                              If config option set to 'disable', remove existing cron job if any
+	print_log                 Print most recent session log
+	update                    Update adblock-lean to the latest version
+	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings
+	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
+	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
+	                              Use this command to create or update persistent blocklist when PERSIST_BLOCKLIST_MODE is 'manual'"
+
+# adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
+# Project homepage: https://github.com/lynxthecat/adblock-lean
 
 # Authors: @Lynx and @Wizballs (OpenWrt forum)
 # Contributors: @antonk; @dave14305 (OpenWrt forum)
@@ -89,31 +113,9 @@ SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-ABL_BUILTIN_CMDS="start stop restart reload enable disable"
-ABL_CUSTOM_CMDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits gen_persist_blocklist"
-
-export EXTRA_COMMANDS="${ABL_CUSTOM_CMDS}"
-export EXTRA_HELP="
-adblock-lean custom commands:
-	version                   Print adblock-lean version
-	setup                     Run automated setup for adblock-lean
-	status                    Check dnsmasq and entries count of existing blocklist
-	pause                     Pause adblock-lean
-	resume                    Resume adblock-lean
-	gen_stats                 Generate dnsmasq stats for system log
-	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
-	gen_config                Generate default config based on one of the pre-defined presets
-	upd_cron_job              Create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	                              If config option set to 'disable', remove existing cron job if any
-	print_log                 Print most recent session log
-	update                    Update adblock-lean to the latest version
-	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings
-	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
-	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
-	                              Use this command to create or update persistent blocklist when PERSIST_BLOCKLIST_MODE is 'manual'"
-
 # silence shellcheck warnings
-: "${action:=}" "${boot_start_delay_s:=}" "${CONFIG_FORMAT}"
+: "${action:=}" "${boot_start_delay_s:=}" "${CONFIG_FORMAT}" "${SAE_STATUS:=}"
+
 export luci_log luci_pid_action luci_errors luci_dnsmasq_status luci_good_line_count luci_update_status luci_pkgs_install_failed luci_cron_job_creation_failed
 
 
@@ -399,33 +401,33 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
-# Populates global vars: BL_FILE_CURR PAUSE_FILE_CURR PERSIST_BL_FILE_CURR PERSIST_PAUSE_FILE_CURR
+# Populates global vars: BL_FILE_CURR PAUSE_FILE_CURR PERSIST_BL_FILE_CURR
 get_curr_blocklist_paths()
 {
 	debug_msg "Looking for existing blocklist files."
-	local path
+	local gcb_path
 	export \
 		BL_FILE_CURR='' \
 		PAUSE_FILE_CURR='' \
-		PERSIST_BL_FILE_CURR='' \
-		PERSIST_PAUSE_FILE_CURR=''
+		PERSIST_BL_FILE_CURR=''
+
+	[ "${ABL_CMD}" = start ] && rm_pause_bl
 
 	# Current blocklist file path
-	read_str_from_file -E "${_NL_}" -v path -f "${LAST_BLOCKLIST_PATH_FILE:?}" -q -n 512 &&
-		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
-			BL_FILE_CURR="${path}"
+	read_str_from_file -E "${_NL_}" -v gcb_path -f "${LAST_BLOCKLIST_PATH_FILE:?}" -q -n 512 &&
+		is_valid_dir "${gcb_path%/*}" && [ -f "${gcb_path}" ] &&
+			BL_FILE_CURR="${gcb_path}"
 
 	# Current pause file path
-	read_str_from_file -E "${_NL_}" -v path -f "${LAST_PAUSE_PATH_FILE:?}" -q -n 512 &&
-		is_valid_dir "${path%/*}" && [ -f "${path}" ] &&
-			PAUSE_FILE_CURR="${path}"
+	read_str_from_file -E "${_NL_}" -v gcb_path -f "${LAST_PAUSE_PATH_FILE:?}" -q -n 512 &&
+		is_valid_dir "${gcb_path%/*}" && [ -f "${gcb_path}" ] &&
+			PAUSE_FILE_CURR="${gcb_path}"
 
 	# Current persistent blocklist path
-	FF_RM_EXTRA=1 find_files PERSIST_BL_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}" ||
-	FF_RM_EXTRA=1 find_files PERSIST_PAUSE_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME:?}"
+	FF_RM_EXTRA=1 find_files PERSIST_BL_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}"
 
 	debug_msg "BL_FILE_CURR='${BL_FILE_CURR}'" "PAUSE_FILE_CURR='${PAUSE_FILE_CURR}'" \
-		"PERSIST_BL_FILE_CURR='${PERSIST_BL_FILE_CURR}'" "PERSIST_PAUSE_FILE_CURR='${PERSIST_PAUSE_FILE_CURR}'"
+		"PERSIST_BL_FILE_CURR='${PERSIST_BL_FILE_CURR}'"
 	:
 }
 
@@ -967,7 +969,7 @@ restart_dnsmasq()
 		return 1
 	}
 
-	reg_action -blue "Waiting for dnsmasq initialization." || return 1
+	reg_msg -blue "Waiting for dnsmasq initialization." || return 1
 	local dnsmasq_ok=
 	for i in $(seq 1 60)
 	do
@@ -1461,24 +1463,22 @@ init_command()
 
 	# set requirements
 	case ${ABL_CMD} in
-		help|enabled|enable|disable|uninstall) ;;
+		enabled|enable|disable|uninstall) ;;
 		gen_stats|calculate_limits) libs_req=1 ;;
-		status) config_req=1 env_req=1 work_dir_req=1 ;;
+		status) local SAE_STATUS=1; config_req=1 env_req=1 work_dir_req=1 ;;
 		upd_cron_job) config_req=1 ;;
 		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
 		boot|gen_persist_blocklist) config_req=1 LOCK_REQ=1 ;;
 		pause) work_dir_req=1 config_req=1 env_req=1 LOCK_REQ=1 ;;
 		start|resume) work_dir_req=1 config_req=1 env_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
-			source_libs || exit 1
 			kill_abl_pids
 			check_lock
 			case ${?} in
 				1) exit 1 ;;
 				2) reg_failure "Failed to kill running adblock-lean processes."; exit 1
 			esac
-			GDI_NOFORCE=1 get_dnsmasq_instances
-			CLEANUP_REQ=1 LOCK_REQ=1 ;;
+			libs_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
 			libs_req=1 LOCK_REQ=1
 			[ "${action}" = select_dnsmasq_instances ] && config_req=1 # require config when called directly
@@ -1552,7 +1552,7 @@ init_command()
 
 	if [ -n "${init_action_pr}" ]
 	then
-		reg_action -1 -purple "${init_action_pr}" || exit 1
+		reg_action -1 -purple "" "${init_action_pr}" || exit 1
 	elif [ -n "${init_action_short}" ]
 	then
 		update_action_file "${init_action_short}"
@@ -2019,7 +2019,6 @@ start()
 
 	debug_msg "START_ACTION: '${START_ACTION}'"
 
-	rm_pause_bl
 	rm_conf_scripts
 
 	if [ "${START_ACTION}" = load ]
@@ -2182,7 +2181,7 @@ gen_persist_blocklist()
 # 1/2 - (optional) '-noexit' to return to the calling function
 stop()
 {
-	local file dir stop_rc=0 ASSERT_NOEXIT=1 noexit='' keep_persist_orig="${KEEP_PERSIST}"
+	local file dir stop_rc=0 ASSERT_NOEXIT=1 noexit=''
 	for _arg in "$@"
 	do
 		case "${_arg}" in
@@ -2194,7 +2193,9 @@ stop()
 	msg="${msg% }"
 
 	init_command stop || { FAIL_STOP_REQ=''; exit 1; }
+	print_msg ""
 	load_config
+	GDI_NOFORCE=1 get_dnsmasq_instances
 
 	get_curr_blocklist_paths
 
@@ -2202,7 +2203,7 @@ stop()
 
 	rm_conf_scripts || stop_rc=1
 	rm_pause_bl
-	local KEEP_PERSIST="${KEEP_PERSIST:-1}"
+	local keep_persist_orig="${KEEP_PERSIST}" KEEP_PERSIST="${KEEP_PERSIST:-1}"
 	rm_main_bl
 	KEEP_PERSIST=${keep_persist_orig}
 
@@ -2248,13 +2249,13 @@ status()
 			exit 2
 	esac
 
+	init_command status || exit 1
+
 	rc_enabled
 	case ${?} in
 		0) print_msg -green "" "adblock-lean service is enabled." ;;
 		1) print_msg -yellow "" "adblock-lean service is disabled."
 	esac
-
-	SAE_STATUS=1 init_command status || exit 1
 
 	local run_state timestamp status_cnt='' status_cnt_human
 

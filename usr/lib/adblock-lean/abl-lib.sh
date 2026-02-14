@@ -144,17 +144,67 @@ create_addnmounts()
 {
 	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
 
-	local IFS="${DEFAULT_IFS}" REPLY all_req_addnmounts='' missing_addnmounts=''
+	local me=create_addnmounts IFS="${DEFAULT_IFS}" REPLY \
+		missing_addnm all_missing_addnm='' all_req_addnmounts='' addnm_ignore_paths='' \
+		ca_paths ca_compr_util_path ca_compr_ext \
+		bl_full_fname bl_path_ram
 
-	CPF_RECOMMEND=1 check_process_features _ all_req_addnmounts missing_addnmounts || return 1
+	assert_set "F_${me}" DNSMASQ_INDEXES compression_util || return 1
 
-	[ -n "${missing_addnmounts}" ] ||
+	## Check addmounts
+
+	# Compression
+	get_compr_util_spec ca_compr_util_path ca_compr_ext "${compression_util}" || return 1
+
+	if [ -n "${ca_compr_ext}" ]
+	then
+		bl_full_fname=${BLOCKLIST_BASE_FNAME:?}${ca_compr_ext}
+		bl_path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
+		ca_paths="${BUSYBOX_PATH:?}${_NL_}${ca_compr_util_path%% *}${_NL_}${bl_path_ram}"
+		check_addnmounts missing_addnm "${ca_paths}" || return 1
+
+		add2list all_req_addnmounts "${ca_paths}" "${_NL_}" &&
+		add2list all_missing_addnm "${missing_addnm}" ", " || return 1
+    fi
+
+	: "${bl_full_fname:="${BLOCKLIST_BASE_FNAME:?}"}"
+
+	# Multiple dnsmasq instances
+	case "${DNSMASQ_INDEXES}" in
+		*[0-9]*" "*[0-9]*)
+				bl_path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
+				ca_paths="${BUSYBOX_PATH:?}${_NL_}${bl_path_ram}"
+				check_addnmounts missing_addnm "${ca_paths}" &&
+				add2list all_req_addnmounts "${ca_paths}" "${_NL_}" &&
+				add2list all_missing_addnm "${missing_addnm}" ", " || return 1 ;;
+		*)
+			first_conf_dir="${DNSMASQ_CONF_DIRS%% *}"
+			is_valid_dir "${first_conf_dir}" || return 1
+			addnm_ignore_paths="${first_conf_dir}/${bl_full_fname}"
+
+			: "${bl_path_ram:="${first_conf_dir}/${bl_full_fname}"}" ;;
+    esac
+
+	assert_set "F_${me}" bl_path_ram || return 1
+
+	# Persistent blocklist
+	case "${PERSIST_BLOCKLIST_MODE}" in manual|managed)
+			ca_paths="${BUSYBOX_PATH:?}${_NL_}${PERSIST_BLOCKLIST_DIR}"
+			is_included "${bl_path_ram}" "${addnm_ignore_paths}" "${_NL_}" ||
+				add2list ca_paths "${bl_path_ram}" "${_NL_}"
+			check_addnmounts missing_addnm "${ca_paths}" &&
+			add2list all_req_addnmounts "${ca_paths}" "${_NL_}" &&
+			add2list all_missing_addnm "${missing_addnm}" ", " || return 1
+	esac
+
+	[ -n "${all_missing_addnm}" ] ||
 	{
 		reg_msg -green "" "All required dnsmasq addnmount entries already exist."
 		return 0
 	}
 
-	log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${missing_addnmounts}"
+	## Dialog
+	log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${all_missing_addnm}"
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ]
 	then
 		print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
@@ -165,6 +215,7 @@ create_addnmounts()
 	fi
 	[ "${REPLY}" = y ] || return 0
 
+	## Create addnmounts
 	local index path paths_pr add_list_failed=''
 
 	IFS="${_NL_}"
@@ -1210,6 +1261,7 @@ parse_config()
 
 load_config()
 {
+	detect_main_utils || return 1 # for abl-install.sh
 	local force_load=
 	[ "${1}" = '-force' ] || [ -n "${ABL_IN_INSTALL}" ] && { force_load=1; shift; }
 	[ -n "${CONFIG_LOADED}" ] && [ -z "${force_load}" ] && return 0

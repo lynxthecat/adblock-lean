@@ -384,233 +384,61 @@ try_get_abl_run_state()
 	return 4
 }
 
-# Output via optional vars:
-# 1: state var for processing setup: <final_compr:[0|1]${_NL_}multi_inst:[0|1]${_NL_}persist_bl:[0|1]>
-# 2: printable missing addnmounts for addnmounts suggestion
-# 3: path on ramdisk for new blocklist creation
-# 4: path for persistent blocklist creation/loading
-# 5: compr util path
-# 6: compr extension
-# 7: conf_req: 1 if conf-files are required, 0 if not
-check_process_features()
-{
-	feature_unavail() {
-		[ -z "${CPF_RECOMMEND}" ] && reg_failure "${1} can not be used because of missing addnmounts in /etc/config/dhcp: ${2}" \
-			"Please run 'service adblock-lean setup' to create required addnmount entries."
-	}
-
-	local me=check_process_features \
-		IFS="${DEFAULT_IFS}" \
-		first_conf_dir \
-		\
-		cpf_paths='' \
-		\
-		cpf_missing='' \
-		\
-		cpf_all_req_recomm='' \
-		cpf_all_missing_recomm='' \
-		\
-		compr_allowed=0 \
-		persist_allowed=0 \
-		multi_inst_allowed=0 \
-		\
-		cpf_compr_util_path='' \
-		cpf_compr_ext='' \
-		\
-		cpf_conf_req=1 \
-		\
-		bl_full_fname='' \
-		cpf_bl_path_ram='' \
-		cpf_bl_path_persist='' \
-		\
-		bl_full_fname_check='' \
-		bl_path_ram_check='' \
-		\
-		ok_paths='' \
-		\
-		bl_full_fname_recomm='' \
-		cpf_bl_path_ram_recomm='' \
-		\
-		persist_dir="${PERSIST_BLOCKLIST_DIR}" \
-		\
-		state_var="${1}" \
-		all_req_addnm_var="${2}" \
-		missing_recomm_var="${3}" \
-		bl_path_ram_var="${4}" \
-		bl_path_persist_var="${5}" \
-		compr_util_path_var="${6}" \
-		compr_ext_var="${7}" \
-		conf_req_var="${8}"
-
-	debug_msg "Checking processing features${CPF_RECOMMEND:+" (RECOMMEND)"}."
-
-	unset_vars "${state_var}" "${all_req_addnm_var}" "${missing_recomm_var}" "${bl_path_ram_var}" "${bl_path_persist_var}" "${compr_util_path_var}" "${compr_ext_var}" "${conf_req_var}" &&
-	assert_set "F_${me}" DNSMASQ_INDEXES compression_util || return 1
-
-
-	# Compression
-	get_compr_util_spec cpf_compr_util_path cpf_compr_ext "${compression_util}" || return 1
-
-	if [ -n "${cpf_compr_ext}" ]
-	then
-		bl_full_fname_check=${BLOCKLIST_BASE_FNAME:?}${cpf_compr_ext}
-		bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
-		cpf_paths="${BUSYBOX_PATH:?}${_NL_}${cpf_compr_util_path%% *}${_NL_}${bl_path_ram_check}"
-		check_addnmounts cpf_missing "${cpf_paths}" || return 1
-
-		if [ -z "${cpf_missing}" ]
-		then
-			compr_allowed=1
-			bl_full_fname=${bl_full_fname_check}
-			cpf_bl_path_ram=${bl_path_ram_check}
-		else
-			feature_unavail "Final blocklist compression" "${cpf_missing}"
-		fi
-
-		[ -n "${CPF_RECOMMEND}" ] &&
-		{
-			bl_full_fname_recomm=${BLOCKLIST_BASE_FNAME:?}${cpf_compr_ext}
-			cpf_bl_path_ram_recomm=${ABL_RUN_DIR:?}/${bl_full_fname_recomm}
-			add2list cpf_all_req_recomm "${cpf_paths}" "${_NL_}" &&
-			add2list cpf_all_missing_recomm "${cpf_missing}" ", " || return 1
-		}
-	fi
-
-	: "${bl_full_fname_recomm:="${BLOCKLIST_BASE_FNAME:?}"}"
-	: "${bl_full_fname:="${BLOCKLIST_BASE_FNAME:?}"}"
-
-
-	# Multiple dnsmasq instances
-	case "${DNSMASQ_INDEXES}" in
-		*[0-9]*" "*[0-9]*)
-			[ -n "${CPF_RECOMMEND}" ] &&
-			{
-				cpf_bl_path_ram_recomm=${ABL_RUN_DIR:?}/${bl_full_fname_recomm}
-				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${cpf_bl_path_ram_recomm}"
-				check_addnmounts cpf_missing "${cpf_paths}" &&
-				add2list cpf_all_req_recomm "${cpf_paths}" "${_NL_}" &&
-				add2list cpf_all_missing_recomm "${cpf_missing}" ", " || return 1
-			}
-
-			bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname:?}
-			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${bl_path_ram_check}"
-			check_addnmounts cpf_missing "${cpf_paths}" || return 1
-			if [ -z "${cpf_missing}" ]
-			then
-				cpf_bl_path_ram=${bl_path_ram_check}
-				multi_inst_allowed=1
-			else
-				feature_unavail "Multiple dnsmasq instances" "${cpf_missing}"
-			fi ;;
-		*)
-			first_conf_dir="${DNSMASQ_CONF_DIRS%% *}"
-			is_valid_dir "${first_conf_dir}" || return 1
-			ok_paths="${first_conf_dir}/${bl_full_fname}${_NL_}${first_conf_dir}/${bl_full_fname_recomm}"
-
-			[ -n "${cpf_bl_path_ram}" ] ||
-			{
-				cpf_bl_path_ram="${first_conf_dir}/${bl_full_fname}"
-				cpf_conf_req=0
-			}
-
-			: "${cpf_bl_path_ram_recomm:="${first_conf_dir}/${bl_full_fname_recomm}"}"
-	esac
-
-	assert_set "F_${me}" cpf_bl_path_ram_recomm || return 1
-
-	# Persistent blocklist
-	case "${PERSIST_BLOCKLIST_MODE}" in manual|managed)
-		[ -n "${CPF_RECOMMEND}" ] &&
-		{
-			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${persist_dir}"
-			is_included "${cpf_bl_path_ram_recomm}" "${ok_paths}" "${_NL_}" ||
-				cpf_paths="${cpf_paths}${_NL_}${cpf_bl_path_ram_recomm}"
-			check_addnmounts cpf_missing "${cpf_paths}" &&
-			add2list cpf_all_req_recomm "${cpf_paths}" "${_NL_}" &&
-			add2list cpf_all_missing_recomm "${cpf_missing}" ", " || return 1
-		}
-
-		if [ -n "${cpf_bl_path_ram}" ]
-		then
-			local persist_fail persist_dir_pr="persistent blocklist directory"
-			if [ -d "${persist_dir}" ] ||
-				{
-					case "${PERSIST_BLOCKLIST_DIR}" in
-						''|/) persist_fail="Empty or invalid ${persist_dir_pr} '${persist_dir}' specified in config option PERSIST_BLOCKLIST_DIR." ;;
-						*) persist_fail="Can not find ${persist_dir_pr}: ${persist_dir}."
-					esac
-					false
-				}
-			then
-				# alternative path on ramdisk required for fallback
-				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${persist_dir}"
-				is_included "${cpf_bl_path_ram}" "${ok_paths}" "${_NL_}" ||
-					cpf_paths="${cpf_paths}${_NL_}${cpf_bl_path_ram}"
-				check_addnmounts cpf_missing "${cpf_paths}" || return 1
-				if [ -z "${cpf_missing}" ]
-				then
-					persist_allowed=1
-					[ "${PERSIST_BLOCKLIST_MODE}" = managed ] && cpf_bl_path_persist="${persist_dir}/${bl_full_fname}"
-				else
-					feature_unavail "Persistent blocklist" "${cpf_missing}"
-				fi
-			else
-				log_msg -warn "" "${persist_fail}${persist_fail:+ }Persistent blocklist can not be used or updated."
-			fi
-		fi
-	esac
-
-	eval "${state_var:-_}=\"final_compr:\${compr_allowed}\${_NL_}multi_inst:\${multi_inst_allowed}\${_NL_}persist_bl:\${persist_allowed}\""
-	eval "${all_req_addnm_var:-_}"='${cpf_all_req_recomm}'
-	eval "${missing_recomm_var:-_}"='${cpf_all_missing_recomm}'
-	eval "${conf_req_var:-_}"='${cpf_conf_req}'
-	eval "${bl_path_ram_var:-_}"='${cpf_bl_path_ram}'
-	eval "${bl_path_persist_var:-_}"='${cpf_bl_path_persist}'
-	eval "${compr_util_path_var:-_}"='${cpf_compr_util_path}'
-	eval "${compr_ext_var:-_}"='${cpf_compr_ext}'
-
-	: "${cpf_all_req_recomm}" "${multi_inst_allowed}" "${persist_allowed}" "${compr_allowed}" "${cpf_all_missing_recomm}" "${cpf_bl_path_persist}" "${cpf_conf_req}"
-
-	:
-}
-
 # Populates global vars required for processing, status and cleanup
 # Env vars:
 #   SAE_STATUS: do not exit on non-critical errors
 set_abl_env()
 {
+	feature_unavail() {
+		reg_failure "${1} can not be used because of missing addnmounts in /etc/config/dhcp: ${2}" \
+			"Please run 'service adblock-lean setup' to create required addnmount entries."
+	}
+
 	[ -n "${ABL_ENV_SET}" ] && return 0
 
 	local me=set_abl_env \
 		IFS="${DEFAULT_IFS}" \
 		\
+		final_compr_avail=0 \
+		persist_avail=0 \
+		multi_inst_avail=0 \
+		\
+		first_conf_dir \
+		cpf_paths='' \
+		sae_missing_addnm='' \
+		addnm_ignore_paths='' \
+		\
+		bl_full_fname_check='' \
+		bl_path_ram_check='' \
+		bl_full_fname='' \
+		bl_path_ram='' \
+		bl_path_persist='' \
+		\
 		compr_util_path='' \
 		compr_ext='' \
-		\
 		extr_cmd_stdout='' \
 		compr_cmd_to_file='' \
 		extra_compr_cmd_to_file_opts='' \
 		compr_cmd_stdout='' \
-		\
 		interm_compr_opts='' \
-		\
 		final_compr_opts='' \
 		\
 		pause_dir="${ABL_RUN_DIR:?}" \
 		\
 		par_opt='' \
 		cpu_cnt \
-		rebuild_persist_bl='' \
 		\
+		persist_dir="${PERSIST_BLOCKLIST_DIR}" \
 		persist_bl_size_b='' \
 		persist_cnt=0 \
-		persist_cnt_human=''
+		persist_cnt_human='' \
+		rebuild_persist_bl='' \
 
 	export \
 		START_ACTION=gen \
 		\
-		CONF_FILES_REQ=0 \
-		CONF_FILES_REQ_FALLBACK=0 \
+		CONF_FILES_REQ=1 \
+		CONF_FILES_REQ_FALLBACK=1 \
 		\
 		BL_FILE_NEW='' \
 		BL_FILE_NEW_FALLBACK='' \
@@ -666,12 +494,91 @@ set_abl_env()
 	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and persistent blocklist creation,
 	#   get final blocklist paths,
 	#   compression util path and extension
-	local state bl_path_ram bl_path_persist compr_util_path compr_ext \
-		final_compr_req='' multi_inst_req='' persist_bl_req='' CPF_RECOMMEND=''
+	debug_msg "Checking processing features."
 
-	check_process_features state _ _ bl_path_ram bl_path_persist compr_util_path compr_ext CONF_FILES_REQ || return 1
+	assert_set "F_${me}" DNSMASQ_INDEXES compression_util || return 1
+
+	# Compression
+	get_compr_util_spec compr_util_path compr_ext "${compression_util}" || return 1
+
+	if [ -n "${compr_ext}" ]
+	then
+		bl_full_fname_check=${BLOCKLIST_BASE_FNAME:?}${compr_ext}
+		bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
+		cpf_paths="${BUSYBOX_PATH:?}${_NL_}${compr_util_path%% *}${_NL_}${bl_path_ram_check}"
+		check_addnmounts sae_missing_addnm "${cpf_paths}" || return 1
+
+		if [ -z "${sae_missing_addnm}" ]
+		then
+			final_compr_avail=1
+			bl_full_fname=${bl_full_fname_check}
+			bl_path_ram=${bl_path_ram_check}
+		else
+			feature_unavail "Final blocklist compression" "${sae_missing_addnm}"
+		fi
+	fi
+
+	: "${bl_full_fname:="${BLOCKLIST_BASE_FNAME:?}"}"
+
+
+	# Multiple dnsmasq instances
+	case "${DNSMASQ_INDEXES}" in
+		*[0-9]*" "*[0-9]*)
+			bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname:?}
+			cpf_paths="${BUSYBOX_PATH:?}${_NL_}${bl_path_ram_check}"
+			check_addnmounts sae_missing_addnm "${cpf_paths}" || return 1
+			if [ -z "${sae_missing_addnm}" ]
+			then
+				bl_path_ram=${bl_path_ram_check}
+				multi_inst_avail=1
+			else
+				feature_unavail "Multiple dnsmasq instances" "${sae_missing_addnm}"
+			fi ;;
+		*)
+			first_conf_dir="${DNSMASQ_CONF_DIRS%% *}"
+			is_valid_dir "${first_conf_dir}" || return 1
+			addnm_ignore_paths="${first_conf_dir}/${bl_full_fname}"
+
+			[ -n "${bl_path_ram}" ] ||
+			{
+				bl_path_ram="${first_conf_dir}/${bl_full_fname}"
+				CONF_FILES_REQ=0
+			}
+	esac
+
+	# Persistent blocklist
+	[ -n "${bl_path_ram}" ] &&
+		case "${PERSIST_BLOCKLIST_MODE}" in manual|managed)
+			local persist_fail persist_dir_pr="persistent blocklist directory"
+			if [ -d "${persist_dir}" ] ||
+				{
+					case "${PERSIST_BLOCKLIST_DIR}" in
+						''|/) persist_fail="Empty or invalid ${persist_dir_pr} '${persist_dir}' specified in config option PERSIST_BLOCKLIST_DIR." ;;
+						*) persist_fail="Can not find ${persist_dir_pr}: ${persist_dir}."
+					esac
+					false
+				}
+			then
+				# alternative path on ramdisk required for fallback
+				cpf_paths="${BUSYBOX_PATH:?}${_NL_}${persist_dir}"
+				is_included "${bl_path_ram}" "${addnm_ignore_paths}" "${_NL_}" ||
+					cpf_paths="${cpf_paths}${_NL_}${bl_path_ram}"
+				check_addnmounts sae_missing_addnm "${cpf_paths}" || return 1
+				if [ -z "${sae_missing_addnm}" ]
+				then
+					persist_avail=1
+					[ "${PERSIST_BLOCKLIST_MODE}" = managed ] && bl_path_persist="${persist_dir}/${bl_full_fname}"
+				else
+					feature_unavail "Persistent blocklist" "${sae_missing_addnm}"
+				fi
+			else
+				log_msg -warn "" "${persist_fail}${persist_fail:+ }Persistent blocklist can not be used or updated."
+			fi
+		esac
+
+
 	debug_msg \
-		"state: '${state//"${_NL_}"/ }'" \
+		"features state: 'final_compr_avail:${final_compr_avail} multi_inst_avail:${multi_inst_avail} persist_bl_avail:${persist_avail}'" \
 		"bl_path_ram: '${bl_path_ram}'" \
 		"bl_path_persist: '${bl_path_persist}'" \
 		"compr_util_path: '${compr_util_path}'" \
@@ -680,20 +587,6 @@ set_abl_env()
 
 	CONF_FILES_REQ_FALLBACK=${CONF_FILES_REQ}
 
-	# Parse state
-	local feature_state
-	for feature in final_compr multi_inst persist_bl
-	do
-		feature_state="${state##*"${feature}:"}"
-		feature_state="${feature_state%%"${_NL_}"*}"
-		case "${feature_state}" in
-			[01]) ;;
-			*)
-				reg_failure "${me}: invalid state '${feature_state}' for feature '${feature}'."
-				[ -n "${SAE_STATUS}" ] || return 1
-		esac
-		eval "${feature}_req"='${feature_state}'
-	done
 
 	# Interm compr commands
 	[ -n "${compr_ext}" ] &&
@@ -725,7 +618,7 @@ set_abl_env()
 	}
 
 	# Compr final commands, extension and filenames
-	[ "${final_compr_req}" = 1 ] &&
+	[ "${final_compr_avail}" = 1 ] &&
 	{
 		FINAL_COMPRESS=1
 		FINAL_COMPR_EXT=${compr_ext}
@@ -734,19 +627,19 @@ set_abl_env()
 		FINAL_EXTR_OR_CAT_STDOUT=${extr_cmd_stdout}
 	}
 
-	[ "${final_compr_req}" = 1 ] || [ "${multi_inst_req}" = 1 ] &&
+	[ "${final_compr_avail}" = 1 ] || [ "${multi_inst_avail}" = 1 ] &&
 		CONF_FILES_REQ=1
 
 
 	BK_BL_FILE="${BK_BL_BASE_PATH:?}${INTERM_COMPR_EXT}"
 
 	# Persistent blocklist
-	if [ "${persist_bl_req}" = 1 ]
+	if [ "${persist_avail}" = 1 ]
 	then
 		if [ "${ABL_INIT_ACTION}" = boot ] || { [ -z "${PAUSE_FILE_CURR}" ] && [ "${ABL_INIT_ACTION}" = status ]; }
 		then
 			reg_action -blue "Checking the persistent blocklist."
-			local file="${PERSIST_BL_FILE_CURR:-"${PERSIST_PAUSE_FILE_CURR}"}" \
+			local file="${PERSIST_BL_FILE_CURR}" \
 				compr_util='' min_good_line_count_human='' persist_ext='' persist_fail='' persist_cnt='' persist_cnt_human=''
 
 			if
@@ -791,18 +684,6 @@ set_abl_env()
 							persist_fail="Entries count (${persist_cnt_human}) in the persistent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
 							false
 						}
-				} &&
-
-				{
-					[ "${file}" != "${PERSIST_PAUSE_FILE_CURR}" ] ||
-					{
-						split_path persist_dir _ persist_ext "${file}" &&
-						local persist_moved="${persist_dir}/${BLOCKLIST_BASE_FNAME}${persist_ext:+.}${persist_ext}" &&
-						mv_blocklist "${file}" "${persist_moved}" &&
-						PERSIST_PAUSE_FILE_CURR='' file="${persist_moved}" &&
-						{ [ "${file}" != "${PAUSE_FILE_CURR}" ] || PAUSE_FILE_CURR=''; } ||
-							{ rm_pause_bl; rm_main_bl; false; }
-					}
 				}
 			then
 				START_ACTION=load
@@ -1919,7 +1800,7 @@ check_blocklist_spec()
 # 4: description
 install_blocklist()
 {
-	local me=install_blocklist size_b entries_cnt_human list_size_human compr_pr="uncompressed" cpf_compr_ext compr_util dir errors inst_mac \
+	local me=install_blocklist size_b entries_cnt_human list_size_human compr_pr="uncompressed" inst_compr_ext compr_util dir errors inst_mac \
 		final_file="${1}" desc="${2}"
 
 	assert_set "F_${me}" final_file desc DNSMASQ_CONF_DIRS FINAL_EXTR_OR_CAT_STDOUT || return 1
@@ -1940,8 +1821,8 @@ install_blocklist()
 	size_b="$(get_file_size "${final_file}")" &&
 	bytes2human list_size_human "${size_b}" || return 1
 
-	get_compr_spec cpf_compr_ext compr_util "${final_file}" || return 1
-	[ -n "${cpf_compr_ext}" ] && compr_pr="${compr_util}${compr_util:+"-"}compressed"
+	get_compr_spec inst_compr_ext compr_util "${final_file}" || return 1
+	[ -n "${inst_compr_ext}" ] && compr_pr="${compr_util}${compr_util:+"-"}compressed"
 
 	[ "${CONF_FILES_REQ}" = 1 ] &&
 		for dir in ${DNSMASQ_CONF_DIRS}
