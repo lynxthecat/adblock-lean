@@ -9,27 +9,28 @@ START=99
 STOP=04
 
 ABL_BUILTIN_CMDS="start stop restart reload enable disable"
-ABL_CUSTOM_CMDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits gen_persist_blocklist"
+ABL_CUSTOM_CMDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits gen_persist_blocklist create_addnmounts"
 
 export EXTRA_COMMANDS="${ABL_CUSTOM_CMDS}"
 export EXTRA_HELP="
 adblock-lean custom commands:
 	version                   Print adblock-lean version
-	setup                     Run automated setup for adblock-lean
+	update                    Update adblock-lean to the latest version
 	status                    Check dnsmasq and entries count of existing blocklist
 	pause                     Pause adblock-lean
 	resume                    Resume adblock-lean
-	gen_stats                 Generate dnsmasq stats for system log
-	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
+	setup                     Run automated setup for adblock-lean
 	gen_config                Generate default config based on one of the pre-defined presets
+	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
+	create_addnmounts         Check which dnsmasq service addnmount paths are required for current adblock-lean config and create them automatically
 	upd_cron_job              Create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	                              If config option set to 'disable', remove existing cron job if any
+	                              If the config option is set to 'disable', remove existing cron job if any
 	print_log                 Print most recent session log
-	update                    Update adblock-lean to the latest version
-	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings
-	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
 	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
-	                              Use this command to create or update persistent blocklist when PERSIST_BLOCKLIST_MODE is 'manual'"
+	                              Use this command to create or update persistent blocklist when PERSIST_BLOCKLIST_MODE is 'manual'
+	gen_stats                 Generate dnsmasq stats for system log
+	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
+	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings"
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
 # Project homepage: https://github.com/lynxthecat/adblock-lean
@@ -69,21 +70,28 @@ export ABL_TMP_DIR="${ABL_RUN_DIR}/tmp"
 
 export ABL_UPD_DIR=${ABL_TMP_DIR}/update \
 	ABL_PID_DIR="/tmp/adblock-lean" \
+	ABL_HOTPLUG_DIR="/etc/hotplug.d/block" \
 	\
 	ABL_LIB_DIR="/usr/lib/adblock-lean" \
 	ABL_CONFIG_DIR="/etc/adblock-lean" \
 	ABL_CONF_STAGING_DIR="/tmp/abl-conf-staging" \
 	\
 	ABL_SERVICE_PATH="/etc/init.d/adblock-lean" \
-	\
 	ABL_FILE_TYPES="GEN LIB EXTRA" \
 	\
 	BLOCKLIST_BASE_FNAME="abl-blocklist" \
 	PAUSE_BASE_FNAME="pause-blocklist" \
+	HOTPLUG_SCRIPT_FNAME="99-abl-hotplug.sh" \
 	\
-	BK_BL_BASE_PATH="${ABL_TMP_DIR:?}/bk-blocklist" \
+	BK_BL_BASE_PATH="${ABL_TMP_DIR:?}/bk-blocklist"
 
-export ABL_GEN_FILES="${ABL_SERVICE_PATH}" \
+export ABL_HOTPLUG_PATH_SRC="${ABL_CONFIG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
+	ABL_HOTPLUG_PATH_ENABLED="${ABL_HOTPLUG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
+	ABL_HOTPLUG_PATH_DISABLED="${ABL_HOTPLUG_DIR}/.${HOTPLUG_SCRIPT_FNAME}" \
+	ABL_HOTPLUG_REG_FILE="${ABL_RUN_DIR}/hotplug-device"
+
+export ABL_GEN_FILES="${ABL_SERVICE_PATH}
+		${ABL_HOTPLUG_PATH_SRC}" \
 	ABL_LIB_FILES="${ABL_LIB_DIR}/abl-lib.sh
 		${ABL_LIB_DIR}/abl-process.sh" \
 	ABL_EXTRA_FILES="" \
@@ -102,6 +110,7 @@ export ABL_GEN_FILES="${ABL_SERVICE_PATH}" \
 	\
 	ABL_CRON_CMD="/etc/init.d/adblock-lean start" \
 	\
+	META_FILE="${ABL_RUN_DIR}/blocklist-metadata" \
 	LAST_BLOCKLIST_PATH_FILE="${ABL_RUN_DIR}/last-blocklist-path.txt" \
 	LAST_PAUSE_PATH_FILE="${ABL_RUN_DIR}/pause-blocklist-path.txt"
 
@@ -120,6 +129,8 @@ export luci_log luci_pid_action luci_errors luci_dnsmasq_status luci_good_line_c
 
 
 ### UTILITY FUNCTIONS
+
+is_hex_lc() { case "${1}" in ''|*[!0-9a-f]*) false ;; *) :; esac; }
 
 is_uint()
 {
@@ -401,34 +412,42 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
-# Populates global vars: BL_FILE_CURR PAUSE_FILE_CURR PERSIST_BL_FILE_CURR
-get_curr_blocklist_paths()
+# 1: var for output
+# 2: blocklist instance
+# 3: BL|PAUSE|BK
+# 4: RAM|PERSIST
+get_curr_bl_path()
 {
-	debug_msg "Looking for existing blocklist files."
-	local gcb_path
-	export \
-		BL_FILE_CURR='' \
-		PAUSE_FILE_CURR='' \
-		PERSIST_BL_FILE_CURR=''
+	unset_vars "${1:?}" &&
+	{
+		case "${3:?}" in
+			BL|PAUSE) ;;
+			*) false ;;
+		esac &&
+		case "${4:?}" in
+			RAM|PERSIST) ;;
+			*) false ;;
+		esac || bad_args get_urr_bl_path "${@}"; return 1
+	} &&
+	eval "${1}=\"\${${4}_${3}_FILE_CURR_${2:?}}\"" # example: RAM_BL_FILE_CURR_3
+}
 
-	[ "${ABL_CMD}" = start ] && rm_pause_bl
+find_persist_files()
+{
+	local persist_dir bl_file pause_file \
+		bl_inst="${1}"
 
-	# Current blocklist file path
-	read_str_from_file -E "${_NL_}" -v gcb_path -f "${LAST_BLOCKLIST_PATH_FILE:?}" -q -n 512 &&
-		is_valid_dir "${gcb_path%/*}" && [ -f "${gcb_path}" ] &&
-			BL_FILE_CURR="${gcb_path}"
+	for bl_inst in ${BL_INSTANCES}
+	do
+		file=
+		FF_RM_EXTRA=1 find_files bl_file "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}_${bl_inst}"
+		export "PERSIST_BL_FILE_CURR_${bl_inst}=${file}"
 
-	# Current pause file path
-	read_str_from_file -E "${_NL_}" -v gcb_path -f "${LAST_PAUSE_PATH_FILE:?}" -q -n 512 &&
-		is_valid_dir "${gcb_path%/*}" && [ -f "${gcb_path}" ] &&
-			PAUSE_FILE_CURR="${gcb_path}"
+		FF_RM_EXTRA=1 find_files pause_file "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME:?}_${bl_inst}"
+		export "PERSIST_PAUSE_FILE_CURR_${bl_inst}=${file}"
 
-	# Current persistent blocklist path
-	FF_RM_EXTRA=1 find_files PERSIST_BL_FILE_CURR "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}"
-
-	debug_msg "BL_FILE_CURR='${BL_FILE_CURR}'" "PAUSE_FILE_CURR='${PAUSE_FILE_CURR}'" \
-		"PERSIST_BL_FILE_CURR='${PERSIST_BL_FILE_CURR}'"
-	:
+		debug_msg "instance '${bl_inst}':" "PERSIST_BL_FILE_CURR_${bl_inst}:'${bl_file}'" "PERSIST_PAUSE_FILE_CURR_${bl_inst}:'${pause_file}'"
+	done
 }
 
 # Splits path to file into dir, filename, ext
@@ -457,6 +476,17 @@ split_path()
 
 	[ -n "${sp_dir}" ] && [ -n "${sp_fname}" ] &&
 	eval "${sp_dir_out_var}"='${sp_dir}' "${sp_fname_out_var}"='${sp_fname}' "${sp_ext_out_var}"='${sp_ext}'
+}
+
+split_path_spec()
+{
+	unset_vars "${2}" "${3}" "${4}" || return 1
+	local IFS="${_NL_}" \
+		sps_dir_out_var="${1}" sps_prefix_out_var="${2}" sps_ext_out_var="${3}" path_spec="${4}"
+	set -- ${path_spec}
+	IFS="${DEFAULT_IFS}"
+	[ -n "${1}" ] && [ -n "${2}" ] || { reg_failure "split_path_spec bad path spec '${4//"${_NL_}"/ }'"; return 1; }
+	eval "${sps_dir_out_var:-_}"='${1}' "${sps_prefix_out_var:-_}"='${2}' "${sps_ext_out_var:-_}"='${3}'
 }
 
 is_valid_dir()
@@ -500,21 +530,37 @@ rm_if_writable()
 	done
 }
 
+
+		# for bl_inst in ${BL_INSTANCES}
+		# do
+
+# shellcheck disable=SC2120
 rm_pause_bl()
 {
-	local file found_file dir ext base_fname="${PAUSE_BASE_FNAME:?}"
-	[ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${PERSIST_BLOCKLIST_MODE}" != manual ] &&
-	{
-		FF_RM_EXTRA=1 find_files found_file "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME}"
-		for file in "${CURR_PAUSE_FILE}" "${found_file}"
-		do
-			[ -n "${file}" ] || continue
-			split_path dir _ ext "${file}" &&
-			[ "${dir}" = "${PERSIST_BLOCKLIST_DIR}" ] &&
-			[ -f "${file}" ] &&
-			mv_blocklist "${file}" "${dir}/${BLOCKLIST_BASE_FNAME:?}${ext:+"."}${ext}"
-		done
-	}
+	local bl_inst file found_file dir ext \
+		persist_dir persist_mode \
+		base_fname="${PAUSE_BASE_FNAME:?}" \
+		bl_inst="${1}"
+
+		get_metadata "${bl_inst}" "ram"
+
+		eval "persist_dir=\"\${persist_dir_${bl_inst}}\"" "persist_mode=\"\${persist_mode_${bl_inst}}\"" # TODO: make sure these vars are set
+		[ -n "${persist_dir}" ] && [ "${persist_mode}" != manual ] &&
+		{
+
+#		gmd_bl_inst="${1}" gmd_self_location="${2}" desc="${3}" gmd_bl_path_out_var="${4}" gmd_md5_out_var="${5}" gmd_cnt_out_var="${6}"
+
+			FF_RM_EXTRA=1 find_files found_file "${persist_dir}" "${PAUSE_BASE_FNAME}"
+			for file in "${CURR_PAUSE_FILE}" "${found_file}"
+			do
+				[ -n "${file}" ] || continue
+				split_path dir _ ext "${file}" &&
+				[ "${dir}" = "${persist_dir}" ] &&
+				[ -f "${file}" ] &&
+				mv_blocklist "${file}" "${dir}/${BLOCKLIST_BASE_FNAME:?}${ext:+"."}${ext}"
+			done
+		}
+
 	KEEP_PERSIST=0 rm_if_writable \
 		"${PAUSE_FILE_CURR}" \
 		"${SHARED_BLOCKLIST_DIR:-"${ABL_RUN_DIR}"}/${base_fname}"* \
@@ -553,7 +599,7 @@ rm_conf_scripts()
 	do
 		[ -n "${dir}" ] || continue
 		IFS="${DEFAULT_IFS}"
-		rm -f "${dir}"/abl-conf-script "${dir}"/.abl-extract_blocklist
+		rm -f "${dir}/abl-conf-script"
 	done
 	IFS="${DEFAULT_IFS}"
 
@@ -650,93 +696,81 @@ rc_enabled()
 
 detect_util()
 {
-	local du_out_var="${1}" gen_name="${2}" specific_name="${3}" specific_path="${4}" \
-		res_cmd='' res_name='' _util _util_path='' found_by_path='' found_by_name='' path_is_symlink='' \
-		opt me=detect_util
+	try_detect_util()
+	{
+		local res_name=''
+
+		# try specific path
+		[ -n "${specific_path}" ] && [ -f "${specific_path}" ] && _util_path="${specific_path}" && return 0
+
+		# try to resolve specific name, then gen game
+		{
+			{ [ -n "${specific_name}" ] && check_util "${specific_name}" && res_name="${specific_name}"; } ||
+			{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; }
+		} &&
+		_util_path="$(command -v "${res_name}")" &&
+		[ -n "${util_path}" ] &&
+		return 0
+
+		# fall back to checking files in Busybox package
+		[ -n "${gen_name}" ] &&
+		{ [ -n "${PKG_MANAGER}" ] || detect_pkg_manager; } &&
+		{ [ -n "${BB_FILES}" ] || BB_FILES="$(${PKG_FILE_LIST_CMD} busybox)"; } &&
+		case "${BB_FILES}" in
+			*/"${gen_name}" ) _util_path="$( printf '%s\n' "${BB_FILES}" | grep ".*/${gen_name}$" )" && [ -f "${_util_path}" ] ;;
+			*) false
+		esac && return 0
+		return 1
+	}
+
+	local me=detect_util _util_path \
+		du_out_var="${1}" gen_name="${2}" specific_name="${3}" specific_path="${4}"
 
 	[ ${#} -ge 4 ] || { bad_args "${me}" "${@}"; return 1; }
-	shift 4
 
 	unset_vars "${du_out_var}" || return 1
 
-	if [ -n "${specific_path}" ] && [ -f "${specific_path}" ]
-	then
-		_util_path="${specific_path}"
-		found_by_path=1
-	elif
-		{ [ -n "${specific_name}" ] && check_util "${specific_name}" && res_name="${specific_name}"; } ||
-		{ [ -n "${gen_name}" ] && check_util "${gen_name}" && res_name="${gen_name}"; }
-	then
-		_util_path="$(command -v "${res_name}")"
-		found_by_name=1
-	fi
+	try_detect_util &&
+	{
+		debug_msg "${du_out_var}=${_util_path}"
+		export "${du_out_var}=${_util_path}"
+		return 0
+	}
 
-	if [ -n "${_util_path}" ] &&
-		{
-			[ -L "${_util_path}" ] && path_is_symlink=1
-			if [ -n "${path_is_symlink}" ]
-			then
-				# resolve symlinks
-				_util_path="$(readlink -f "${_util_path}")" &&
-				case "${_util_path}" in
-					busybox|/bin/busybox) _util_path="/bin/busybox ${gen_name}" ;;
-					''|/) false ;;
-					/*) : ;;
-					*) util_path="$(command -v "${util_path}")" &&
-						case "${util_path}" in
-							''|/) false ;;
-							/*) : ;;
-							*) false
-						esac
-				esac
-			elif [ -z "${path_is_symlink}" ] && { [ -n "${found_by_path}" ] || [ -f "${_util_path}" ]; }
-			then
-				# path is not symlink
-				:
-			else
-				false
-			fi
-		}
-	then
-		res_cmd="${_util_path}"
-	elif [ -n "${found_by_name}" ]
-	then
-		res_cmd="${res_name}"
-	else
-		reg_failure "${me}: '${gen_name:-"${specific_name}"}' not found."
-		return 1
-	fi
-
-	debug_msg "${du_out_var}=${res_cmd}"
-	export "${du_out_var}=${res_cmd}"
+	reg_failure "${me}: '${gen_name:-"${specific_name}"}' not found."
+	return 1
 }
 
 # 1 (optional) : '-f' to force re-detection
-# sets $AWK_CMD, $SED_CMD, $SORT_CMD
+# sets vars for main utils
 # shellcheck disable=SC2120
 detect_main_utils()
 {
 	[ -n "${MAIN_UTILS_DETECTED}" ] && [ "${1}" != '-f' ] && return 0
-	unset SED_CMD AWK_CMD SORT_CMD LOG_CMD MD5_CMD NSLOOKUP_CMD PIDOF_CMD PGREP_CMD
+	unset DF_CMD SED_CMD AWK_CMD SORT_CMD LOG_CMD MD5_CMD NSLOOKUP_CMD PIDOF_CMD PGREP_CMD
 
-	local IFS="${DEFAULT_IFS}" util util_params failed_utils='' req_utils="sed awk sort logger md5sum nslookup pidof pgrep"
+	local IFS="${DEFAULT_IFS}" util util_params failed_utils='' \
+		req_utils="df sed awk sort logger md5sum nslookup pidof pgrep"
 	# shellcheck disable=SC2034
-	# Format:            VAR     gen_name specific_name  specific_path
+	# Format:				VAR			gen_name	specific_name	specific_path
 	local \
-		sed_params="     SED_CMD      sed       ''   /usr/libexec/sed-gnu       " \
-		awk_params="     AWK_CMD      awk      gawk  /usr/bin/gawk              " \
-		sort_params="    SORT_CMD     sort      ''   /usr/libexec/sort-coreutils" \
-		logger_params="  LOG_CMD      logger    ''   ''                         " \
-		md5sum_params="  MD5_CMD      md5sum    ''   ''                         " \
-		nslookup_params="NSLOOKUP_CMD nslookup  ''   ''                         " \
-		pidof_params="   PIDOF_CMD    pidof     ''   ''                         " \
-		pgrep_params="   PGREP_CMD    pgrep     ''   ''                         "
+		awk_params="		AWK_CMD			awk			gawk	/usr/bin/gawk				" \
+		sed_params="		SED_CMD			sed			''		/usr/libexec/sed-gnu		" \
+		sort_params="		SORT_CMD		sort		''		/usr/libexec/sort-coreutils	" \
+		cat_params="		CAT_CMD			cat			''		/bin/cat					" \
+		logger_params="		LOG_CMD			logger		''		/usr/bin/logger				" \
+		df_params="			DF_CMD			df			''		/bin/df						" \
+		md5sum_params="		MD5_CMD			md5sum		''		/usr/bin/md5sum				" \
+		nslookup_params="	NSLOOKUP_CMD	nslookup	''		/usr/bin/nslookup			" \
+		pidof_params="		PIDOF_CMD		pidof		''		/bin/pidof					" \
+		pgrep_params="		PGREP_CMD		pgrep		''		/usr/bin/pgrep				" \
+		netstat_params="	NETSTAT_CMD		netstat		''		/bin/netstat				"
 
 	for util in ${req_utils}
 	do
 		eval "util_params=\"\${${util}_params}\"" &&
 		[ -n "${util_params}" ] &&
-		eval "set -- ${util_params}" &&
+		eval "set -- ${util_params}" && # eval needed because some fields are ''
 		detect_util "${1}" "${2}" "${3}" "${4}" ||
 			add2list failed_utils "${util}" ', '
 	done
@@ -918,7 +952,7 @@ cleanup_and_exit()
 			[ -d "/proc/${SCHEDULER_PID}" ] && kill_pids_recursive "${SCHEDULER_PID}"
 		}
 	fi
-	local bk_dir bk_fname bk_file="${BK_BL_FILE:-"${BK_BL_BASE_PATH}"}"
+	local bk_dir bk_fname bk_file="${BK_BL_FILE:-"${BK_BL_BASE_PATH}"}" # TODO
 	split_path bk_dir bk_fname _ "${bk_file}"
 	KEEP_PERSIST=1 rm_if_writable "${bk_file:-???}"* "${bk_dir:-???}/.${bk_fname:-???}.spec"
 
@@ -1468,7 +1502,7 @@ init_command()
 		status) local SAE_STATUS=1; config_req=1 env_req=1 work_dir_req=1 ;;
 		upd_cron_job) config_req=1 ;;
 		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
-		boot|gen_persist_blocklist) config_req=1 LOCK_REQ=1 ;;
+		boot|gen_persist_blocklist|create_addnmounts) config_req=1 LOCK_REQ=1 ;;
 		pause) work_dir_req=1 config_req=1 env_req=1 LOCK_REQ=1 ;;
 		start|resume) work_dir_req=1 config_req=1 env_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
@@ -1956,11 +1990,19 @@ upd_cron_job()
 	:
 }
 
+create_addnmounts()
+{
+	init_command create_addnmounts &&
+	get_dnsmasq_instances &&
+	check_dnsmasq_instances &&
+	do_create_addnmounts
+}
+
 select_dnsmasq_instances()
 {
 	init_command select_dnsmasq_instances &&
 	do_select_dnsmasq_instances "${@}" &&
-	create_addnmounts || return 1
+	do_create_addnmounts || return 1
 }
 
 # 1 - (optional) '-noexit' to return to the calling function
@@ -1989,6 +2031,12 @@ boot()
 
 start()
 {
+	BLOCKLISTS_TO_INSTALL=
+	BLOCKLISTS_TO_GEN=
+	BLOCKLISTS_TO_RESTORE=
+	BLOCKLISTS_TO_RETRY=
+	GENERATED_BLOCKLISTS=
+
 	init_command start || exit 1
 
 	if ! dnsmasq --help | grep -qe "--conf-script"
@@ -2006,145 +2054,120 @@ start()
 		wait ${!}
 	fi
 
-	case "${START_ACTION}" in
-		load|gen) ;;
-		*) reg_failure "Unexpected start action '${START_ACTION}'."; exit 1
-	esac
-
-	local run_state conn_check_req=1 rv=1 initial_uptime_ms elapsed_time totalmem restore_from_persist=''
+	local \
+		run_state \
+		start_rv=1 \
+		initial_uptime_ms \
+		elapsed_time
 
 	get_uptime_ms initial_uptime_ms
 
 	FAIL_STOP_REQ=1
 
-	debug_msg "START_ACTION: '${START_ACTION}'"
+	rm_conf_scripts && # TODO?
+	rm_pause_bl ${BLOCKLISTS_TO_GEN} ${BLOCKLISTS_TO_INSTALL} || exit 1
 
-	rm_conf_scripts
 
-	if [ "${START_ACTION}" = load ]
-	then
-		assert_set F_start BL_FILE_NEW || exit 1
+	[ -n "${BLOCKLISTS_TO_GEN}" ] && gen_blocklists BLOCKLISTS_TO_INSTALL BLOCKLISTS_TO_RESTORE "${BLOCKLISTS_TO_GEN}" "${initial_uptime_ms}" # appends values to out-vars
 
-		[ -z "${BL_FILE_CURR}" ] || [ "${BL_FILE_CURR}" != "${LOAD_BL_PATH}" ] && rm_main_bl
+	[ -n "${BLOCKLISTS_TO_INSTALL}" ] && install_blocklists BLOCKLISTS_TO_RETRY "${BLOCKLISTS_TO_INSTALL}" && install_succeeded_inst=1
+	BLOCKLISTS_TO_INSTALL=
 
-		if stop_dnsmasq &&
-			install_blocklist "${LOAD_BL_PATH}" "${LOAD_BL_DESC}"
-		then
-			rv=0
-		else
-			reg_failure "Failed to install blocklist '${LOAD_BL_PATH}'"
-			[ -n "${BL_FILE_NEW_FALLBACK}" ] && [ -d "${BL_FILE_NEW_FALLBACK%/*}" ] || return 1
+	[ -n "${BLOCKLISTS_TO_RETRY}" ] && gen_blocklists BLOCKLISTS_TO_INSTALL BLOCKLISTS_TO_RESTORE "${BLOCKLISTS_TO_RETRY}" "${initial_uptime_ms}"
+	[ -n "${BLOCKLISTS_TO_INSTALL}" ] && install_blocklists _ "${BLOCKLISTS_TO_INSTALL}" && install_succeeded_inst=1
+	BLOCKLISTS_TO_INSTALL=
 
-			BL_FILE_NEW=${BL_FILE_NEW_FALLBACK}
-			export CONF_FILES_REQ="${CONF_FILES_REQ_FALLBACK}"
-			log_msg "Will try to generate a new blocklist."
-			KEEP_PERSIST=0 stop -noexit
-			START_ACTION=gen
-		fi
-	fi
-
-	if [ "${START_ACTION}" = gen ]
-	then
-
-		get_abl_run_state run_state
-		case "${run_state}" in
-			0|3|4) ;;
-			1) stop 1 -noexit; get_abl_run_state run_state; [ "${run_state}" = 1 ] && exit 1 ;;
-			*) inval_run_state "${run_state}" "start"; exit 1
-		esac
-
-		case ${run_state} in
-			3|4) unload_blocklist_before_update=0 conn_check_req='' ;;
-		esac
-
-		if [ "${unload_blocklist_before_update}" = auto ]
-		then
-			read -r _ totalmem _ < /proc/meminfo
-			if is_uint "${totalmem}" && [ "${totalmem}" -ge 410000 ]
+	[ -n "${BLOCKLISTS_TO_RESTORE}" ] &&
+	{
+		local bl_inst bk_file
+		for bl_inst in ${BLOCKLISTS_TO_RESTORE}
+		do
+			eval "bk_file=\"\""
+			if [ -f "${bk_file}" ]
 			then
-				unload_blocklist_before_update=0
-			else
-				unload_blocklist_before_update=1
-			fi
-		fi
-
-		if [ "${unload_blocklist_before_update}" != 1 ] && [ -n "${conn_check_req}" ]
-		then
-			test_url_domains || unload_blocklist_before_update=1
-		fi
-
-		local file_to_bk=''
-		if [ -n "${BL_FILE_CURR}" ] && [ -z "${BL_FILE_BAD}" ]
-		then
-			file_to_bk=${BL_FILE_CURR}
-		elif [ -n "${PERSIST_BL_FILE_CURR}" ] && [ -z "${PERSIST_BL_FILE_BAD}" ]
-		then
-			file_to_bk=${PERSIST_BL_FILE_CURR}
-		else
-			reg_msg -2 "" "No valid existing blocklist found."
-		fi
-
-		[ -n "${file_to_bk}" ] &&
-		{
-			if is_dir_writable "${file_to_bk%/*}"
-			then
-				export_blocklist "${file_to_bk}" "${BK_BL_FILE}" "${INTERM_COMPR_TO_FILE}"
-			elif [ -f "${file_to_bk}" ]
-			then
-				# for persistent blocklist in 'manual' mode, the original file is used as a backup
-				BK_BL_FILE=${file_to_bk}
-				restore_from_persist=1
-			fi
-		}
-
-		rm_conf_scripts
-		rm_main_bl
-
-		if [ "${unload_blocklist_before_update}" = 1 ]
-		then
-			reg_action -blue "Unloading current blocklist."
-			restart_dnsmasq || exit 1
-		fi
-
-		assert_set F_start BL_FILE_NEW || return 1
-
-		processed_bl_file="${ABL_TMP_DIR}/processed-blocklist${FINAL_COMPR_EXT}"
-
-		if gen_blocklist "${processed_bl_file}" "${initial_uptime_ms}" &&
-			stop_dnsmasq &&
-			mv_blocklist "${processed_bl_file}" "${BL_FILE_NEW}" "${FINAL_COMPR_TO_FILE}" &&
-			install_blocklist "${BL_FILE_NEW}" "processed"
-		then
-			rv=0
-		else
-			reg_failure "Failed to generate new blocklist."
-			local bk_mac restore_failed=1
-			if [ -f "${BK_BL_FILE}" ]
-			then
-				[ -n "${restore_from_persist}" ] && BL_FILE_NEW="${BK_BL_FILE}"
-				if restore_saved_blocklist "${BK_BL_FILE}" "${BL_FILE_NEW}" &&
-					CS_PARAMS="path md5" check_blocklist_spec "${BL_FILE_NEW}" "restored" _ _ _ bk_mac || return 1
+				[ -n "${restore_from_persist}" ] && install_path="${bk_file}"
+				if restore_saved_blocklist "${bk_file}" "${install_path}" &&
+					GMD_CHECK_MD5=1 get_metadata "${install_path}" "restored" _ _ _ bk_mac
 				then
 					if CA_CHECK_DNS=1 check_active_blocklist "${bk_mac}"
 					then
 						log_msg -green "Previous blocklist restored successfully."
 						restore_failed=
+						installed_path="${install_path}"
 					else
 						reg_failure "Active blocklist check failed with previous blocklist file."
 					fi
-				else
-					reg_failure "Failed to restore blocklist file '${BK_BL_FILE}'."
 				fi
 			else
 				log_msg -yellow "" "Previous blocklist file does not exist - can not restore."
 			fi
 			[ -n "${restore_failed}" ] && stop 1 -noexit
-		fi
+
+			[ -n "${restore_from_persist}" ] || rm -f "${bk_file}"
+		done
+	}
+
+
+
+
+
+		# then
+		# 	start_rv_inst=0
+		# 	installed_path="${install_path}"
+		# else
+		# 	reg_failure "Failed to generate new blocklist."
+		# 	local bk_mac restore_failed=1
+		# 	if [ -f "${bk_file}" ]
+		# 	then
+		# 		[ -n "${restore_from_persist}" ] && install_path="${bk_file}"
+		# 		if restore_saved_blocklist "${bk_file}" "${install_path}" &&
+		# 			GMD_CHECK_MD5=1 get_metadata "${install_path}" "restored" _ _ _ bk_mac
+		# 		then
+		# 			if CA_CHECK_DNS=1 check_active_blocklist "${bk_mac}"
+		# 			then
+		# 				log_msg -green "Previous blocklist restored successfully."
+		# 				restore_failed=
+		# 				installed_path="${install_path}"
+		# 			else
+		# 				reg_failure "Active blocklist check failed with previous blocklist file."
+		# 			fi
+		# 		fi
+		# 	else
+		# 		log_msg -yellow "" "Previous blocklist file does not exist - can not restore."
+		# 	fi
+		# 	[ -n "${restore_failed}" ] && stop 1 -noexit
+		# fi
+
+		# [ -n "${restore_from_persist}" ] || rm -f "${bk_file}"
+
+		# [ "${start_rv_inst}" = 0 ] && { assert_set F_start installed_path || exit 1; }
+
+
+
+
+
+
+	# restart_dnsmasq || return 1
+
+	# CA_CHECK_DOMAINS=1 check_active_blocklist "${md5}" || { reg_failure "Active blocklist check failed with the ${desc} blocklist."; return 1; }
+	# reg_msg -green "" "Active blocklist check passed."
+
+	# reg_success "${green}Successfully installed ${desc} blocklist${n_c}." \
+	# 	"Final blocklist file: ${blue}${bl_file}${n_c} (${compr_pr}, size: ${blue}${inst_size_human}${n_c}${cnt_human:+", entries count: ${blue}${cnt_human}${n_c}"}).${n_c}"
+
+
+
+
+
+
+	if [ "${installed_path%/*}" = "${PERSIST_BLOCKLIST_DIR}" ]
+	then
+		mk_hotplug_script "${installed_path}"
+	else
+		disable_hotplug_script
 	fi
 
-	[ -n "${restore_from_persist}" ] || rm -f "${BK_BL_FILE}"
-
-	[ "${rv}" = 0 ] &&
+	[ "${start_rv}" = 0 ] && # TODO: infer start_rv from all of start_rv_inst
 	{
 		get_elapsed_time_human elapsed_time "${initial_uptime_ms}"
 		reg_msg "" "Processing time for blocklist generation and import: ${blue}${elapsed_time:-"${yellow}unknown"}${n_c}"
@@ -2153,9 +2176,10 @@ start()
 	FAIL_STOP_REQ=
 
 	check_for_updates
-	exit ${rv}
+	exit ${start_rv}
 }
 
+# TODO
 gen_persist_blocklist()
 {
 	init_command gen_persist_blocklist || exit 1
@@ -2257,25 +2281,26 @@ status()
 		1) print_msg -yellow "" "adblock-lean service is disabled."
 	esac
 
-	local run_state timestamp status_cnt='' status_cnt_human
+	local timestamp status_cnt='' status_cnt_human
 
 
-	get_abl_run_state run_state status_cnt
-	case ${run_state} in
+	# TODO: get status_cnt
+
+	case ${RUN_STATE_GLOBAL} in
 		0) ;;
 		1) reg_failure "adblock-lean is not working correctly. Consider running 'service adblock-lean restart' in order to restore adblocking." ;;
 		3) print_msg -yellow "" "adblock-lean is paused." ;;
 		4) print_msg -yellow "" "adblock-lean is stopped." ;;
-		*) inval_run_state "${run_state}" "status"
+		*) inval_run_state "${RUN_STATE_GLOBAL}"
 	esac
 
-	if [ "${run_state}" = 0 ]
+	if [ "${RUN_STATE_GLOBAL}" = 0 ]
 	then
 		luci_good_line_count=${status_cnt}
 		if [ "${status_cnt}" = 0 ]
 		then
 			log_msg -warn "No entries found in the blocklist file."
-			run_state=1
+			RUN_STATE_GLOBAL=1
 		else
 			int2human status_cnt_human "${status_cnt}" || return 1
 			timestamp="$(get_blocklist_timestamp -h)"
@@ -2291,25 +2316,23 @@ status()
 	[ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${PERSIST_BLOCKLIST_MODE}" = managed ] && [ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR%/*}" != "${PERSIST_BLOCKLIST_DIR}" ] &&
 		print_msg -warn "" "Persistent blocklist directory is configured but not currently used."
 
-	luci_dnsmasq_status=${run_state}
+	luci_dnsmasq_status=${RUN_STATE_GLOBAL}
 
 	check_for_updates
 	luci_update_status=${?}
 
-	exit "${run_state}"
+	exit "${RUN_STATE_GLOBAL}"
 }
 
 pause()
 {
-	local run_state
 	init_command pause || exit 1
-	get_abl_run_state run_state
-	case "${run_state}" in
+	case "${RUN_STATE_GLOBAL}" in
 		0) ;;
 		1) stop 1 ;;
 		3) reg_msg -green "adblock-lean is already paused."; exit 0 ;;
 		4) reg_msg -err "adblock-lean is currently stopped."; exit 1 ;;
-		*) inval_run_state "${run_state}" "pause"; exit 1
+		*) inval_run_state "${RUN_STATE_GLOBAL}"; exit 1
 	esac
 
 	local FAIL_STOP_REQ=1
@@ -2327,13 +2350,12 @@ resume()
 {
 	local run_state
 	init_command resume || exit 1
-	get_abl_run_state run_state
-	case "${run_state}" in
+	case "${RUN_STATE_GLOBAL}" in
 		0) reg_msg -green "adblock-lean is already running."; exit 0 ;;
 		1) stop 1 ;;
 		3) ;;
 		4) reg_msg -err "adblock-lean is currently stopped, not paused. Can not resume."; exit 1 ;;
-		*) inval_run_state "${run_state}" "resume"; exit 1
+		*) inval_run_state "${RUN_STATE_GLOBAL}"; exit 1
 	esac
 
 	FAIL_STOP_REQ=1
@@ -2491,7 +2513,7 @@ uninstall()
 	KEEP_PERSIST=0 stop -noexit
 	if rc_enabled
 		then
-		log_msg -purple "" "Disabling adblock-lean."
+		log_msg -purple "Disabling adblock-lean."
 		rc_disable && ! rc_enabled ||
 			{ reg_failure "Failed to disable adblock-lean. Disable manually and then run this command again."; exit 1; }
 	fi
@@ -2508,7 +2530,7 @@ uninstall()
 
 	if [ "${REPLY}" = y ]
 	then
-		print_msg -purple "" "Deleting the config directory."
+		print_msg -purple "Deleting the config directory."
 		rm -rf "${ABL_CONFIG_DIR:-???}"
 	fi
 
@@ -2538,11 +2560,14 @@ uninstall()
 		fi
 	fi
 
-	[ -n "${addnm_del_fail}" ] && log_msg -warn "Some addnmount entries were not deleted. Please delete manually."
+	[ -n "${addnm_del_fail}" ] && log_msg -warn "Some addnmount entries in /etc/config/dhcp were not deleted. Please delete manually."
 
-	print_msg -purple "" "Deleting the scripts."
+	print_msg "Deleting the adblock-lean hotplug script."
+	rm -f "${ABL_HOTPLUG_PATH_ENABLED}" "${ABL_HOTPLUG_PATH_DISABLED}"
+
+	print_msg -purple "Deleting adblock-lean scripts."
 	rm -f "${ABL_SERVICE_PATH}"
-	rm -rf "${ABL_LIB_DIR}"
+	rm -rf "${ABL_LIB_DIR:-???}" "${ABL_RUN_DIR:-???}" "${ABL_TMP_DIR:-???}"
 
 	print_msg -purple "" "Uninstall complete."
 	exit 0
