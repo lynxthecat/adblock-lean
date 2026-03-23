@@ -49,9 +49,13 @@ trim_spaces()
 
 try_mv()
 {
+	local mv_q=
+	[ "${1}" = '-q' ] && { mv_q=1; shift; }
 	[ -n "${1}" ] && [ -n "${2}" ] || { bad_args "try_mv" "${@}"; return 1; }
-	mv -f "${1}" "${2}" || { reg_failure "Failed to move '${1}' to '${2}'."; return 1; }
-	:
+	mv -f "${1}" "${2}" && return 0
+
+	[ -n "${mv_q}" ] || reg_failure "Failed to move '${1}' to '${2}'."
+	return 1
 }
 
 # 1 - var for output
@@ -137,65 +141,249 @@ int2human()
 	eval "${1}"='${in_num:-0}${out_num}'
 }
 
+get_md5()
+{
+	unset_vars "${1}" || return 1
+	local IFS="${DEFAULT_IFS}" g_md5
+	g_md5="$(${MD5_CMD} "${2}")" &&
+	g_md5="${g_md5%% *}" &&
+	[ -n "${g_md5}" ] &&
+	eval "${1}"='${g_md5}' && return 0
+
+	reg_failure "Failed to get md5 sum for file '${2}'"
+	return 1
+}
+
 
 ### SETUP AND CONFIG MANAGEMENT
 
-create_addnmounts()
+hp_scr_pr="the adblock-lean hotplug script"
+
+# Make sure the directory is not the same as the mount point
+check_persist_dir()
+{
+	local mnt_point persist_dir="${PERSIST_BLOCKLIST_DIR}"
+
+	[ -d "${persist_dir}" ] ||
+	{
+		case "${persist_dir}" in
+			''|/) reg_failure "Empty or invalid persistent blocklist directory'${persist_dir}' specified in config option PERSIST_BLOCKLIST_DIR." ;;
+			*) reg_failure "Can not find persistent blocklist directory: ${persist_dir}."
+		esac
+		return 1
+	}
+
+	mnt_point="$(${DF_CMD} "${persist_dir}" |
+		${AWK_CMD} '/^[ \t]*Filesystem[ \t]/{next} {i++; print $6} END{ if(i == 1) exit 0; exit 1}')" &&
+	[ -d "${mnt_point}" ] ||
+		{ reg_failure "Failed to get the mount point for partition where the persistent blocklist is stored (got '${mnt_point}')."; return 1; }
+
+	[ "${persist_dir}" != "${mnt_point}" ] ||
+		{  reg_failure "Persistent directory '${persist_dir}' is the same as the mount point. Please use a subdirectory."; return 1; }
+
+	:
+}
+
+mk_hotplug_script()
+{
+	try_mk_hotplug_script "${@}" && return 0
+	reg_failure "Failed to activate ${hp_scr_pr}."
+	disable_hotplug_script
+	return 1
+}
+
+try_mk_hotplug_script()
+{
+	check_hp_script()
+	{
+		local installed_md5 dist_md5
+		[ -f "${1}" ] &&
+		get_md5 installed_md5 "${1}" &&
+		get_md5 dist_md5 "${ABL_HOTPLUG_PATH_SRC}" &&
+		[ "${installed_md5}" = "${dist_md5}" ]
+	}
+
+	local me=mk_hotplug_script IFS="${DEFAULT_IFS}" \
+		hp_dev df_lines_cnt=0 \
+		hp_fail_msg="Can not create or activate ${hp_scr_pr}" \
+		bl_path="${1}"
+
+	[ "${PERSIST_HOTPLUG_SCRIPT}" = 1 ] ||
+	{
+		reg_msg "" "Option PERSIST_HOTPLUG_SCRIPT is set to '${PERSIST_HOTPLUG_SCRIPT}'. Skipping hotplug script creation."
+		disable_hotplug_script
+		return 0
+	}
+
+	assert_set "F_${me}" ABL_HOTPLUG_REG_FILE ABL_HOTPLUG_PATH_ENABLED ABL_HOTPLUG_PATH_DISABLED bl_path || return 1
+
+	hp_dev="$(${DF_CMD} "${bl_path}" | ${SED_CMD} -n '/^\s*Filesystem\s/n;s/^\s*//;s/\s.*//;p')" &&
+	cnt_lines df_lines_cnt "${hp_dev}" &&
+	[ "${df_lines_cnt}" = 1 ] ||
+	{
+		reg_failure "Unexpected or empty 'df' utility output '${hp_dev}' when checking device name for hotplug script. ${hp_fail_msg}."
+		return 1
+	}
+
+	case "${hp_dev}" in /dev/root|tmpfs|/dev/loop*|overlayfs)
+		reg_msg "" "Persistent blocklist is on device '${hp_dev}'. Hotplug script not required."
+		disable_hotplug_script
+		return 0
+	esac
+
+	printf '%s\n' "${hp_dev#"/dev/"}" > "${ABL_HOTPLUG_REG_FILE}" &&
+
+	if [ -f "${ABL_HOTPLUG_PATH_DISABLED}" ]
+	then
+		log_msg -blue "" "Activating ${hp_scr_pr}"
+		try_mv "${ABL_HOTPLUG_PATH_DISABLED}" "${ABL_HOTPLUG_PATH_ENABLED}" && return 0
+	fi
+
+	if check_hp_script "${ABL_HOTPLUG_PATH_ENABLED}"
+	then
+		debug_msg "${hp_scr_pr} already exists"
+		rm -f "${ABL_HOTPLUG_PATH_DISABLED}"
+		return 0
+	elif check_hp_script "${ABL_HOTPLUG_PATH_DISABLED}"
+	then
+		log_msg -blue "" "Activating ${hp_scr_pr}"
+		try_mv "${ABL_HOTPLUG_PATH_DISABLED}" "${ABL_HOTPLUG_PATH_ENABLED}" && return 0
+	else
+		log_msg -blue "" "Installing ${hp_scr_pr}."
+		rm -f "${ABL_HOTPLUG_PATH_DISABLED}"
+		try_mkdir -p "${ABL_HOTPLUG_PATH_ENABLED%/*}" &&
+		{
+			cp "${ABL_HOTPLUG_PATH_SRC}" "${ABL_HOTPLUG_PATH_ENABLED}" || { reg_failure "Failed to copy ${hp_scr_pr} to ${ABL_HOTPLUG_PATH_ENABLED}."; false; }
+		} &&
+			return 0
+	fi
+
+	return 1
+}
+
+# optional: '-deactivate' to only remove the hotplug reg file
+# shellcheck disable=SC2120
+disable_hotplug_script()
+{
+	local deactiv_req=1 disable_req=1 hotpl_act="Disabling"
+	[ "${1}" = "-deactivate" ] && { disable_req='' hotpl_act="Deactivating"; shift; }
+
+	assert_set F_disable_hotplug_script ABL_HOTPLUG_REG_FILE ABL_HOTPLUG_PATH_ENABLED ABL_HOTPLUG_PATH_DISABLED || return 1
+
+	[ -f "${ABL_HOTPLUG_PATH_ENABLED}" ] || disable_req=
+	[ -f "${ABL_HOTPLUG_REG_FILE}" ] || deactiv_req=
+
+	if [ -n "${disable_req}" ] || [ -n "${deactiv_req}" ]
+	then
+		reg_msg -blue "" "${hotpl_act} ${hp_scr_pr}."
+	else
+		debug_msg "Hotplug script disable or deactivate not required."
+		return 0
+	fi
+
+	[ -n "${deactiv_req}" ] && rm -f "${ABL_HOTPLUG_REG_FILE}"
+
+	[ -z "${disable_req}" ] ||
+		try_mv "${ABL_HOTPLUG_PATH_ENABLED}" "${ABL_HOTPLUG_PATH_DISABLED}" && return 0
+
+	reg_failure "" "Failed to disable ${hp_scr_pr}. Deleting it."
+	rm -f "${ABL_HOTPLUG_PATH_ENABLED}" "${ABL_HOTPLUG_PATH_DISABLED}"
+
+	return 1
+}
+
+do_create_addnmounts()
 {
 	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
+	process_addnm()
+	{
+		local missing_addnm index indexes="${1}" req_addnm="${2}"
+		check_addnmounts missing_addnm "${indexes}" "${req_addnm}" || return 1
+		[ -n "${missing_addnm}" ] || return 0
+		for index in ${indexes}
+		do
+			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
+		done
+		add2list all_missing_addnm "${missing_addnm}" ", "
+	}
 
 	local me=create_addnmounts IFS="${DEFAULT_IFS}" REPLY \
-		missing_addnm all_missing_addnm='' all_req_addnmounts='' addnm_ignore_paths='' \
-		ca_paths ca_compr_util_path ca_compr_ext \
-		bl_full_fname bl_path_ram
+		index indexes all_indexes \
+		req_addnm_index \
+		\
+		bl_inst \
+		bl_full_fname_inst \
+		bl_path_ram_inst \
+		ignore_paths_inst \
+		ram_addnm_inst \
+		\
+		all_missing_addnm \
+		cra_compr_util_path cra_compr_ext \
+		add_list_failed \
+		path paths_pr
 
-	assert_set "F_${me}" DNSMASQ_INDEXES compression_util || return 1
+
+	assert_set "F_${me}" BL_INSTANCES compression_util || return 1
+
+	get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util}" || return 1
+
+	# compile list of indexes, reset req_addnm_${index} vars
+	for bl_inst in ${BL_INSTANCES}
+	do
+		for index in ${indexes}
+		do
+			eval "local req_addnm_${index}=" &&
+			add2list all_indexes "${index}" " " || return 1
+		done
+	done
 
 	## Check addmounts
+	for bl_inst in ${BL_INSTANCES}
+	do
+		bl_path_ram_inst='' ignore_paths_inst='' ram_addnm_inst=''
+		eval "indexes=\"\${DNSMASQ_INDEXES_${bl_inst}}\""
+		assert_set "F_${me}" indexes compression_util || return 1
 
-	# Compression
-	get_compr_util_spec ca_compr_util_path ca_compr_ext "${compression_util}" || return 1
+		# Logger
+		process_addnm "${indexes}" "${LOG_CMD}" || return 1
 
-	if [ -n "${ca_compr_ext}" ]
-	then
-		bl_full_fname=${BLOCKLIST_BASE_FNAME:?}${ca_compr_ext}
-		bl_path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-		ca_paths="${BUSYBOX_PATH:?}${_NL_}${ca_compr_util_path%% *}${_NL_}${bl_path_ram}"
-		check_addnmounts missing_addnm "${ca_paths}" || return 1
+		bl_full_fname_inst=${BLOCKLIST_BASE_FNAME:?}_${bl_inst}${cra_compr_ext}
 
-		add2list all_req_addnmounts "${ca_paths}" "${_NL_}" &&
-		add2list all_missing_addnm "${missing_addnm}" ", " || return 1
-    fi
+		# Compression
+		if [ -n "${cra_compr_ext}" ]
+		then
+			bl_path_ram_inst=${ABL_RUN_DIR:?}/${bl_full_fname_inst}
+			process_addnm "${indexes}" "${cra_compr_util_path%% *}${_NL_}${bl_path_ram_inst}" || return 1
+		fi
 
-	: "${bl_full_fname:="${BLOCKLIST_BASE_FNAME:?}"}"
+		# Multiple dnsmasq instances
+		case "${indexes}" in
+			*[0-9]*" "*[0-9]*)
+				bl_path_ram_inst=${ABL_RUN_DIR:?}/${bl_full_fname_inst}
+				process_addnm "${indexes}" "${bl_path_ram_inst}" || return 1 ;;
+			*)
+				first_conf_dir="${DNSMASQ_CONF_DIRS%% *}"
+				is_valid_dir "${first_conf_dir}" || return 1
+				ignore_paths_inst="${first_conf_dir}/${bl_full_fname_inst}"
 
-	# Multiple dnsmasq instances
-	case "${DNSMASQ_INDEXES}" in
-		*[0-9]*" "*[0-9]*)
-				bl_path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-				ca_paths="${BUSYBOX_PATH:?}${_NL_}${bl_path_ram}"
-				check_addnmounts missing_addnm "${ca_paths}" &&
-				add2list all_req_addnmounts "${ca_paths}" "${_NL_}" &&
-				add2list all_missing_addnm "${missing_addnm}" ", " || return 1 ;;
-		*)
-			first_conf_dir="${DNSMASQ_CONF_DIRS%% *}"
-			is_valid_dir "${first_conf_dir}" || return 1
-			addnm_ignore_paths="${first_conf_dir}/${bl_full_fname}"
+				: "${bl_path_ram_inst:="${first_conf_dir}/${bl_full_fname_inst}"}" ;;
+		esac
 
-			: "${bl_path_ram:="${first_conf_dir}/${bl_full_fname}"}" ;;
-    esac
+		assert_set "F_${me}" bl_path_ram_inst || return 1
 
-	assert_set "F_${me}" bl_path_ram || return 1
+		# Persistent blocklist
+		case "${PERSIST_BLOCKLIST_MODE}" in
+			manual|managed) : ;;
+			*) false ;;
+		esac &&
+		check_persist_dir &&
+		{
 
-	# Persistent blocklist
-	case "${PERSIST_BLOCKLIST_MODE}" in manual|managed)
-			ca_paths="${BUSYBOX_PATH:?}${_NL_}${PERSIST_BLOCKLIST_DIR}"
-			is_included "${bl_path_ram}" "${addnm_ignore_paths}" "${_NL_}" ||
-				add2list ca_paths "${bl_path_ram}" "${_NL_}"
-			check_addnmounts missing_addnm "${ca_paths}" &&
-			add2list all_req_addnmounts "${ca_paths}" "${_NL_}" &&
-			add2list all_missing_addnm "${missing_addnm}" ", " || return 1
-	esac
+			is_included "${bl_path_ram_inst}" "${ignore_paths_inst}" "${_NL_}" ||
+				ram_addnm_inst="${_NL_}${bl_path_ram_inst}"
+			process_addnm "${indexes}" "${PERSIST_BLOCKLIST_DIR}${ram_addnm_inst}" || return 1
+		}
+	done
 
 	[ -n "${all_missing_addnm}" ] ||
 	{
@@ -216,23 +404,24 @@ create_addnmounts()
 	[ "${REPLY}" = y ] || return 0
 
 	## Create addnmounts
-	local index path paths_pr add_list_failed=''
-
-	IFS="${_NL_}"
-	for path in ${all_req_addnmounts}
+	for index in ${all_indexes}
 	do
+		eval "req_addnm_index=\"\${req_addnm_${index}}\""
+		[ -n "${req_addnm_index}" ] || continue
+
+		IFS="${_NL_}"
+		for path in ${req_addnm_index}
+		do
+			IFS="${DEFAULT_IFS}"
+			add2list paths_pr "'${path}'" ", "
+		done
 		IFS="${DEFAULT_IFS}"
-		add2list paths_pr "'${path}'" ", "
-	done
-	IFS="${DEFAULT_IFS}"
 
-	for index in ${DNSMASQ_INDEXES}
-	do
 		del_addnmounts "${index}"
 		case ${?} in 0|3) ;; *) { add_list_failed=1; break; }; esac
 		log_msg -purple "Creating dnsmasq addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
 		IFS="${_NL_}"
-		for path in ${all_req_addnmounts}
+		for path in ${req_addnm_index}
 		do
 			IFS="${DEFAULT_IFS}"
 			create_addnmount "${index}" "${path}" || { add_list_failed=1; break 2; }
@@ -305,7 +494,7 @@ do_setup()
 	{
 		# determine if there are missing GNU utils
 		local recomm_pkgs_regex="${RECOMMENDED_PKGS//" "/|}"
-		local pkgs2install='' missing_packages='' missing_utils='' all_req_addnmounts='' missing_utils_print='' util pkg_name \
+		local pkgs2install='' missing_packages='' missing_utils='' missing_utils_print='' util pkg_name \
 			installed_pkgs='' util_size_B='' util_size_human='' utils_size_B=0 utils_size_human='' awk_size_B sort_size_B sed_size_B \
 			free_space_human='' free_space_B='' free_space_KB mount_point
 
@@ -329,8 +518,8 @@ do_setup()
 		# make a list of GNU utils to install
 		if [ -n "${missing_utils}" ]
 		then
-			free_space_KB="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')"
-			mount_point="$(df -k /usr/ | tail -n1 | $SED_CMD -E 's/.*[ \t]+//')"
+			free_space_KB="$(${DF_CMD} -k /usr/ | tail -n1 | ${SED_CMD} -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')"
+			mount_point="$(${DF_CMD} -k /usr/ | tail -n1 | ${SED_CMD} -E 's/.*[ \t]+//')"
 
 			is_uint "${free_space_KB}" || { reg_failure "Failed to check available free space."; return 1; }
 
@@ -466,7 +655,7 @@ do_setup()
 	esac
 
 	# create addnmount entries - enables blocklist compression and adblocking on multiple instances
-	create_addnmounts || return 1
+	do_create_addnmounts || return 1
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
@@ -638,7 +827,7 @@ do_calculate_limits()
 # (optional) -c to print with DNSMASQ_CONF_DIRS
 print_def_config()
 {
-	# follow each default option with '@' and a pre-defined type: string, integer (implies unsigned integer), integer_list
+	# follow each default option with '@' and a pre-defined type: string, uint, uint_list
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
 
 	# process args
@@ -707,6 +896,11 @@ print_def_config()
 	# Optional path to directory on non-volatile storage device where persistent blocklist should be stored
 	PERSIST_BLOCKLIST_DIR="" @ string
 
+	# Whether to create a hotplug script when persistent blocklist is used
+	#   The hotplug script activates on storage device removal. If the removed device is the one where the blocklist is stored,
+	#   adblock-lean will be automatically restarted and will create a new blocklist on the ramdisk.
+	PERSIST_HOTPLUG_SCRIPT="0" @ 0|1
+
 	# Test domains are automatically querried after loading the blocklist into dnsmasq,
 	# in order to verify that the blocklist didn't break DNS resolution
 	# If query for any of the test domains fails, previous blocklist is restored from backup
@@ -721,7 +915,7 @@ print_def_config()
 	list_part_failed_action="SKIP" @ SKIP|STOP
 
 	# Maximum number of download retries
-	max_download_retries="3" @ integer
+	max_download_retries="3" @ uint
 
 	# Default download mirrors.
 	# Hagezi mirror: 'github' or 'gitlab'
@@ -732,18 +926,18 @@ print_def_config()
 	stevenblack_default_mirror="github" @ github|sbc_io
 
 	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="${pdc_min_lines}" @ integer
+	min_good_line_count="${pdc_min_lines}" @ uint
 
 	# Mininum number of lines of any individual downloaded part
-	min_blocklist_part_line_count="1" @ integer
-	min_ipv4_blocklist_part_line_count="1" @ integer
-	min_allowlist_part_line_count="1" @ integer
+	min_blocklist_part_line_count="1" @ uint
+	min_ipv4_blocklist_part_line_count="1" @ uint
+	min_allowlist_part_line_count="1" @ uint
 
 	# Maximum size of any individual downloaded blocklist part
-	max_file_part_size_KB="${pdc_max_part_size}" @ integer
+	max_file_part_size_KB="${pdc_max_part_size}" @ uint
 
 	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB="${pdc_max_bl_size}" @ integer
+	max_blocklist_file_size_KB="${pdc_max_bl_size}" @ uint
 
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1" @ 0|1
@@ -765,10 +959,10 @@ print_def_config()
 	unload_blocklist_before_update="auto" @ auto|0|1
 
 	# Start delay in seconds when service is started from system boot
-	boot_start_delay_s="30" @ integer
+	boot_start_delay_s="30" @ uint
 
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
-	MAX_PARALLEL_JOBS="auto" @ auto|integer
+	MAX_PARALLEL_JOBS="auto" @ auto|uint
 
 	# If a path to custom script is specified and that script defines functions
 	# 'report_success()', 'report_failure()' or 'report_update()',
@@ -783,7 +977,7 @@ print_def_config()
 
 	# dnsmasq instance indexes and config directories
 	# normally this should be set automatically by the 'setup' command
-	DNSMASQ_INDEXES="${dnsmasq_indexes}" @ integer_list
+	DNSMASQ_INDEXES="${dnsmasq_indexes}" @ uint_list
 	DNSMASQ_CONF_DIRS="${dnsmasq_conf_dirs}" @ string
 
 	# Log verbosity (0-5). Higher values send more messages to the syslog. Default is 1.
@@ -1052,14 +1246,14 @@ parse_config()
 				else
 				{
 					val_regex=valid_values
-					if ( ! sub(/integer_list/,"[ 	]*[0-9]+([ 	]+[0-9]+)*[ 	]*",val_regex) )
-						sub(/integer/,"[0-9]+",val_regex)
+					if ( ! sub(/uint_list/,"[ 	]*[0-9]+([ 	]+[0-9]+)*[ 	]*",val_regex) )
+						sub(/uint/,"[0-9]+",val_regex)
 					valid_values_regex_arr[key]=val_regex
 					valid_values_seen_regex_arr[valid_values]=val_regex
 
 					val_print=valid_values
-					if ( ! sub(/integer_list/,"space-separated list of non-negative integers",val_print) )
-						sub(/integer/,"non-negative integer",val_print)
+					if ( ! sub(/uint_list/,"space-separated list of non-negative integers",val_print) )
+						sub(/uint/,"non-negative integer",val_print)
 					gsub(/\|/," or ", val_print)
 					valid_values_print_arr[key]=val_print
 					valid_values_seen_print_arr[valid_values]=val_print
@@ -1271,7 +1465,7 @@ load_config()
 	if [ -n "${in_install}" ]
 	then
 		get_dnsmasq_instances &&
-		create_addnmounts
+		do_create_addnmounts
 	fi
 	:
 }
@@ -1453,7 +1647,7 @@ write_config()
 ### HELPER FUNCTIONS
 
 # Detect package manager (opkg or apk)
-# Sets global vars: $PKG_MANAGER $PKG_INSTALL_CMD
+# Sets global vars: $PKG_MANAGER $PKG_INSTALL_CMD $PKG_FILES_LIST_CMD
 detect_pkg_manager() {
 	local apk_present='' opkg_present=''
 	check_util apk && apk_present=1
@@ -1466,12 +1660,16 @@ detect_pkg_manager() {
 
 	if [ -n "$apk_present" ]
 	then
-		PKG_MANAGER=apk
-		PKG_INSTALL_CMD="apk add"
+		export \
+			PKG_MANAGER=apk \
+			PKG_INSTALL_CMD="apk add" \
+			PKG_FILE_LIST_CMD="apk info --contents"
 	elif [ -n "$opkg_present" ]
 	then
-		PKG_MANAGER=opkg
-		PKG_INSTALL_CMD="opkg install"
+		export \
+			PKG_MANAGER=opkg \
+			PKG_INSTALL_CMD="opkg install" \
+			PKG_FILE_LIST_CMD="opkg files"
 	else
 		reg_failure "Failed to detect package manager."
 		return 1
@@ -1518,63 +1716,49 @@ report_utils()
 	esac
 }
 
-# 1: list of newline-separated paths
-# Optional:
-# 2: var name for printable missing paths output
+# 1: var name for printable missing paths output
+# 2: dnsmasq instance indexes to check
+# 3: list of newline-separated paths
 # shellcheck disable=SC2120
 check_addnmounts()
 {
 	try_check_addnmounts "${@}" || { reg_failure "Failed to check addnmount entries."; return 1; }
-	:
 }
 
 try_check_addnmounts()
 {
-	# return codes:
-	# 0 - addnmount present
-	# 1 - error
-	# 2 - addnmount not present
-	check_addnmount()
-	{
-		local path="${1}" addnmounts="${2}"
-		case "${path}" in
-			/*) ;;
-			*) reg_failure "check_addnmount: invalid path '${path}'."; return 1
-		esac
-
-		while [ -n "${path}" ]
-		do
-			is_included "${path}" "${addnmounts}" ' ' && return 0
-			path="${path%/*}"
-		done
-
-		return 2
-	}
-
 	local me=check_addnmounts \
-		ca_addnmounts index path \
 		IFS="${DEFAULT_IFS}" \
-		ca_missing_var="${1}" ca_req_addnm="${2}"
+		ca_index ca_path ca_addnmounts \
+		ca_missing_var="${1}" ca_indexes="${2}" ca_req_addnm="${3}"
 
 	unset_vars "${ca_missing_var}" &&
-	assert_set "F_${me}" DNSMASQ_INDEXES ADDNMOUNTS_SET ca_req_addnm || return 1
+	assert_set "F_${me}" ca_indexes ADDNMOUNTS_SET || return 1
 
-	for index in ${DNSMASQ_INDEXES}
+	[ -n "${ca_req_addnm}" ] || return 0
+
+	for ca_index in ${ca_indexes}
 	do
-		is_uint "${index}" || { reg_failure "${me}: Invalid dnsmasq index '${index}'."; return 1; }
-		eval "ca_addnmounts=\"\${ADDNMOUNTS_${index}}\""
+		is_uint "${ca_index}" || { reg_failure "${me}: Invalid dnsmasq index '${ca_index}'."; return 1; }
 		IFS="${_NL_}"
-		for path in ${ca_req_addnm}
+		for ca_path in ${ca_req_addnm}
 		do
-			[ -n "${path}" ] || continue
+			[ -n "${ca_path}" ] || continue
 			IFS="${DEFAULT_IFS}"
 
-			check_addnmount "${path}" "${ca_addnmounts}"
-			case ${?} in
-				0) ;;
-				1) return 1 ;;
-				*) [ -n "${ca_missing_var}" ] && add2list "${ca_missing_var}" "'${path}'" ", "
+			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_index}}\""
+			case "${ca_path}" in
+				/*) ;;
+				*) reg_failure "${me}: invalid path '${ca_path}'."; return 1
 			esac
+
+			while [ -n "${ca_path}" ]
+			do
+				is_included "${ca_path}" "${ca_addnmounts}" ' ' && continue
+				ca_path="${ca_path%/*}"
+			done
+
+			[ -n "${ca_missing_var}" ] && add2list "${ca_missing_var}" "'${ca_path}'" ", "
 		done
 		IFS="${DEFAULT_IFS}"
 	done
@@ -1730,7 +1914,7 @@ do_select_dnsmasq_instances() {
 				do
 					eval "instance=\"\${INST_NAME_${index}}\"" \
 						"ifaces=\"\${IFACES_${index}}\""
-					ifaces="${ifaces// /, }"
+					ifaces="${ifaces//"${_NL_}"/, }"
 					reg_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
 					indexes="${indexes}${index}|"
 				done
@@ -1763,10 +1947,10 @@ do_select_dnsmasq_instances() {
 	for index in ${DNSMASQ_INDEXES}
 	do
 		eval "ifaces=\"\${IFACES_${index}}\""
-		add2list select_ifaces "${ifaces}" " "
+		add2list select_ifaces "${ifaces}" "${_NL_}"
 	done
 
-	log_msg "Selected dnsmasq indexes: '${DNSMASQ_INDEXES}' (network intefaces: ${select_ifaces// /, })."
+	log_msg "Selected dnsmasq indexes: '${DNSMASQ_INDEXES}' (network intefaces: ${select_ifaces//"${_NL_}"/, })."
 
 	DNSMASQ_CONF_DIRS=
 	for index in ${DNSMASQ_INDEXES}
@@ -1813,8 +1997,8 @@ do_select_dnsmasq_instances() {
 #   GDI_NOFORCE: skip re-processing instances if DNSMASQ_INST_SET is non-empty
 # populates global vars:
 #   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
-#   INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}, MAC_${index}
-#   BL_MAC_NEW, ADDNMOUNTS_SET, DNSMASQ_INST_SET
+#   INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, PID_${index}, ADDNMOUNTS_${index}
+#   ADDNMOUNTS_SET, DNSMASQ_INST_SET
 get_dnsmasq_instances() {
 	# shellcheck disable=SC2317,SC2329
 	add_conf_dir_and_addnmounts()
@@ -1830,9 +2014,9 @@ get_dnsmasq_instances() {
 		is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] && return 0
 
 	local me=get_dnsmasq_instances \
-		nonempty='' instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir first_iface mac_addr mac_shared=''
+		nonempty='' instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir
 
-	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET BL_MAC_NEW
+	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -blue "Checking dnsmasq instances."
 
@@ -1870,7 +2054,7 @@ get_dnsmasq_instances() {
 	index=0
 	for instance in ${instances}
 	do
-		unset "INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}" "MAC_${index}"
+		unset "INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}" "PID_${index}"
 
 		case "${instance}" in
 			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
@@ -1878,6 +2062,7 @@ get_dnsmasq_instances() {
 		json_is_a "${instance}" object || continue # skip if $instance is not object
 		json_select "${instance}" &&
 		json_get_var "RUNNING_${index}" running &&
+		json_get_var "PID_${index}" pid &&
 		json_is_a command array &&
 		json_select command || { reg_failure "Failed to process info for dnsmasq instance '${instance}'."; return 1; }
 
@@ -1903,12 +2088,8 @@ get_dnsmasq_instances() {
 		IFS="${DEFAULT_IFS}"
 
 		# get ifaces for instance
-		ifaces="$(${AWK_CMD} -F= '/^\s*interface=/ {if ($2 != "" && !seen[$2]++) {ifaces = ifaces $2 " "} } END {print ifaces}' "${@}")"
-		[ -n "${ifaces}" ] ||
-		{
-			ifaces="$(fw4 zone lan)"
-			ifaces="${ifaces//"${_NL_}"/ }"
-		}
+		ifaces="$( ${SED_CMD} -n '/^\s*interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}" | sort -u )"
+		: "${ifaces:="$(fw4 zone lan)"}" # fall back to all LAN interfaces
 
 		# get conf-dirs for instance
 		conf_dirs="$(
@@ -1926,32 +2107,14 @@ get_dnsmasq_instances() {
 			add2list ALL_CONF_DIRS "${dir}"
 		done
 
-		# get mac address for instance
-		mac_addr=
-		first_iface="${ifaces%% *}"
-		[ -n "${first_iface}" ] &&
-		{
-			read -rn17 mac_addr _ < "/sys/class/net/${first_iface}/address"
-			mac_addr="${mac_addr//:/}" &&
-			case "${mac_addr}" in
-				''|*[!0-9a-fA-F]*) mac_addr='' ;;
-				*) add2list mac_shared "${mac_addr}" " "
-			esac
-		}
-
-		eval "INST_NAME_${index}=\"${instance}\"
-			CONF_DIRS_${index}=\"${conf_dirs}\"
-			IFACES_${index}=\"${ifaces% }\"
-			MAC_${index}=\"${mac_addr}\""
+		eval "INST_NAME_${index}"='${instance}' \
+			"CONF_DIRS_${index}"='${conf_dirs}' \
+			"IFACES_${index}"='${ifaces}'
 		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
 		index=$((index+1))
 	done
 	json_cleanup
 	cnt_lines DNSMASQ_INSTANCES_CNT "${running_instances}"
-
-	mac_shared="${mac_shared// /}"
-	tolower mac_shared "${mac_shared}"
-	export BL_MAC_NEW="${mac_shared:0:24}" # trim to 24 chars (2 first addresses)
 
 	export DNSMASQ_INST_SET=1
 
