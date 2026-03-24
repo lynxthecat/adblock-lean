@@ -958,8 +958,9 @@ gen_blocklists()
 		file_to_bk \
 		bk_file \
 		inst_force_unload \
-		install_location \
+		location \
 		install_path \
+		persist_dir \
 		index \
 		dnsmasq_indexes \
 		totalmem \
@@ -981,12 +982,15 @@ gen_blocklists()
 		# TODO: where is RUN_STATE_ set?
 		unset "RESTORE_FROM_PERSIST_${bl_inst}" "SKIP_LOAD_STOP_${bl_inst}"
 		eval "run_state=\"\${RUN_STATE_${bl_inst}}\"" \
-			"install_location=\"\${INSTALL_LOCATION_${bl_inst}}\"" \
+			"persist_dir=\"\${PERSIST_DIR_${bl_inst}}\"" \
 			"install_path=\"\${INSTALL_PATH_${bl_inst}}\"" \
 			"dnsmasq_indexes=\"\${DNSMASQ_INDEXES_${bl_inst}}\"" \
 			"bk_file=\"\${BK_FILE_${bl_inst}}\""
 
 		assert_set "F_${me}" install_path || exit 1
+
+		location=RAM
+		[ "${install_path%/*}" = "$persist_dir" ] && location=PERSIST
 
 		get_curr_bl_path ram_bl_file_curr "${bl_inst}" BL RAM &&
 		get_curr_bl_path persist_bl_file_curr "${bl_inst}" BL RAM || exit 1
@@ -1051,11 +1055,11 @@ gen_blocklists()
 
 		processed_bl_file="${ABL_TMP_DIR}/processed-blocklist${FINAL_COMPR_EXT}"
 
-		if gen_blocklist "BL_CNT_${install_location}_${bl_inst}" "${processed_bl_file}" "${initial_uptime_ms}" &&
-			get_md5 "BL_MD5_${install_location}_${bl_inst}" "${processed_bl_file}" &&
+		if gen_blocklist "BL_CNT_${location}_${bl_inst}" "${processed_bl_file}" "${initial_uptime_ms}" &&
+			get_md5 "BL_MD5_${location}_${bl_inst}" "${processed_bl_file}" &&
 			mv_blocklist "${processed_bl_file}" "${install_path}" "${FINAL_COMPR_TO_FILE}"
 		then
-			eval "BL_PATH_${install_location}_${bl_inst}"='${out_f}'
+			eval "BL_PATH_${location}_${bl_inst}"='${install_path}'
 			add2list "${blocklists_out_var}" "${bl_inst}" " "
 		else
 			reg_failure "Failed to generate new blocklist."
@@ -1294,10 +1298,9 @@ install_blocklists()
 	local \
 		dnsmasq_indexes \
 		start_rv_inst \
-		install_location \
-		install_location_fallback \
+		location \
 		install_path \
-		install_path_fallback \
+		bl_path_ram \
 		install_desc \
 		some_succeeded \
 		skip_load_stop \
@@ -1306,18 +1309,21 @@ install_blocklists()
 	for bl_inst in ${bl_instances}
 	do
 		start_rv_inst=1
-		eval "install_location=\"\${INSTALL_LOCATION_${bl_inst}}\"" \
-			"install_location_fallback=\"\${INSTALL_LOCATION_FALLBACK_${bl_inst}}\"" \
+		eval \
+			"persist_dir=\"\${PERSIST_DIR_${bl_inst}}\"" \
 			"install_path=\"\${INSTALL_PATH_${bl_inst}}\"" \
-			"install_path_fallback=\"\${INSTALL_PATH_FALLBACK_${bl_inst}}\"" \
-			"install_desc=\"\${INSTALL_DESC_${bl_inst}}\"" \
+			"bl_path_ram=\"\${INSTALL_PATH_RAM_${bl_inst}}\"" \
 			"dnsmasq_indexes=\"\${DNSMASQ_INDEXES_${bl_inst}}\"" \
 			"skip_load_stop=\"\${SKIP_LOAD_STOP_${bl_inst}}\""
 
 		get_curr_bl_path ram_bl_file_curr "${bl_inst}" BL RAM &&
 		get_curr_bl_path persist_bl_file_curr "${bl_inst}" BL RAM &&
 
-		assert_set F_start install_path install_location dnsmasq_indexes || exit 1
+		location=RAM
+		[ "${install_path%/*}" = "$persist_dir" ] &&
+			location=PERSIST install_desc=persistent
+
+		assert_set F_start install_path dnsmasq_indexes || exit 1
 
 		[ -n "${ram_bl_file_curr}" ] || rm_main_bl "${bl_inst}" "ram" # TODO: specify ram|persist to rm_main_bl
 
@@ -1330,11 +1336,10 @@ install_blocklists()
 			add2list INSTALLED_INSTANCES "${bl_inst}"
 		else
 			reg_failure "Failed to install blocklist '${bl_inst}'"
-			install_path=${install_path_fallback}
-			install_location="${install_location_fallback}"
-			[ -n "${install_location}" ] && [ -n "${install_path}" ] && [ -d "${install_path%/*}" ] || continue
-			eval "INSTALL_PATH_${bl_inst}"='${install_path}' "INSTALL_LOCATION_${bl_inst}"='${install_location}'
-			unset "INSTALL_PATH_FALLBACK_${bl_inst}" "INSTALL_LOCATION_FALLBACK_${bl_inst}"
+			[ "$location" = "PERSIST" ] &&
+			install_path=${bl_path_ram} &&
+			[ -n "${install_path}" ] && [ -d "${install_path%/*}" ] || continue
+			eval "INSTALL_PATH_${bl_inst}"='${install_path}'
 
 			log_msg "Will try to generate a new blocklist."
 			KEEP_PERSIST=0 stop -noexit # TODO
