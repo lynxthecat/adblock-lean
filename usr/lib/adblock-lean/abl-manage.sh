@@ -365,11 +365,7 @@ set_abl_inst_env()
 		pause_dir \
 		pause_file_new \
 		\
-		install_location=ram \
-		install_location_fallback \
 		install_path \
-		install_path_fallback \
-		install_desc \
 		\
 		persist_avail=0 \
 		persist_dir \
@@ -536,11 +532,7 @@ set_abl_inst_env()
 			then
 				start_action=load
 
-				install_location=persist
 				install_path=${file}
-				install_desc=persistent
-				install_path_fallback=${bl_path_ram}
-				install_location_fallback=ram
 			else
 				[ "${BL_FILE_CURR}" = "${file}" ] &&
 					{ [ "${ABL_INIT_ACTION}" = status ] || rm_main_bl "${bl_inst}"; } # TODO: rm_main_bl should handle individual bl instances
@@ -551,7 +543,6 @@ set_abl_inst_env()
 					start_act_msg="Will rebuild the persistent blocklist."
 
 					install_path=${bl_path_persist}
-					install_path_fallback=${bl_path_ram}
 				}
 
 				[ -n "${persist_fail}" ] && log_msg -warn "${persist_fail}"
@@ -563,7 +554,6 @@ set_abl_inst_env()
 			pause_dir=${persist_dir:?}
 			[ "${ABL_CMD}" = start ] && reg_msg "" "Will update the persistent blocklist." ""
 			install_path=${bl_path_persist}
-			install_path_fallback=${bl_path_ram}
 		fi
 	fi
 
@@ -581,11 +571,8 @@ set_abl_inst_env()
 	pause_file_new="${pause_dir:-"${ABL_RUN_DIR:?}"}/${PAUSE_BASE_FNAME:?}${final_compr_ext}"
 
 	export \
-		"INSTALL_LOCATION_${bl_inst}=${install_location}" \
-		"INSTALL_LOCATION_FALLBACK_${bl_inst}=${install_location_fallback}" \
 		"INSTALL_PATH_${bl_inst}=${install_path}" \
-		"INSTALL_PATH_FALLBACK_${bl_inst}=${install_path_fallback}" \
-		"INSTALL_DESC_${bl_inst}=${install_desc}" \
+		"INSTALL_PATH_RAM_${bl_inst}=${bl_path_ram}" \
 		"PAUSE_FILE_NEW_${bl_inst}=${pause_file_new}" \
 		"BK_FILE_${bl_inst}=${bk_file}" \
 		"FINAL_COMPRESS_${bl_inst}=${final_compress}" \
