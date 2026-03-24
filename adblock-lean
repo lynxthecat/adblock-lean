@@ -412,44 +412,6 @@ pick_opt()
 
 ### HELPER FUNCTIONS
 
-# 1: var for output
-# 2: blocklist instance
-# 3: BL|PAUSE|BK
-# 4: RAM|PERSIST
-get_curr_bl_path()
-{
-	unset_vars "${1:?}" &&
-	{
-		case "${3:?}" in
-			BL|PAUSE) ;;
-			*) false ;;
-		esac &&
-		case "${4:?}" in
-			RAM|PERSIST) ;;
-			*) false ;;
-		esac || bad_args get_urr_bl_path "${@}"; return 1
-	} &&
-	eval "${1}=\"\${${4}_${3}_FILE_CURR_${2:?}}\"" # example: RAM_BL_FILE_CURR_3
-}
-
-find_persist_files()
-{
-	local persist_dir bl_file pause_file \
-		bl_inst="${1}"
-
-	for bl_inst in ${BL_INSTANCES}
-	do
-		file=
-		FF_RM_EXTRA=1 find_files bl_file "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}_${bl_inst}"
-		export "PERSIST_BL_FILE_CURR_${bl_inst}=${file}"
-
-		FF_RM_EXTRA=1 find_files pause_file "${PERSIST_BLOCKLIST_DIR}" "${PAUSE_BASE_FNAME:?}_${bl_inst}"
-		export "PERSIST_PAUSE_FILE_CURR_${bl_inst}=${file}"
-
-		debug_msg "instance '${bl_inst}':" "PERSIST_BL_FILE_CURR_${bl_inst}:'${bl_file}'" "PERSIST_PAUSE_FILE_CURR_${bl_inst}:'${pause_file}'"
-	done
-}
-
 # Splits path to file into dir, filename, ext
 split_path()
 {
@@ -2348,7 +2310,6 @@ pause()
 
 resume()
 {
-	local run_state
 	init_command resume || exit 1
 	case "${RUN_STATE_GLOBAL}" in
 		0) reg_msg -green "adblock-lean is already running."; exit 0 ;;
