@@ -818,9 +818,6 @@ try_mk_metadata()
 	:
 }
 
-# Env vars:
-#   GMD_QUIET: do not print file-not-found or key-not-found erros (return 1)
-#
 # Reads the metadata file and assigns global vars:
 #   IS_PAUSED_{inst}
 #   PATH_RAM_{inst} MD5_RAM_{inst} CNT_RAM_{inst}
@@ -924,7 +921,7 @@ read_blocklist_metadata()
 	done
 
 	[ -f "${META_FILE}" ] ||
-		{ [ -n "${GMD_QUIET}" ] || reg_failure "${me}: can not find ${sp_f_pr}."; return 1; }
+		{ debug_msg "${me}: can not find ${sp_f_pr}."; return 0; }
 
 	UCI_CONFIG_DIR="${META_FILE%/*}" config_load "${META_FILE##*/}" ||
 		{ reg_failure "${me}: failed to load ${sp_f_pr}."; return 1; }
