@@ -204,7 +204,7 @@ try_get_abl_run_state()
 
 	print_msg -blue "Checking adblock-lean run state."
 
-	[ -n "${META_READ}" ] || read_all_metadata || params_check_res=1
+	[ -n "${META_READ}" ] || read_blocklist_metadata || params_check_res=1
 
 	for bl_inst in "${@}"
 	do
@@ -276,7 +276,7 @@ set_abl_env()
 	assert_set "F_${me}" BL_INSTANCES compression_util || return 1
 
 	set -o pipefail
-	read_all_metadata &&
+	read_blocklist_metadata &&
 	get_dnsmasq_instances &&
 	check_dnsmasq_instances &&
 	get_dnsmasq_ips ||
@@ -370,9 +370,11 @@ set_abl_inst_env()
 		persist_avail=0 \
 		persist_dir \
 		persist_mode \
-		persist_bl_size_b \
-		persist_cnt=0 \
-		persist_cnt_human \
+		\
+		curr_path_persist \
+		curr_cnt_persist \
+		curr_cnt_persist_human \
+		curr_persist_size_b \
 		\
 		final_compress \
 		final_compr_ext \
@@ -395,11 +397,15 @@ set_abl_inst_env()
 		"dnsmasq_indexes=\"DNSMASQ_INDEXES_${bl_inst}\"" \
 		"dnsmasq_conf_dirs=\"\${DNSMASQ_CONF_DIRS_${bl_inst}}\"" \
 		"persist_dir=\"\${PERSIST_DIR_${bl_inst}}\"" \
-		"persist_mode=\"\${PERSIST_MODE_${bl_inst}}\""
+		"persist_mode=\"\${PERSIST_MODE_${bl_inst}}\"" \
+		"curr_path_persist=\"\${PATH_PERSIST_${bl_inst}}\"" \
+		"curr_cnt_persist=\"\${CNT_PERSIST_${bl_inst}}\""
 
 	bl_base_fname=${BLOCKLIST_BASE_FNAME:?}_${bl_inst}
 
-	get_curr_blocklist_paths # TODO: instance-specific paths
+	get_inst_metadata
+
+	get_curr_blocklist_path # TODO: instance-specific paths
 
 	# conf-script error logging
 	check_addnmounts sae_missing_addnm "${dnsmasq_indexes}" "${LOG_CMD}" || return 1
@@ -484,7 +490,7 @@ set_abl_inst_env()
 		then
 			reg_action -blue "Checking the persistent blocklist."
 			local file="${PERSIST_BL_FILE_CURR}" \
-				min_good_line_count_human='' persist_ext='' persist_fail='' persist_cnt='' persist_cnt_human=''
+				min_good_line_count_human='' persist_ext='' persist_fail='' curr_cnt_persist='' curr_cnt_persist_human=''
 
 			if
 				{
@@ -509,23 +515,23 @@ set_abl_inst_env()
 						}
 				} &&
 
-				persist_bl_size_b="$(get_file_size "${file}")" &&
+				curr_persist_size_b="$(get_file_size "${file}")" &&
 				{
-					[ $(( persist_bl_size_b/1024 )) -le "${max_blocklist_file_size_KB}" ] ||
+					[ $(( curr_persist_size_b/1024 )) -le "${max_blocklist_file_size_KB}" ] ||
 					{ persist_fail="Persistent blocklist file '${file}' is larger than the maximum value set in config (${max_blocklist_file_size_KB} KiB)."; false; }
 				} &&
 
-				GMD_QUIET=1 GMD_CHECK_MD5=1 get_metadata "${file}" "" _ _ persist_cnt &&
+				GMD_QUIET=1 get_inst_metadata "${file}" "" _ _ curr_cnt_persist && #TODO
 
 				{
-					int2human persist_cnt_human "${persist_cnt}" &&
+					int2human curr_cnt_persist_human "${curr_cnt_persist}" &&
 					int2human min_good_line_count_human "${min_good_line_count}" || return 1
 				} &&
 
 				{
-					[ "${persist_cnt}" -ge "${min_good_line_count}" ] ||
+					[ "${curr_cnt_persist}" -ge "${min_good_line_count}" ] ||
 						{
-							persist_fail="Entries count (${persist_cnt_human}) in the persistent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
+							persist_fail="Entries count (${curr_cnt_persist_human}) in the persistent blocklist '${file}' is below the minimum value set in config (${min_good_line_count_human})."
 							false
 						}
 				}
@@ -748,7 +754,7 @@ get_dnsmasq_ips()
 mk_metadata()
 {
 	try_mk_metadata "${@}" && return 0
-	reg_failure "Failed to create or update metadata files."
+	reg_failure "Failed to create or update the metadata file."
 	return 1
 }
 
@@ -760,147 +766,188 @@ try_mk_metadata()
 
 	# shellcheck disable=SC2034
 	local me=mk_metadata IFS="${DEFAULT_IFS}" \
-		meta_location \
-		meta_self_path \
-		meta_dir meta_fname meta_ext \
-		meta_param param_key param_val uci_fail='' \
-		meta_blocklist_path meta_md5 meta_cnt \
-		meta_bl_inst
+		meta_dir="${META_FILE%/*}" \
+		meta_fname="${META_FILE##*/}" \
+		location \
+		meta_param param_val uci_fail='' \
+		meta_path meta_md5 meta_cnt \
+		bl_inst
 
 	debug_msg "Creating/updating metadata."
 
 	assert_set "F_${me}" INSTALLED_INSTANCES || return 1
 
-	meta_fname="${META_FILE##*/}"
+	{ [ -f "${META_FILE}" ] || touch "${META_FILE}"; } || return 1
 
-	for meta_location in RAM PERSIST
+	(
+		UCI_CONFIG_DIR="${meta_dir}" config_load "${META_FILE##*/}" &&
+		config_foreach rm_unused blocklist_instance
+	)
+
+	for bl_inst in ${INSTALLED_INSTANCES}
 	do
-		case "${meta_location}" in
-			PERSIST)
-				eval "meta_dir=\"\${PERSIST_DIR_${meta_bl_inst}}\"" \
-					"persist_mode=\"\${PERSIST_MODE_${meta_bl_inst}}\""
-				case "${persist_mode}" in manual|managed) ;; *) false; esac &&
-				[ -n "${meta_dir}" ] &&
-				is_dir_writable "${meta_dir}" || continue ;;
-			RAM) meta_dir="${META_FILE%/*}" ;;
-		esac
-		meta_self_path="${meta_dir}/${meta_fname}"
-		{ [ -f "${meta_self_path}" ] || touch "${meta_self_path}"; } || return 1
-
-		(
-			UCI_CONFIG_DIR="${meta_dir}" config_load "${meta_fname}" &&
-			config_foreach rm_unused instance
-		)
-
-		for meta_bl_inst in ${INSTALLED_INSTANCES}
+		for location in RAM PERSIST
 		do
-			eval "meta_blocklist_path=\"\${BL_PATH_${meta_location}_${meta_bl_inst}}\"" \
-				"meta_md5=\"\${MD5_${meta_location}_${meta_bl_inst}}\"" \
-				"meta_cnt=\"\${CNT_${meta_location}_${meta_bl_inst}}\""
+			eval "meta_path=\"\${PATH_${location}_${bl_inst}}\"" \
+				"meta_md5=\"\${MD5_${location}_${bl_inst}}\"" \
+				"meta_cnt=\"\${CNT_${location}_${bl_inst}}\""
 
-			[ -n "${meta_blocklist_path}" ] && [ -n "${meta_md5}" ] && [ -n "${meta_cnt}" ] || [ "${meta_location}" = PERSIST ] ||
-				{ reg_failure "${me}: empty values for params."; uci_fail=1; break; }
+			{ [ -n "${meta_path}" ] && [ -n "${meta_md5}" ] && [ -n "${meta_cnt}" ]; } ||
+				{ [ "${location}" = PERSIST ] && continue; } ||
+					{ reg_failure "${me}: empty values for params."; uci_fail=1; break; }
 
 			# create/update section in meta file
-			uci_tmp set "${meta_fname}.${meta_bl_inst}=instance" &&
+			uci_tmp set "${meta_fname}.${bl_inst}=blocklist_instance" &&
 			for meta_param in blocklist_path md5 cnt
 			do
 				eval "param_val=\"\${meta_${meta_param}}\""
-				[ -n "${param_val}" ] || { reg_failure "${me}: empty value for param '${meta_param}'."; uci_fail=1; break; }
-				uci_tmp set "${meta_fname}.${meta_bl_inst}.${param_key}"="${param_val}" || { uci_fail=1; break; }
+				uci_tmp set "${meta_fname}.${bl_inst}.${meta_param}"="${param_val}" || { uci_fail=1; break; }
 			done
-		done &&
 
-		[ -z "${uci_fail}" ] &&
-		uci_tmp commit "${meta_fname}" ||
-			{ uci_tmp revert "${meta_fname}"; rm -f "${meta_self_path}"; return 1; }
+			# Store MD5 sum for persistent blocklist next to the file
+			[ "${location}" = PERSIST ] &&
+				printf '%s\n' "${meta_md5}" > "${meta_path%/*}/.persist-md5"
+		done
 	done
+
+	[ -z "${uci_fail}" ] &&
+	uci_tmp commit "${meta_fname}" ||
+		{ uci_tmp revert "${meta_fname}"; rm -f "${META_FILE}"; return 1; }
 
 
 	:
-}
-
-read_all_metadata()
-{
-	local bl_inst read_fail_inst
-	META_READ=
-	[ -n "${BL_INSTANCES}" ] || { reg_failure "Blocklist instances (\$BL_INSTANCES) are not set."; return 1; }
-	for bl_inst in ${BL_INSTANCES}
-	do
-		GMD_QUIET=1 GMD_CHECK_MD5=1 get_metadata "${bl_inst}" "ram" "BL_PATH_RAM_${bl_inst}" "BL_MD5_RAM_${bl_inst}" "BL_CNT_RAM_${bl_inst}" ||
-			read_fail_inst="${read_fail_inst}${read_fail_inst:+, }'${bl_inst}'"
-	done
-	[ -n "${read_fail_inst}" ] ||
-		{ export META_READ=1; return 0; }
-	[ -n "${META_QUIET}" ] || reg_failure "Failed to get metadata for blocklist instances: ${read_fail_inst}."
-	return 1
-}
-
-
-
-get_metadata()
-{
-	local me=get_metadata gmd_rv err_msg=
-	debug_msg "${me} start"
-	try_get_metadata "${@}"
-	gmd_rv=${?}
-
-	[ -n "${err_msg}" ] && reg_failure "${err_msg}"
-	debug_msg "${me} end"
-	return ${gmd_rv}
 }
 
 # Env vars:
 #   GMD_QUIET: do not print file-not-found or key-not-found erros (return 1)
-#   GMD_CHECK_MD5
-try_get_metadata()
+#
+# Reads the metadata file and assigns global vars:
+#   IS_PAUSED_{inst}
+#   PATH_RAM_{inst} MD5_RAM_{inst} CNT_RAM_{inst}
+#   PATH_PERSIST_{inst} MD5_PERSIST_{inst} CNT_PERSIST_{inst}
+#
+# Values are only assigned for files which actually exist, and reflect last known state
+#   (updated at the end of each adblock-lean run of start/stop/pause/resume)
+#
+# shellcheck disable=SC2329
+read_blocklist_metadata()
 {
-	local IFS="${DEFAULT_IFS}" \
-		key gmd_req_keys="path md5 cnt" \
-		gmd_self_path \
-		gmd_bl_md5 \
-		gmd_path gmd_md5 gmd_cnt \
-		gmd_bl_inst="${1}" gmd_self_location="${2}" gmd_bl_path_out_var="${3}" gmd_md5_out_var="${4}" gmd_cnt_out_var="${5}"
+	append_err() { err_msgs=${err_msgs}${err_msgs:+"${_NL_}"}; }
 
-	case "${gmd_self_location}" in
-		persist) eval "gmd_self_path=\"\${PERSIST_DIR_${gmd_bl_inst}}/${META_FILE##*/}\"" ;;
-		ram) gmd_self_path="${META_FILE}" ;;
-		*) bad_args "${me}" "${@}"; return 1
-	esac
-
-	: "${gmd_cnt}"
-
-	assert_set "F_${me}" gmd_bl_inst gmd_self_location &&
-	unset_vars "${gmd_bl_path_out_var}" "${gmd_md5_out_var}" "${gmd_cnt_out_var}" || return 1
-
-	local bl_inst_pr="blocklist instance '${gmd_bl_inst}'" sp_f_pr="metadata file '${gmd_self_path}'"
-
-	[ -f "${gmd_self_path}" ] || { [ -n "${GMD_QUIET}" ] || err_msg="Can not find ${sp_f_pr}."; return 1; }
-
-	UCI_CONFIG_DIR="${gmd_self_path%/*}" config_load "${gmd_self_path##*/}" || { err_msg="Failed to read ${sp_f_pr}."; return 1; }
-
-	for key in ${gmd_req_keys}
-	do
-		config_get "gmd_${key}" "${gmd_bl_inst}" "${key}" &&
-		eval "[ -n \"\${gmd_${key}}\" ]" || { [ -n "${GMD_QUIET}" ] || err_msg="Failed to get ${key} from ${sp_f_pr} for ${bl_inst_pr}."; return 1; }
-	done
-
-	# check md5
-	[ -n "${GMD_CHECK_MD5}" ] &&
+	populate_vars()
 	{
-		get_md5 gmd_bl_md5 "${gmd_path}" || return 1
-		[ "${gmd_md5}" = "${gmd_bl_md5}" ] ||
-			err_msg="md5 not matching in ${sp_f_pr} for ${bl_inst_pr}, path '${gmd_path}'. Spec file has: '${gmd_md5}', blocklist file has: '${gmd_bl_md5}'."
+		local \
+			bl_md5 \
+			meta_path meta_md5 meta_cnt \
+			persist_seen='' \
+			bl_inst_pr="blocklist instance '${1}'"
+
+		debug_msg "Populating vars for blocklist instance '${1}'."
+		is_included "${1}" "${BL_INSTANCES}" ||
+		{
+			append_err "Instance '${1}' in ${sp_f_pr} is not included in configured instances '${BL_INSTANCES}'."
+			return 1
+		}
+
+		is_included "${seen_instances}" "${1}" &&
+			append_err "Multiple entries for ${bl_inst_pr} in ${sp_f_pr}."
+
+		add2list seen_instances "${1}" " "
+
+		for location in RAM PERSIST
+		do
+			for key in ${req_keys}
+			do
+				config_get "meta_val" "${1}" "${location}_${key}"
+				[ -n "$meta_val" ] ||
+				{ [ "${location}" = PERSIST ] && [ -z "${persist_seen}" ] && continue; } ||
+				{
+					append_err "Failed to get ${key} from ${sp_f_pr} for ${bl_inst_pr}."
+					return 1
+				}
+
+				[ "${location}" = PERSIST ] && persist_seen=1
+
+				eval "${key}_${location}_${1}"='${meta_val}'
+			done
+		done
+
+		config_get "IS_PAUSED_${1}" "${1}" "IS_PAUSED"
+
+		META_READ=1
+
+		# check md5 - requires second loop
+		for location in RAM PERSIST
+		do
+			eval \
+				"meta_md5=\"MD5_${location}_${1}\"" \
+				"meta_path=\"PATH_${location}_${1}\""
+			[ -n "${meta_path}" ] || continue
+			get_md5 bl_md5 "${meta_path}" ||
+				{ append_err "Failed to get MD5 sum of ${meta_path}."; return 1; }
+			[ "${meta_md5}" = "${bl_md5}" ] ||
+			{
+				append_err "MD5 sum not matching in ${sp_f_pr} for ${bl_inst_pr}, path '${meta_path}'. Spec file has: '${meta_md5}', blocklist file has: '${bl_md5}'."
+				return 1
+			}
+		done
+		:
 	}
 
-	eval "${gmd_bl_path_out_var:-_}"='${gmd_path}' "${gmd_md5_out_var:-_}"='${gmd_md5}' "${gmd_cnt_out_var:-_}"='${gmd_cnt}'
+	local me=read_blocklist_metadata \
+		req_keys="PATH MD5 CNT" \
+		location key \
+		IFS="${DEFAULT_IFS}" \
+		rbm_rv=0 \
+		err_msgs='' \
+		seen_instances='' \
+		missing_instances='' \
+		sp_f_pr="metadata file '${META_FILE}'"
 
-	[ -n "${err_msg}" ] && return 1
+	debug_msg "${me} start, instances ${BL_INSTANCES}"
 
-	:
+	export META_READ=
+
+	[ -n "${BL_INSTANCES}" ] || { reg_failure "Blocklist instances (\$BL_INSTANCES) are not set."; return 1; }
+
+	# Reset global vars
+	for bl_inst in ${BL_INSTANCES}
+	do
+		unset "IS_PAUSED_${bl_inst}"
+		for location in RAM PERSIST
+		do
+			for key in ${req_keys}
+			do
+				unset "${key}_${location}_${bl_inst}"
+			done
+		done
+	done
+
+	[ -f "${META_FILE}" ] ||
+		{ [ -n "${GMD_QUIET}" ] || reg_failure "${me}: can not find ${sp_f_pr}."; return 1; }
+
+	UCI_CONFIG_DIR="${META_FILE%/*}" config_load "${META_FILE##*/}" ||
+		{ reg_failure "${me}: failed to load ${sp_f_pr}."; return 1; }
+
+	config_foreach populate_vars blocklist_instance
+
+	[ -n "${err_msgs}" ] &&
+	{
+		rbm_rv=1
+		IFS="${_NL_}"
+		for err_msg in ${err_msgs}
+		do
+			IFS="${DEFAULT_IFS}"
+			reg_failure "${me}: ${err_msg}"
+		done
+		IFS="${DEFAULT_IFS}"
+	}
+
+	subtract_a_from_b "${seen_instances}" "${BL_INSTANCES}" missing_instances " " ||
+		{ reg_failure "${me}: configured instances '${missing_instances}' are missing from ${sp_f_pr}."; rbm_rv=1; }
+
+	return ${rbm_rv}
 }
-
-
 
 
 mv_blocklist()
@@ -974,12 +1021,12 @@ try_mv_blocklist()
 			{ get_md5 dst_md5 "${mv_src_f}" || return 1; }
 	}
 
-    : "${dst_md5}"
+	: "${dst_md5}"
 
 	${transfer_cmd} "${mv_src_f}" "${mv_dst_f}" || return 1
 
 	# Update metadata
-	[ -n "${mv_bl_inst}" ] && eval "BL_MD5_${mv_location}_${mv_bl_inst}"='${dst_md5}'
+	[ -n "${mv_bl_inst}" ] && eval "MD5_${mv_location}_${mv_bl_inst}"='${dst_md5}'
 
 	:
 }
