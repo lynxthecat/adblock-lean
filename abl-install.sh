@@ -69,6 +69,7 @@ cleanup_and_exit()
 {
 	trap - INT TERM EXIT
 	rm -rf "${ABL_TMP_DIR}" "${ABL_PID_DIR}"
+	[ "${1}" = 1 ] && reg_failure "Failed to install adblock-lean."
 	[ -n "${ABL_LUCI_SOURCED}" ] && abl_inst_luci_exit "${1}"
 	exit "${1}"
 }
@@ -100,12 +101,12 @@ pick_opt()
 {
 	while :
 	do
-		printf %s "${1}: " 1>${MSGS_DEST}
+		printf %s "${1}: " 1>"${MSGS_DEST}"
 		read -r REPLY
-		case "${REPLY}" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter ${1}" 1>${MSGS_DEST}; continue; esac
+		case "${REPLY}" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter ${1}" 1>"${MSGS_DEST}"; continue; esac
 		eval "case \"${REPLY}\" in 
 				${1}) return 0 ;;
-				*) printf '\n%s\n\n' \"Please enter ${1}\" 1>${MSGS_DEST}
+				*) printf '\n%s\n\n' \"Please enter ${1}\" 1>\"${MSGS_DEST}\"
 			esac"
 	done
 }
@@ -945,7 +946,7 @@ fetch_and_install()
 				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}" ;;
 			*) reg_failure "Failed to get version from fetched adblock-lean distribution."; false ;;
 		esac
-	) || exit 1
+	) || inst_failed
 
 	rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 	log_msg "" "adblock-lean (version '${upd_ver}') has been installed."
@@ -960,7 +961,7 @@ fetch_and_install()
 			then
 				clean_abl_env
 				# shellcheck source=/dev/null
-				. "${ABL_SERVICE_PATH}" || exit 1
+				. "${ABL_SERVICE_PATH}"
 				enable &&
 				start
 			else
@@ -973,7 +974,7 @@ fetch_and_install()
 			then
 				clean_abl_env
 				# shellcheck source=/dev/null
-				. "${ABL_SERVICE_PATH}" || exit 1
+				. "${ABL_SERVICE_PATH}"
 				setup
 			else
 				exit 0
@@ -988,10 +989,12 @@ printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
 /bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null ||
 {
 	rm -f /tmp/abl-test
-	reg_failure "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
-	exit 1
+	inst_failed "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
 }
 rm -f /tmp/abl-test
+
+dnsmasq --help | grep -qe "--conf-script" ||
+	inst_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
 
 
 [ -s "${ABL_SERVICE_PATH}" ] && IS_UPDATE=1

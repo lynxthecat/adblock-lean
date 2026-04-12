@@ -43,133 +43,8 @@ stevenblack_mirrors="github sbc_io" \
 	stevenblack_github_url="https://raw.githubusercontent.com/StevenBlack/hosts/master" \
 	stevenblack_sbc_io_url="http://sbc.io/hosts"
 
-IP_REGEX_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
-IP_REGEX_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
-
 
 # UTILITY FUNCTIONS
-
-# 1 - var name to output extension
-# 2 - var name to output compr util (gzip|zstd)
-# 3 - path
-get_compr_spec()
-{
-	local gcs_file='' gcs_ext='' gcs_util='' \
-		extn_out_var="${1}" util_out_var="${2}" gcs_path="${3}"
-
-	unset_vars "${extn_out_var}" "${util_out_var}" &&
-	assert_set F_get_compr_spec extn_out_var util_out_var gcs_path || return 1
-
-	gcs_file="${gcs_path##*"/"}"
-	case "${gcs_file}" in
-		*.gz) gcs_ext=.gz gcs_util=gzip ;;
-		*.zst) gcs_ext=.zst gcs_util=zstd ;;
-		*.*) reg_failure "Unexpected extension '${gcs_file##*.}' in file '${gcs_path}'."; return 1
-	esac
-	: "${gcs_ext}" "${gcs_util}"
-	eval "${extn_out_var}"='${gcs_ext}' "${util_out_var}"='${gcs_util}'
-}
-
-# 1: input file
-# 2: command including options
-# 3: (optional) var name to output path to compressed file
-try_compress()
-{
-	local IFS="${DEFAULT_IFS}" tc_cmd opts='' tc_err='' \
-		tc_dir tc_fname tc_ext \
-		tc_in_file="${1}" tc_cmd="${2}" out_file_var="${3}"
-
-	unset_vars "${out_file_var}" &&
-	split_path tc_dir tc_fname _ "${tc_in_file}" && [ -n "${tc_fname}" ] && is_valid_dir "${tc_dir}" &&
-	{
-		is_dir_writable "${tc_dir}" ||
-			{ tc_err="Logic bug: attempted to compress file '${tc_in_file}' to protected dir '${tc_dir}'."; false; }
-	} &&
-
-	case "${tc_cmd}" in
-		*gzip*|*pigz*) tc_ext=.gz ;;
-		*zstd*) tc_ext=.zst ;;
-		*) tc_err="unexpected command '${tc_cmd}'."; false
-	esac &&
-
-	${tc_cmd} "${tc_in_file}" ||
-		{
-			reg_failure "try_compress: ${tc_err}${tc_err:+ }Failed to compress '${tc_in_file}'."
-			rm_if_writable "${tc_in_file}";
-			return 1
-		}
-
-	[ -n "${out_file_var}" ] && eval "${out_file_var}"='${tc_in_file}${tc_ext}'
-
-	: "${tc_ext}"
-	:
-}
-
-# 0 (optional): '-stdout' (does not remove source file)
-# 1: path to file to extract
-try_extract()
-{
-	local stdout=
-	[ "${1}" = '-stdout' ] && { stdout=1; shift; }
-
-	local IFS="${DEFAULT_IFS}" cmd='' opts='' \
-		file_opts='' \
-		stdout_opts='' \
-		te_dir te_fname te_ext \
-		te_err='' \
-		te_file="${1}"
-
-	split_path te_dir te_fname te_ext "${te_file}" && [ -n "${te_fname}" ] && is_valid_dir "${te_dir}" &&
-	{
-		[ -n "${stdout}" ] || is_dir_writable "${te_dir}" ||
-			{ te_err="Logic bug: attempted to extract file '${te_file}' to protected dir '${te_dir}'."; false; }
-	} &&
-	get_compr_spec _ cmd "${te_file}" &&
-
-	case "${te_ext}" in
-		gz)
-			file_opts="-fd"
-			stdout_opts="-cd" ;;
-		zst)
-			file_opts=" -fd --rm -q --no-progress"
-			stdout_opts="-cd" ;;
-		'') cmd="${CAT_CMD}" ;;
-		*) te_err="file '${te_file}' has unexpected extension."; false
-	esac &&
-
-	if [ -n "${stdout}" ]
-	then
-		opts="${stdout_opts}"
-	else
-		opts="${file_opts}"
-	fi &&
-
-	${cmd} ${opts} "${te_file}" ||
-
-	{
-		[ -n "${stdout}" ] || rm_if_writable "${te_fname}"*
-		reg_failure "try_extract: ${te_err}${te_err:+ }Failed to extract '${te_file}'."
-		return 1
-	}
-}
-
-# subtract list $1 from list $2, with optional field separator $4 (otherwise uses newline)
-# output via optional variable with name $3
-# returns status 0 if the result is null, 1 if not
-subtract_a_from_b() {
-	local sab_out="${3:-___dummy}" IFS="${DEFAULT_IFS}"
-	are_var_names_safe "${sab_out}" || return 1
-	case "${2}" in '') eval "${sab_out}=''"; return 0; esac
-	case "${1}" in '') eval "${sab_out}"='${2}'; [ ! "${2}" ]; return; esac
-	local _fs_su="${4:-"${_NL_}"}"
-	local e rv_su=0 _subt=
-	local IFS="${_fs_su}"
-	for e in ${2}; do
-		is_included "${e}" "${1}" "${_fs_su}" || { add2list _subt "${e}" "${_fs_su}"; rv_su=1; }
-	done
-	eval "${sab_out}"='$_subt'
-	return ${rv_su}
-}
 
 # 1 - var name for ms output
 get_uptime_ms()
@@ -263,14 +138,14 @@ get_list_url()
 	eval "base_url=\"\${${list_author}_${mirror}_url}\""
 	[ -n "${base_url}" ] || { reg_failure "Failed to get base URL for ${list_author} mirror '${mirror}'."; return 1; }
 
-	is_included "${list_name}" "${lists}" " " || { reg_failure "Unknown ${list_author} list '${2}'."; return 1; }
+	is_included "${list_name}" "${lists}" || { reg_failure "Unknown ${list_author} list '${2}'."; return 1; }
 
 	eval "list_formats=\"\${${list_author}_formats}\""
-	is_included "${list_format}" "${list_formats}" " " ||
+	is_included "${list_format}" "${list_formats}" ||
 		{ reg_failure "${list_id} is only available in formats: ${list_formats}."; return 1; }
 
 	eval "mirrors=\"\${${list_author}_mirrors}\""
-	is_included "${mirror}" "${mirrors}" " " ||
+	is_included "${mirror}" "${mirrors}" ||
 		{ reg_failure "Unexpected mirror '${mirror}' for list author ${list_author}."; return 1; }
 
 	case "${list_author}" in
@@ -350,7 +225,7 @@ handle_done_job()
 	[ -n "${done_pid}" ] || { reg_failure "${me}: received empty string for PID."; return 1; }
 	[ -n "${done_job_rv}" ] || { reg_failure "${me}: received empty string instead of return code for job ${done_pid}."; return 1; }
 
-	subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS " "
+	subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS
 	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
 
 	if [ "${done_job_rv}" != 0 ]
@@ -795,7 +670,8 @@ gen_list_parts()
 		preproc_cnt=0 preproc_cnt_human \
 		preproc_size_B=0 preproc_size_human \
 		invalid_urls bad_hagezi_urls \
-		list_line_count list_types
+		list_line_count list_types \
+		bl_id="${1}"
 
 
 	[ -n "${raw_block_lists}${dnsmasq_block_lists}${hosts_block_lists}" ] ||
@@ -903,7 +779,7 @@ gen_list_parts()
 		then
 			# consolidate allowlist parts into one file
 			FF_EXEC="concat_allow_cb {}" \
-				find_files _ "${PROCESSED_PARTS_DIR}" "allow-" || [ ${?} != 1 ] ||
+				find_files _ "${PROCESSED_PARTS_DIR}" "allow-" "" "${bl_id}" || [ ${?} != 1 ] ||
 					{ reg_failure "Failed to merge allowlist part."; return 1; }
 		fi
 
@@ -913,7 +789,7 @@ gen_list_parts()
 			# count lines for current list type
 			local part_line_count=0 list_line_count=0 part_size_B=0 list_size_B=0
 			FF_EXEC="read_stats_cb {}" \
-				find_files _ "${ABL_TMP_DIR}" "stats_${list_type}-" || [ ${?} != 1 ] ||
+				find_files _ "${ABL_TMP_DIR}" "stats_${list_type}-" "" "${bl_id}" || [ ${?} != 1 ] ||
 					{ reg_failure "Failed to read processed ${list_type}list parts stats."; return 1; }
 
 			if ! [ "${list_line_count}" -gt 0 ] || ! [ "${list_size_B}" -gt 0 ]
@@ -949,22 +825,23 @@ gen_blocklists()
 	local \
 		me=gen_blocklists \
 		processed_bl_file \
-		bl_inst \
+		bl_id \
 		run_state \
-		ram_bl_file_curr \
-		persist_bl_file_curr \
+		curr_path \
+		curr_persist_path \
 		conn_check_req \
-		restore_from_persist='' \
 		file_to_bk \
 		bk_file \
-		inst_force_unload \
-		location \
-		install_path \
-		persist_dir \
+		bk_ext \
+		final_compr_ext \
+		force_unload \
+		install_path install_cnt \
 		index \
 		dnsmasq_indexes \
 		totalmem \
-		blocklists_out_var="${1:?}" failed_blocklists_out_var="${2:?}" bl_instances="${3:?}" initial_uptime_ms="${4:?}"
+		blocklists_out_var="${1:?}" bl_ids="${2:?}" initial_uptime_ms="${3:?}"
+	
+	: "${install_cnt}"
 
 	if [ "${unload_blocklist_before_update}" = auto ] # global var
 	then
@@ -977,98 +854,95 @@ gen_blocklists()
 		fi
 	fi
 
-	for bl_inst in ${bl_instances}
+	for bl_id in ${bl_ids}
 	do
-		# TODO: where is RUN_STATE_ set?
-		unset "RESTORE_FROM_PERSIST_${bl_inst}" "SKIP_LOAD_STOP_${bl_inst}"
-		eval "run_state=\"\${RUN_STATE_${bl_inst}}\"" \
-			"persist_dir=\"\${PERSIST_DIR_${bl_inst}}\"" \
-			"install_path=\"\${INSTALL_PATH_${bl_inst}}\"" \
-			"dnsmasq_indexes=\"\${DNSMASQ_INDEXES_${bl_inst}}\"" \
-			"bk_file=\"\${BK_FILE_${bl_inst}}\""
+		unset "RESTORE_FROM_PERSIST_${bl_id}" "SKIP_LOAD_STOP_${bl_id}"
 
-		assert_set "F_${me}" install_path || exit 1
-
-		location=RAM
-		[ "${install_path%/*}" = "$persist_dir" ] && location=PERSIST
-
-		get_curr_bl_path ram_bl_file_curr "${bl_inst}" BL RAM &&
-		get_curr_bl_path persist_bl_file_curr "${bl_inst}" BL RAM || exit 1
+		get_bl_params -f "${me}" "${bl_id}" run_state dnsmasq_indexes install_path &&
+		get_bl_params "${bl_id}" curr_path curr_persist_path persist_dir bk_ext final_compr_ext
 
 		case "${run_state}" in
 			0|3|4) ;;
-			1)
-				stop 1 -noexit # TODO: stop individual indexes
-				get_abl_run_state run_state "${bl_inst}" ;;
-			*) inval_run_state "${run_state}"; exit 1 # TODO: inval_run_state per-inst
+			*)
+				KEEP_PERSIST=1 do_stop "${bl_id}"
+				CA_NOERR=1 get_bl_run_state "${bl_id}"
+				set_bl_params "${bl_id}" run_state=${?} ;;
 		esac
 
 		conn_check_req=1
-		inst_force_unload=${unload_blocklist_before_update}
+		force_unload=${unload_blocklist_before_update}
 
 		case ${run_state} in
 			0) ;;
-			3|4) inst_force_unload=0 conn_check_req='' ;;
+			3|4) force_unload=0 conn_check_req='' ;;
 			*) exit 1
 		esac
 
-		if [ "${inst_force_unload}" != 1 ] && [ -n "${conn_check_req}" ]
+		if [ "${force_unload}" != 1 ] && [ -n "${conn_check_req}" ]
 		then
-			test_url_domains || inst_force_unload=1 # TODO: test per-bl-inst domains
+			test_url_domains || force_unload=1 # TODO: test per-bl-inst domains
 		fi
 
+		bk_file=
 		file_to_bk=
-		if [ -n "${ram_bl_file_curr}" ]
+		if [ -n "${curr_path}" ]
 		then
-			file_to_bk=${ram_bl_file_curr}
-		elif [ -n "${persist_bl_file_curr}" ] && eval "[ -z \"\${PERSIST_BL_FILE_BAD_${bl_inst}}\" ]"
+			file_to_bk=${curr_path}
+		elif [ -n "${curr_persist_path}" ]
 		then
-			file_to_bk=${persist_bl_file_curr}
-		else
-			reg_msg -2 "" "No valid existing blocklist found for blocklist instance '${bl_inst}'."
+			file_to_bk=${curr_persist_path}
 		fi
 
-		[ -n "${file_to_bk}" ] &&
-		{
-			if is_dir_writable "${file_to_bk%/*}"
-			then
-				export_blocklist "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}"
-			elif [ -f "${file_to_bk}" ]
-			then
-				# for persistent blocklist in 'manual' mode, the original file is used as a backup
-				bk_file=${file_to_bk}
-				restore_from_persist=1
-			fi
+		[ -f "${file_to_bk}" ] || file_to_bk=
 
-			eval "RESTORE_FROM_PERSIST_${bl_inst}"='${restore_from_persist}'
-
-		}
-
-		rm_main_bl "${bl_inst}" "ram"
-
-		if [ "${inst_force_unload}" = 1 ]
+		if [ -n "${file_to_bk}" ] && is_dir_writable "${bl_id}" "${file_to_bk%/*}"
 		then
-			reg_action -blue "Unloading current blocklist."
+			bk_file="${BK_BL_BASE_PATH:?}-${bl_id}${bk_ext}"
+			reg_action -blue "" "Creating backup of current blocklist '${bl_id}'." &&
+			mv_blocklist "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${bl_id}" ||
+			{
+				reg_failure "Failed to create backup of current blocklist file '${file_to_bk}'."
+				rm_if_writable "${bl_id}" "${file_to_bk}"
+				bk_file=
+			}
+		elif [ -n "${file_to_bk}" ]
+		then
+			# for persistent blocklist in 'manual' mode, the original file is used as a backup
+			bk_file="${file_to_bk}"
+		else
+			reg_msg -2 "" "No existing file found for blocklist '${bl_id}'."
+		fi
+		set_bl_params "${bl_id}" bk_file
+		debug_msg "bk_file: '${bk_file}'"
+
+		KEEP_PERSIST=0 rm_blocklists "${bl_id}"
+
+		if [ "${force_unload}" = 1 ]
+		then
+			reg_action -blue "Unloading current blocklist '${bl_id}'."
 			restart_dnsmasq "${dnsmasq_indexes}" || exit 1
-			eval "SKIP_LOAD_STOP_${bl_inst}=1"
+			set_bl_params "${bl_id}" skip_load_stop=1
 		fi
 
-		processed_bl_file="${ABL_TMP_DIR}/processed-blocklist${FINAL_COMPR_EXT}"
+		processed_bl_file="${ABL_TMP_DIR}/processed-blocklist-${bl_id}${final_compr_ext}"
 
-		if gen_blocklist "BL_CNT_${location}_${bl_inst}" "${processed_bl_file}" "${initial_uptime_ms}" &&
-			get_md5 "BL_MD5_${location}_${bl_inst}" "${processed_bl_file}" &&
-			mv_blocklist "${processed_bl_file}" "${install_path}" "${FINAL_COMPR_TO_FILE}"
+		if gen_blocklist "${bl_id}" install_cnt "${processed_bl_file}" "${initial_uptime_ms}" &&
+			try_mv "${processed_bl_file}" "${install_path}"
 		then
-			eval "BL_PATH_${location}_${bl_inst}"='${install_path}'
-			add2list "${blocklists_out_var}" "${bl_inst}" " "
+			add2list "${blocklists_out_var}" "${bl_id}"
+			set_bl_params "${bl_id}" install_cnt
 		else
-			reg_failure "Failed to generate new blocklist."
-			add2list "${failed_blocklists_out_var}" "${bl_inst}" " "
+			rm -f "${processed_bl_file}"
+			reg_failure "Failed to generate new blocklist file for blocklist '${bl_id}'."
 		fi
 	done
 }
 
 
+# 1: blocklist ID
+# 2: out var for elements count
+# 3: output file path
+# 4: initial uptime
 # shellcheck disable=SC2329
 gen_blocklist()
 {
@@ -1132,7 +1006,7 @@ gen_blocklist()
 		}
 
 		FF_EXEC="print_file_cb {}" \
-			find_files _ "${PROCESSED_PARTS_DIR}" "${prefix}-" "${suffix}" || printf ''
+			find_files _ "${PROCESSED_PARTS_DIR}" "${prefix}-" "${suffix}" "${bl_id}" || printf ''
 	}
 
 	# 1 - var name for output
@@ -1151,15 +1025,25 @@ gen_blocklist()
 		max_size_b=$((max_blocklist_file_size_KB*1024)) \
 		dedup_cmd_or_cat="${CAT_CMD}" \
 		pack_cmd="pack_entries_sed" \
+		part_extr_or_cat_stdout \
+		final_compr_or_cat_stdout \
+		new_single_instance \
 		\
-		cnt_out_var="${2}" \
-		out_f="${3}" \
+		bl_id="${1}" \
+		cnt_out_var="${2:?}" \
+		out_f="${3:?}" \
 		INITIAL_UPTIME_S="$(( ${4} / 1000 ))"
 
-	unset_vars cnt_out_var &&
-	assert_set "F_${me}" cnt_out_var out_f PART_EXTR_OR_CAT_STDOUT FINAL_EXTR_OR_CAT_STDOUT FINAL_COMPR_OR_CAT_STDOUT &&
-	case "${PART_EXTR_OR_CAT_STDOUT}" in
-		cat|*" cat") ;;
+	unset_vars "${cnt_out_var}" &&
+
+	get_bl_params -f "${me}" "${bl_id}" \
+		part_extr_or_cat_stdout \
+		final_compr_or_cat_stdout
+	get_bl_params "${bl_id}" \
+		new_single_instance
+
+	case "${part_extr_or_cat_stdout}" in
+		"${CAT_CMD}") ;;
 		*) assert_set "F_${me}" INTERM_COMPR_EXT || false
 	esac || return 1
 
@@ -1169,17 +1053,18 @@ gen_blocklist()
 		*gawk) pack_cmd="pack_entries_awk"
 	esac
 
-	gen_list_parts ||
+	gen_list_parts "${bl_id}" ||
 	{
 		reg_failure "Failed to generate preprocessed blocklist file with at least one entry."
 		return 1
 	}
 
-	reg_action -blue "" "Sorting and merging the blocklist parts into a single blocklist file." || return 1
+	reg_action -blue "" "Sorting and merging blocklist parts into a single blocklist file." || return 1
+
 	{
 		{
 			# print blocklist parts
-			print_list_parts block "${INTERM_COMPR_EXT}" "${PART_EXTR_OR_CAT_STDOUT}" |
+			print_list_parts block "${INTERM_COMPR_EXT}" "${part_extr_or_cat_stdout}" |
 			# optional deduplication
 			${dedup_cmd_or_cat} |
 			# count entries
@@ -1190,7 +1075,7 @@ gen_blocklist()
 			# print ipv4 blocklist parts
 			if [ -n "${use_ipv4_blocklist}" ]
 			then
-				print_list_parts ipv4_block "${INTERM_COMPR_EXT}" "${PART_EXTR_OR_CAT_STDOUT}" |
+				print_list_parts ipv4_block "${INTERM_COMPR_EXT}" "${part_extr_or_cat_stdout}" |
 				# optional deduplication
 				${dedup_cmd_or_cat} |
 				tee >(wc -w > "${ABL_TMP_DIR}/ipv4_block_stats") |
@@ -1218,6 +1103,10 @@ gen_blocklist()
 				${AWK_CMD} 'BEGIN{for (i=97; i<=122; i++) printf("*%c/",i);exit}' || exit 1
 				printf '\n'
 			fi
+
+			# add the test domain in single-instance mode
+			[ -n "${new_single_instance}" ] &&
+				printf '%s\n' "address=/${ABL_TEST_DOM_BASE}/#"
 			:
 		} |
 
@@ -1225,11 +1114,11 @@ gen_blocklist()
 		{ head -c "${max_size_b}"; read -rn1 -d '' && { touch "${ABL_TMP_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } || true; } |
 
 		# compress or cat
-		${FINAL_COMPR_OR_CAT_STDOUT} > "${out_f}"
+		${final_compr_or_cat_stdout} > "${out_f}"
 	} 2>"${ERR_F}" ||
 		{
 			reg_failure "Failed to merge blocklist parts into output file '${out_f}'."
-			errors="$(head -n10 "${ERR_F}" 2>/dev/null | ${SED_CMD} '/^$/d')"
+			errors="$(cat "${ERR_F}" 2>/dev/null | ${SED_CMD} '/^$/d')"
 			rm -f "${out_f}" "${ERR_F}"
 			[ -n "${errors}" ] && log_msg "STDERR output:${_NL_}${errors}"
 			return 1
@@ -1271,7 +1160,7 @@ gen_blocklist()
 	rm -f "${ERR_F}"
 
 	{
-		try_extract -stdout "${out_f}" |
+		try_extract -stdout "${bl_id}" "${out_f}" |
 		dnsmasq --test -C -
 	} 2> "${ERR_F}"
 
@@ -1290,220 +1179,6 @@ gen_blocklist()
 
 	eval "${cnt_out_var}"='${gen_cnt}'
 
-	:
-}
-
-install_blocklists()
-{
-	local \
-		dnsmasq_indexes \
-		start_rv_inst \
-		location \
-		install_path \
-		bl_path_ram \
-		install_desc \
-		some_succeeded \
-		skip_load_stop \
-		retry_blocklists_out_var="${1}" bl_instances="${2}"
-
-	for bl_inst in ${bl_instances}
-	do
-		start_rv_inst=1
-		eval \
-			"persist_dir=\"\${PERSIST_DIR_${bl_inst}}\"" \
-			"install_path=\"\${INSTALL_PATH_${bl_inst}}\"" \
-			"bl_path_ram=\"\${INSTALL_PATH_RAM_${bl_inst}}\"" \
-			"dnsmasq_indexes=\"\${DNSMASQ_INDEXES_${bl_inst}}\"" \
-			"skip_load_stop=\"\${SKIP_LOAD_STOP_${bl_inst}}\""
-
-		get_curr_bl_path ram_bl_file_curr "${bl_inst}" BL RAM &&
-		get_curr_bl_path persist_bl_file_curr "${bl_inst}" BL RAM &&
-
-		location=RAM
-		[ "${install_path%/*}" = "$persist_dir" ] &&
-			location=PERSIST install_desc=persistent
-
-		assert_set F_start install_path dnsmasq_indexes || exit 1
-
-		[ -n "${ram_bl_file_curr}" ] || rm_main_bl "${bl_inst}" "ram" # TODO: specify ram|persist to rm_main_bl
-
-		[ -n "${skip_load_stop}" ] || stop_dnsmasq "${dnsmasq_indexes}" || exit 1
-
-		if install_blocklist "${install_path}" "${install_desc}"
-		then
-			start_rv_inst=0
-			some_succeeded=1
-			add2list INSTALLED_INSTANCES "${bl_inst}"
-		else
-			reg_failure "Failed to install blocklist '${bl_inst}'"
-			[ "$location" = "PERSIST" ] &&
-			install_path=${bl_path_ram} &&
-			[ -n "${install_path}" ] && [ -d "${install_path%/*}" ] || continue
-			eval "INSTALL_PATH_${bl_inst}"='${install_path}'
-
-			log_msg "Will try to generate a new blocklist."
-			KEEP_PERSIST=0 stop -noexit # TODO
-			add2list "${retry_blocklists_out_var}" "${bl_inst}" " "
-		fi
-		eval "START_RV_${bl_inst}"='${start_rv_inst}'
-	done
-	[ -n "${some_succeeded}" ]
-}
-
-# Args:
-# 1: final blocklist path
-# 2: blocklist size
-# 3: entries count
-# 4: description
-install_blocklist()
-{
-	local me=install_blocklist \
-		compr_ext final_extr_or_cat_stdout \
-		cnt cnt_human md5 \
-		dnsmasq_conf_dirs \
-		conf_script_log_avail \
-		inst_size_b inst_size_human compr_pr="uncompressed" compr_util dir errors \
-		bl_file="${1}" desc="${2}" cnt="${3}" bl_inst="${4}" meta_location="${5}"
-
-	eval "dnsmasq_conf_dirs=\"\${DNSMASQ_CONF_DIRS_${bl_inst}}\"" \
-		"final_extr_or_cat_stdout=\"\${FINAL_EXTR_OR_CAT_STDOUT_${bl_inst}}\"" \
-		"conf_script_log_avail=\"\${CONF_SCRIPT_LOG_${bl_inst}}\"" \
-		"md5=\"BL_MD5_${meta_location}_${bl_inst}\""
-
-	assert_set "F_${me}" bl_file desc cnt bl_inst dnsmasq_conf_dirs final_extr_or_cat_stdout || return 1
-
-	reg_action -blue "Installing ${desc} blocklist file."
-
-	int2human cnt_human "${cnt}" &&
-	inst_size_b="$(get_file_size "${bl_file}")" &&
-	bytes2human inst_size_human "${inst_size_b}" &&
-	get_compr_spec compr_ext compr_util "${bl_file}" || return 1
-
-	[ -n "${compr_ext}" ] && compr_pr="${compr_util}${compr_util:+"-"}compressed"
-
-	for dir in ${dnsmasq_conf_dirs}
-	do
-		is_valid_dir "${dir}" || return 1
-
-		cat <<-EOF | ${SED_CMD} -E 's/\s+/ /g' > "${dir}/abl-conf-script" ||
-			conf-script= \
-			${final_extr_or_cat_stdout} "${bl_file}" && \
-			printf '%s\n' "address=/${md5}-${ABL_TEST_DOM_BASE}/#"; \
-			${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script 'conf-script at '${dir}/abl-conf-script' failed.';"} \
-			exit 0
-		EOF
-			{ reg_failure "Failed to create conf-script in directory '${dir}'."; return 1; }
-	done
-
-	:
-}
-
-# 1: src path
-# 2: dst path
-# 3: compression command with options
-# 4: blocklist index
-export_blocklist()
-{
-	local IFS="${DEFAULT_IFS}" exp_err \
-		src_f="${1}" dst_f="${2}" compr_cmd="${3}" bl_inst="${4}"
-
-	assert_set "F_export_blocklist" src_f dst_f ALL_CONF_DIRS &&
-	reg_action -blue "" "Creating backup of current blocklist." &&
-	mv_blocklist "${src_f}" "${dst_f}" "${compr_cmd}" "${bl_inst}" &&
-	return 0
-
-	reg_failure "${exp_err}${exp_err:+ }Failed to export blocklist '${src_f}' to '${dst_f}'."
-	return 1
-}
-
-# 1 - src file
-# 2 - dst file
-restore_saved_blocklist()
-{
-	local me="restore_saved_blocklist" \
-		src_f="${1}" dst_f="${2}" bl_inst="${3}"
-
-	assert_set "F_${me}" src_f dst_f &&
-	reg_action -1 "" "${blue}Restoring saved blocklist file: ${n_c}'${src_f}'." &&
-	rm_conf_scripts &&
-	rm_main_bl &&
-	mv_blocklist "${src_f}" "${dst_f}" "${FINAL_COMPR_TO_FILE}" "${bl_inst}" &&
-	install_blocklist "${dst_f}" "saved" &&
-	return 0
-
-	rm_conf_scripts
-	rm_main_bl
-
-	reg_failure "Failed to restore saved blocklist: '${src_f}'."
-	BL_FILE_CURR=
-	return 1
-}
-
-# TODO: Parallelize domains lookup
-test_url_domains()
-{
-	local list lists list_author url mirror mirrors all_urls='' list_type list_format dom IFS="${DEFAULT_IFS}"
-	for list_type in block ipv4_block allow
-	do
-		for list_format in ${ALL_LIST_FORMATS}
-		do
-			eval "lists=\"\${${list_format}_${list_type}_lists}\""
-			[ -z "${lists}" ] && continue
-			for list in ${lists}
-			do
-				case "${list}" in
-					'') continue ;;
-					hagezi:*|oisd:*|stevenblack:*)
-						list_author="${list%%":"*}"
-						eval "mirror=\"\${${list_author}_default_mirror}\""
-						eval "url=\"\${${list_author}_${mirror}_url}\""
-						[ -n "${url}" ] && all_urls="${all_urls:+"${all_urls}${_NL_}"}${url}" ;;
-					*) all_urls="${all_urls:+"${all_urls}${_NL_}"}${list}"
-				esac
-			done
-		done
-	done
-
-	[ -n "${all_urls}" ] || return 0
-
-	reg_action -blue "Testing connectivity." || exit 1
-
-	printf '%s\n' "${all_urls}" |
-	${SED_CMD} -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}' |
-	${SORT_CMD} -u |
-	while IFS="${_NL_}" read -r dom || [ -n "${dom}" ]
-	do
-		[ -n "${dom}" ] || continue
-		try_lookup_domain "${dom}" "127.0.0.1" 2 || { reg_failure "Lookup of '${dom}' failed."; exit 1; }
-	done || return 1
-	:
-}
-
-# 1 - domain
-# 2 - nameservers
-# 3 - max attempts
-# 4 - (optional) '-n': don't check if result is 127.0.0.1 or 0.0.0.0
-try_lookup_domain()
-{
-	local ns_res ip lookup_ok='' i=0 IFS="${DEFAULT_IFS}"
-
-	while :
-	do
-		for ip in ${2}
-		do
-			ns_res="$(${NSLOOKUP_CMD} "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break 2; }
-		done
-		i=$((i+1))
-		[ "${i}" -ge "${3}" ] && break
-		sleep 1
-	done
-
-	[ -n "${lookup_ok}" ] || return 2
-
-	[ "${4}" = '-n' ] && return 0
-
-	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^Address: *(0\.0\.0\.0|127\.0\.0\.1)$' &&
-		{ reg_failure "Lookup of '${1}' resulted in 0.0.0.0 or 127.0.0.1."; return 3; }
 	:
 }
 

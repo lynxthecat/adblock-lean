@@ -9,8 +9,6 @@
 : "${luci_cron_job_creation_failed}" "${luci_pkgs_install_failed}" "${luci_tarball_url}"
 
 ### GLOBAL VARIABLES
-RECOMMENDED_PKGS="gawk sed coreutils-sort"
-RECOMMENDED_UTILS="awk sed sort"
 ABL_CRON_SVC_PATH=/etc/init.d/cron
 ALL_PRESETS="mini small medium large large_relaxed"
 
@@ -147,10 +145,10 @@ get_md5()
 	local IFS="${DEFAULT_IFS}" g_md5
 	g_md5="$(${MD5_CMD} "${2}")" &&
 	g_md5="${g_md5%% *}" &&
-	[ -n "${g_md5}" ] &&
+	is_hex_lc "${g_md5}" &&
 	eval "${1}"='${g_md5}' && return 0
 
-	reg_failure "Failed to get md5 sum for file '${2}'"
+	reg_failure "Failed to get MD5 sum for file '${2}'"
 	return 1
 }
 
@@ -158,31 +156,6 @@ get_md5()
 ### SETUP AND CONFIG MANAGEMENT
 
 hp_scr_pr="the adblock-lean hotplug script"
-
-# Make sure the directory is not the same as the mount point
-check_persist_dir()
-{
-	local mnt_point persist_dir="${PERSIST_BLOCKLIST_DIR}"
-
-	[ -d "${persist_dir}" ] ||
-	{
-		case "${persist_dir}" in
-			''|/) reg_failure "Empty or invalid persistent blocklist directory'${persist_dir}' specified in config option PERSIST_BLOCKLIST_DIR." ;;
-			*) reg_failure "Can not find persistent blocklist directory: ${persist_dir}."
-		esac
-		return 1
-	}
-
-	mnt_point="$(${DF_CMD} "${persist_dir}" |
-		${AWK_CMD} '/^[ \t]*Filesystem[ \t]/{next} {i++; print $6} END{ if(i == 1) exit 0; exit 1}')" &&
-	[ -d "${mnt_point}" ] ||
-		{ reg_failure "Failed to get the mount point for partition where the persistent blocklist is stored (got '${mnt_point}')."; return 1; }
-
-	[ "${persist_dir}" != "${mnt_point}" ] ||
-		{  reg_failure "Persistent directory '${persist_dir}' is the same as the mount point. Please use a subdirectory."; return 1; }
-
-	:
-}
 
 mk_hotplug_script()
 {
@@ -307,81 +280,81 @@ do_create_addnmounts()
 		add2list all_missing_addnm "${missing_addnm}" ", "
 	}
 
-	local me=create_addnmounts IFS="${DEFAULT_IFS}" REPLY \
-		index indexes all_indexes \
+	local me=create_addnmounts \
+		IFS="${DEFAULT_IFS}" \
+		REPLY \
+		conf_dirs \
+		index dnsmasq_indexes all_dnsmasq_indexes \
 		req_addnm_index \
 		\
-		bl_inst \
-		bl_full_fname_inst \
-		bl_path_ram_inst \
-		ignore_paths_inst \
-		ram_addnm_inst \
+		bl_id \
+		bl_full_fname \
+		path_ram \
+		ignore_paths \
+		ram_addnm \
+		\
+		persist_mode \
+		persist_dir \
 		\
 		all_missing_addnm \
 		cra_compr_util_path cra_compr_ext \
 		add_list_failed \
 		path paths_pr
 
-
-	assert_set "F_${me}" BL_INSTANCES compression_util || return 1
-
-	get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util}" || return 1
-
-	# compile list of indexes, reset req_addnm_${index} vars
-	for bl_inst in ${BL_INSTANCES}
-	do
-		for index in ${indexes}
-		do
-			eval "local req_addnm_${index}=" &&
-			add2list all_indexes "${index}" " " || return 1
-		done
-	done
+	get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util:?}" || return 1
 
 	## Check addmounts
-	for bl_inst in ${BL_INSTANCES}
+	for bl_id in ${BL_IDS:?}
 	do
-		bl_path_ram_inst='' ignore_paths_inst='' ram_addnm_inst=''
-		eval "indexes=\"\${DNSMASQ_INDEXES_${bl_inst}}\""
-		assert_set "F_${me}" indexes compression_util || return 1
+		path_ram='' ignore_paths='' ram_addnm=''
+		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs &&
+		get_bl_params "${bl_id}" persist_mode persist_dir || return 1
+
+		# compile list of indexes, reset req_addnm_${index} vars
+		for index in ${dnsmasq_indexes}
+		do
+			eval "local req_addnm_${index}=" &&
+			add2list all_dnsmasq_indexes "${index}" || return 1
+		done
 
 		# Logger
-		process_addnm "${indexes}" "${LOG_CMD}" || return 1
+		process_addnm "${dnsmasq_indexes}" "${LOG_CMD}" || return 1
 
-		bl_full_fname_inst=${BLOCKLIST_BASE_FNAME:?}_${bl_inst}${cra_compr_ext}
+		bl_full_fname=${BLOCKLIST_BASE_FNAME:?}-${bl_id}${cra_compr_ext}
 
 		# Compression
 		if [ -n "${cra_compr_ext}" ]
 		then
-			bl_path_ram_inst=${ABL_RUN_DIR:?}/${bl_full_fname_inst}
-			process_addnm "${indexes}" "${cra_compr_util_path%% *}${_NL_}${bl_path_ram_inst}" || return 1
+			path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
+			process_addnm "${dnsmasq_indexes}" "${cra_compr_util_path%% *}${_NL_}${path_ram}" || return 1
 		fi
 
 		# Multiple dnsmasq instances
-		case "${indexes}" in
+		case "${dnsmasq_indexes}" in
 			*[0-9]*" "*[0-9]*)
-				bl_path_ram_inst=${ABL_RUN_DIR:?}/${bl_full_fname_inst}
-				process_addnm "${indexes}" "${bl_path_ram_inst}" || return 1 ;;
+				path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
+				process_addnm "${dnsmasq_indexes}" "${path_ram}" || return 1 ;;
 			*)
-				first_conf_dir="${DNSMASQ_CONF_DIRS%% *}"
+				first_conf_dir="${conf_dirs%% *}"
 				is_valid_dir "${first_conf_dir}" || return 1
-				ignore_paths_inst="${first_conf_dir}/${bl_full_fname_inst}"
+				ignore_paths="${first_conf_dir}/${bl_full_fname}"
 
-				: "${bl_path_ram_inst:="${first_conf_dir}/${bl_full_fname_inst}"}" ;;
+				: "${path_ram:="${first_conf_dir}/${bl_full_fname}"}" ;;
 		esac
 
-		assert_set "F_${me}" bl_path_ram_inst || return 1
+		assert_set "F_${me}" path_ram || return 1
 
 		# Persistent blocklist
-		case "${PERSIST_BLOCKLIST_MODE}" in
+		case "${persist_mode}" in
 			manual|managed) : ;;
 			*) false ;;
 		esac &&
 		check_persist_dir &&
 		{
 
-			is_included "${bl_path_ram_inst}" "${ignore_paths_inst}" "${_NL_}" ||
-				ram_addnm_inst="${_NL_}${bl_path_ram_inst}"
-			process_addnm "${indexes}" "${PERSIST_BLOCKLIST_DIR}${ram_addnm_inst}" || return 1
+			is_included "${path_ram}" "${ignore_paths}" "${_NL_}" ||
+				ram_addnm="${_NL_}${path_ram}"
+			process_addnm "${dnsmasq_indexes}" "${persist_dir}${ram_addnm}" || return 1
 		}
 	done
 
@@ -404,7 +377,7 @@ do_create_addnmounts()
 	[ "${REPLY}" = y ] || return 0
 
 	## Create addnmounts
-	for index in ${all_indexes}
+	for index in ${all_dnsmasq_indexes}
 	do
 		eval "req_addnm_index=\"\${req_addnm_${index}}\""
 		[ -n "${req_addnm_index}" ] || continue
@@ -509,7 +482,7 @@ do_setup()
 				*"${util}"*) reg_msg -green "GNU ${util} is already installed." ;;
 				*)
 					get_pkg_name pkg_name "${util}" || return 1
-					add2list missing_utils "${util}" " "
+					add2list missing_utils "${util}"
 					add2list missing_packages "${blue}${pkg_name}${n_c}" ", "
 					missing_utils_print="${missing_utils_print}${missing_utils_print:+, }${blue}GNU ${util}${n_c}"
 			esac
@@ -844,7 +817,7 @@ print_def_config()
 	done
 
 	: "${preset:=small}"
-	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "${me}: \$preset has invalid value '${preset}'."; return 1; }
+	is_included "${preset}" "${ALL_PRESETS}" || { reg_failure "${me}: \$preset has invalid value '${preset}'."; return 1; }
 
 	get_preset "${preset}" _ _ _ _ pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines &&
 	assert_set "F_${me}" pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines || return 1
@@ -1054,7 +1027,7 @@ do_gen_config()
 		esac
 	fi
 
-	is_included "${preset}" "${ALL_PRESETS}" " " || { reg_failure "Invalid preset '${preset}'."; return 1; }
+	is_included "${preset}" "${ALL_PRESETS}" || { reg_failure "Invalid preset '${preset}'."; return 1; }
 	reg_msg -blue "Selected preset '${preset}'."
 
 	do_select_dnsmasq_instances -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
@@ -1458,12 +1431,24 @@ load_config()
 	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
 	local in_install="${ABL_IN_INSTALL:-"${upd_channel}"}"
 	[ -n "${CONFIG_LOADED}" ] && [ "${1}" != '-force' ] && [ -z "${in_install}" ] && return 0
-	try_load_config || { reg_failure "Failed to load config." "Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."; return 1; }
+	try_load_config ||
+	{
+		reg_failure "Failed to load config." "Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
+		return 1
+	}
 	export CONFIG_LOADED=1
 
+	# TODO: temporary hack for multiple blocklists
+	BL_IDS=00
+	DNSMASQ_INDEXES_00=0
+	DNSMASQ_CONF_DIRS_00=/tmp/dnsmasq.cfg01411c.d
+	PERSIST_MODE_00=disable
+
+
 	# check for missing addnmounts during version update
-	if [ -n "${in_install}" ]
+	if [ -n "${in_install}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
 	then
+		export ADDNMOUNTS_CHECKED=1
 		get_dnsmasq_instances &&
 		do_create_addnmounts
 	fi
@@ -1556,13 +1541,13 @@ fix_config()
 				\#*|'') printf '%s\n' "${def_line}"; continue ;;
 				*=*)
 					key=${def_line%%=*}
-					if is_included "${key}" "${replace_keys}" " "
+					if is_included "${key}" "${replace_keys}"
 					then
 						printf '%s\n' "${def_line}"
 						continue
 					fi
 
-					if is_included "${key}" "${migrated_keys}" " "
+					if is_included "${key}" "${migrated_keys}"
 					then
 						eval "[ -n \"\${MIGRATE_${key}+set}\" ]" ||
 							{ reg_failure "fix_config: '\$MIGRATE_${key}' not set."; return 1; }
@@ -1579,7 +1564,7 @@ fix_config()
 
 	local replace_keys="${1}" migrated_keys="${2}" fixed_config
 
-	if is_included DNSMASQ_INDEXES "${replace_keys}" " " || is_included DNSMASQ_CONF_DIRS "${replace_keys}" " "
+	if is_included DNSMASQ_INDEXES "${replace_keys}" || is_included DNSMASQ_CONF_DIRS "${replace_keys}"
 	then
 		do_select_dnsmasq_instances -n || return 1
 		# shellcheck disable=SC2034
@@ -1645,126 +1630,6 @@ write_config()
 
 
 ### HELPER FUNCTIONS
-
-# Detect package manager (opkg or apk)
-# Sets global vars: $PKG_MANAGER $PKG_INSTALL_CMD $PKG_FILES_LIST_CMD
-detect_pkg_manager() {
-	local apk_present='' opkg_present=''
-	check_util apk && apk_present=1
-	check_util opkg && opkg_present=1
-	if [ -n "$apk_present" ] && [ -n "$opkg_present" ]
-	then
-		reg_failure "Both apk and opkg package managers present in the system."
-		return 1
-	fi
-
-	if [ -n "$apk_present" ]
-	then
-		export \
-			PKG_MANAGER=apk \
-			PKG_INSTALL_CMD="apk add" \
-			PKG_FILE_LIST_CMD="apk info --contents"
-	elif [ -n "$opkg_present" ]
-	then
-		export \
-			PKG_MANAGER=opkg \
-			PKG_INSTALL_CMD="opkg install" \
-			PKG_FILE_LIST_CMD="opkg files"
-	else
-		reg_failure "Failed to detect package manager."
-		return 1
-	fi
-	:
-}
-
-report_utils()
-{
-	local util pkg_name awk_inst_tip='' sed_inst_tip='' sort_inst_tip=''
-
-	printf '\n' > "${MSGS_DEST}"
-
-	for util in ${RECOMMENDED_UTILS}
-	do
-		case "${PKG_MANAGER}" in
-			opkg|apk)
-				get_pkg_name pkg_name "${util}" || return 1
-				eval "${util}_inst_tip=\" (${PKG_INSTALL_CMD} ${pkg_name})\"" ;;
-			*)
-				unset "${util}_inst_tip" ;;
-		esac
-	done
-
-	case "${AWK_CMD}" in
-		*gawk*) reg_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
-		*)
-			reg_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocklist will be slow and list processing will not be as efficient."
-			reg_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
-	esac
-
-	case "${SED_CMD}" in
-		*gnu*) reg_msg -green "GNU sed detected so list processing will be fast." ;;
-		*)
-			reg_msg -yellow "GNU sed not detected so list processing will be a little slower."
-			reg_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
-	esac
-
-	case "${SORT_CMD}" in
-		*coreutils*) reg_msg -green "coreutils-sort detected so sort will be fast." ;;
-		*)
-			reg_msg -yellow "coreutils-sort not detected so sort will be a little slower."
-			reg_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
-	esac
-}
-
-# 1: var name for printable missing paths output
-# 2: dnsmasq instance indexes to check
-# 3: list of newline-separated paths
-# shellcheck disable=SC2120
-check_addnmounts()
-{
-	try_check_addnmounts "${@}" || { reg_failure "Failed to check addnmount entries."; return 1; }
-}
-
-try_check_addnmounts()
-{
-	local me=check_addnmounts \
-		IFS="${DEFAULT_IFS}" \
-		ca_index ca_path ca_addnmounts \
-		ca_missing_var="${1}" ca_indexes="${2}" ca_req_addnm="${3}"
-
-	unset_vars "${ca_missing_var}" &&
-	assert_set "F_${me}" ca_indexes ADDNMOUNTS_SET || return 1
-
-	[ -n "${ca_req_addnm}" ] || return 0
-
-	for ca_index in ${ca_indexes}
-	do
-		is_uint "${ca_index}" || { reg_failure "${me}: Invalid dnsmasq index '${ca_index}'."; return 1; }
-		IFS="${_NL_}"
-		for ca_path in ${ca_req_addnm}
-		do
-			[ -n "${ca_path}" ] || continue
-			IFS="${DEFAULT_IFS}"
-
-			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_index}}\""
-			case "${ca_path}" in
-				/*) ;;
-				*) reg_failure "${me}: invalid path '${ca_path}'."; return 1
-			esac
-
-			while [ -n "${ca_path}" ]
-			do
-				is_included "${ca_path}" "${ca_addnmounts}" ' ' && continue
-				ca_path="${ca_path%/*}"
-			done
-
-			[ -n "${ca_missing_var}" ] && add2list "${ca_missing_var}" "'${ca_path}'" ", "
-		done
-		IFS="${DEFAULT_IFS}"
-	done
-
-	:
-}
 
 # return values:
 # 0 - up-to-date
@@ -1849,355 +1714,6 @@ enable_cron_service()
 
 	check_cron_service || { printf '%s\n' "${red}Failed${n_c}"; reg_failure "${enable_failed}."; return 1; }
 	printf '%s\n' "${green}OK${n_c}" > "${MSGS_DEST}"
-	:
-}
-
-### dnsmasq support implementation
-
-# analyze dnsmasq instances and set $DNSMASQ_CONF_DIRS
-# 1 - (optional) '-n' to only set vars (no config write)
-do_select_dnsmasq_instances() {
-	validate_indexes()
-	{
-		printf '%s\n' "${1}" | grep -qE "^(a|${indexes}|(${indexes} )+)$" &&
-		case "${1}" in
-			a) : ;;
-			*[!0-9\ ]*) false ;;
-			*) :
-		esac
-	}
-
-	get_dnsmasq_instances && is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] ||
-	{
-		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
-		stop -noexit
-		get_dnsmasq_instances && is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] || return 1
-	}
-
-	local conf_dirs='' conf_dirs_instance index indexes='' ifaces='' REPLY first diff conf_dirs_cnt conf_dirs_print='' add_dir
-
-	if [ "${DNSMASQ_INSTANCES_CNT}" = 1 ]
-	then
-		reg_msg -blue "Detected only 1 dnsmasq instance - skipping manual instance selection."
-		DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
-	else
-		# check if all instances share same conf-dirs
-		REPLY='' first=1 diff='' conf_dirs_cnt=''
-		for index in ${DNSMASQ_RUNNING_INDEXES}
-		do
-			eval "conf_dirs_instance=\"\${CONF_DIRS_${index}}\""
-			case "${first}" in
-				1)
-					first=
-					conf_dirs="${conf_dirs_instance}" ;;
-				'')
-					# conf-dirs are sorted, so we can directly compare
-					[ "${conf_dirs_instance}" = "${conf_dirs}" ] && continue
-					diff=1
-					break
-			esac
-		done
-
-		# if conf-dirs are shared, attach to first instance
-		if [ -z "${diff}" ]
-		then
-			reg_msg -blue "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
-			DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
-		else
-			# if conf-dirs are not shared, ask the user
-			reg_msg -blue "Multiple dnsmasq instances detected."
-			REPLY=a
-			if [ "${DO_DIALOGS}" = 1 ]
-			then
-				reg_msg "" "Existing dnsmasq instances and assigned network interfaces:"
-				for index in ${DNSMASQ_RUNNING_INDEXES}
-				do
-					eval "instance=\"\${INST_NAME_${index}}\"" \
-						"ifaces=\"\${IFACES_${index}}\""
-					ifaces="${ifaces//"${_NL_}"/, }"
-					reg_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
-					indexes="${indexes}${index}|"
-				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort." \
-					"To adblock on multiple instances, enter their indexes separated by whitespaces."
-				while :
-				do
-					printf %s "${indexes}a: " > "${MSGS_DEST}"
-					read -r REPLY
-					validate_indexes "${REPLY}" ||
-						{ printf '\n%s\n\n' "Please enter ${indexes}a" > "${MSGS_DEST}"; continue; }
-					break
-				done
-			elif [ -n "${LUCI_DNSMASQ_INDEXES}" ]
-			then
-				REPLY="${LUCI_DNSMASQ_INDEXES}"
-				validate_indexes "${REPLY}" ||
-					{ reg_failure "Invalid dnsmasq instance indexes '${REPLY}'."; return 1; }
-			else
-				reg_failure "dnsmasq indexes not specified."
-				return 1
-			fi
-
-			[ "${REPLY}" = a ] && { reg_msg "Aborted config generation."; exit 0; }
-			DNSMASQ_INDEXES="${REPLY}"
-		fi
-	fi
-
-	local select_ifaces=
-	for index in ${DNSMASQ_INDEXES}
-	do
-		eval "ifaces=\"\${IFACES_${index}}\""
-		add2list select_ifaces "${ifaces}" "${_NL_}"
-	done
-
-	log_msg "Selected dnsmasq indexes: '${DNSMASQ_INDEXES}' (network intefaces: ${select_ifaces//"${_NL_}"/, })."
-
-	DNSMASQ_CONF_DIRS=
-	for index in ${DNSMASQ_INDEXES}
-	do
-		add_dir=''
-		eval "conf_dirs=\"\${CONF_DIRS_${index}}\"
-			conf_dirs_cnt=\"\${CONF_DIRS_CNT_${index}}\""
-
-		if [ "${conf_dirs_cnt}" = 1 ]
-		then
-			add_dir="${conf_dirs}"
-		else
-			if is_included "/tmp/dnsmasq.d" "${conf_dirs}"
-			then
-				add_dir="/tmp/dnsmasq.d"
-			elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}"
-			then
-				add_dir="/tmp/dnsmasq.cfg01411c.d"
-			else
-				# fall back to first conf-dir
-				add_dir="${conf_dirs%%"${_NL_}"*}"
-			fi
-		fi
-		[ -n "${add_dir}" ] && { add2list DNSMASQ_CONF_DIRS "${add_dir}" " "; add2list conf_dirs_print "${add_dir}" ", "; }
-	done
-
-	[ -n "${DNSMASQ_CONF_DIRS}" ] || { reg_failure "Failed to detect conf-dirs for dnsmasq indexes '${DNSMASQ_INDEXES}'."; return 1; }
-
-	log_msg "Selected dnsmasq conf-dirs: ${conf_dirs_print}"
-	if [ "${1}" != '-n' ]
-	then
-		write_config "$(
-			${SED_CMD} "
-				s~^\s*DNSMASQ_INDEXES=.*~DNSMASQ_INDEXES=\"${DNSMASQ_INDEXES}\"~
-				s~^\s*DNSMASQ_CONF_DIRS=.*~DNSMASQ_CONF_DIRS=\"${DNSMASQ_CONF_DIRS}\"~
-			" "${ABL_CONFIG_FILE}"
-		)" || return 1
-	fi
-
-	:
-}
-
-# Env vars:
-#   GDI_NOFORCE: skip re-processing instances if DNSMASQ_INST_SET is non-empty
-# populates global vars:
-#   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
-#   INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, PID_${index}, ADDNMOUNTS_${index}
-#   ADDNMOUNTS_SET, DNSMASQ_INST_SET
-get_dnsmasq_instances() {
-	# shellcheck disable=SC2317,SC2329
-	add_conf_dir_and_addnmounts()
-	{
-		local confdir
-		config_get confdir "${1}" confdir
-		[ -n "${confdir}" ] && add2list ALL_CONF_DIRS "${confdir}"
-		config_get "ADDNMOUNTS_${index}" "${1}" addnmount
-		index=$((index+1))
-	}
-
-	[ -n "${GDI_NOFORCE}" ] && [ -n "${DNSMASQ_INST_SET}" ] && [ -n "${ADDNMOUNTS_SET}" ] &&
-		is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] && return 0
-
-	local me=get_dnsmasq_instances \
-		nonempty='' instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir
-
-	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
-	DNSMASQ_INSTANCES_CNT=0
-	reg_action -blue "Checking dnsmasq instances."
-
-	[ -n "${DHCP_LOADED}" ] ||
-	{
-		# gather conf dirs from /etc/config/dhcp
-		{ check_func config_load 1>/dev/null || { [ -f /lib/functions.sh ] && . /lib/functions.sh; }; } &&
-		config_load dhcp ||
-			{ reg_failure "Failed to load /etc/config/dhcp"; return 1; }
-		DHCP_LOADED=1
-	}
-
-	index=0
-	config_foreach add_conf_dir_and_addnmounts dnsmasq
-	export ADDNMOUNTS_SET=1
-
-	# gather conf dirs from /tmp/
-	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
-	do
-		case "${dir}" in ''|*".cfg*") continue; esac
-		add2list ALL_CONF_DIRS "${dir}"
-	done
-
-	# gather info from '/etc/init.d/dnsmasq info'
-
-	. /usr/share/libubox/jshn.sh &&
-	json_load "$(/etc/init.d/dnsmasq info)" &&
-	json_get_keys nonempty &&
-	[ -n "${nonempty}" ] &&
-	json_select dnsmasq &&
-	json_select instances &&
-	json_get_keys instances &&
-	[ -n "${instances}" ] || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
-
-	index=0
-	for instance in ${instances}
-	do
-		unset "INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}" "PID_${index}"
-
-		case "${instance}" in
-			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
-		esac
-		json_is_a "${instance}" object || continue # skip if $instance is not object
-		json_select "${instance}" &&
-		json_get_var "RUNNING_${index}" running &&
-		json_get_var "PID_${index}" pid &&
-		json_is_a command array &&
-		json_select command || { reg_failure "Failed to process info for dnsmasq instance '${instance}'."; return 1; }
-
-		add2list running_instances "${instance}" &&
-		add2list DNSMASQ_RUNNING_INDEXES "${index}" " " || return 1
-		l1_conf_files=
-
-		# look for '-C' in values, get next value which is instance's conf file
-		i=0
-		while json_is_a $((i+1)) string
-		do
-			i=$((i+1))
-			json_get_var s ${i}
-			[ "${s}" = '-C' ] || continue
-			json_get_var l1_conf_file $((i+1)) || return 1
-			add2list l1_conf_files "${l1_conf_file}" || return 1
-		done
-		json_select ..
-		json_select ..
-
-		IFS="${_NL_}"
-		set -- ${l1_conf_files}
-		IFS="${DEFAULT_IFS}"
-
-		# get ifaces for instance
-		ifaces="$( ${SED_CMD} -n '/^\s*interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}" | sort -u )"
-		: "${ifaces:="$(fw4 zone lan)"}" # fall back to all LAN interfaces
-
-		# get conf-dirs for instance
-		conf_dirs="$(
-			for f in "${@}"
-			do
-				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
-			done | $SORT_CMD -u
-		)"
-
-		IFS="${_NL_}"
-		set -- ${conf_dirs}
-		IFS="${DEFAULT_IFS}"
-		for dir in "${@}"
-		do
-			add2list ALL_CONF_DIRS "${dir}"
-		done
-
-		eval "INST_NAME_${index}"='${instance}' \
-			"CONF_DIRS_${index}"='${conf_dirs}' \
-			"IFACES_${index}"='${ifaces}'
-		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
-		index=$((index+1))
-	done
-	json_cleanup
-	cnt_lines DNSMASQ_INSTANCES_CNT "${running_instances}"
-
-	export DNSMASQ_INST_SET=1
-
-	:
-}
-
-# Checks that configured dnsmasq instances are running and verifies that their indexes and conf-dirs match the config
-# 1 - (optional) '-q' to quiet
-# return codes:
-# 0 - configured dnsmasq instances running
-# 1 - dnsmasq instance is not running or other error
-# shellcheck disable=SC2120
-check_dnsmasq_instances()
-{
-	check_failed()
-	{
-		[ -n "${quiet}" ] && return 0
-		reg_failure "${@}"
-	}
-
-	local quiet='' instance index dir instance_conf_dirs conf_dir_reg all_abl_conf_dirs='' \
-		inst_ind="dnsmasq instance with index" \
-		please_run="Please run 'service adblock-lean select_dnsmasq_instances'."
-
-	[ "${1}" = '-q' ] && quiet=1
-
-	assert_set F_check_dnsmasq_instances DNSMASQ_INST_SET || return 1
-
-	[ -n "${DNSMASQ_INDEXES}" ] || { check_failed "DNSMASQ_INDEXES config option is not set."; return 1; }
-
-	for index in ${DNSMASQ_INDEXES}
-	do
-		eval "[ \"\${RUNNING_${index}}\" = 1 ]" ||
-		{
-			check_failed "${inst_ind} ${index} is not running."
-			stop -noexit
-			get_dnsmasq_instances &&
-			eval "[ \"\${RUNNING_${index}}\" = 1 ]" ||
-			{
-				check_failed "${inst_ind} ${index} is misconfigured or not running."
-				return 1
-			}
-		}
-
-		conf_dir_reg=
-		eval "instance_conf_dirs=\"\${CONF_DIRS_${index}}\""
-		[ -n "${instance_conf_dirs}" ] ||
-			{ check_failed "dnsmasq config directory is not set for instance with index ${index}."; return 1; }
-		all_abl_conf_dirs="${all_abl_conf_dirs}${instance_conf_dirs}${_NL_}"
-
-		local IFS="${_NL_}"
-		for dir in ${instance_conf_dirs}
-		do
-			IFS="${DEFAULT_IFS}"
-			is_included "${dir}" "${DNSMASQ_CONF_DIRS}" " " && conf_dir_reg=1
-			[ -d "${dir}" ] ||
-			{
-				check_failed "Conf-dir '${dir}' does not exist. ${inst_ind} ${index} is misconfigured. ${please_run}"
-				return 1
-			}
-		done
-		IFS="${DEFAULT_IFS}"
-
-		[ -n "${conf_dir_reg}" ] ||
-		{
-			check_failed "Conf-dirs for ${inst_ind} ${index} changed. ${please_run}"
-			return 1
-		}
-
-		# check if config section exists in /etc/config/dhcp
-		uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
-		{
-			check_failed "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
-			return 1
-		}
-	done
-
-	for dir in ${DNSMASQ_CONF_DIRS}
-	do
-		is_included "${dir}" "${all_abl_conf_dirs}" "${_NL_}" ||
-			{ check_failed "conf-dir directory '${dir}' is set in config but not used by dnsmasq instances '${DNSMASQ_INDEXES}'."; return 1; }
-	done
-
 	:
 }
 
