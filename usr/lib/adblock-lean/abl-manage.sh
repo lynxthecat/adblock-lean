@@ -685,7 +685,7 @@ get_dnsmasq_ips()
 
 mv_blocklist()
 {
-	local me=mv_blocklist mv_rv curr_path \
+	local me=mv_blocklist mv_rv \
 		mv_src_f="${1:?}" mv_dst_f="${2:?}" mv_compr_cmd="${3}" mv_bl_id="${4:?}"
 
 	debug_msg "${me} start: '${mv_src_f}' to '${mv_dst_f}'"
@@ -1096,18 +1096,15 @@ set_bl_env()
 		\
 		bl_base_fname \
 		bl_full_fname_check \
-		bl_path_ram_check \
 		bl_full_fname \
-		bl_path_ram \
 		bl_path_persist \
-		\
-		bk_ext \
 		\
 		pause_path \
 		\
 		install_location=RAM \
 		install_path \
 		install_path_ram \
+		install_path_ram_check \
 		new_single_instance \
 		\
 		persist_avail=0 \
@@ -1158,21 +1155,23 @@ set_bl_env()
 	[ -z "${sbe_missing_addnm}" ] && conf_script_log_avail=1
 
 	# Compression
-	set_bl_params "${bl_id}" part_extr_or_cat_stdout="${CAT_CMD:?}"
+	part_extr_or_cat_stdout="${CAT_CMD:?}"
+	set_bl_params "${bl_id}" part_extr_or_cat_stdout
 
 	# Final blocklist compr commands, filenames, ramdisk blocklist path
 	if [ -n "${compr_ext}" ]
 	then
 		assert_set "F_${me}" compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout || return 1
-		set_bl_params "${bl_id}" part_extr_or_cat_stdout="try_extract -stdout ${bl_id}"
+		part_extr_or_cat_stdout="try_extract -stdout ${bl_id}"
+		set_bl_params "${bl_id}" part_extr_or_cat_stdout
 		bl_full_fname_check=${bl_base_fname:?}${compr_ext}
-		bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
-		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${extr_cmd_stdout%% *}${_NL_}${bl_path_ram_check}" || return 1
+		install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
+		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${extr_cmd_stdout%% *}${_NL_}${install_path_ram_check}" || return 1
 
 		if [ -z "${sbe_missing_addnm}" ]
 		then
 			bl_full_fname=${bl_full_fname_check}
-			bl_path_ram=${bl_path_ram_check}
+			install_path_ram=${install_path_ram_check}
 
 			final_compress=1
 			final_compr_ext=${compr_ext}
@@ -1190,11 +1189,11 @@ set_bl_env()
 	# Multiple dnsmasq instances
 	case "${dnsmasq_indexes}" in
 		*[0-9]*" "*[0-9]*)
-			bl_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname:?}
-			check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${bl_path_ram_check}" || return 1
+			install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname:?}
+			check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${install_path_ram_check}" || return 1
 			if [ -z "${sbe_missing_addnm}" ]
 			then
-				bl_path_ram=${bl_path_ram_check}
+				install_path_ram=${install_path_ram_check}
 			else
 				wont_work "Multiple dnsmasq instances" "${sbe_missing_addnm}"
 			fi ;;
@@ -1203,14 +1202,14 @@ set_bl_env()
 			is_valid_dir "${first_conf_dir}" || return 1
 			addnm_ignore_paths="${first_conf_dir}/${bl_full_fname}"
 
-			[ -n "${bl_path_ram}" ] ||
-				{ bl_path_ram="${first_conf_dir}/${bl_full_fname}"; new_single_instance=1; }
+			[ -n "${install_path_ram}" ] ||
+				{ install_path_ram="${first_conf_dir}/${bl_full_fname}"; new_single_instance=1; }
 	esac
 
 	# addnmount for blocklist on ramdisk - required regardless of compr/persist/multi_inst availability
 	sbe_missing_addnm=
-	is_included "${bl_path_ram}" "${addnm_ignore_paths}" "${_NL_}" ||
-		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${bl_path_ram}" || return 1
+	is_included "${install_path_ram}" "${addnm_ignore_paths}" "${_NL_}" ||
+		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${install_path_ram}" || return 1
 	[ -z "${sbe_missing_addnm}" ] || { wont_work "adblock-lean" "${sbe_missing_addnm}"; [ -n "${SBE_STATUS}" ] || return 1; }
 
 	# Persistent blocklist
@@ -1304,7 +1303,9 @@ set_bl_env()
 				{
 					KEEP_PERSIST=0 rm_if_writable "${bl_id}" "${curr_persist_path}" "${curr_persist_path%/*}/${META_FNAME}"; }
 					[ "${curr_path}" = "${curr_persist_path}" ] && unset_metadata "${bl_id}"
-					set_bl_params "${bl_id}" persist_path= persist_cnt=
+					curr_persist_path=
+					curr_persist_cnt=
+					set_bl_params "${bl_id}" curr_persist_path curr_persist_cnt
 				}
 
 				local start_act_msg="Will create a new blocklist on the ramdisk."
@@ -1325,7 +1326,7 @@ set_bl_env()
 		fi
 	fi
 
-	: "${install_path:="${bl_path_ram}"}"
+	: "${install_path:="${install_path_ram}"}"
 
 	[ -n "${install_path}" ] &&
 	case "${start_action}" in
@@ -1344,7 +1345,7 @@ set_bl_env()
 	set_bl_params "${bl_id}" \
 		install_location \
 		install_path \
-		install_path_ram="${bl_path_ram}" \
+		install_path_ram \
 		new_single_instance \
 		pause_path \
 		bk_ext="${INTERM_COMPR_EXT}" \
@@ -1356,21 +1357,15 @@ set_bl_env()
 		conf_script_log_avail
 
 	: \
-		"${install_location}" \
-		"${install_path_ram}" \
 		"${new_single_instance}" \
-		"${bk_ext}" \
 		"${pause_path}" \
 		"${final_compress}" \
-		"${final_extr_or_cat_stdout}" \
-		"${final_compr_or_cat_stdout}" \
 		"${final_compr_to_file}" \
 		"${conf_script_log_avail}"
 
 	debug_msg \
 		"install_location: '${install_location}'" \
 		"install_path: '${install_path}'" \
-		"bl_path_ram: '${bl_path_ram}'" \
 		"part_extr_or_cat_stdout: '${part_extr_or_cat_stdout}'" \
 		"final_compr_or_cat_stdout: '${final_compr_or_cat_stdout}'" \
 		"final_extr_or_cat_stdout: '${final_extr_or_cat_stdout}'" \
@@ -1500,7 +1495,6 @@ set_bl_params()
 					eval "val=\"\${${param}}\"" ;;
 			esac &&
 			get_bl_param_gl_var gl_var "${param}" || { bad_args "${me}" "${bl_id} ${*}"; exit 1; }
-			eval "${param}"='${val}'
 			export "${gl_var}_${bl_id}=${val}"
 		done
 	done
@@ -1517,12 +1511,9 @@ install_blocklists()
 		skip_load_stop \
 		\
 		curr_path \
-		curr_location \
-		curr_single_instance \
-		curr_md5 \
-		curr_cnt \
 		\
 		install_location \
+		install_path \
 		install_path_ram \
 		install_desc \
 		install_md5 \
@@ -1538,8 +1529,6 @@ install_blocklists()
 		abl_cmd="${ABL_CMD}" \
 		\
 		ok_blocklists_out_var="${1}" perm_fail_blocklists_out_var="${2}" bl_ids="${3}"
-
-	: "${curr_location}" "${curr_single_instance}" "${curr_md5}" "${curr_cnt}"
 
 	unset_vars "${ok_blocklists_out_var}" "${perm_fail_blocklists_out_var}" || exit 1
 

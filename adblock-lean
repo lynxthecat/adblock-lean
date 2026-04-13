@@ -2121,19 +2121,16 @@ start()
 		restored_blocklists='' \
 		ok_blocklists='' \
 		perm_failed_blocklists='' \
-		run_state \
 		start_rv=1 \
 		initial_uptime_cs \
 		elapsed_time \
 		curr_cnt \
-		install_path install_cnt \
+		install_path \
 		final_compr_to_file \
 		bk_file \
 		bl_id \
 		bl_ids="${*:-"${BL_IDS}"}"
 	local failed_blocklists="${bl_ids}"
-
-	: "${install_cnt}"
 
 	FAIL_STOP_REQ=1
 
@@ -2177,7 +2174,7 @@ start()
 				local bl_pr="blocklist ${bl_id} from backup"
 				log_msg -blue "" "Preparing to restore ${bl_pr}."
 
-				set_bl_params "${bl_id}" "install_cnt=${curr_cnt}" && # sets global INSTALL_* and local install_* vars
+				set_bl_params "${bl_id}" "install_cnt=${curr_cnt}" &&
 				if \
 					mv_blocklist "${bk_file}" "${install_path}" "${final_compr_to_file}" "${bl_id}" &&
 					add2list BLOCKLISTS_TO_INSTALL "${bl_id}" &&
@@ -2440,7 +2437,6 @@ pause_resume()
 		curr_path \
 		curr_cnt \
 		install_path \
-		install_cnt \
 		new_single_instance \
 		pause_path \
 		state_ok_pr \

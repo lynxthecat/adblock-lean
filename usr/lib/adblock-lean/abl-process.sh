@@ -870,7 +870,8 @@ gen_blocklists()
 			*)
 				KEEP_PERSIST=1 do_stop "${bl_id}"
 				CA_NOERR=1 get_bl_run_state "${bl_id}"
-				set_bl_params "${bl_id}" run_state=${?} ;;
+				run_state=${?}
+				set_bl_params "${bl_id}" run_state ;;
 		esac
 
 		conn_check_req=1
