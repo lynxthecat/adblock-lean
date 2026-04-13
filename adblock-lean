@@ -515,7 +515,7 @@ rm_bk()
 }
 
 # Env vars:
-# KEEP_PERSIST
+# KEEP_PERSIST, KEEP_BK
 rm_blocklists()
 {
 	local bl_id curr_path curr_persist_path \
@@ -523,8 +523,9 @@ rm_blocklists()
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params "${bl_id}" curr_path curr_persist_path &&
+		get_bl_params "${bl_id}" curr_path curr_persist_path bk_file &&
 		[ -n "${curr_path}" ] || [ -n "${curr_persist_path}" ] || continue
+		[ -n "${KEEP_BK}" ] && [ "${curr_path}" = "${bk_file}" ] && continue
 
 		rm_if_writable "${bl_id}" "${curr_path}"
 		set_bl_params "${bl_id}" curr_path= curr_location= curr_md5= curr_cnt=
@@ -2186,7 +2187,7 @@ start()
 		BLOCKLISTS_TO_INSTALL=
 		for bl_id in ${failed_blocklists}
 		do
-			get_bl_params "${bl_id}" bk_file curr_cnt final_compr_to_file
+			get_bl_params "${bl_id}" bk_file curr_cnt final_compr_to_file install_path
 			if [ -f "${bk_file}" ]
 			then
 				local bl_pr="blocklist ${bl_id} from backup"
@@ -2212,7 +2213,7 @@ start()
 			install_blocklists restored_blocklists _ "${BLOCKLISTS_TO_INSTALL}"
 		subtract_a_from_b "${restored_blocklists}" "${failed_blocklists}" failed_blocklists
 
-		[ -n "${restored_blocklists}" ] && log_msg "Successfully restored blocklists from backup: ${blue}${restored_blocklists}${n_c}."
+		[ -n "${restored_blocklists}" ] && log_msg "${green}Successfully restored blocklists from backup${n_c}: ${blue}${restored_blocklists}${n_c}."
 
 		[ -n "${failed_blocklists}" ] &&
 		{

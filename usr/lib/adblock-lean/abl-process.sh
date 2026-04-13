@@ -921,7 +921,7 @@ gen_blocklists()
 		set_bl_params "${bl_id}" bk_file
 		debug_msg "bk_file: '${bk_file}'"
 
-		KEEP_PERSIST=0 rm_blocklists "${bl_id}"
+		KEEP_BK=1 KEEP_PERSIST=0 rm_blocklists "${bl_id}"
 
 		if [ "${force_unload}" = 1 ]
 		then
