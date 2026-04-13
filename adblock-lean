@@ -2107,14 +2107,6 @@ start()
 
 	init_command start || exit 1
 
-	local \
-		installed_blocklists='' \
-		blocklists_to_retry='' \
-		restored_blocklists='' \
-		ok_blocklists='' \
-		perm_failed_blocklists='' \
-		failed_blocklists="${BL_IDS}"
-
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
 		random_delay_mins=$(($(hexdump -n 1 -e '"%u"' </dev/urandom)%60))
@@ -2124,6 +2116,11 @@ start()
 	fi
 
 	local \
+		installed_blocklists='' \
+		blocklists_to_retry='' \
+		restored_blocklists='' \
+		ok_blocklists='' \
+		perm_failed_blocklists='' \
 		run_state \
 		start_rv=1 \
 		initial_uptime_ms \
@@ -2134,6 +2131,7 @@ start()
 		bk_file \
 		bl_id \
 		bl_ids="${*:-"${BL_IDS}"}"
+	local failed_blocklists="${bl_ids}"
 
 	: "${install_cnt}"
 
