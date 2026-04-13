@@ -2438,9 +2438,9 @@ status()
 				esac
 
 				case ${run_state} in
-					0) ;;
-					3) print_msg -yellow "  adblocking is paused." ;;
-					4) print_msg -yellow "  adblocking is stopped." ;;
+					0) print_msg -green  "  Adblocking is active.";;
+					3) print_msg -yellow "  Adblocking is paused." ;;
+					4) print_msg -yellow "  Adblocking is stopped." ;;
 					*)
 						run_state=1
 						reg_failure "${bl_id_pr} is not working correctly. Consider running 'service adblock-lean restart ${bl_id}' in order to restore adblocking." ;;
@@ -2450,7 +2450,6 @@ status()
 					int2human curr_cnt_human "${curr_cnt}" || return 1
 					timestamp="$(get_blocklist_timestamp -h "${bl_id}")"
 					print_msg \
-						"  ${green}Adblocking is active.${n_c}" \
 						"  Blocklist file: ${blue}${curr_path}${n_c}" \
 						"  Entries count: ${blue}${curr_cnt_human}${n_c}" \
 						"  Blocklist was updated on: ${blue}${timestamp:-"${red}Unknown"}${n_c}"
@@ -2520,14 +2519,7 @@ pause_resume()
 	for bl_id in ${bl_ids}
 	do
 		get_bl_params -f "${cmd}" "${bl_id}" \
-			final_compr_to_file \
-			dnsmasq_indexes \
-			run_state \
-			curr_path \
-			curr_cnt \
-			pause_path \
-			install_path || return 1
-		get_bl_params "${bl_id}" new_single_instance
+			run_state || return 1
 
 		bl_id_pr="blocklist '${bl_id}'"
 
@@ -2541,7 +2533,7 @@ pause_resume()
 
 		case "${cmd},${run_state}" in
 			"pause,3"|"resume,0") state_ok_msg="Adblocking is ${state_ok_pr} for ${bl_id_pr}."  ;;
-			"pause,4"|"resume,4") state_ok_msg="Adblocking is stopped for ${bl_id_pr}. Can not ${cmd}." ;;
+			"pause,4"|"resume,4") state_ok_msg="${yellow}Adblocking is stopped for ${bl_id_pr}. Can not ${cmd}.${n_c}" ;;
 			*) false
 		esac &&
 		{
@@ -2552,6 +2544,14 @@ pause_resume()
 
 		reg_action -blue "${state_progr_pr} ${bl_id_pr}."
 
+		get_bl_params -f "${cmd}" "${bl_id}" \
+			final_compr_to_file \
+			dnsmasq_indexes \
+			curr_path \
+			curr_cnt \
+			pause_path \
+			install_path || return 1
+
 		case "${cmd}" in
 			pause)
 				rm_conf_scripts "${bl_id}" &&
@@ -2561,8 +2561,8 @@ pause_resume()
 				mv_blocklist "${curr_path}" "${install_path}" "${final_compr_to_file}" "${bl_id}" &&
 				set_bl_params "${bl_id}" "install_cnt=${curr_cnt}" ;;
 		esac &&
-		set_bl_params "${bl_id}" \
-			curr_single_instance="${new_single_instance}" ||
+		get_bl_params "${bl_id}" new_single_instance &&
+		set_bl_params "${bl_id}" curr_single_instance="${new_single_instance}" ||
 		{
 			reg_failure "Failed to ${cmd} blocklist '${bl_id}'."
 			do_stop "${bl_id}"
