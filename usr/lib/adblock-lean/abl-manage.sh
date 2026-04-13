@@ -1,7 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC3043,SC2016,SC3060,SC3040,SC3003,SC3020
-
-# silence shellcheck warnings
+# shellcheck source=/dev/null
 
 META_FNAME="blocklist-metadata"
 META_FNAME_PERSIST="persist_blocklist-metadata"
@@ -13,6 +12,7 @@ IP_REGEX_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|
 IP_REGEX_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
 
 
+# silence shellcheck warnings
 : "${test_domains:=}" "${compression_util:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" \
 	"${blue:=}" "${green:=}" "${red:=}" "${n_c:=}"
 
