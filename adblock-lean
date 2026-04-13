@@ -2209,13 +2209,9 @@ start()
 
 	subtract_a_from_b "${failed_blocklists} ${restored_blocklists}" "${bl_ids}" installed_blocklists
 
-	for bl_id in ${installed_blocklists}
-	do
-		set_bl_params "${bl_id}" run_state=0
-	done
-
 	[ -n "${installed_blocklists}" ] && 
 	{
+		set_bl_params "${installed_blocklists}" run_state=0
 		start_rv=0
 		reg_success "${green}Successfully installed blocklists:${n_c} ${blue}${installed_blocklists}${n_c}."
 	}
