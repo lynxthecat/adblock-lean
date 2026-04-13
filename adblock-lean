@@ -2123,7 +2123,7 @@ start()
 		perm_failed_blocklists='' \
 		run_state \
 		start_rv=1 \
-		initial_uptime_ms \
+		initial_uptime_cs \
 		elapsed_time \
 		curr_cnt \
 		install_path install_cnt \
@@ -2137,7 +2137,7 @@ start()
 
 	FAIL_STOP_REQ=1
 
-	get_uptime_ms initial_uptime_ms
+	get_uptime_cs initial_uptime_cs
 
 	set_global_env "${bl_ids}" || exit 1
 
@@ -2148,7 +2148,7 @@ start()
 	# gen_blocklists() and install_blocklists() append values to output vars
 
 	[ -n "${BLOCKLISTS_TO_GEN}" ] &&
-		gen_blocklists BLOCKLISTS_TO_INSTALL "${BLOCKLISTS_TO_GEN}" "${initial_uptime_ms}" 
+		gen_blocklists BLOCKLISTS_TO_INSTALL "${BLOCKLISTS_TO_GEN}" "${initial_uptime_cs}" 
 
 	[ -n "${BLOCKLISTS_TO_INSTALL}" ] &&
 		install_blocklists ok_blocklists perm_failed_blocklists "${BLOCKLISTS_TO_INSTALL}"
@@ -2159,7 +2159,7 @@ start()
 	{
 		BLOCKLISTS_TO_INSTALL=
 		log_msg -blue "" "Trying again to generate and install blocklists: ${blocklists_to_retry}."
-		gen_blocklists BLOCKLISTS_TO_INSTALL "${blocklists_to_retry}" "${initial_uptime_ms}"
+		gen_blocklists BLOCKLISTS_TO_INSTALL "${blocklists_to_retry}" "${initial_uptime_cs}"
 
 		[ -n "${BLOCKLISTS_TO_INSTALL}" ] &&
 			install_blocklists ok_blocklists _ "${BLOCKLISTS_TO_INSTALL}"
@@ -2231,7 +2231,7 @@ start()
 
 	[ "${start_rv}" = 0 ] &&
 	{
-		get_elapsed_time_human elapsed_time "${initial_uptime_ms}"
+		get_elapsed_time_human elapsed_time "${initial_uptime_cs}"
 		reg_msg "" "Processing time for blocklist generation and import: ${blue}${elapsed_time:-"${yellow}unknown"}${n_c}"
 	}
 

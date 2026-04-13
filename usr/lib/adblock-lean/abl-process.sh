@@ -46,64 +46,68 @@ stevenblack_mirrors="github sbc_io" \
 
 # UTILITY FUNCTIONS
 
-# 1 - var name for ms output
-get_uptime_ms()
-{
+# 1 - var name for centiseconds output
+get_uptime_cs() {
+	local __uptime i_cs gu_cs gu_s
 	unset_vars "${1}" || return 1
-	local __uptime __s __ms
+
 	read -r __uptime _ < /proc/uptime &&
 	case "${__uptime}" in
 		''|*.*.*) false ;;
-		*) :
+		*.*) ;;
+		*) false ;;
 	esac &&
-	{
-		__s="${__uptime%.*}"
-		__ms="${__uptime##*.}"
-		# normalize ms to 3 digits
-		case "${__ms}" in
-			'') __ms=000 ;;
-			?) __ms="${__ms}00" ;;
-			??) __ms="${__ms}0" ;;
-			???) ;;
-			???*) __ms="${__ms%"${__ms#???}"}"
-		esac
-	} &&
-	is_uint "${__s}" "${__ms}" ||
+	i_cs="${__uptime##*.}" &&
+	case "${i_cs}" in
+		'') gu_cs=00 ;;
+		?) gu_cs="${i_cs}0" ;;
+		??) gu_cs="${i_cs}" ;;
+		??*) gu_cs="${i_cs%"${i_cs#??}"}"
+	esac &&
+	gu_s="${__uptime%.*}" &&
+	is_uint "${gu_s}" "${gu_cs}" ||
 	{
 		reg_failure "Failed to get uptime from /proc/uptime."
-		eval "${1:-_}"=0000
+		eval "${1}"=0
 		return 1
 	}
-	eval "${1:-_}"='${__s:-0}${__ms:-000}'
+	gu_cs="${gu_s:-0}${gu_cs:-00}"
+	gu_cs="${gu_cs#"${gu_cs%%[!0]*}"}"
+	eval "${1}"='${gu_cs:-0}'
 }
 
-# To use, first get initial uptime: 'get_uptime_ms INITIAL_UPTIME_MS'
+# To use, first get initial uptime: 'get_uptime_cs INITIAL_UPTIME'
 # Then call this function to get elapsed time string at desired intervals, e.g.:
-# get_elapsed_time_ms elapsed_time "${INITIAL_UPTIME_MS}"
-# 1 - var name for output
-# 2 - initial uptime in ms
-get_elapsed_time_ms()
-{
-	local ge_uptime_ms
-	get_uptime_ms ge_uptime_ms || return 1
-	: "${ge_uptime_ms}"
-	eval "${1}"='$(( ge_uptime_ms - ${2:-ge_uptime_ms} ))'
+# get_elapsed_time_cs elapsed_time_cs "${INITIAL_UPTIME}"
+# 1 - var name for centiseconds output
+# 2 - initial uptime in centiseconds
+get_elapsed_time_cs() {
+	local ge_uptime_cs
+	: "${ge_uptime_cs}"
+	unset_vars "${1}" &&
+	get_uptime_cs ge_uptime_cs &&
+	eval "${1}"='$(( ge_uptime_cs - ${2:-ge_uptime_cs} ))'
 }
 
-get_elapsed_time_human()
-{
-	local geh_elapsed _elapsed_ms _elapsed_m _elapsed_s elapsed_fp _elapsed_human
-	get_elapsed_time_ms geh_elapsed "${2}" || return 1
-	_elapsed_m=$(( geh_elapsed / 60000 ))
-	_elapsed_ms=$(( geh_elapsed % 60000 ))
-	_elapsed_s=$(( _elapsed_ms / 1000 ))
-	elapsed_fp=$(( _elapsed_ms % 1000 ))
-	elapsed_fp="${elapsed_fp%0}"
-	elapsed_fp="${elapsed_fp%0}"
-	: "${elapsed_fp:=0}"
-	is_uint "${_elapsed_m}" "${_elapsed_s}" "${elapsed_fp}" && _elapsed_human="${_elapsed_m}m:${_elapsed_s}.${elapsed_fp}s" || _elapsed_human=unknown
+# 1: var name for output
+# 2: reference time in centiseconds
+get_elapsed_time_human() {
+	local _e_m _e_s _e_cs _e_elapsed _elapsed_human=''
+	unset_vars "${1}" &&
+	get_elapsed_time_cs _e_elapsed "${2}" || return 1
+	_e_m=$(( _e_elapsed / 6000 ))
+	[ "$_e_m" -gt 0 ] || _e_m=
+	_e_cs=$(( _e_elapsed % 6000 ))
+	_e_s=$(( _e_cs / 100 ))
+	case "${_e_cs}" in
+		'') _e_cs=00 ;;
+		?) _e_cs="0${_e_cs}" ;;
+		??) ;;
+		??*) _e_cs="${_e_cs#"${_e_cs%??}"}"
+	esac
+	is_uint "${_e_m:-0}" "${_e_s}" "${_e_cs}" &&
+		_elapsed_human="${_e_m:+"${_e_m}m:"}${_e_s}.${_e_cs}s"
 	eval "${1}"='${_elapsed_human}'
-	: "${_elapsed_m}" "${_elapsed_s}" "${elapsed_fp}" "${_elapsed_human}"
 }
 
 
@@ -244,11 +248,11 @@ handle_done_job()
 # 1 - var name to output remaining time
 get_remaining_time()
 {
-	local ct_curr_time_ms ct_curr_time_s ct_total_time_s ct_remaining_time_s
+	local ct_curr_time_cs ct_curr_time_s ct_total_time_s ct_remaining_time_s
 	eval "${1}"=0
 
-	get_uptime_ms ct_curr_time_ms || return 1
-	ct_curr_time_s=$((ct_curr_time_ms/1000))
+	get_uptime_cs ct_curr_time_cs || return 1
+	ct_curr_time_s=$((ct_curr_time_cs/100))
 	ct_total_time_s=$((INITIAL_UPTIME_S-ct_curr_time_s))
 
 	ct_remaining_time_s=$((PROCESSING_TIMEOUT_S-ct_total_time_s))
@@ -839,7 +843,7 @@ gen_blocklists()
 		index \
 		dnsmasq_indexes \
 		totalmem \
-		blocklists_out_var="${1:?}" bl_ids="${2:?}" initial_uptime_ms="${3:?}"
+		blocklists_out_var="${1:?}" bl_ids="${2:?}" initial_uptime_cs="${3:?}"
 	
 	: "${install_cnt}"
 
@@ -926,7 +930,7 @@ gen_blocklists()
 
 		processed_bl_file="${ABL_TMP_DIR}/processed-blocklist-${bl_id}${final_compr_ext}"
 
-		if gen_blocklist "${bl_id}" install_cnt "${processed_bl_file}" "${initial_uptime_ms}" &&
+		if gen_blocklist "${bl_id}" install_cnt "${processed_bl_file}" "${initial_uptime_cs}" &&
 			try_mv "${processed_bl_file}" "${install_path}"
 		then
 			add2list "${blocklists_out_var}" "${bl_id}"
@@ -942,7 +946,7 @@ gen_blocklists()
 # 1: blocklist ID
 # 2: out var for elements count
 # 3: output file path
-# 4: initial uptime
+# 4: initial uptime in centiseconds
 # shellcheck disable=SC2329
 gen_blocklist()
 {
@@ -1032,7 +1036,7 @@ gen_blocklist()
 		bl_id="${1}" \
 		cnt_out_var="${2:?}" \
 		out_f="${3:?}" \
-		INITIAL_UPTIME_S="$(( ${4} / 1000 ))"
+		INITIAL_UPTIME_S="$(( ${4} / 100 ))"
 
 	unset_vars "${cnt_out_var}" &&
 
