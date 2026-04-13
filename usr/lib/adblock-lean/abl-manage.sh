@@ -514,60 +514,179 @@ do_select_dnsmasq_instances() {
 	:
 }
 
-# 1: var name for printable missing paths output
-# 2: dnsmasq instance indexes to check
-# 3: list of newline-separated paths
-# shellcheck disable=SC2120
-check_addnmounts()
+# Get interfaces each dnsmasq instance is listening on and associated IP addresses
+# Populates global vars: DNSMASQ_IPS_SET, NS4_${dnsmasq_index}, NS6_${dnsmasq_index}
+get_dnsmasq_ips()
 {
-	try_check_addnmounts "${@}" || { reg_failure "Failed to check addnmount entries."; return 1; }
-}
-
-try_check_addnmounts()
-{
-	local me=check_addnmounts \
+	local me=get_dnsmasq_ips \
 		IFS="${DEFAULT_IFS}" \
-		ca_index ca_path ca_addnmounts \
-		ca_missing_var="${1}" ca_indexes="${2}" ca_req_addnm="${3}"
+		odevs linux_ifaces dnp_res
 
-	unset_vars "${ca_missing_var}" &&
-	assert_set "F_${me}" ca_indexes ADDNMOUNTS_SET || return 1
+	DNSMASQ_IPS_SET=
 
-	[ -n "${ca_req_addnm}" ] || return 0
+	assert_set "F_${me}" IP_REGEX_4 IP_REGEX_6 || return 1
 
-	for ca_index in ${ca_indexes}
+	# get list of OpenWrt device names, store in $odevs
+	# shellcheck disable=SC2329
+	get_odevs_cb()
+	{
+		local dev section_id="$1"
+		config_get dev "${section_id}" name
+		odevs="${odevs}${odevs:+$'\n'}${dev}"
+	}
+
+	config_load network &&
+	config_foreach get_odevs_cb device &&
+
+	# get list of all linux ifaces + IP addresses
+	linux_ifaces="$(
+		${IP_CMD} -o addr show |
+		${SED_CMD} -nE "/^\s*[0-9]+:\s*/{s/^\s*[0-9]+\s*:\s+//;s/inet[6]*\s+//;s/\s(${IP_REGEX_4:?}|${IP_REGEX_6:?})(\/[0-9]+)\s.*/\1/;s/\s+/ /;s/\s+$//;p;}"
+	)" &&
+
+	dnp_res="$(
+		${NETSTAT_CMD} -plnt |
+		${AWK_CMD} -v regex_4="${IP_REGEX_4//\\./.}" -v regex_6="${IP_REGEX_6}" -v l_ifaces="${linux_ifaces}" -v odevs_str="${odevs}" '
+			function print_id(id)
+			{
+				if (out_4[id]) {rv = 0; out_val_4 = out_4[id]} else out_val_4 = "NIL"
+				if (out_6[id]) {rv = 0; out_val_6 = out_6[id]} else out_val_6 = "NIL"
+				print id " " out_val_4 " " out_val_6
+			}
+
+			BEGIN {
+				rv = 1
+				# array with OpenWrt device names as keys
+				split(odevs_str,o,"\n")
+				for (d in o) { odevs[o[d]] }
+
+				# parse linux ifaces w/ ips into array keyed by ips, prioritize OpenWrt devices
+				split(l_ifaces,a,"\n")
+				for (e in a) {
+					i=a[e]
+					n = index(i, " ")
+					if(n != 0) {
+						ip = substr(i, n + 1)
+						if_name=substr(i, 1, n - 1)
+						if ( ips[ip] == "" || if_name in odevs ) {ips[ip] = if_name}
+					}
+				}
+			}
+
+			/LISTEN[ ].*\/dnsmasq$/ {
+				ip = $4
+				sub(/:[^:]+$/,"",ip)
+				if (ip in ips) {} else next
+				iface=ips[ip]
+
+				pid = $7
+				if (pid !~ /\/dnsmasq$/) next
+				sub("/dnsmasq","",pid)
+				if (! iface || ! pid) next
+
+				id = pid " " iface
+
+				if (iface in odevs) odevs_out[id]
+				else out[id]
+
+				if (ip ~ regex_4)
+				{
+					if (out_4[id] != "") {next}
+					out_4[id] = ip
+				}
+				else if (ip ~ regex_6)
+				{
+					if (out_6[id] != "") {next}
+					out_6[id] = ip
+				}
+				else next
+			}
+
+			END {
+				for (id in odevs_out) print_id(id)
+				for (id in out) print_id(id)
+				exit rv
+			}
+		'
+	)" &&
+	[ -n "${dnp_res}" ] ||
+		{ reg_failure "Failed to get network params for dnsmasq instances. Found Linux ifaces: '${linux_ifaces//"${_NL_}"/ }', OpenWrt devices: '${odevs}', "; return 1; }
+
+
+	# dnsmasq nameserver IP's
+	local line index dnsmasq_indexes \
+		all_dnsmasq_indexes='' \
+		bl_id \
+		inst_name inst_pid inst_iface \
+		inst_ip_4 inst_ip_6 ip4_present ip6_present
+
+	for bl_id in ${BL_IDS}
 	do
-		is_uint "${ca_index}" || { reg_failure "${me}: Invalid dnsmasq index '${ca_index}'."; return 1; }
+		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes || return 1
+		add2list all_dnsmasq_indexes "${dnsmasq_indexes}"
+	done
+
+	for index in ${all_dnsmasq_indexes}
+	do
+		# iface and nameservers
+		inst_iface='' inst_ip_4='' inst_ip_6='' ip4_present='' ip6_present=''
+
+		eval "inst_name=\"\${DNSMASQ_INST_NAME_${index}}\""
+		inst_pid="$(pgrep -f '^/usr/sbin/dnsmasq.*'"${inst_name:-???}"'.pid$')" ||
+			{ reg_failure "No PID found for dnsmasq instance with index '${index}' (name: '${inst_name}')."; return 1; }
+
 		IFS="${_NL_}"
-		for ca_path in ${ca_req_addnm}
+		for line in ${dnp_res}
 		do
-			[ -n "${ca_path}" ] || continue
 			IFS="${DEFAULT_IFS}"
+			set -- ${line}
+			[ "${1}" = "${inst_pid}" ] && [ -n "${2}" ] || continue
 
-			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_index}}\""
-			case "${ca_path}" in
-				/*) ;;
-				*) reg_failure "${me}: invalid path '${ca_path}'."; return 1
-			esac
+			[ -n "${3%"NIL"}" ] && ip4_present=1
+			[ -n "${4%"NIL"}" ] && ip6_present=1
+		done
 
-			ca_path_tmp="${ca_path}"
-			i=1
-			while [ -n "${ca_path_tmp}" ] && [ "${i}" -le 10 ]
-			do
-				i=$((i+1))
-				is_included "${ca_path_tmp}" "${ca_addnmounts}" && continue 2
-				ca_path_tmp="${ca_path_tmp%/*}"
-			done
+		IFS="${_NL_}"
+		for line in ${dnp_res}
+		do
+			IFS="${DEFAULT_IFS}"
+			set -- ${line}
+			[ "${1}" = "${inst_pid}" ] || continue
 
-			[ -n "${ca_missing_var}" ] && add2list "${ca_missing_var}" "'${ca_path}'" ", "
+			iface_tmp="${2}"
+			ip4_tmp="${3%"NIL"}"
+			ip6_tmp="${4%"NIL"}"
+
+			[ -n "${iface_tmp}" ] &&
+				{ [ -n "${ip4_tmp}" ] || [ -n "${ip6_tmp}" ]; } ||
+					continue
+
+			[ -z "${inst_iface}" ] ||
+			{
+				[ "${inst_iface}" = lo ] &&
+				{ [ -z "${ip4_present}" ] || [ -n "${ip4_tmp}" ]; } &&
+				{ [ -z "${ip6_present}" ] || [ -n "${ip6_tmp}" ]; }
+			} &&
+			{
+				inst_iface="${iface_tmp}"
+				inst_ip_4="${ip4_tmp}"
+				inst_ip_6="${ip6_tmp}"
+			}
 		done
 		IFS="${DEFAULT_IFS}"
+
+		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: no IP addresses detected for dnsmasq instance with index ${index}."; return 1; }
+
+		eval "NS4_${index}"='${inst_ip_4}'
+		eval "NS6_${index}"='${inst_ip_6}'
 	done
+
+	DNSMASQ_IPS_SET=1
 	:
 }
 
 
-# HELPER FUNCTIONS
+### GENERAL HELPER FUNCTIONS
 
 mv_blocklist()
 {
@@ -814,6 +933,58 @@ get_bl_run_state()
 	debug_msg "${me}: bl_id:'${bl_id}'; check res:'${bl_check_res}'"
 
 	return "${run_state}"
+}
+
+# 1: var name for printable missing paths output
+# 2: dnsmasq instance indexes to check
+# 3: list of newline-separated paths
+# shellcheck disable=SC2120
+check_addnmounts()
+{
+	try_check_addnmounts "${@}" || { reg_failure "Failed to check addnmount entries."; return 1; }
+}
+
+try_check_addnmounts()
+{
+	local me=check_addnmounts \
+		IFS="${DEFAULT_IFS}" \
+		ca_index ca_path ca_addnmounts \
+		ca_missing_var="${1}" ca_indexes="${2}" ca_req_addnm="${3}"
+
+	unset_vars "${ca_missing_var}" &&
+	assert_set "F_${me}" ca_indexes ADDNMOUNTS_SET || return 1
+
+	[ -n "${ca_req_addnm}" ] || return 0
+
+	for ca_index in ${ca_indexes}
+	do
+		is_uint "${ca_index}" || { reg_failure "${me}: Invalid dnsmasq index '${ca_index}'."; return 1; }
+		IFS="${_NL_}"
+		for ca_path in ${ca_req_addnm}
+		do
+			[ -n "${ca_path}" ] || continue
+			IFS="${DEFAULT_IFS}"
+
+			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_index}}\""
+			case "${ca_path}" in
+				/*) ;;
+				*) reg_failure "${me}: invalid path '${ca_path}'."; return 1
+			esac
+
+			ca_path_tmp="${ca_path}"
+			i=1
+			while [ -n "${ca_path_tmp}" ] && [ "${i}" -le 10 ]
+			do
+				i=$((i+1))
+				is_included "${ca_path_tmp}" "${ca_addnmounts}" && continue 2
+				ca_path_tmp="${ca_path_tmp%/*}"
+			done
+
+			[ -n "${ca_missing_var}" ] && add2list "${ca_missing_var}" "'${ca_path}'" ", "
+		done
+		IFS="${DEFAULT_IFS}"
+	done
+	:
 }
 
 # Populates global vars required for processing, status and cleanup
@@ -1066,13 +1237,18 @@ set_bl_env()
 
 	if [ "${persist_avail}" = 1 ]
 	then
-		if [ "${ABL_INIT_ACTION}" = boot ] || { [ "${run_state}" != 3 ] && [ "${ABL_INIT_ACTION}" = status ]; }
+		FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${bl_base_fname}"
+		set_bl_params "${bl_id}" curr_persist_path
+
+		debug_msg "curr_persist_path for bl_id '${bl_id}': '${curr_persist_path}'"
+
+		if \
+			case "${ABL_INIT_ACTION}" in
+				boot|status) : ;;
+				resume) [ "${run_state}" = 3 ] && [ "${curr_path}" = "${curr_persist_path}" ] ;;
+				*) false ;;
+			esac
 		then
-			FF_RM_EXTRA=1 find_files curr_persist_path "${PERSIST_BLOCKLIST_DIR}" "${BLOCKLIST_BASE_FNAME:?}-${bl_id}"
-			set_bl_params "${bl_id}" curr_persist_path
-
-			debug_msg "curr_persist_path for bl_id '${bl_id}': '${curr_persist_path}'"
-
 			reg_msg -blue "Checking the persistent blocklist ${curr_persist_path}"
 			local min_good_line_count_human='' persist_ext='' persist_fail='' curr_persist_cnt='' curr_persist_cnt_human=''
 
@@ -1205,179 +1381,6 @@ set_bl_env()
 		"final_extr_or_cat_stdout: '${final_extr_or_cat_stdout}'" \
 		"final_compr_ext: '${final_compr_ext}'"
 
-	:
-}
-
-
-
-# Get interfaces each dnsmasq instance is listening on and associated IP addresses
-# Populates global vars: DNSMASQ_IPS_SET, NS4_${dnsmasq_index}, NS6_${dnsmasq_index}
-get_dnsmasq_ips()
-{
-	local me=get_dnsmasq_ips \
-		IFS="${DEFAULT_IFS}" \
-		odevs linux_ifaces dnp_res
-
-	DNSMASQ_IPS_SET=
-
-	assert_set "F_${me}" IP_REGEX_4 IP_REGEX_6 || return 1
-
-	# get list of OpenWrt device names, store in $odevs
-	# shellcheck disable=SC2329
-	get_odevs_cb()
-	{
-		local dev section_id="$1"
-		config_get dev "${section_id}" name
-		odevs="${odevs}${odevs:+$'\n'}${dev}"
-	}
-
-	config_load network &&
-	config_foreach get_odevs_cb device &&
-
-	# get list of all linux ifaces + IP addresses
-	linux_ifaces="$(
-		${IP_CMD} -o addr show |
-		${SED_CMD} -nE "/^\s*[0-9]+:\s*/{s/^\s*[0-9]+\s*:\s+//;s/inet[6]*\s+//;s/\s(${IP_REGEX_4:?}|${IP_REGEX_6:?})(\/[0-9]+)\s.*/\1/;s/\s+/ /;s/\s+$//;p;}"
-	)" &&
-
-	dnp_res="$(
-		${NETSTAT_CMD} -plnt |
-		${AWK_CMD} -v regex_4="${IP_REGEX_4//\\./.}" -v regex_6="${IP_REGEX_6}" -v l_ifaces="${linux_ifaces}" -v odevs_str="${odevs}" '
-			function print_id(id)
-			{
-				if (out_4[id]) {rv = 0; out_val_4 = out_4[id]} else out_val_4 = "NIL"
-				if (out_6[id]) {rv = 0; out_val_6 = out_6[id]} else out_val_6 = "NIL"
-				print id " " out_val_4 " " out_val_6
-			}
-
-			BEGIN {
-				rv = 1
-				# array with OpenWrt device names as keys
-				split(odevs_str,o,"\n")
-				for (d in o) { odevs[o[d]] }
-
-				# parse linux ifaces w/ ips into array keyed by ips, prioritize OpenWrt devices
-				split(l_ifaces,a,"\n")
-				for (e in a) {
-					i=a[e]
-					n = index(i, " ")
-					if(n != 0) {
-						ip = substr(i, n + 1)
-						if_name=substr(i, 1, n - 1)
-						if ( ips[ip] == "" || if_name in odevs ) {ips[ip] = if_name}
-					}
-				}
-			}
-
-			/LISTEN[ ].*\/dnsmasq$/ {
-				ip = $4
-				sub(/:[^:]+$/,"",ip)
-				if (ip in ips) {} else next
-				iface=ips[ip]
-
-				pid = $7
-				if (pid !~ /\/dnsmasq$/) next
-				sub("/dnsmasq","",pid)
-				if (! iface || ! pid) next
-
-				id = pid " " iface
-
-				if (iface in odevs) odevs_out[id]
-				else out[id]
-
-				if (ip ~ regex_4)
-				{
-					if (out_4[id] != "") {next}
-					out_4[id] = ip
-				}
-				else if (ip ~ regex_6)
-				{
-					if (out_6[id] != "") {next}
-					out_6[id] = ip
-				}
-				else next
-			}
-
-			END {
-				for (id in odevs_out) print_id(id)
-				for (id in out) print_id(id)
-				exit rv
-			}
-		'
-	)" &&
-	[ -n "${dnp_res}" ] ||
-		{ reg_failure "Failed to get network params for dnsmasq instances. Found Linux ifaces: '${linux_ifaces//"${_NL_}"/ }', OpenWrt devices: '${odevs}', "; return 1; }
-
-
-	# dnsmasq nameserver IP's
-	local line index dnsmasq_indexes \
-		all_dnsmasq_indexes='' \
-		bl_id \
-		inst_name inst_pid inst_iface \
-		inst_ip_4 inst_ip_6 ip4_present ip6_present
-
-	for bl_id in ${BL_IDS}
-	do
-		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes || return 1
-		add2list all_dnsmasq_indexes "${dnsmasq_indexes}"
-	done
-
-	for index in ${all_dnsmasq_indexes}
-	do
-		# iface and nameservers
-		inst_iface='' inst_ip_4='' inst_ip_6='' ip4_present='' ip6_present=''
-
-		eval "inst_name=\"\${DNSMASQ_INST_NAME_${index}}\""
-		inst_pid="$(pgrep -f '^/usr/sbin/dnsmasq.*'"${inst_name:-???}"'.pid$')" ||
-			{ reg_failure "No PID found for dnsmasq instance with index '${index}' (name: '${inst_name}')."; return 1; }
-
-		IFS="${_NL_}"
-		for line in ${dnp_res}
-		do
-			IFS="${DEFAULT_IFS}"
-			set -- ${line}
-			[ "${1}" = "${inst_pid}" ] && [ -n "${2}" ] || continue
-
-			[ -n "${3%"NIL"}" ] && ip4_present=1
-			[ -n "${4%"NIL"}" ] && ip6_present=1
-		done
-
-		IFS="${_NL_}"
-		for line in ${dnp_res}
-		do
-			IFS="${DEFAULT_IFS}"
-			set -- ${line}
-			[ "${1}" = "${inst_pid}" ] || continue
-
-			iface_tmp="${2}"
-			ip4_tmp="${3%"NIL"}"
-			ip6_tmp="${4%"NIL"}"
-
-			[ -n "${iface_tmp}" ] &&
-				{ [ -n "${ip4_tmp}" ] || [ -n "${ip6_tmp}" ]; } ||
-					continue
-
-			[ -z "${inst_iface}" ] ||
-			{
-				[ "${inst_iface}" = lo ] &&
-				{ [ -z "${ip4_present}" ] || [ -n "${ip4_tmp}" ]; } &&
-				{ [ -z "${ip6_present}" ] || [ -n "${ip6_tmp}" ]; }
-			} &&
-			{
-				inst_iface="${iface_tmp}"
-				inst_ip_4="${ip4_tmp}"
-				inst_ip_6="${ip6_tmp}"
-			}
-		done
-		IFS="${DEFAULT_IFS}"
-
-		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: no IP addresses detected for dnsmasq instance with index ${index}."; return 1; }
-
-		eval "NS4_${index}"='${inst_ip_4}'
-		eval "NS6_${index}"='${inst_ip_6}'
-	done
-
-	DNSMASQ_IPS_SET=1
 	:
 }
 
