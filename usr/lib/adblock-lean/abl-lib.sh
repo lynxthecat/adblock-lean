@@ -272,11 +272,11 @@ do_create_addnmounts()
 	{
 		local missing_addnm index indexes="${1}" req_addnm="${2}"
 		check_addnmounts missing_addnm "${indexes}" "${req_addnm}" || return 1
-		[ -n "${missing_addnm}" ] || return 0
 		for index in ${indexes}
 		do
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
+		[ -n "${missing_addnm}" ] || return 0
 		add2list all_missing_addnm "${missing_addnm}" ", "
 	}
 
@@ -392,7 +392,7 @@ do_create_addnmounts()
 
 		del_addnmounts "${index}"
 		case ${?} in 0|3) ;; *) { add_list_failed=1; break; }; esac
-		log_msg -purple "Creating dnsmasq addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
+		log_msg -purple "Creating addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
 		IFS="${_NL_}"
 		for path in ${req_addnm_index}
 		do
