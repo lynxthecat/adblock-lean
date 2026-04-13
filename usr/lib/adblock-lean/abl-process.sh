@@ -862,7 +862,8 @@ gen_blocklists()
 	do
 		unset "RESTORE_FROM_PERSIST_${bl_id}" "SKIP_LOAD_STOP_${bl_id}"
 
-		get_bl_params -f "${me}" "${bl_id}" run_state dnsmasq_indexes install_path &&
+		get_bl_params -f "${me}" "${bl_id}" run_state dnsmasq_indexes install_path || return 1
+
 		get_bl_params "${bl_id}" curr_path curr_persist_path persist_dir bk_ext final_compr_ext
 
 		case "${run_state}" in
@@ -1043,9 +1044,10 @@ gen_blocklist()
 
 	get_bl_params -f "${me}" "${bl_id}" \
 		part_extr_or_cat_stdout \
-		final_compr_or_cat_stdout
+		final_compr_or_cat_stdout &&
+
 	get_bl_params "${bl_id}" \
-		new_single_instance
+		new_single_instance &&
 
 	case "${part_extr_or_cat_stdout}" in
 		"${CAT_CMD}") ;;
