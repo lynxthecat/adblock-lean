@@ -123,7 +123,7 @@ export \
 	RECOMMENDED_UTILS="awk sed sort"
 
 # silence shellcheck warnings
-: "${action:=}" "${boot_start_delay_s:=}" "${CONFIG_FORMAT}" "${SBE_STATUS:=}"
+: "${action:=}" "${boot_start_delay_s:=}" "${CONFIG_FORMAT}" "${SBE_STATUS:=}" "${compression_util:=}"
 
 export luci_log luci_pid_action luci_errors luci_dnsmasq_status luci_good_line_count luci_update_status luci_pkgs_install_failed luci_cron_job_creation_failed
 
@@ -1507,7 +1507,16 @@ rm_cron_job()
 # 3 - No entries found for instance
 del_addnmounts()
 {
-	local rv path paths entry_deleted=0 entry_failed=0 index
+	local bl_id rv path paths entry_deleted=0 entry_failed=0 index persist_dir persist_dirs
+	[ -n "${BL_IDS}" ] ||
+		ASSERT_NOEXIT=1 load_config
+
+	for bl_id in ${BL_IDS}
+	do
+		get_bl_params "${bl_id}" persist_dir
+		add2list persist_dirs "${persist_dir}" "${_NL_}"
+	done
+
 	for index in ${1}
 	do
 		paths="$(
@@ -1525,9 +1534,13 @@ del_addnmounts()
 		do
 			IFS="${DEFAULT_IFS}"
 			case "${path}" in
-				/bin/busybox*|*gzip*|*pigz*|*zstd*|*/"${BLOCKLIST_BASE_FNAME:?}"*|"${ABL_RUN_DIR:-???}"*|"${PERSIST_BLOCKLIST_DIR:-???}"*) ;;
-				*) continue # ignore addnmounts possibly created not by us
-			esac
+				'') continue ;;
+				/bin/busybox*|/usr/bin/logger|*gzip*|*pigz*|*zstd*|*/"${BLOCKLIST_BASE_FNAME:-???}"*|"${ABL_RUN_DIR:-???}"*|"${LOG_CMD%% *}"|"${compression_util%% *}") : ;;
+				*) false # ignore addnmounts possibly created not by us
+			esac ||
+			is_included "${path}" "${persist_dirs}" "${_NL_}" ||
+			is_included "${path:%/*}" "${persist_dirs}" "${_NL_}" ||
+			continue
 			log_msg -purple "Deleting addnmount entry for '${path}' for dnsmasq instance ${index}."
 			if uci -q del_list "dhcp.@dnsmasq[${index}].addnmount=${path}"
 			then

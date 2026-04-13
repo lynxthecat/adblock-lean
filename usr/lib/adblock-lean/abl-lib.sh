@@ -351,7 +351,6 @@ do_create_addnmounts()
 		esac &&
 		check_persist_dir &&
 		{
-
 			is_included "${path_ram}" "${ignore_paths}" "${_NL_}" ||
 				ram_addnm="${_NL_}${path_ram}"
 			process_addnm "${dnsmasq_indexes}" "${persist_dir}${ram_addnm}" || return 1
@@ -376,6 +375,9 @@ do_create_addnmounts()
 	fi
 	[ "${REPLY}" = y ] || return 0
 
+	del_addnmounts "${all_dnsmasq_indexes}"
+	case ${?} in 0|3) : ;; *) false; esac &&
+
 	## Create addnmounts
 	for index in ${all_dnsmasq_indexes}
 	do
@@ -390,8 +392,6 @@ do_create_addnmounts()
 		done
 		IFS="${DEFAULT_IFS}"
 
-		del_addnmounts "${index}"
-		case ${?} in 0|3) ;; *) { add_list_failed=1; break; }; esac
 		log_msg -purple "Creating addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
 		IFS="${_NL_}"
 		for path in ${req_addnm_index}
@@ -400,9 +400,10 @@ do_create_addnmounts()
 			create_addnmount "${index}" "${path}" || { add_list_failed=1; break 2; }
 		done
 		IFS="${DEFAULT_IFS}"
-	done
+	done &&
+	[ -z "${add_list_failed}" ] &&
 
-	[ -z "${add_list_failed}" ] && uci commit dhcp ||
+	uci commit dhcp ||
 	{
 		uci revert dhcp
 		reg_failure "Failed to create or change addnmount entries."
