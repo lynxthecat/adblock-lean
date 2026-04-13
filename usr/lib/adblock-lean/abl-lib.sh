@@ -277,7 +277,7 @@ do_create_addnmounts()
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
 		[ -n "${missing_addnm}" ] || return 0
-		add2list all_missing_addnm "${missing_addnm}" ", "
+		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${missing_addnm} (required for ${3})"
 	}
 
 	local me=create_addnmounts \
@@ -318,7 +318,7 @@ do_create_addnmounts()
 		done
 
 		# Logger
-		process_addnm "${dnsmasq_indexes}" "${LOG_CMD}" || return 1
+		process_addnm "${dnsmasq_indexes}" "${LOG_CMD}" "logging failed attempts by dnsmasq to load the blocklist" || return 1
 
 		bl_full_fname=${BLOCKLIST_BASE_FNAME:?}-${bl_id}${cra_compr_ext}
 
@@ -326,14 +326,14 @@ do_create_addnmounts()
 		if [ -n "${cra_compr_ext}" ]
 		then
 			path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-			process_addnm "${dnsmasq_indexes}" "${cra_compr_util_path%% *}${_NL_}${path_ram}" || return 1
+			process_addnm "${dnsmasq_indexes}" "${cra_compr_util_path%% *}${_NL_}${path_ram}" "final blocklist compression" || return 1
 		fi
 
 		# Multiple dnsmasq instances
 		case "${dnsmasq_indexes}" in
 			*[0-9]*" "*[0-9]*)
 				path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-				process_addnm "${dnsmasq_indexes}" "${path_ram}" || return 1 ;;
+				process_addnm "${dnsmasq_indexes}" "${path_ram}" "final blocklist compression or blocklist loading by multiple dnsmasq instances" || return 1 ;;
 			*)
 				first_conf_dir="${conf_dirs%% *}"
 				is_valid_dir "${first_conf_dir}" || return 1
@@ -353,7 +353,7 @@ do_create_addnmounts()
 		{
 			is_included "${path_ram}" "${ignore_paths}" "${_NL_}" ||
 				ram_addnm="${_NL_}${path_ram}"
-			process_addnm "${dnsmasq_indexes}" "${persist_dir}${ram_addnm}" || return 1
+			process_addnm "${dnsmasq_indexes}" "${persist_dir}${ram_addnm}" "persistent blocklist functionality" || return 1
 		}
 	done
 
@@ -364,7 +364,7 @@ do_create_addnmounts()
 	}
 
 	## Dialog
-	log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths: ${all_missing_addnm}"
+	log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths:${_NL_}${all_missing_addnm}"
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ]
 	then
 		print_msg -blue "Create missing addnmount entries automatically? (y|n)"
