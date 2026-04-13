@@ -515,16 +515,12 @@ do_select_dnsmasq_instances() {
 }
 
 # Get interfaces each dnsmasq instance is listening on and associated IP addresses
-# Populates global vars: DNSMASQ_IPS_SET, NS4_${dnsmasq_index}, NS6_${dnsmasq_index}
+# Populates global vars: NS4_${dnsmasq_index}, NS6_${dnsmasq_index}
 get_dnsmasq_ips()
 {
 	local me=get_dnsmasq_ips \
 		IFS="${DEFAULT_IFS}" \
 		odevs linux_ifaces dnp_res
-
-	DNSMASQ_IPS_SET=
-
-	assert_set "F_${me}" IP_REGEX_4 IP_REGEX_6 || return 1
 
 	# get list of OpenWrt device names, store in $odevs
 	# shellcheck disable=SC2329
@@ -681,7 +677,6 @@ get_dnsmasq_ips()
 		eval "NS6_${index}"='${inst_ip_6}'
 	done
 
-	DNSMASQ_IPS_SET=1
 	:
 }
 
