@@ -1472,33 +1472,37 @@ get_bl_params()
 	:
 }
 
-# 1: blocklist ID
+# 1: blocklist IDs
 # other args: any number of: 'param' to use current value, or 'param=value'
 set_bl_params()
 {
 	local me=set_bl_params \
 		gl_var val param pair \
-		bl_id="${1:?}"
+		bl_id \
+		bl_ids="${1:?}"
 	shift
 
-	assert_valid_bl_id "${bl_id}" "${me}"
-
-	for pair in "${@}"
+	for bl_id in ${bl_ids}
 	do
-		case "${pair}" in
-			*=*=*) false ;;
-			*=*)
-				param="${pair%%=*}"
-				val="${pair#*=}"
-				are_var_names_safe "${param}" ;;
-			*)
-				param="${pair}"
-				are_var_names_safe "${param}" &&
-				eval "val=\"\${${param}}\"" ;;
-		esac &&
-		get_bl_param_gl_var gl_var "${param}" || { bad_args "${me}" "${bl_id} ${*}"; exit 1; }
-		eval "${param}"='${val}'
-		export "${gl_var}_${bl_id}=${val}"
+		assert_valid_bl_id "${bl_id}" "${me}"
+
+		for pair in "${@}"
+		do
+			case "${pair}" in
+				*=*=*) false ;;
+				*=*)
+					param="${pair%%=*}"
+					val="${pair#*=}"
+					are_var_names_safe "${param}" ;;
+				*)
+					param="${pair}"
+					are_var_names_safe "${param}" &&
+					eval "val=\"\${${param}}\"" ;;
+			esac &&
+			get_bl_param_gl_var gl_var "${param}" || { bad_args "${me}" "${bl_id} ${*}"; exit 1; }
+			eval "${param}"='${val}'
+			export "${gl_var}_${bl_id}=${val}"
+		done
 	done
 	:
 }
