@@ -520,7 +520,8 @@ get_dnsmasq_ips()
 {
 	local me=get_dnsmasq_ips \
 		IFS="${DEFAULT_IFS}" \
-		odevs linux_ifaces dnp_res
+		odevs linux_ifaces dnp_res \
+		bl_ids="${*:-"${BL_IDS}"}"
 
 	# get list of OpenWrt device names, store in $odevs
 	# shellcheck disable=SC2329
@@ -616,9 +617,9 @@ get_dnsmasq_ips()
 		inst_name inst_pid inst_iface \
 		inst_ip_4 inst_ip_6 ip4_present ip6_present
 
-	for bl_id in ${BL_IDS}
+	for bl_id in ${bl_ids}
 	do
-		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes || return 1
+		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes || continue
 		add2list all_dnsmasq_indexes "${dnsmasq_indexes}"
 	done
 
@@ -999,6 +1000,9 @@ set_global_env()
 		compr_cmd_to_file \
 		compr_cmd_stdout \
 		cpu_cnt \
+		sge_err='' \
+		valid_ids='' \
+		bl_id \
 		bl_ids="${*:-"${BL_IDS}"}"
 
 	export \
@@ -1009,18 +1013,9 @@ set_global_env()
 
 	debug_msg "Preparing environment." 
 
-	assert_set "F_${me}" bl_ids || return 1
-
 	set -o pipefail
 
-	read_blocklist_metadata "${META_FILE}" "${bl_ids}" # ignore errors
-
-	get_dnsmasq_instances &&
-	check_dnsmasq_instances &&
-	get_dnsmasq_ips ||
-		return 1
-
-	# Parallel processing
+	# Parallel processing - independent of other params
 	case "${MAX_PARALLEL_JOBS}" in
 		auto)
 			cpu_cnt="$(grep -c '^processor\s*:' /proc/cpuinfo)"
@@ -1036,8 +1031,26 @@ set_global_env()
 			PARALLEL_JOBS="${MAX_PARALLEL_JOBS}"
 	esac
 
-	# Compression
+	# Compression util - independent of other params
 	get_compr_util_spec compr_util_path compr_ext "${compression_util}" || return 1
+
+	# dnsmasq instances - independent of other params
+	get_dnsmasq_instances &&
+	check_dnsmasq_instances || sge_err=1
+
+	for bl_id in ${bl_ids}
+	do
+		assert_known_bl_id "${bl_id}" "${me}" || continue
+		add2list valid_ids "${bl_id}"
+	done
+
+	[ -n "${valid_ids}" ] || { reg_failure "${me}: no known blocklist IDs specified."; [ -n "${ASSERT_NOT_EXIT}" ] || exit 1; return 1; }
+
+	read_blocklist_metadata "${META_FILE}" "${valid_ids}" || sge_err=1
+
+	get_dnsmasq_ips "${valid_ids}" &&
+	[ -z "${sge_err}" ] ||
+		return 1
 
 	# Interm compr commands
 	[ -n "${compr_ext}" ] &&
@@ -1055,7 +1068,7 @@ set_global_env()
 
 	export ABL_ENV_SET=1 # must precede call to get_bl_run_state()
 
-	for bl_id in ${bl_ids}
+	for bl_id in ${valid_ids}
 	do
 		set_bl_env "${bl_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}" &&
 		CA_NOERR=1 get_bl_run_state "${bl_id}"
@@ -1424,9 +1437,10 @@ get_bl_param_gl_var()
 	eval "${1:?}"='${GBP_PREFIX}${gl_var}'
 }
 
-assert_valid_bl_id()
+assert_known_bl_id()
 {
-	is_included "${1}" "${BL_IDS}" || { reg_failure "${2}: blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS}'."; exit 1; }
+	is_included "${1}" "${BL_IDS}" ||
+		{ reg_failure "${2:+"${2}: "}blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS}'."; [ -n "${ASSERT_NOEXIT}" ] || exit 1; return 1; }
 }
 
 # 0 (optional): '-f <func_name>' to error out if value is not set
@@ -1437,16 +1451,16 @@ get_bl_params()
 	local me=get_bl_params \
 		gl_var val force_err err_func err_func_pr var_name
 
-	[ "${1}" = '-f' ] && { err_func="${2}" err_func_pr="-f ${2} "; shift 2; }
+	[ "${1}" = '-f' ] && { force_err=1 err_func="${2}" err_func_pr="-f ${2} "; shift 2; }
 	bl_id="${1:?}"
 	shift
 
 	for var_name in "${@}"
 	do
-		unset_vars "${var_name:?}" || exit 1
+		unset_vars "${var_name}" || exit 1
 	done
 
-	assert_valid_bl_id "${bl_id}" "${me}"
+	assert_known_bl_id "${bl_id}" "${me}"
 
 	for var_name in "${@}"
 	do
@@ -1479,7 +1493,7 @@ set_bl_params()
 
 	for bl_id in ${bl_ids}
 	do
-		assert_valid_bl_id "${bl_id}" "${me}"
+		assert_known_bl_id "${bl_id}" "${me}"
 
 		for pair in "${@}"
 		do
@@ -1534,7 +1548,7 @@ install_blocklists()
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params -f "${me}" "${bl_id}" conf_dirs dnsmasq_indexes final_extr_or_cat_stdout install_location install_path install_path_ram install_cnt
+		get_bl_params -f "${me}" "${bl_id}" conf_dirs dnsmasq_indexes final_extr_or_cat_stdout install_location install_path install_path_ram install_cnt || return 1
 		get_bl_params "${bl_id}" curr_path skip_load_stop persist_mode new_single_instance conf_script_log_avail
 
 		[ "${install_location}" = PERSIST ] && install_desc=persistent
@@ -1737,9 +1751,11 @@ try_commit_metadata()
 	# Persist metadata
 	for bl_id in "${@}"
 	do
-		get_bl_params -f "${me}" "${bl_id}" curr_location curr_path curr_md5 curr_cnt || return 1
+		get_bl_params "${bl_id}" curr_location
 
 		[ "${curr_location}" = PERSIST ] || continue
+
+		get_bl_params -f "${me}" "${bl_id}" curr_path curr_md5 curr_cnt || return 1
 
 		persist_dir="${curr_path%/*}"
 		persist_meta_file="${persist_dir:?}/${META_FNAME_PERSIST}"
@@ -1785,7 +1801,7 @@ read_blocklist_metadata()
 
 		debug_msg "Populating vars for ${bl_id_pr}."
 
-		assert_valid_bl_id "${1}" "${me}"
+		assert_known_bl_id "${1}" "${me}"
 
 		is_included "${seen_ids}" "${1}" &&
 			append_err "Multiple entries for ${bl_id_pr} in ${sp_f_pr}."
