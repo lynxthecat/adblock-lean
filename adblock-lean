@@ -1987,20 +1987,25 @@ get_config_format()
 	fi
 }
 
-# 1 - <-s|-h> to output as [s]econds since epoch or [h]uman-readable
+# 1: <-s|-h> to output as [s]econds since epoch or [h]uman-readable
+# 2: blocklist ID
 get_blocklist_timestamp()
 {
-	local date_fmt_str me=get_blocklist_timestamp
+	local me=get_blocklist_timestamp \
+		ASSERT_NOEXIT=1 \
+		date_fmt_str curr_path
 	case "${1}" in
 		-s) date_fmt_str='+%s' ;;
 		-h) date_fmt_str='+%b %d %Y, %H:%M:%S' ;;
 		*) reg_failure "${me}: unexpected format '${1}'."; return 1
 	esac
 
-	if [ -n "${BL_FILE_CURR}" ]
+	get_bl_params -f "${me}" "${2}" curr_path || return 1
+
+	if [ -n "${curr_path}" ]
 	then
-		date -r "${BL_FILE_CURR}" "${date_fmt_str}" && return 0
-		reg_failure "${me}: Failed to get the timestamp of file '${BL_FILE_CURR}'."
+		date -r "${curr_path}" "${date_fmt_str}" && return 0
+		reg_failure "${me}: Failed to get the timestamp of file '${curr_path}'."
 		return 1
 	else
 		reg_failure "${me}: no blocklist file found."
@@ -2301,15 +2306,16 @@ do_stop()
 
 	if [ -z "${BL_IDS}" ] || ! set_global_env "${bl_ids}"
 	then
-		bl_ids="${BL_IDS}"
+		: "${bl_ids="${BL_IDS}"}"
 		GDI_NOFORCE=1 get_dnsmasq_instances
 	fi
 
+	bl_id_pr="blocklists: '${bl_ids}'"
+
 	if [ -n "${bl_ids}" ] &&
-		bl_id_pr="blocklists: ${bl_ids}" &&
 		for bl_id in ${bl_ids}
 		do
-			get_bl_params "${bl_id}" dnsmasq_indexes &&
+			get_bl_params -f stop "${bl_id}" dnsmasq_indexes &&
 			add2list all_stop_indexes "${dnsmasq_indexes}" ||
 				{ bl_params_failed=1; break; }
 		done &&
@@ -2318,6 +2324,7 @@ do_stop()
 		rm_conf_scripts "${bl_ids}" &&
 		rm_blocklists "${bl_ids}" &&
 		restart_dnsmasq "${all_stop_indexes}" &&
+		[ -n "${ABL_ENV_SET}" ] &&
 		for bl_id in ${bl_ids}
 		do
 			CA_NOERR=1 get_bl_run_state "${bl_id}"
@@ -2331,6 +2338,9 @@ do_stop()
 		log_msg -purple "" "Successfully stopped adblocking for ${bl_id_pr}"
 		return 0
 	fi
+
+	[ "${bl_ids}" = "${BL_IDS}" ] ||
+		{ reg_failure "Failed to stop adblocking for ${bl_id_pr}."; exit 1; }
 
 	reg_action -1 -purple "" "Stopping adblocking for any adblock-lean blocklists."
 
@@ -2383,54 +2393,83 @@ status()
 
 	init_command status || exit 1
 
-	set_global_env || exit 1
-
 	rc_enabled
 	case ${?} in
 		0) print_msg -green "" "adblock-lean service is enabled." ;;
 		1) print_msg -yellow "" "adblock-lean service is disabled."
 	esac
 
-	local timestamp status_cnt='' status_cnt_human
+	local timestamp curr_cnt_human \
+		status_rv=0 \
+		run_state curr_path curr_cnt persist_dir persist_mode \
+		bl_id bl_id_pr bl_id_pr_lc \
+		ASSERT_NOEXIT=1 \
+		bl_ids="${*:-"${BL_IDS}"}"
 
-
-	# TODO: get status_cnt
-
-	case ${RUN_STATE_GLOBAL} in
-		0) ;;
-		1) reg_failure "adblock-lean is not working correctly. Consider running 'service adblock-lean restart' in order to restore adblocking." ;;
-		3) print_msg -yellow "" "adblock-lean is paused." ;;
-		4) print_msg -yellow "" "adblock-lean is stopped." ;;
-	esac
-
-	if [ "${RUN_STATE_GLOBAL}" = 0 ]
+	if [ -z "${BL_IDS}" ]
 	then
-		luci_good_line_count=${status_cnt}
-		if [ "${status_cnt}" = 0 ]
-		then
-			log_msg -warn "No entries found in the blocklist file."
-			RUN_STATE_GLOBAL=1
-		else
-			int2human status_cnt_human "${status_cnt}" || return 1
-			timestamp="$(get_blocklist_timestamp -h)"
-			print_msg "" \
-				"${green}adblock-lean is active.${n_c}" \
-				"Installed blocklist file: ${blue}${BL_FILE_CURR}${n_c}" \
-				"Entries count: ${blue}${status_cnt_human}${n_c}" \
-				"Blocklist was updated on: ${blue}${timestamp:-"${red}Unknown"}${n_c}"
-			gen_stats -noexit
-		fi
+		reg_failure "No blocklists registered."
+		status_rv=1
+	elif [ -z "${bl_ids}" ]
+	then
+		reg_failure "No blocklist IDs specified."
+		status_rv=1
+	elif ! set_global_env "${bl_ids}"
+	then
+		reg_failure "Failed to load environment for blocklists '${bl_ids}'."
+		status_rv=1
+	else
+		for bl_id in ${bl_ids}
+		do
+			run_state=1
+			bl_id_pr="Blocklist '${blue}${bl_id}${n_c}'"
+			bl_id_pr_lc="blocklist '${blue}${bl_id}${n_c}'"
+			print_msg "" "Status of ${bl_id_pr_lc}:"
+			get_bl_params "${bl_id}" run_state curr_path curr_cnt persist_dir persist_mode &&
+			{
+				: "${curr_cnt:=0}"
+				case "${run_state}" in 0|3)
+					[ -n "${curr_path}" ] || run_state=1
+					[ "${curr_cnt}" -gt 0 ] ||
+					{
+						log_msg -warn "  Blocklist file for ${bl_id_pr_lc} not found or no entries found in the blocklist file."
+						run_state=1
+					}
+				esac
+
+				case ${run_state} in
+					0) ;;
+					3) print_msg -yellow "  adblocking is paused." ;;
+					4) print_msg -yellow "  adblocking is stopped." ;;
+					*)
+						run_state=1
+						reg_failure "${bl_id_pr} is not working correctly. Consider running 'service adblock-lean restart ${bl_id}' in order to restore adblocking." ;;
+				esac
+
+				case "${run_state}" in 0|3)
+					int2human curr_cnt_human "${curr_cnt}" || return 1
+					timestamp="$(get_blocklist_timestamp -h "${bl_id}")"
+					print_msg \
+						"  ${green}Adblocking is active.${n_c}" \
+						"  Blocklist file: ${blue}${curr_path}${n_c}" \
+						"  Entries count: ${blue}${curr_cnt_human}${n_c}" \
+						"  Blocklist was updated on: ${blue}${timestamp:-"${red}Unknown"}${n_c}"
+
+					[ -n "${persist_dir}" ] && [ "${persist_mode}" = managed ] && [ "${curr_path%/*}" != "${persist_dir}" ] &&
+						print_msg -warn "Persistent blocklist directory '${persist_dir}' for ${bl_id_pr_lc} is configured but not currently used."
+				esac
+			}
+
+			luci_good_line_count=${curr_cnt:-0}
+			luci_dnsmasq_status=${run_state}
+			[ "${run_state}" = 1 ] && status_rv=1
+		done
 	fi
-
-	[ -n "${PERSIST_BLOCKLIST_DIR}" ] && [ "${PERSIST_BLOCKLIST_MODE}" = managed ] && [ -n "${BL_FILE_CURR}" ] && [ "${BL_FILE_CURR%/*}" != "${PERSIST_BLOCKLIST_DIR}" ] &&
-		print_msg -warn "" "Persistent blocklist directory is configured but not currently used."
-
-	luci_dnsmasq_status=${RUN_STATE_GLOBAL}
 
 	check_for_updates
 	luci_update_status=${?}
 
-	exit "${RUN_STATE_GLOBAL}"
+	exit ${status_rv}
 }
 
 # 1: pause|resume
@@ -2487,8 +2526,8 @@ pause_resume()
 			curr_path \
 			curr_cnt \
 			pause_path \
-			install_path \
-			new_single_instance
+			install_path || return 1
+		get_bl_params "${bl_id}" new_single_instance
 
 		bl_id_pr="blocklist '${bl_id}'"
 
@@ -2717,6 +2756,7 @@ update()
 
 uninstall()
 {
+	local ASSERT_NOEXIT=1
 	init_command uninstall || return 1
 	KEEP_PERSIST=0 do_stop
 	if rc_enabled
