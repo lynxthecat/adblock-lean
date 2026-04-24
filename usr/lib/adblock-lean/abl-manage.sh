@@ -924,7 +924,7 @@ check_active_blocklist()
 	get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes &&
 	get_bl_params "${bl_id}" test_domains || return 1
 
-	if [ -n "${ca_single_instance}" ]
+	if [ "${ca_single_instance}" = 1 ]
 	then
 		ca_id="${bl_id}" # blocklist ID is used in test domain for single instance
 	else
@@ -988,11 +988,13 @@ get_bl_run_state()
 {
 	local me=get_bl_run_state \
 		bl_id \
-		curr_path curr_md5 curr_single_instance \
+		curr_path curr_md5 curr_single_instance new_single_instance \
 		bl_check_res \
 		run_state \
-		bl_file_exists \
-		cs_res='' dns_check_res='' \
+		bl_in_conf_dir \
+		cs_res=0 \
+		bl_file_exists=0 \
+		dns_check_res=0 \
 		conf_dir conf_dirs cd_state \
 		bl_id="${1:?}"
 
@@ -1000,50 +1002,67 @@ get_bl_run_state()
 
 	print_msg -blue "Checking state of adblock-lean blocklist '${bl_id}'"
 
-	get_bl_params "${bl_id}" curr_path curr_md5 curr_single_instance conf_dirs
+	get_bl_params "${bl_id}" curr_path curr_md5 curr_single_instance new_single_instance conf_dirs || return 1
 
-	debug_msg "${me}: curr_path=${curr_path};curr_single_instance=${curr_single_instance};curr_md5=${curr_md5}"
+	: "${curr_single_instance:="${new_single_instance}"}"
+
+	debug_msg "${me}: curr_single_instance=${curr_single_instance};curr_md5=${curr_md5}"
 
 	# Test adblocking
 	if [ -n "${curr_md5}" ]
 	then
 		check_active_blocklist "${bl_id}" "${curr_md5}" "${curr_single_instance}"
 		case ${?} in
-			0|2) dns_check_res=${?} ;;
-			*) dns_check_res=1 ;;
+			0) dns_check_res=1 ;; # pass
+			2) dns_check_res=0 ;; # not pass
+			*) dns_check_res=2 ;; # error
 		esac
-	else
-		dns_check_res=2
 	fi
 
-	# Check conf-scripts
-	# codes:
-	# 0: all conf-scripts found
-	# 1: inconsistent state
-	# 2: all conf-scripts not found
+	[ -n "${curr_path}" ] && [ -f "${curr_path}" ] || curr_path=
+
+	# conf-scripts codes:
+	# 0: all conf-scripts not found
+	# 1: all conf-scripts found
+	# 2: inconsistent state
 	for conf_dir in ${conf_dirs}
 	do
-		[ -f "${conf_dir}/abl-conf-script" ] && cd_state=0 || cd_state=2
+		[ -f "${conf_dir}/abl-conf-script" ] && cd_state=1 || cd_state=0
 		[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
-		[ "${cs_res}" = "${cd_state}" ] || cs_res=1		
-	done
-	: "${cs_res:=2}"
 
-	# Check if blocklist file exists
-	[ -f "${curr_path}" ]
-	bl_file_exists=${?}
+		[ "${cs_res}" = "${cd_state}" ] || cs_res=2
+	done
+
+	[ -n "${curr_path}" ] ||
+		# Look for blocklist file in all conf-dirs
+		for conf_dir in ${ALL_CONF_DIRS}
+		do
+			FF_FIRST=1 find_files curr_path "${conf_dir}" "abl-blocklist-${bl_id}"
+			[ -n "${curr_path}" ] && { bl_in_conf_dir=1 curr_single_instance=1; break; }
+		done
+
+	[ -n "${curr_path}" ] && bl_file_exists=1
 
 	# Summarize
-	bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${curr_single_instance:-0}"
+	bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${curr_single_instance}"
 	case "${bl_check_res}" in
-		0000|0021) run_state=0 ;; # running
-		2020|2021) run_state=3 ;; # paused
-		2120|2121) run_state=4 ;; # stopped
-		*)
-			run_state=1
-			reg_failure "Unexpected state for blocklist '${bl_id}'. DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${curr_single_instance:-0};"
+		1110|1101) run_state=0 ;; # running
+		0100|0101)
+			if [ -n "${bl_in_conf_dir}" ]
+			then
+				run_state=1
+			else
+				run_state=3  # paused
+			fi ;;
+		0000|0001) run_state=4 ;; # stopped
+		*) run_state=1 ;;
 	esac
-	set_bl_params "${bl_id}" run_state
+
+	[ "${run_state}" = 1 ] &&
+		reg_failure "Unexpected state for blocklist '${bl_id}'." \
+			"path:${curr_path}; DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${curr_single_instance:-0};"
+
+	set_bl_params "${bl_id}" run_state curr_path curr_single_instance
 
 	debug_msg "${me}: bl_id:'${bl_id}'; check res:'${bl_check_res}'"
 
@@ -1207,7 +1226,7 @@ set_bl_env()
 {
 	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${1}' to rebuild the ${2}${2:+ }blocklist."; }
 	wont_work() {
-		reg_failure "${1} can not be used because of missing addnmounts in /etc/config/dhcp: ${2}" \
+		reg_failure "${1} can not be used with blocklist '${bl_id}' because of missing addnmounts in /etc/config/dhcp: ${2}" \
 			"Please run 'service adblock-lean create_addnmounts' to create required addnmount entries."
 	}
 
@@ -1238,7 +1257,7 @@ set_bl_env()
 		install_path \
 		install_path_ram \
 		install_path_ram_check \
-		new_single_instance \
+		new_single_instance=0 \
 		\
 		persist_avail=0 \
 		persist_dir \
@@ -1477,7 +1496,7 @@ set_bl_env()
 	[ "${install_path}" = "${bl_path_persist}" ] && install_location=PERSIST
 
 	pause_path="${install_path}"
-	[ -n "${new_single_instance}" ] &&
+	[ "${new_single_instance}" = 1 ] &&
 		pause_path="${ABL_RUN_DIR}/${bl_full_fname}"
 
 	set_bl_params "${bl_id}" \
@@ -1661,7 +1680,7 @@ install_blocklists()
 		if \
 			reg_action -blue "Installing ${install_desc} blocklist file." && # TODO: desc from args?
 			get_md5 install_md5 "${install_path}" &&
-			[ -n "${new_single_instance}" ] ||
+			[ "${new_single_instance}" = 1 ] ||
 			# Make conf-script
 			{
 				for conf_dir in ${conf_dirs}
@@ -1879,10 +1898,10 @@ try_commit_metadata()
 }
 
 # Reads the metadata file and assigns global vars:
-#   IS_PAUSED_${inst} [PERSIST_]PATH_${inst} [PERSIST_]MD5_${inst} [PERSIST_]CNT_${inst}
+#   META_READ_IDS, IS_PAUSED_${id}, [PERSIST_]PATH_${id}, [PERSIST_]MD5_${id}, [PERSIST_]CNT_${id}
 #
 # Values are only assigned for files which actually exist, and reflect last known state
-#   (updated at the end of each adblock-lean run of start/stop/pause/resume)
+#   (updated at the end of each run of start/stop/pause/resume)
 #
 # 0 (optional): '-persist'
 # 1: path to the meta file
@@ -1891,85 +1910,101 @@ try_commit_metadata()
 # shellcheck disable=SC2329
 read_blocklist_metadata()
 {
-	append_err() { err_msgs=${err_msgs}${err_msgs:+"${_NL_}"}${1}; }
+	append_err() {
+		rbm_errors=${rbm_errors}${rbm_errors:+"${_NL_}"}${1}
+		is_included "${bl_id}" "${meta_ids}" && rbm_rv=1
+	}
 
 	populate_vars()
 	{
 		local \
-			meta_params \
+			pv_param \
 			meta_val \
 			bl_md5 \
 			curr_path curr_cnt curr_md5 \
-			bl_id_pr="blocklist '${1}'"
+			bl_id="${1}"
+		local bl_id_pr="blocklist '${bl_id}'"
 
-		: "${meta_val}"
+		is_included "${bl_id}" "${req_ids}" || return 0
 
 		debug_msg "Populating vars for ${bl_id_pr}."
 
-		assert_known_bl_id "${1}" "${me}"
-
-		is_included "${seen_ids}" "${1}" &&
+		is_included "${bl_id}" "${seen_ids}" &&
 			append_err "Multiple entries for ${bl_id_pr} in ${sp_f_pr}."
 
-		add2list seen_ids "${1}"
+		add2list seen_ids "${bl_id}"
 
-		meta_params="${META_PARAMS}"
-		[ -n "${gbp_prefix}" ] && meta_params="${PERSIST_META_PARAMS}"
-
-		for param in ${meta_params}
+		for pv_param in ${meta_params}
 		do
-			config_get "meta_val" "${1}" "${param}" # accept empty values
-			eval "${gbp_prefix}${param}_${1}"='${meta_val}'
+			config_get meta_val "${bl_id}" "${pv_param}" # accept empty values
+			eval "${rbm_prefix}${pv_param}_${bl_id}"='${meta_val}'
 		done
 
 		# check md5
-		GBP_PREFIX="${gbp_prefix}" get_bl_params "${1}" curr_cnt curr_md5 curr_path
+		GBP_PREFIX="${rbm_prefix}" get_bl_params "${bl_id}" curr_cnt curr_md5 curr_path
 		[ -n "${curr_path}" ] || return 0
 
 		get_md5 bl_md5 "${curr_path}" ||
 			{ append_err "Failed to get MD5 sum of ${bl_id_pr} file at ${curr_path}."; return 1; }
 		[ "${curr_md5}" = "${bl_md5}" ] ||
-		{
 			append_err "MD5 sum not matching in ${sp_f_pr} for ${bl_id_pr}, path '${curr_path}'. Metadata file has: '${curr_md5}', blocklist file has: '${bl_md5}'."
-			return 1
-		}
 
 		# set persist params
-		[ "${gbp_prefix}" = 'PERSIST_' ] &&
+		[ "${rbm_type}" = PERSIST ] &&
 		{
 			[ "${curr_path%/*}" = "${meta_file%/*}" ] ||
 			{
 				append_err "Persistent blocklist dir not matching in ${sp_f_pr} for ${bl_id_pr}. Metadata file has: '${curr_path%/*}', metadata is at: '${meta_file%/*}'."
 				return 1
 			}
-			set_bl_params "${1}" curr_persist_md5="${curr_md5}" curr_persist_cnt="${curr_cnt}"
+			set_bl_params "${bl_id}" curr_persist_md5="${curr_md5}" curr_persist_cnt="${curr_cnt}"
+			add2list META_READ_IDS "${bl_id}"
 		}
 		:
 	}
 
-	local gbp_prefix=
-	[ "${1}" = '-persist' ] && { gbp_prefix=PERSIST_; shift; }
-	: "${gbp_prefix}"
+	local rbm_type=RAM rbm_prefix=
+	[ "${1}" = '-persist' ] && { rbm_type=PERSIST rbm_prefix=PERSIST_; shift; }
 
 	local me=read_blocklist_metadata \
-		param \
 		IFS="${DEFAULT_IFS}" \
 		rbm_rv=0 \
-		err_msgs='' \
+		rbm_err rbm_errors='' \
+		bl_id \
+		req_ids='' \
 		seen_ids='' \
-		meta_file="${1}" meta_ids="${2:-"${BL_IDS}"}" 
+		read_ids='' \
+		meta_params="${META_PARAMS}" \
+		meta_file="${1}" meta_ids="${2:-"${BL_IDS}"}"
+	local sp_f_pr="metadata file '${meta_file}'"
 
-		local sp_f_pr="metadata file '${meta_file}'"
+	: "${meta_val}"
 
 	debug_msg "${me} start, IDs ${meta_ids}"
 
 	[ -n "${meta_ids}" ] || { reg_failure "${me}: no blocklist configs found."; return 1; }
 
-	# Reset global vars
-	unset_metadata "${meta_ids}"
-
 	[ -f "${meta_file}" ] ||
 		{ debug_msg "${me}: can not find ${sp_f_pr}."; return 0; }
+
+	eval "read_ids=\"\${META_READ_IDS_${rbm_type}}\""
+
+	# read metadata for all ID's unless previously read
+	for bl_id in ${BL_IDS}
+	do
+		assert_known_bl_id "${bl_id}" "${me}" || return 1
+		# ignore previously processed blocklist ID's
+		is_included "${bl_id}" "${read_ids}" && continue
+		add2list req_ids "${bl_id}"
+	done
+	[ -n "${req_ids}" ] || return 0
+
+	debug_msg "${me}: req_ids: ${req_ids}"
+
+	# Reset global vars
+	unset_metadata "${req_ids}"
+
+	[ "${rbm_type}" = PERSIST ] && meta_params="${PERSIST_META_PARAMS}"
 
 	UCI_CONFIG_DIR="${meta_file%/*}" config_load "${meta_file##*/}" ||
 		{ reg_failure "${me}: failed to load ${sp_f_pr}."; return 1; }
@@ -1977,11 +2012,10 @@ read_blocklist_metadata()
 	config_foreach populate_vars blocklist_id
 
 	IFS="${_NL_}"
-	for err_msg in ${err_msgs}
+	for rbm_err in ${rbm_errors}
 	do
 		IFS="${DEFAULT_IFS}"
-		rbm_rv=1
-		reg_failure "${me}: ${err_msg}"
+		reg_failure "${me}: ${rbm_err}"
 	done
 	IFS="${DEFAULT_IFS}"
 
