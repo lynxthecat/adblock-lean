@@ -1116,7 +1116,7 @@ gen_blocklist()
 
 			# add the test domain in single-instance mode
 			[ -n "${new_single_instance}" ] &&
-				printf '%s\n' "address=/${ABL_TEST_DOM_BASE}/#"
+				printf '%s\n' "address=/${bl_id}-${ABL_TEST_DOM_BASE}/#"
 			:
 		} |
 
