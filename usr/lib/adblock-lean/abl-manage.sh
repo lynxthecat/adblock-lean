@@ -1028,7 +1028,7 @@ get_bl_run_state()
 	# 2: inconsistent state
 	for conf_dir in ${conf_dirs}
 	do
-		[ -f "${conf_dir}/abl-conf-script" ] && cd_state=1 || cd_state=0
+		[ -f "${conf_dir}/${CS_BASE_FNAME}-${bl_id}" ] && cd_state=1 || cd_state=0
 		[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
 
 		[ "${cs_res}" = "${cd_state}" ] || cs_res=2
@@ -1689,12 +1689,12 @@ install_blocklists()
 				do
 					is_valid_dir "${conf_dir}" || return 1
 
-					cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/abl-conf-script" || { reg_failure "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
+					cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${bl_id}" || { reg_failure "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
 						conf-script=\
 						${final_extr_or_cat_stdout} "${install_path}" && \
 						printf '%s\n' "address=/${install_md5}-${ABL_TEST_DOM_BASE}/#" && \
 						exit 0; \
-						${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err 'conf-script at '${conf_dir}/abl-conf-script' failed.';"} \
+						${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err 'conf-script at '${conf_dir}/${CS_BASE_FNAME}-${bl_id}' failed.';"} \
 						exit 0
 					EOF
 				done

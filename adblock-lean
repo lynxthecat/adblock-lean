@@ -109,6 +109,7 @@ export ABL_UPD_DIR=${ABL_TMP_DIR}/update \
 	\
 	BLOCKLIST_BASE_FNAME="abl-blocklist" \
 	HOTPLUG_SCRIPT_FNAME="99-abl-hotplug.sh" \
+	CS_BASE_FNAME="abl-conf-script" \
 	\
 	BK_BL_BASE_PATH="${ABL_TMP_DIR:?}/bk-blocklist"
 
@@ -593,7 +594,7 @@ rm_conf_scripts()
 		get_bl_params "${bl_id}" conf_dirs || return 1
 		for conf_dir in ${conf_dirs}
 		do
-			rm -f "${conf_dir}/abl-conf-script"
+			rm -f "${conf_dir}/${CS_BASE_FNAME}-${bl_id}"
 		done
 	done
 
@@ -2464,7 +2465,7 @@ do_stop()
 	do
 		[ -n "${dir}" ] || continue
 		IFS="${DEFAULT_IFS}"
-		rm -f "${dir}/abl-conf-script" "${dir}/${BLOCKLIST_BASE_FNAME:-???}"*
+		rm -f "${dir}/${CS_BASE_FNAME}"* "${dir}/${BLOCKLIST_BASE_FNAME:-???}"*
 	done
 	IFS="${DEFAULT_IFS}"
 
