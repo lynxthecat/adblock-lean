@@ -916,20 +916,23 @@ check_active_blocklist()
 
 	local me=check_active_blocklist \
 		test_domains \
-		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom \
-		bl_id="${1}" ca_md5="${2}" ca_single_instance="${3}"
-
-	assert_set "F_${me}" bl_id ca_md5 || return 1
+		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
+		bl_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
 	get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes &&
 	get_bl_params "${bl_id}" test_domains || return 1
 
-	[ -n "${ca_single_instance}" ] && ca_md5='' # md5 not part of test domain for single instance
-	ca_test_dom="${ca_md5}${ca_md5:+"-"}${ABL_TEST_DOM_BASE:?}"
+	if [ -n "${ca_single_instance}" ]
+	then
+		ca_id="${bl_id}" # blocklist ID is used in test domain for single instance
+	else
+		ca_id="${ca_md5}"
+	fi
+	ca_test_dom="${ca_id}-${ABL_TEST_DOM_BASE:?}"
 
-	debug_msg "${me}: bl_id:'${bl_id}', indexes:'${dnsmasq_indexes}', md5:'${ca_md5}'"
+	debug_msg "${me}: bl_id:'${bl_id}', indexes:'${dnsmasq_indexes}', id:'${ca_id}'"
 
 	for index in ${dnsmasq_indexes}
 	do
@@ -1511,8 +1514,17 @@ set_bl_env()
 
 assert_known_bl_id()
 {
+	local akb_err
+	{
+		is_alphanum "${1}" ||
+			{ akb_err="Invalid blocklist ID '${1}'."; false; }
+	} &&
+	{
 	is_included "${1}" "${BL_IDS}" ||
-		{ reg_failure "${2:+"${2}: "}blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS}'."; [ -n "${ASSERT_NOEXIT}" ] || exit 1; return 1; }
+		{ akb_err="Blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS}'."; false; }
+	} ||
+		{ reg_failure "${2:+"${2}: "}${akb_err}"; [ -n "${ASSERT_NOEXIT}" ] || exit 1; return 1; }
+	:
 }
 
 # Env vars: GBP_PREFIX
@@ -1547,7 +1559,7 @@ get_bl_params()
 		unset_vars "${var_exp%=*}" || exit 1
 	done
 
-	assert_known_bl_id "${bl_id}" "${me}"
+	assert_known_bl_id "${bl_id}" "${me}${err_func:+": ${err_func}():"}" || return 1
 
 	for var_exp in "${@}"
 	do
@@ -1789,9 +1801,6 @@ unset_metadata()
 	done
 }
 
-# 1: path to the meta file
-# 2: blocklist IDs to write
-# 3: list of params
 commit_metadata()
 {
 	try_commit_metadata "${@}" && return 0
@@ -1845,9 +1854,9 @@ try_commit_metadata()
 	[ -n "${uci_fail}" ] && return 1
 
 	# Persist metadata
-	for bl_id in "${@}"
+	for bl_id in ${BL_IDS}
 	do
-		get_bl_params "${bl_id}" curr_location
+		get_bl_params "${bl_id}" curr_location || return 1
 
 		[ "${curr_location}" = PERSIST ] || continue
 
