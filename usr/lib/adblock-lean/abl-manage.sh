@@ -11,10 +11,93 @@ PERSIST_META_PARAMS="PATH MD5 CNT"
 IP_REGEX_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
 IP_REGEX_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
 
+VAR2CFG_MAP="$(
+	# Format: <var>[=<cfg_opt>]
+	printf '%s\n' "
+		whitelist_mode
+		raw_block_lists
+		raw_allow_lists
+		raw_ipv4_block_lists
+		dnsmasq_block_lists
+		dnsmasq_allow_lists
+		dnsmasq_ipv4_block_lists
+		hosts_block_lists
+		local_allowlist_path
+		local_blocklist_path
+		persist_mode=persist_blocklist_mode
+		persist_dir=persist_blocklist_dir
+		test_domains
+		min_good_line_count
+		min_blocklist_part_line_count
+		min_ipv4_blocklist_part_line_count
+		min_allowlist_part_line_count
+		max_file_part_size_KB
+		max_blocklist_file_size_KB
+		custom_script
+		dnsmasq_indexes
+		conf_dirs=dnsmasq_conf_dirs
+	" |
+	${AWK_CMD:?} '{$1=$1; split($0,a,"="); if (!a[1]) next; if (!a[2]) a[2] = a[1]; print a[1] "=" a[2]}'
+)" &&
+
+# Format: <local_var>=<global_var_prefix>
+BL_PARAMS_MAP="
+	${VAR2CFG_MAP}
+	run_state=RUN_STATE
+	skip_load_stop=SKIP_LOAD_STOP
+	bk_ext=BK_EXT
+	bk_file=BK_FILE
+	curr_persist_path=PERSIST_PATH
+	curr_persist_cnt=PERSIST_CNT
+	curr_persist_md5=PERSIST_MD5
+	curr_location=LOCATION
+	curr_path=PATH
+	curr_md5=MD5
+	curr_cnt=CNT
+	curr_single_instance=SINGLE_INSTANCE
+	install_location=INSTALL_LOCATION
+	install_path=INSTALL_PATH
+	install_cnt=INSTALL_CNT
+	install_path_ram=INSTALL_PATH_RAM
+	new_single_instance=NEW_SINGLE_INSTANCE
+	pause_path=PAUSE_PATH
+	final_compress=FINAL_COMPRESS
+	final_compr_ext=FINAL_COMPR_EXT
+	final_extr_or_cat_stdout=FINAL_EXTR_OR_CAT_STDOUT
+	final_compr_or_cat_stdout=FINAL_COMPR_OR_CAT_STDOUT
+	final_compr_to_file=FINAL_COMPR_TO_FILE
+	part_extr_or_cat_stdout=PART_EXTR_OR_CAT_STDOUT
+	conf_script_log_avail=CONF_SCRIPT_LOG_AVAIL
+"
+
+# 'case' clauses for translating param name to global var name
+BL_PARAMS_CLAUSES="$(
+	printf '%s\n' "${BL_PARAMS_MAP}" |
+	${SED_CMD:?} 's/\s//g;/^$/d;s/=/\) _gl_var=/; s/$/ ;;/'
+)" &&
+
+VAR2CFG_CLAUSES="$(
+	printf '%s\n' "${VAR2CFG_MAP}" |
+	${SED_CMD:?} 's/=/\) _cfg_opt=/; s/$/ ;;/'
+)" || exit 1
+
+get_cfg_opt()
+{
+	local _cfg_opt
+	: "${_cfg_opt}"
+	eval "
+		case \"${2:?}\" in
+			${VAR2CFG_CLAUSES}
+			*) return 1 ;;
+		esac
+	"
+
+	eval "${1:?}"='${_cfg_opt}'
+}
+
 
 # silence shellcheck warnings
-: "${test_domains:=}" "${compression_util:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" \
-	"${blue:=}" "${green:=}" "${red:=}" "${n_c:=}"
+: "${blue:=}" "${green:=}" "${red:=}" "${n_c:=}"
 
 
 # UTILITY FUNCTIONS
@@ -309,124 +392,165 @@ check_dnsmasq_instances()
 		reg_failure "${@}"
 	}
 
-	local quiet='' instance index dir instance_conf_dirs conf_dir_reg all_abl_conf_dirs='' \
-		inst_ind="dnsmasq instance with index" \
-		please_run="Please run 'service adblock-lean select_dnsmasq_instances'."
+	local quiet='' instance index dir \
+		bl_id \
+		cfg_opt \
+		instance_conf_dirs conf_dir_reg \
+		conf_dirs \
+		inst_ind="dnsmasq instance with index"
 
 	[ "${1}" = '-q' ] && quiet=1
 
 	assert_set F_check_dnsmasq_instances DNSMASQ_INST_SET || return 1
 
-	[ -n "${DNSMASQ_INDEXES}" ] || { check_failed "DNSMASQ_INDEXES config option is not set."; return 1; }
-
-	for index in ${DNSMASQ_INDEXES}
+	for bl_id in ${BL_IDS}
 	do
-		eval "[ \"\${RUNNING_${index}}\" = 1 ]" ||
-		{
-			check_failed "${inst_ind} ${index} is not running."
-			do_stop
-			get_dnsmasq_instances &&
+		local \
+			all_bl_conf_dirs='' \
+			bl_id_pr="for blocklist '${bl_id}'" \
+			please_run="Please run 'service adblock-lean select_dnsmasq_instances ${bl_id}'."
+
+		get_bl_params "${bl_id}" dnsmasq_indexes conf_dirs || return 1
+		for param in dnsmasq_indexes conf_dirs
+		do
+			eval "[ -n \"\${${param}}\" ]" ||
+				{ get_cfg_opt cfg_opt "${param}"; check_failed "'${cfg_opt}' config option is not set ${bl_id_pr}. ${please_run}"; return 1; }
+		done
+
+		for index in ${dnsmasq_indexes}
+		do
 			eval "[ \"\${RUNNING_${index}}\" = 1 ]" ||
 			{
-				check_failed "${inst_ind} ${index} is misconfigured or not running."
+				check_failed "${inst_ind} ${index} is not running."
+				do_stop "${bl_id}" &&
+				get_dnsmasq_instances &&
+				eval "[ \"\${RUNNING_${index}}\" = 1 ]" ||
+				{
+					check_failed "${inst_ind} ${index} is misconfigured or not running."
+					return 1
+				}
+			}
+
+			eval "instance_conf_dirs=\"\${CONF_DIRS_${index}}\""
+			[ -n "${instance_conf_dirs}" ] ||
+				{ check_failed "Config directory is not set for dnsmasq instance with index ${index}."; return 1; }
+			all_bl_conf_dirs="${all_bl_conf_dirs}${instance_conf_dirs}${_NL_}"
+
+			conf_dir_reg=
+			local IFS="${_NL_}"
+			for dir in ${instance_conf_dirs}
+			do
+				IFS="${DEFAULT_IFS}"
+				is_included "${dir}" "${conf_dirs}" && conf_dir_reg=1
+				[ -d "${dir}" ] ||
+				{
+					check_failed "Conf-dir '${dir}' does not exist. ${inst_ind} ${index} is misconfigured. ${please_run}"
+					return 1
+				}
+			done
+			IFS="${DEFAULT_IFS}"
+
+			[ -n "${conf_dir_reg}" ] ||
+			{
+				check_failed "Conf-dirs for ${inst_ind} ${index} changed. ${please_run}"
 				return 1
 			}
-		}
 
-		conf_dir_reg=
-		eval "instance_conf_dirs=\"\${CONF_DIRS_${index}}\""
-		[ -n "${instance_conf_dirs}" ] ||
-			{ check_failed "dnsmasq config directory is not set for instance with index ${index}."; return 1; }
-		all_abl_conf_dirs="${all_abl_conf_dirs}${instance_conf_dirs}${_NL_}"
-
-		local IFS="${_NL_}"
-		for dir in ${instance_conf_dirs}
-		do
-			IFS="${DEFAULT_IFS}"
-			is_included "${dir}" "${DNSMASQ_CONF_DIRS}" && conf_dir_reg=1
-			[ -d "${dir}" ] ||
+			# check if config section exists in /etc/config/dhcp
+			uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
 			{
-				check_failed "Conf-dir '${dir}' does not exist. ${inst_ind} ${index} is misconfigured. ${please_run}"
+				check_failed "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
 				return 1
 			}
 		done
-		IFS="${DEFAULT_IFS}"
 
-		[ -n "${conf_dir_reg}" ] ||
-		{
-			check_failed "Conf-dirs for ${inst_ind} ${index} changed. ${please_run}"
-			return 1
-		}
-
-		# check if config section exists in /etc/config/dhcp
-		uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
-		{
-			check_failed "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
-			return 1
-		}
-	done
-
-	for dir in ${DNSMASQ_CONF_DIRS}
-	do
-		is_included "${dir}" "${all_abl_conf_dirs}" "${_NL_}" ||
-			{ check_failed "conf-dir directory '${dir}' is set in config but not used by dnsmasq instances '${DNSMASQ_INDEXES}'."; return 1; }
+		for dir in ${conf_dirs}
+		do
+			is_included "${dir}" "${all_bl_conf_dirs}" "${_NL_}" ||
+			{
+				check_failed "conf-dir directory '${dir}' is set in config ${bl_id_pr} but not used by configured dnsmasq instances '${dnsmasq_indexes}'."
+				return 1
+			}
+		done
 	done
 
 	:
 }
 
-# analyze dnsmasq instances and set $DNSMASQ_CONF_DIRS
-# 1 - (optional) '-n' to only set vars (no config write)
+# analyze dnsmasq instances and set $dnsmasq_conf_dirs
+# 1 (optional): blocklist ID's (defaults to all)
 do_select_dnsmasq_instances() {
 	validate_indexes()
 	{
-		printf '%s\n' "${1}" | grep -qE "^(a|${indexes}|(${indexes} )+)$" &&
+		printf '%s\n' "${1}" | grep -qE "^(a|(${indexes_regex}( +${indexes_regex})+))$" && # TODO: test
 		case "${1}" in
 			a) : ;;
-			*[!0-9\ ]*) false ;;
+			''|*[!0-9\ ]*) false ;;
 			*) :
 		esac
 	}
 
-	get_dnsmasq_instances && is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] ||
+	local me=select_dnsmasq_instances \
+		conf_dirs conf_dirs_instance \
+		conf_dirs_cnt \
+		select_conf_dirs \
+		select_skip_msg \
+		select_indexes \
+		instance index luci_indexes indexes_regex \
+		ifaces \
+		REPLY \
+		first diff \
+		add_dir \
+		bl_id bl_ids
+
+	bl_ids="${1:-"${BL_IDS}"}"
+
+	assert_set "F_${me}" BL_IDS || return 1
+
+	get_dnsmasq_instances && [ -n "${DNSMASQ_RUNNING_INDEXES}" ] ||
 	{
 		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
 		do_stop
-		get_dnsmasq_instances && is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] || return 1
+		get_dnsmasq_instances && [ -n "${DNSMASQ_RUNNING_INDEXES}" ] || return 1
 	}
 
-	local conf_dirs='' instance conf_dirs_instance index indexes='' ifaces='' REPLY first diff conf_dirs_cnt conf_dirs_print='' add_dir
-
-	if [ "${DNSMASQ_INSTANCES_CNT}" = 1 ]
-	then
-		reg_msg -blue "Detected only 1 dnsmasq instance - skipping manual instance selection."
-		DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
-	else
-		# check if all instances share same conf-dirs
-		REPLY='' first=1 diff='' conf_dirs_cnt=''
-		for index in ${DNSMASQ_RUNNING_INDEXES}
-		do
-			eval "conf_dirs_instance=\"\${CONF_DIRS_${index}}\""
-			case "${first}" in
-				1)
-					first=
-					conf_dirs="${conf_dirs_instance}" ;;
-				'')
-					# conf-dirs are sorted, so we can directly compare
-					[ "${conf_dirs_instance}" = "${conf_dirs}" ] && continue
-					diff=1
-					break
-			esac
-		done
-
-		# if conf-dirs are shared, attach to first instance
-		if [ -z "${diff}" ]
+	for bl_id in ${bl_ids}
+	do
+		select_skip_msg="Detected only 1 dnsmasq instance"
+		first=1 diff='' conf_dirs_cnt='' REPLY='' select_indexes='' indexes_regex='' conf_dirs=''
+			ifaces='' select_ifaces=''
+			select_conf_dirs=''
+		if \
+		{
+			[ "${DNSMASQ_INSTANCES_CNT}" = 1 ] &&
+				select_indexes="${DNSMASQ_RUNNING_INDEXES%% *}"
+		} ||
+		{
+			# check if all instances share same conf-dirs
+			for index in ${DNSMASQ_RUNNING_INDEXES}
+			do
+				eval "conf_dirs_instance=\"\${CONF_DIRS_${index}}\""
+				case "${first}" in
+					1)
+						first=
+						conf_dirs="${conf_dirs_instance}" ;;
+					'')
+						# conf-dirs are sorted, so we can directly compare
+						[ "${conf_dirs_instance}" = "${conf_dirs}" ] && continue
+						diff=1
+						break
+				esac
+			done
+			[ -z "${diff}" ] &&
+			select_indexes="${DNSMASQ_RUNNING_INDEXES}" &&
+			select_skip_msg="Detected multiple dnsmasq instances which are using the same conf-dirs: ${_NL_}${blue}${conf_dirs// /" ${_NL_}"}${n_c}"
+		}
 		then
-			reg_msg -blue "Detected multiple dnsmasq instances which are using the same conf-dir. Skipping manual instance selection."
-			DNSMASQ_INDEXES="${DNSMASQ_RUNNING_INDEXES%% *}"
+			reg_msg "" "${select_skip_msg}" "Skipping manual dnsmasq instance selection."
 		else
-			# if conf-dirs are not shared, ask the user
+			# Ask the user
 			reg_msg -blue "Multiple dnsmasq instances detected."
+			eval "luci_indexes=\"\${luci_dnsmasq_indexes_${bl_id}}\""
 			REPLY=a
 			if [ "${DO_DIALOGS}" = 1 ]
 			then
@@ -436,80 +560,70 @@ do_select_dnsmasq_instances() {
 					eval "instance=\"\${DNSMASQ_INST_NAME_${index}}\"" \
 						"ifaces=\"\${IFACES_${index}}\""
 					ifaces="${ifaces//"${_NL_}"/, }"
-					reg_msg "${index}. Instance '${instance}': interfaces '${ifaces}'"
-					indexes="${indexes}${index}|"
+					reg_msg "${index}. Instance '${instance}': network interfaces '${ifaces}'"
+					indexes_regex="${indexes_regex}${index}|"
 				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking, or 'a' to abort." \
+				print_msg "" "Please select which dnsmasq instance should have active adblocking for blocklist '${bl_id}', or 'a' to abort." \
 					"To adblock on multiple instances, enter their indexes separated by whitespaces."
 				while :
 				do
-					printf %s "${indexes}a: " > "${MSGS_DEST}"
+					printf %s "${indexes_regex}a: " > "${MSGS_DEST}"
 					read -r REPLY
 					validate_indexes "${REPLY}" ||
-						{ printf '\n%s\n\n' "Please enter ${indexes}a" > "${MSGS_DEST}"; continue; }
+						{ printf '\n%s\n\n' "Please enter ${indexes_regex}a" > "${MSGS_DEST}"; continue; }
 					break
 				done
-			elif [ -n "${LUCI_DNSMASQ_INDEXES}" ]
+			elif [ -n "${luci_indexes}" ]
 			then
-				REPLY="${LUCI_DNSMASQ_INDEXES}"
+				REPLY="${luci_indexes}"
 				validate_indexes "${REPLY}" ||
 					{ reg_failure "Invalid dnsmasq instance indexes '${REPLY}'."; return 1; }
 			else
-				reg_failure "dnsmasq indexes not specified."
+				reg_failure "dnsmasq indexes not specified for blocklists '${bl_ids}'."
 				return 1
 			fi
 
 			[ "${REPLY}" = a ] && { reg_msg "Aborted config generation."; exit 0; }
-			DNSMASQ_INDEXES="${REPLY}"
+			select_indexes="${REPLY}"
 		fi
-	fi
 
-	local select_ifaces=
-	for index in ${DNSMASQ_INDEXES}
-	do
-		eval "ifaces=\"\${IFACES_${index}}\""
-		add2list select_ifaces "${ifaces}" "${_NL_}"
-	done
+		for index in ${select_indexes}
+		do
+			eval "ifaces=\"\${IFACES_${index}}\""
+			add2list select_ifaces "${ifaces}"
+		done
 
-	log_msg "Selected dnsmasq indexes: '${DNSMASQ_INDEXES}' (network intefaces: ${select_ifaces//"${_NL_}"/, })."
+		log_msg "Selected dnsmasq indexes for blocklist '${bl_id}': '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
 
-	DNSMASQ_CONF_DIRS=
-	for index in ${DNSMASQ_INDEXES}
-	do
-		add_dir=''
-		eval "conf_dirs=\"\${CONF_DIRS_${index}}\"
-			conf_dirs_cnt=\"\${CONF_DIRS_CNT_${index}}\""
+		for index in ${select_indexes}
+		do
+			add_dir=''
+			eval "conf_dirs=\"\${CONF_DIRS_${index}}\"
+				conf_dirs_cnt=\"\${CONF_DIRS_CNT_${index}}\""
 
-		if [ "${conf_dirs_cnt}" = 1 ]
-		then
-			add_dir="${conf_dirs}"
-		else
-			if is_included "/tmp/dnsmasq.d" "${conf_dirs}" "${_NL_}"
+			if [ "${conf_dirs_cnt}" = 1 ]
 			then
-				add_dir="/tmp/dnsmasq.d"
-			elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}" "${_NL_}"
-			then
-				add_dir="/tmp/dnsmasq.cfg01411c.d"
+				add_dir="${conf_dirs}"
 			else
-				# fall back to first conf-dir
-				add_dir="${conf_dirs%%"${_NL_}"*}"
+				if is_included "/tmp/dnsmasq.d" "${conf_dirs}" "${_NL_}"
+				then
+					add_dir="/tmp/dnsmasq.d"
+				elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}" "${_NL_}"
+				then
+					add_dir="/tmp/dnsmasq.cfg01411c.d"
+				else
+					# fall back to first conf-dir
+					add_dir="${conf_dirs%%"${_NL_}"*}"
+				fi
 			fi
-		fi
-		[ -n "${add_dir}" ] && { add2list DNSMASQ_CONF_DIRS "${add_dir}"; add2list conf_dirs_print "${add_dir}" ", "; }
+			[ -n "${add_dir}" ] && add2list select_conf_dirs "${add_dir}" "${_NL_}"
+		done
+
+		[ -n "${select_conf_dirs}" ] || { reg_failure "Failed to detect conf-dirs for dnsmasq indexes '${select_indexes}'."; return 1; }
+
+		log_msg "Selected dnsmasq conf-dirs: '${select_conf_dirs//"${_NL_}"/"', '"/}'"
+		set_bl_params "${bl_id}" dnsmasq_indexes="${select_indexes}" conf_dirs="${select_conf_dirs}" || return 1
 	done
-
-	[ -n "${DNSMASQ_CONF_DIRS}" ] || { reg_failure "Failed to detect conf-dirs for dnsmasq indexes '${DNSMASQ_INDEXES}'."; return 1; }
-
-	log_msg "Selected dnsmasq conf-dirs: ${conf_dirs_print}"
-	if [ "${1}" != '-n' ]
-	then
-		write_config "$(
-			${SED_CMD} "
-				s~^\s*DNSMASQ_INDEXES=.*~DNSMASQ_INDEXES=\"${DNSMASQ_INDEXES}\"~
-				s~^\s*DNSMASQ_CONF_DIRS=.*~DNSMASQ_CONF_DIRS=\"${DNSMASQ_CONF_DIRS}\"~
-			" "${ABL_CONFIG_FILE}"
-		)" || return 1
-	fi
 
 	:
 }
@@ -761,12 +875,12 @@ try_mv_blocklist()
 # Make sure the directory is not the same as the mount point
 check_persist_dir()
 {
-	local mnt_point persist_dir="${PERSIST_BLOCKLIST_DIR}"
+	local mnt_point persist_dir="${persist_blocklist_dir}" # TODO
 
 	[ -d "${persist_dir}" ] ||
 	{
 		case "${persist_dir}" in
-			''|/) reg_failure "Empty or invalid persistent blocklist directory'${persist_dir}' specified in config option PERSIST_BLOCKLIST_DIR." ;;
+			''|/) reg_failure "Empty or invalid persistent blocklist directory'${persist_dir}' specified in config option persist_blocklist_dir." ;;
 			*) reg_failure "Can not find persistent blocklist directory: ${persist_dir}."
 		esac
 		return 1
@@ -801,6 +915,7 @@ check_active_blocklist()
 	reg_action -blue "Checking the active blocklist." || return 1
 
 	local me=check_active_blocklist \
+		test_domains \
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom \
 		bl_id="${1}" ca_md5="${2}" ca_single_instance="${3}"
 
@@ -808,7 +923,8 @@ check_active_blocklist()
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
-	get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes || return 1
+	get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes &&
+	get_bl_params "${bl_id}" test_domains || return 1
 
 	[ -n "${ca_single_instance}" ] && ca_md5='' # md5 not part of test domain for single instance
 	ca_test_dom="${ca_md5}${ca_md5:+"-"}${ABL_TEST_DOM_BASE:?}"
@@ -918,8 +1034,8 @@ get_bl_run_state()
 	bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${curr_single_instance:-0}"
 	case "${bl_check_res}" in
 		0000|0021) run_state=0 ;; # running
-		2020|2001|2021) run_state=3 ;; # paused
-		2120|2101) run_state=4 ;; # stopped
+		2020|2021) run_state=3 ;; # paused
+		2120|2121) run_state=4 ;; # stopped
 		*)
 			run_state=1
 			reg_failure "Unexpected state for blocklist '${bl_id}'. DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${curr_single_instance:-0};"
@@ -990,7 +1106,7 @@ try_check_addnmounts()
 # 1 (optional): blocklist IDs (defaults to all)
 set_global_env()
 {
-	[ -n "${ABL_ENV_SET}" ] && return 0
+	[ -n "${SKIP_SET_ENV}" ] && return 0
 
 	local me=set_global_env \
 		IFS="${DEFAULT_IFS}" \
@@ -1032,7 +1148,7 @@ set_global_env()
 	esac
 
 	# Compression util - independent of other params
-	get_compr_util_spec compr_util_path compr_ext "${compression_util}" || return 1
+	get_compr_util_spec compr_util_path compr_ext "${compression_util:?}" || return 1
 
 	# dnsmasq instances - independent of other params
 	get_dnsmasq_instances &&
@@ -1067,6 +1183,7 @@ set_global_env()
 	debug_msg "compr_util_path: '${compr_util_path}', compr_ext: '${compr_ext}'"
 
 	export ABL_ENV_SET=1 # must precede call to get_bl_run_state()
+	[ "${ABL_CMD}" = start ] && export SKIP_SET_ENV=1
 
 	for bl_id in ${valid_ids}
 	do
@@ -1141,6 +1258,9 @@ set_bl_env()
 		final_compr_or_cat_stdout="${CAT_CMD}" \
 		final_compr_to_file \
 		\
+		max_blocklist_file_size_KB \
+		min_good_line_count \
+		\
 		start_action=gen
 
 	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and persistent blocklist creation,
@@ -1152,6 +1272,8 @@ set_bl_env()
 	get_bl_params -f "${me}" "${bl_id}" \
 		dnsmasq_indexes \
 		conf_dirs \
+		min_good_line_count \
+		max_blocklist_file_size_KB \
 		persist_mode &&
 
 	get_bl_params "${bl_id}" \
@@ -1250,8 +1372,8 @@ set_bl_env()
 		debug_msg "curr_persist_path for bl_id '${bl_id}': '${curr_persist_path}'"
 
 		if \
-			case "${ABL_INIT_ACTION}" in
-				boot|status) : ;;
+			case "${ABL_CMD}" in
+				start|status) : ;;
 				resume) [ "${run_state}" = 3 ] && [ "${curr_path}" = "${curr_persist_path}" ] ;;
 				*) false ;;
 			esac
@@ -1387,84 +1509,51 @@ set_bl_env()
 	:
 }
 
-
-# Env vars: GBP_PREFIX
-#
-get_bl_param_gl_var()
-{
-	case "${2:?}" in
-		run_state) gl_var=RUN_STATE ;;
-		skip_load_stop) gl_var=SKIP_LOAD_STOP ;;
-		bk_ext) gl_var=BK_EXT ;;
-		bk_file) gl_var=BK_FILE ;;
-
-		curr_persist_path) gl_var=PERSIST_PATH ;;
-		curr_persist_cnt) gl_var=PERSIST_CNT ;;
-		curr_persist_md5) gl_var=PERSIST_MD5 ;;
-
-		curr_location) gl_var=LOCATION ;;
-		curr_path) gl_var=PATH ;;
-		curr_md5) gl_var=MD5 ;;
-		curr_cnt) gl_var=CNT ;;
-		curr_single_instance) gl_var=SINGLE_INSTANCE ;;
-
-		install_location) gl_var=INSTALL_LOCATION ;;
-		install_path) gl_var=INSTALL_PATH ;;
-		install_cnt) gl_var=INSTALL_CNT ;;
-		install_path_ram) gl_var=INSTALL_PATH_RAM ;;
-
-		new_single_instance) gl_var=NEW_SINGLE_INSTANCE ;;
-
-		pause_path) gl_var=PAUSE_PATH ;;
-
-		final_compress) gl_var=FINAL_COMPRESS ;;
-		final_compr_ext) gl_var=FINAL_COMPR_EXT ;;
-		final_extr_or_cat_stdout) gl_var=FINAL_EXTR_OR_CAT_STDOUT ;;
-		final_compr_or_cat_stdout) gl_var=FINAL_COMPR_OR_CAT_STDOUT ;;
-		final_compr_to_file) gl_var=FINAL_COMPR_TO_FILE ;;
-		part_extr_or_cat_stdout) gl_var=PART_EXTR_OR_CAT_STDOUT ;;
-		conf_script_log_avail) gl_var=CONF_SCRIPT_LOG_AVAIL ;;
-
-		# from config
-		dnsmasq_indexes) gl_var=DNSMASQ_INDEXES ;;
-		conf_dirs) gl_var=DNSMASQ_CONF_DIRS ;;
-		persist_dir) gl_var=PERSIST_DIR ;;
-		persist_mode) gl_var=PERSIST_MODE ;;
-
-		*) return 1
-	esac
-
-	eval "${1:?}"='${GBP_PREFIX}${gl_var}'
-}
-
 assert_known_bl_id()
 {
 	is_included "${1}" "${BL_IDS}" ||
 		{ reg_failure "${2:+"${2}: "}blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS}'."; [ -n "${ASSERT_NOEXIT}" ] || exit 1; return 1; }
 }
 
+# Env vars: GBP_PREFIX
+get_bl_param_gl_var()
+{
+	local _gl_var
+	: "${_gl_var}"
+	eval "
+		case \"${2:?}\" in
+			${BL_PARAMS_CLAUSES:?}
+			*) return 1 ;;
+		esac
+	"
+
+	eval "${1:?}"='${GBP_PREFIX}${_gl_var}'
+}
+
 # 0 (optional): '-f <func_name>' to error out if value is not set
 # 1: blocklist ID
-# other args: params/output var names
+# other args: params/output var names OR <var_name>=<param> ...
 get_bl_params()
 {
 	local me=get_bl_params \
-		gl_var val force_err err_func err_func_pr var_name
+		gl_var val force_err err_func err_func_pr var_exp var_name bl_param
 
 	[ "${1}" = '-f' ] && { force_err=1 err_func="${2}" err_func_pr="-f ${2} "; shift 2; }
 	bl_id="${1:?}"
 	shift
 
-	for var_name in "${@}"
+	for var_exp in "${@}"
 	do
-		unset_vars "${var_name}" || exit 1
+		unset_vars "${var_exp%=*}" || exit 1
 	done
 
 	assert_known_bl_id "${bl_id}" "${me}"
 
-	for var_name in "${@}"
+	for var_exp in "${@}"
 	do
-		get_bl_param_gl_var gl_var "${var_name}" ||
+		bl_param="${var_exp#*=}"
+		var_name="${var_exp%=*}"
+		get_bl_param_gl_var gl_var "${bl_param}" ||
 		{
 			bad_args "${me}" "${err_func_pr}${bl_id} ${*}"
 			[ -n "${ASSERT_NOEXIT}" ] && return 1
@@ -1718,7 +1807,7 @@ try_commit_metadata()
 	# shellcheck disable=SC2034
 	local me=commit_metadata \
 		IFS="${DEFAULT_IFS}" \
-		param param_val uci_fail='' \
+		param_set param param_val uci_fail='' \
 		bl_id \
 		curr_location curr_path persist_dir persist_meta_file
 
@@ -1732,21 +1821,28 @@ try_commit_metadata()
 	touch "${META_FILE}" || return 1
 	for bl_id in ${BL_IDS}
 	do
+		param_set=
 		# create/update section in meta file
 		uci_tmp set "${META_FNAME}.${bl_id}=blocklist_id" || { uci_fail=1; break; }
 		for param in ${META_PARAMS}
 		do
 			eval "param_val=\"\${${param}_${bl_id}}\""
-			# TODO: remove?
-			# [ -n "${param_val}" ] ||
-			# 	{ reg_failure "${me}: metadata param ${param} has empty value for blocklist ${bl_id}."; uci_fail=1; break 2; }
+			[ -n "${param_val}" ] || continue
 			uci_tmp set "${META_FNAME}.${bl_id}.${param}"="${param_val}" || { uci_fail=1; break 2; }
+			param_set=1
 		done
+		[ -n "${param_set}" ] || uci_tmp delete "${META_FNAME}.${bl_id}"
 	done
 
-	[ -z "${uci_fail}" ] &&
-	uci_tmp commit "${META_FNAME}" ||
-		{ uci_tmp revert "${META_FNAME}"; rm -f "${META_FILE}"; return 1; }
+	if [ -n "${param_set}" ] && [ -z "${uci_fail}" ] && uci_tmp commit "${META_FNAME}"
+	then
+		:
+	else
+		uci_tmp revert "${META_FNAME}"
+		rm -f "${META_FILE}"
+	fi
+
+	[ -n "${uci_fail}" ] && return 1
 
 	# Persist metadata
 	for bl_id in "${@}"
@@ -1852,16 +1948,13 @@ read_blocklist_metadata()
 		rbm_rv=0 \
 		err_msgs='' \
 		seen_ids='' \
-		missing_ids='' \
 		meta_file="${1}" meta_ids="${2:-"${BL_IDS}"}" 
 
 		local sp_f_pr="metadata file '${meta_file}'"
 
 	debug_msg "${me} start, IDs ${meta_ids}"
 
-	export META_PROCESSED=
-
-	[ -n "${meta_ids}" ] || { reg_failure "${me}: no blocklist IDs found."; return 1; }
+	[ -n "${meta_ids}" ] || { reg_failure "${me}: no blocklist configs found."; return 1; }
 
 	# Reset global vars
 	unset_metadata "${meta_ids}"
@@ -1874,22 +1967,14 @@ read_blocklist_metadata()
 
 	config_foreach populate_vars blocklist_id
 
-	[ -n "${err_msgs}" ] &&
-	{
-		rbm_rv=1
-		IFS="${_NL_}"
-		for err_msg in ${err_msgs}
-		do
-			IFS="${DEFAULT_IFS}"
-			reg_failure "${me}: ${err_msg}"
-		done
+	IFS="${_NL_}"
+	for err_msg in ${err_msgs}
+	do
 		IFS="${DEFAULT_IFS}"
-	}
-
-	subtract_a_from_b "${seen_ids}" "${meta_ids}" missing_ids ||
-		{ reg_failure "${me}: entries for blocklists '${missing_ids}' are missing from ${sp_f_pr}."; rbm_rv=1; }
-
-	META_PROCESSED=1
+		rbm_rv=1
+		reg_failure "${me}: ${err_msg}"
+	done
+	IFS="${DEFAULT_IFS}"
 
 	return ${rbm_rv}
 }

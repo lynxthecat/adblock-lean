@@ -9,28 +9,56 @@ START=99
 STOP=04
 
 ABL_BUILTIN_CMDS="start stop restart reload enable disable"
-ABL_CUSTOM_CMDS="setup version status pause resume gen_stats select_dnsmasq_instances gen_config upd_cron_job print_log update uninstall calculate_limits gen_persist_blocklist create_addnmounts"
+ABL_CUSTOM_CMDS="\
+	version \
+	setup \
+	gen_global_config \
+	list_blocklist_configs \
+	print_log \
+	calculate_limits \
+	gen_stats \
+	upd_cron_job \
+	update \
+	uninstall \
+	\
+	add_blocklist_config \
+	rm_blocklist_config \
+	status \
+	pause \
+	resume \
+	select_dnsmasq_instances \
+	create_addnmounts \
+	gen_persist_blocklist"
+ABL_CUSTOM_CMDS="${ABL_CUSTOM_CMDS//"	"/ }"
 
-export EXTRA_COMMANDS="${ABL_CUSTOM_CMDS}"
+export EXTRA_COMMANDS="${ABL_CUSTOM_CMDS//"  "/ }"
 export EXTRA_HELP="
-adblock-lean custom commands:
+adblock-lean global commands:
+Usage: service adblock-lean <command> [options]
 	version                   Print adblock-lean version
+	setup                     Run automated setup for adblock-lean
+	gen_global_config         Create new global config (resets existing global config if any)
+	list_blocklist_configs    List existing blocklist configs
+	print_log                 Print most recent session log
+	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
+	gen_stats                 Generate dnsmasq stats for system log
+	upd_cron_job              Create cron job for adblock-lean with schedule set in the config option 'upd_schedule'.
+	                            If the config option is set to 'disable', remove existing cron job if any
 	update                    Update adblock-lean to the latest version
-	status                    Check dnsmasq and entries count of existing blocklist
+	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings
+
+adblock-lean blocklist commands: affect specified blocklists or all blocklists if blockist_ID is not specified:
+Usage: service adblock-lean <command> [blocklist_ID] [... [blocklist_ID] ...]
+	add_blocklist_config      Create new blocklist config file based on one of pre-defined presets
+	rm_blocklist_config       Remove existing blocklist config file
+	status                    Print status of specified blocklists
 	pause                     Pause adblock-lean
 	resume                    Resume adblock-lean
-	setup                     Run automated setup for adblock-lean
-	gen_config                Generate default config based on one of the pre-defined presets
 	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
 	create_addnmounts         Check which dnsmasq service addnmount paths are required for current adblock-lean config and create them automatically
-	upd_cron_job              Create cron job for adblock-lean with schedule set in the config option 'cron_schedule'.
-	                              If the config option is set to 'disable', remove existing cron job if any
-	print_log                 Print most recent session log
 	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
-	                              Use this command to create or update persistent blocklist when PERSIST_BLOCKLIST_MODE is 'manual'
-	gen_stats                 Generate dnsmasq stats for system log
-	calculate_limits          Calculate recommended values for max_ and min_ config options based on target entries count
-	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings"
+	                              Use this command to create or update persistent blocklist when persist_blocklist_mode is 'manual'
+"
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
 # Project homepage: https://github.com/lynxthecat/adblock-lean
@@ -73,8 +101,8 @@ export ABL_UPD_DIR=${ABL_TMP_DIR}/update \
 	ABL_HOTPLUG_DIR="/etc/hotplug.d/block" \
 	\
 	ABL_LIB_DIR="/usr/lib/adblock-lean" \
-	ABL_CONFIG_DIR="/etc/adblock-lean" \
-	ABL_CONF_STAGING_DIR="/tmp/abl-conf-staging" \
+	ABL_CFG_DIR="/etc/adblock-lean" \
+	ABL_CFG_STAGING_DIR="/tmp/abl-conf-staging" \
 	\
 	ABL_SERVICE_PATH="/etc/init.d/adblock-lean" \
 	ABL_FILE_TYPES="GEN LIB EXTRA" \
@@ -84,7 +112,7 @@ export ABL_UPD_DIR=${ABL_TMP_DIR}/update \
 	\
 	BK_BL_BASE_PATH="${ABL_TMP_DIR:?}/bk-blocklist"
 
-export ABL_HOTPLUG_PATH_SRC="${ABL_CONFIG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
+export ABL_HOTPLUG_PATH_SRC="${ABL_CFG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_PATH_ENABLED="${ABL_HOTPLUG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_PATH_DISABLED="${ABL_HOTPLUG_DIR}/.${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_REG_FILE="${ABL_RUN_DIR}/hotplug-device"
@@ -99,7 +127,7 @@ export ABL_GEN_FILES="${ABL_SERVICE_PATH}
 	\
 	ABL_FILES_REG_PATH="/etc/adblock-lean/abl-reg.md5" \
 	\
-	ABL_CONFIG_FILE="${ABL_CONFIG_DIR}/config" \
+	GLOBAL_CFG_FILE="${ABL_CFG_DIR}/global.conf" \
 	\
 	PID_FILE="${ABL_PID_DIR}/adblock-lean.pid" \
 	ACTION_FILE="${ABL_PID_DIR}/adblock-lean.action" \
@@ -144,6 +172,18 @@ is_uint()
 	:
 }
 
+is_alphanum()
+{
+	local _v
+	for _v in "${@}"
+	do
+		case "${_v}" in
+			''|*[!a-zA-Z0-9_]*) return 1
+		esac
+	done
+	:
+}
+
 # Env vars:
 #   ASSERT_NOEXIT: do not exit on error
 # Check that required vars are set
@@ -158,7 +198,7 @@ assert_set()
 		[ -n "${ASSERT_NOEXIT}" ] || exit 1
 	}
 
-	local func _val_ne _var_ne _checked='' IFS="${DEFAULT_IFS}"
+	local me=assert_set func _val_ne _var_ne _checked='' IFS="${DEFAULT_IFS}"
 
 	case "${1}" in
 		F_*)
@@ -167,12 +207,13 @@ assert_set()
 				'') false ;;
 			esac ;;
 		*) false
-	esac || { assert_fail "assert_set(): func '${1}' not prefixed with 'F_'"; return 1; }
+	esac || { assert_fail "${me}: func '${1}' not prefixed with 'F_'"; return 1; }
 
 	shift
 
 	for _var_ne in "${@}"
 	do
+		[ -n "${_var_ne}" ] || { assert_fail "${me}: func '${1}()': var name can not be empty string."; return 1; }
 		eval "_val_ne=\"\${${_var_ne}}\""
 		case "${_val_ne}" in
 			'') assert_fail "Assertion failed: ${func}(): variable '${_var_ne}' must have a value."; return 1 ;;
@@ -180,7 +221,7 @@ assert_set()
 		esac
 	done
 
-	case "${_checked}" in '') assert_fail "assert_set(): no vars specified by ${func}()"; return 1; esac
+	case "${_checked}" in '') assert_fail "${me}: no vars specified by ${func}()"; return 1; esac
 
 	:
 }
@@ -601,7 +642,7 @@ get_abl_version()
 	[ -s "${1}" ] || { reg_failure "Can not find '${1}'."; return 1; }
 
 	# v0.7.3 and later
-	if old_config_format="$(get_config_format "${1}")" && [ -n "${old_config_format}" ] && [ "${old_config_format}" -ge 9 ] &&
+	if old_cfg_format="$(get_config_format "${1}")" && [ -n "${old_cfg_format}" ] && [ "${old_cfg_format}" -ge 9 ] &&
 		grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
 		get_ver_str gv_upd_ch gv_ver "${1}"
 	then
@@ -973,7 +1014,7 @@ cleanup_and_exit()
 		commit_metadata "${BL_IDS}" || exit 1
 	fi
 
-	rm -rf "${ABL_TMP_DIR}" "${ABL_CONF_STAGING_DIR}"
+	rm -rf "${ABL_TMP_DIR}" "${ABL_CFG_STAGING_DIR}"
 
 	if [ "${1}" != 0 ] && [ -n "${FAIL_STOP_REQ}" ]
 	then
@@ -1040,9 +1081,7 @@ dnsmasq_stop_restart_shared()
 
 stop_dnsmasq()
 {
-	local indexes="${*:-"${DNSMASQ_INDEXES}"}"
-
-	dnsmasq_stop_restart_shared stop "${indexes:-all}"
+	dnsmasq_stop_restart_shared stop "${*:-all}"
 }
 
 # 1: indexes (defaults to all)
@@ -1052,7 +1091,7 @@ restart_dnsmasq()
 		ns ns4 ns6 \
 		host hostname \
 		inst_init_pr \
-		indexes="${*:-"${DNSMASQ_INDEXES}"}"
+		indexes="${*:-all}"
 
 	: "${indexes:=all}"
 
@@ -1419,10 +1458,10 @@ source_libs()
 	[ -n "${LIBS_SOURCED}" ] && return 0
 
 	# fixup for upgrading from earlier versions
-	if [ ! -f "${ABL_REG_FILE}" ] && [ -f "${ABL_CONFIG_DIR}/ver_migration" ]
+	if [ ! -f "${ABL_REG_FILE}" ] && [ -f "${ABL_CFG_DIR}/ver_migration" ]
 	then
 		local curr_ver='' curr_upd_ch=''
-		read_str_from_file -f "${ABL_CONFIG_DIR}/ver_migration" -d -v "curr_upd_ch curr_ver" &&
+		read_str_from_file -f "${ABL_CFG_DIR}/ver_migration" -d -v "curr_upd_ch curr_ver" &&
 		[ -n "${curr_upd_ch}" ] && [ -n "${curr_ver}" ] &&
 		ver_upd_fixup "${curr_ver}" "${curr_upd_ch}" &&
 		local abl_cmd="${ABL_CMD}" &&
@@ -1476,7 +1515,7 @@ get_curr_crontab()
 
 	# check if adblock-lean cron job with same schedule exists
 	case "${curr_cron}" in
-		*"${cron_schedule}"*"${ABL_CRON_CMD}"*) return 0 ;;
+		*"${upd_schedule}"*"${ABL_CRON_CMD}"*) return 0 ;;
 		*"${ABL_CRON_CMD}"*) return 2 ;;
 		*) return 3 ;;
 	esac
@@ -1569,7 +1608,7 @@ init_command()
 {
 	ABL_CMD="${1}"
 	local config_req=''  work_dir_req='' act_pr='' init_action_pr='' init_action_short='' \
-		log_rotated='' log_rotate_req=''
+		log_rotated='' log_rotate_req='' bl_ids_req=''
 
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 		DO_DIALOGS=1
@@ -1593,10 +1632,10 @@ init_command()
 		gen_stats|calculate_limits) libs_req=1 ;;
 		status) local SBE_STATUS=1; config_req=1 work_dir_req=1 ;;
 		upd_cron_job) config_req=1 ;;
-		setup|gen_config) libs_req=1 LOCK_REQ=1 ;;
-		boot|gen_persist_blocklist|create_addnmounts) config_req=1 LOCK_REQ=1 ;;
-		pause) work_dir_req=1 config_req=1 LOCK_REQ=1 ;;
-		start|resume) work_dir_req=1 config_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		setup|gen_global_config|add_blocklist_config|rm_blocklist_config) libs_req=1 LOCK_REQ=1 ;;
+		boot|gen_persist_blocklist|create_addnmounts) config_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
+		pause) work_dir_req=1 config_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
+		start|resume) work_dir_req=1 config_req=1 bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			kill_abl_pids
 			check_lock
@@ -1606,7 +1645,7 @@ init_command()
 			esac
 			libs_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
-			libs_req=1 LOCK_REQ=1
+			libs_req=1 bl_ids_req=1 LOCK_REQ=1
 			[ "${action}" = select_dnsmasq_instances ] && config_req=1 # require config when called directly
 			;;
 		reload|restart) ;;
@@ -1634,7 +1673,7 @@ init_command()
 	# enable writing session log for commands which require it if we have the lock
 	case ${init_lock_status} in 0|3)
 		case "${ABL_CMD}" in
-			boot|start|setup|gen_config|reload|restart)
+			boot|start|setup|gen_global_config|add_blocklist_config|rm_blocklist_config|reload|restart)
 				export ABL_CURR_LOG_FILE="${ABL_SESSION_LOG_FILE}"
 				log_rotate_req=1
 				log_rotated="${ABL_SESSION_LOG_ROTATED}" ;;
@@ -1690,6 +1729,9 @@ init_command()
 	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_TMP_DIR}" || exit 1; }
 
 	[ -z "${config_req}" ] || load_config || exit 1
+
+	[ -z "${bl_ids_req}" ] || [ -n "${BL_IDS}" ] ||
+		{ reg_failure "No blocklist configs found. Use 'service adblock-lean add_blocklist_config' to generate a new blocklist config."; exit 1; }
 
 	# check dnsmasq, source custom script
 	case ${ABL_CMD} in
@@ -1929,9 +1971,9 @@ abl_post_update_2()
 		3)
 			# old version format
 			[ -n "${dist_dir}" ] && [ -n "${upd_channel}" ] && [ -n "${ref}" ] &&
-			mkdir -p "${ABL_CONFIG_DIR}" &&
+			mkdir -p "${ABL_CFG_DIR}" &&
 			printf '%s\n' " $(print_file_list ALL | tr '\n' ' ' | busybox sed 's/\s\s*/ /g') " > "${dist_dir}/inst_files" &&
-			printf '%s\n' "${upd_channel} ${ref}" > "${ABL_CONFIG_DIR}/ver_migration" ;;
+			printf '%s\n' "${upd_channel} ${ref}" > "${ABL_CFG_DIR}/ver_migration" ;;
 		4|5) ;; # new version format
 	esac
 
@@ -1979,12 +2021,12 @@ fetch_abl_dist()
 # input via STDIN or ${1}
 get_config_format()
 {
-	local conf_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
+	local cfg_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
 	if [ -n "${1}" ]
 	then
-		$SED_CMD -En "${conf_form_sed_expr}" "${1}"
+		$SED_CMD -En "${cfg_form_sed_expr}" "${1}"
 	else
-		$SED_CMD -En "${conf_form_sed_expr}"
+		$SED_CMD -En "${cfg_form_sed_expr}"
 	fi
 }
 
@@ -2022,10 +2064,55 @@ version()
 	print_msg "adblock-lean version: '${ABL_VERSION}', update channel: '${ABL_UPD_CHANNEL}'."
 }
 
-gen_config()
+add_blocklist_config()
 {
-	init_command gen_config &&
-	do_gen_config
+	init_command add_blocklist_config &&
+	do_add_blocklist_config "${@}"
+}
+
+# TODO
+rm_blocklist_config()
+{
+	init_command rm_blocklist_config &&
+	do_rm_blocklist_config "${@}"
+}
+
+gen_global_config()
+{
+	init_command gen_global_config &&
+	reg_action -purple "" "Generating new default global config for adblock-lean." || return 1
+
+	# create cron job
+	upd_schedule=
+	local \
+		new_cfg \
+		def_upd_schedule="0 5 * * *" \
+		def_upd_schedule_desc="daily at 5am (5 o'clock at night)"
+
+	REPLY=n
+	if [ "${DO_DIALOGS}" = 1 ]
+	then
+		print_msg "" "${purple}Cron job configuration:${n_c}" \
+			"A cron job can be created to enable automatic list updates." \
+			"The default schedule is '${blue}${def_upd_schedule}${n_c}': ${def_upd_schedule_desc}" \
+			"The cron job will run with an added random number of minutes." \
+			"" "Create cron job with default schedule for automatic list updates? (y|n)" \
+			"'n' will set the 'upd_schedule' setting to 'disable'. You can later create a cron job with a custom schedule as described in:" \
+			"https://github.com/lynxthecat/adblock-lean/blob/master/README.md"
+		pick_opt "y|n" || return 1
+		upd_schedule="${def_upd_schedule}"
+	elif [ -n "${luci_upd_cron_job}" ] && [ -n "${luci_upd_schedule}" ]
+	then
+		REPLY=y
+		upd_schedule="${luci_upd_schedule}"
+	elif  [ -n "${luci_upd_cron_job}" ]
+	then
+		reg_failure "Can not create cron job for luci because the \${luci_upd_schedule} var is empty."
+	fi
+	[ "${REPLY}" = n ] && upd_schedule=disable
+
+	new_cfg="$(print_def_cfg global)" &&
+	write_config global global "${new_cfg}" || return 1
 }
 
 setup()
@@ -2052,10 +2139,10 @@ upd_cron_job()
 
 	local me="upd_cron_job" curr_cron cron_line
 
-	case "${cron_schedule}" in
-		'') reg_failure "${me}: the \$cron_schedule variable is unset."; return 1 ;;
+	case "${upd_schedule}" in
+		'') reg_failure "${me}: the \$upd_schedule variable is unset."; return 1 ;;
 		disable)
-			reg_msg -yellow "cron_schedule is set to 'disable' in config."
+			reg_msg -yellow "upd_schedule is set to 'disable' in config."
 			rm_cron_job
 			return 0
 	esac
@@ -2063,16 +2150,16 @@ upd_cron_job()
 	enable_cron_service || return 1
 	curr_cron="$(get_curr_crontab)"
 	case ${?} in
-		0) print_msg -green "Cron job for adblock-lean with schedule '${cron_schedule}' aldready exists."; return 0 ;;
+		0) print_msg -green "Cron job for adblock-lean with schedule '${upd_schedule}' aldready exists."; return 0 ;;
 		1) return 1 ;;
 		2) curr_cron="$(printf %s "${curr_cron}" | $SED_CMD "s~^.*${ABL_CRON_CMD}.*\$~~")" ;; # remove cron job with a different schedule
 		3) ;; # no adblock-lean cron job exists
 	esac
 
-	cron_line="${cron_schedule} RANDOM_DELAY=1 ${ABL_CRON_CMD} 1>/dev/null"
+	cron_line="${upd_schedule} RANDOM_DELAY=1 ${ABL_CRON_CMD} 1>/dev/null"
 
 	#### Create new cron job
-	print_msg "Creating cron job with schedule '${blue}${cron_schedule}${n_c}'."
+	print_msg "Creating cron job with schedule '${blue}${upd_schedule}${n_c}'."
 	printf '%s\n' "${curr_cron}${_NL_}${cron_line}" | $SED_CMD '/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	:
@@ -2088,9 +2175,28 @@ create_addnmounts()
 
 select_dnsmasq_instances()
 {
-	init_command select_dnsmasq_instances &&
-	do_select_dnsmasq_instances "${@}" &&
-	do_create_addnmounts || return 1
+	local me=select_dnsmasq_instances
+	init_command "${me}" || return 1
+
+	local bl_ids="${*:-"${BL_IDS}"}" \
+		cfg_path \
+		upd_cfg \
+		dnsmasq_indexes conf_dirs
+
+	do_select_dnsmasq_instances "${@}" || return 1
+	for bl_id in ${bl_ids}
+	do
+		get_cfg_path cfg_path "${bl_id}" &&
+		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs &&
+		upd_cfg="$(
+			${SED_CMD} "
+				s~^\s*dnsmasq_indexes=.*~dnsmasq_indexes=\"${dnsmasq_indexes}\"~
+				s~^\s*dnsmasq_conf_dirs=.*~dnsmasq_conf_dirs=\"${conf_dirs}\"~
+			" "${cfg_path}"
+		)" &&
+		write_config bl "${bl_id}" "${upd_cfg}" || return 1
+	done
+	do_create_addnmounts "${bl_ids}" || return 1
 }
 
 # 1 - (optional) '-noexit' to return to the calling function
@@ -2234,7 +2340,7 @@ start()
 
 	commit_metadata "${bl_ids}" || { do_stop; start_rv=1; }
 
-	# if [ "${installed_path%/*}" = "${PERSIST_BLOCKLIST_DIR}" ]
+	# if [ "${installed_path%/*}" = "${persist_blocklist_dir}" ]
 	# then
 	# 	mk_hotplug_script "${installed_path}"
 	# else
@@ -2265,10 +2371,10 @@ gen_persist_blocklist()
 		get_bl_params "${bl_id}" persist_mode persist_dir
 		case "${persist_mode}" in
 			manual|managed) : ;;
-			*) err_msg="'PERSIST_MODE' config option is '${persist_mode}' for blocklist ${bl_id}"; continue
+			*) err_msg="'persist_blocklist_mode' config option is '${persist_mode}' for blocklist ${bl_id}"; continue
 		esac &&
 		{
-			[ -n "${persist_dir}" ] || { err_msg="'PERSIST_DIR' config option is not set for blocklist '${bl_id}'"; false; }
+			[ -n "${persist_dir}" ] || { err_msg="'persist_blocklist_dir' config option is not set for blocklist '${bl_id}'"; false; }
 		} ||
 		{ reg_failure "${err_msg} - can not generate persitent file for blocklist ${bl_id}."; continue; }
 
@@ -2294,26 +2400,26 @@ stop()
 # Additional args: blocklist IDs (defaults to all)
 do_stop()
 {
-	local file dir bl_ids all_stop_indexes='' dnsmasq_indexes bl_id_pr conf_dir \
+	local file dir bl_ids all_stop_indexes='' dnsmasq_indexes conf_dir \
 		bl_params_failed='' \
 		ASSERT_NOEXIT=1 FAIL_STOP_REQ='' \
-		IFS="${DEFAULT_IFS}"
+		IFS="${DEFAULT_IFS}" \
+		bl_id_pr \
+		bl_ids_arg="${*}"
+
 
 	init_command stop || exit 1
 	load_config
 
-	bl_ids="${*:-"${BL_IDS}"}"
+	[ -n "${bl_ids_arg}" ] && ! subtract_a_from_b "${bl_ids_arg}" "${BL_IDS}" || bl_ids_arg=all
+	bl_ids="${bl_ids_arg:-"${BL_IDS}"}"
 	[ "${bl_ids}" = all ] && bl_ids="${BL_IDS}"
 
-	if [ -z "${BL_IDS}" ] || ! set_global_env "${bl_ids}"
+	if [ -n "${bl_ids}" ]
 	then
-		: "${bl_ids="${BL_IDS}"}"
-		GDI_NOFORCE=1 get_dnsmasq_instances
-	fi
+		bl_id_pr="blocklists: '${bl_ids}'"
 
-	bl_id_pr="blocklists: '${bl_ids}'"
-
-	if [ -n "${bl_ids}" ] &&
+		set_global_env "${bl_ids}" &&
 		for bl_id in ${bl_ids}
 		do
 			get_bl_params -f stop "${bl_id}" dnsmasq_indexes &&
@@ -2325,7 +2431,6 @@ do_stop()
 		rm_conf_scripts "${bl_ids}" &&
 		rm_blocklists "${bl_ids}" &&
 		restart_dnsmasq "${all_stop_indexes}" &&
-		[ -n "${ABL_ENV_SET}" ] &&
 		for bl_id in ${bl_ids}
 		do
 			CA_NOERR=1 get_bl_run_state "${bl_id}"
@@ -2334,14 +2439,15 @@ do_stop()
 		[ -z "${bl_params_failed}" ] &&
 		unset_metadata "${bl_ids}" &&
 		set_bl_params "${bl_ids}" run_state=4 &&
-		commit_metadata "${bl_ids}"
-	then
-		log_msg -purple "" "Successfully stopped adblocking for ${bl_id_pr}"
-		return 0
-	fi
+		commit_metadata "${bl_ids}" &&
+		{
+			log_msg -purple "" "Successfully stopped adblocking for ${bl_id_pr}"
+			return 0
+		}
 
-	[ "${bl_ids}" = "${BL_IDS}" ] ||
-		{ reg_failure "Failed to stop adblocking for ${bl_id_pr}."; exit 1; }
+		reg_failure "Failed to stop adblocking for ${bl_id_pr}."
+		[ "${bl_ids_arg}" = all ] || return 1
+	fi
 
 	reg_action -1 -purple "" "Stopping adblocking for any adblock-lean blocklists."
 
@@ -2409,7 +2515,7 @@ status()
 
 	if [ -z "${BL_IDS}" ]
 	then
-		reg_failure "No blocklists registered."
+		reg_failure "No blocklist configs found."
 		status_rv=1
 	elif [ -z "${bl_ids}" ]
 	then
@@ -2519,8 +2625,7 @@ pause_resume()
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params -f "${cmd}" "${bl_id}" \
-			run_state || return 1
+		get_bl_params -f "${cmd}" "${bl_id}" run_state || return 1
 
 		bl_id_pr="blocklist '${bl_id}'"
 
@@ -2546,12 +2651,12 @@ pause_resume()
 		reg_action -blue "${state_progr_pr} ${bl_id_pr}."
 
 		get_bl_params -f "${cmd}" "${bl_id}" \
-			final_compr_to_file \
 			dnsmasq_indexes \
 			curr_path \
 			curr_cnt \
 			pause_path \
-			install_path || return 1
+			install_path &&
+		get_bl_params "${bl_id}" final_compr_to_file || return 1
 
 		case "${cmd}" in
 			pause)
@@ -2664,7 +2769,7 @@ update()
 
 	init_command update || { upd_failed; return 1; }
 
-	[ -z "${upd_nostop}" ] && do_stop
+	[ -n "${upd_nostop}" ] || do_stop
 
 	# parse version string from arguments into $req_upd_channel, $req_ver
 	case "${ver_str_arg}" in
@@ -2771,7 +2876,7 @@ uninstall()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		print_msg "" "Delete the config directory ${ABL_CONFIG_DIR}? (y|n)"
+		print_msg "" "Delete the config directory ${ABL_CFG_DIR}? (y|n)"
 		pick_opt "y|n"
 	else
 		REPLY="${luci_uninstall_rm_config:-n}"
@@ -2780,7 +2885,7 @@ uninstall()
 	if [ "${REPLY}" = y ]
 	then
 		print_msg -purple "Deleting the config directory."
-		rm -rf "${ABL_CONFIG_DIR:-???}"
+		rm -rf "${ABL_CFG_DIR:-???}"
 	fi
 
 	local i="-1" addnm_deleted='' addnm_del_fail=''
@@ -2833,7 +2938,7 @@ enable()
 	rc_enable && rc_enabled ||
 		{ reg_failure "Failed to enable the adblock-lean service"; return 4; }
 	source_libs && load_config || return 3
-	[ -n "${cron_schedule}" ] && { upd_cron_job || return 6; }
+	[ -n "${upd_schedule}" ] && { upd_cron_job || return 6; }
 	:
 }
 

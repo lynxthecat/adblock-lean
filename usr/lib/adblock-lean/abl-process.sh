@@ -2,8 +2,8 @@
 # shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045,SC3003,SC3060,SC3057,SC3040
 
 # silence shellcheck warnings
-: "${max_file_part_size_KB:=}" "${whitelist_mode:=}" "${list_part_failed_action:=}" "${test_domains:=}" "${intermediate_compression_options:=}" "${final_compression_options:=}" \
-	"${max_download_retries:=}" "${deduplication:=}" "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}" \
+: "${list_part_failed_action:=}" \
+	"${max_download_retries:=}" "${deduplication:=}" \
 	"${blue:=}" "${green:=}" "${red:=}" "${n_c:=}"
 
 BUSYBOX_PATH="/bin/busybox"
@@ -200,27 +200,6 @@ get_curr_job_pid()
 	eval "${1}"='${__pid}'
 }
 
-# 1 - PID of the job throwing the fatal error
-# 2 - list path
-handle_fatal()
-{
-	local fatal_pid="${1}" fatal_print_id="${2}"
-	if [ -n "${fatal_pid}" ]
-	then
-		: "${fatal_print_id:=unknown}"
-		reg_failure "Processing job (PID: ${fatal_pid}) for list '${fatal_print_id}' reported fatal error."
-	else
-		reg_failure "Fatal error reported by unknown processing job."
-	fi
-
-	[ -n "${SCHEDULER_PID}" ] && [ -d "/proc/${SCHEDULER_PID}" ] && {
-		kill -s USR1 "${SCHEDULER_PID}"
-		wait_on_pid "${SCHEDULER_PID}" 5
-	}
-
-	exit 1
-}
-
 # 1 - job PID
 # 2 - job return code
 handle_done_job()
@@ -258,13 +237,13 @@ get_remaining_time()
 	ct_remaining_time_s=$((PROCESSING_TIMEOUT_S-ct_total_time_s))
 	[ "${ct_remaining_time_s}" -gt 0 ] ||
 	{
-		reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${SCHEDULER_PID})."
+		reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${scheduler_pid})."
 		return 1
 	}
 
 	case "$(( IDLE_TIMEOUT_S - (ct_curr_time_s-${CT_PREV_TIME_S:-${INITIAL_UPTIME_S}}) ))" in
 		0|-*)
-			reg_failure "Idle timeout (${IDLE_TIMEOUT_S} s) for scheduler (PID: ${SCHEDULER_PID})."
+			reg_failure "Idle timeout (${IDLE_TIMEOUT_S} s) for scheduler (PID: ${scheduler_pid})."
 			return 1
 	esac
 
@@ -276,38 +255,8 @@ get_remaining_time()
 	eval "${1}"='${ct_remaining_time_s}'
 }
 
-# 1 - list origin (DL|LOCAL)
-# 2 - list URL or local path
-# 3 - list type (block|ipv4_block|allow)
-# 4 - list format (raw|dnsmasq|hosts)
-# the rest of the args passed as-is to workers
-schedule_job()
-{
-	local remaining_time_s done_pid done_rv print_id
-	eval "print_id=\"\${${list_format}_${list_type}_${index}_print_id}\""
-
-	get_remaining_time remaining_time_s || return 1
-
-	# wait for job vacancy
-	while [ "${RUNNING_JOBS_CNT}" -ge "${PARALLEL_JOBS}" ] && [ -e "${SCHED_CB_FIFO}" ] &&
-		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
-	do
-		get_remaining_time remaining_time_s || return 1
-		handle_done_job "${done_pid}" "${done_rv}" || return 1
-	done
-
-	get_remaining_time remaining_time_s || return 1
-
-	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
-	process_list_part "${@}" "${print_id}" &
-
-	RUNNING_PIDS="${RUNNING_PIDS} ${!}"
-	export "JOB_PRINT_ID_${!}"="${print_id}"
-
-	:
-}
-
-# 1 - list types (allow|block|ipv4_block)
+# 1: blocklist ID
+# 2: list types (allow|block|ipv4_block)
 schedule_jobs()
 {
 	finalize_scheduler()
@@ -320,23 +269,25 @@ schedule_jobs()
 			kill_pids_recursive "${RUNNING_PIDS}"
 			rm -rf "${PROCESSED_PARTS_DIR}" 2>/dev/null
 		}
-		rm -f "${SCHED_CB_FIFO}"
+		rm -f "${sched_cb_fifo}"
 		exit "${1}"
 	}
 
 	local list_type list_format index indexes \
-		SCHEDULER_PID \
-		list_types="${1}"
-	get_curr_job_pid SCHEDULER_PID || finalize_scheduler 1
+		remaining_time_s \
+		done_pid done_rv print_id \
+		scheduler_pid \
+		RUNNING_PIDS='' \
+		RUNNING_JOBS_CNT=0 \
+		bl_id="${1:?}" list_types="${2:?}"
 
-	RUNNING_PIDS=
-	RUNNING_JOBS_CNT=0
+	get_curr_job_pid scheduler_pid || finalize_scheduler 1
 
 	trap 'USR_TRIG=1 finalize_scheduler 1' USR1
 
-	local SCHED_CB_FIFO="${SCHEDULE_DIR}/scheduler_callback_${SCHEDULER_PID}"
-	mkfifo "${SCHED_CB_FIFO}" &&
-	exec 3<>"${SCHED_CB_FIFO}" || { reg_failure "Failed to create FIFO '${SCHED_CB_FIFO}'."; finalize_scheduler 1; }
+	local sched_cb_fifo="${SCHEDULE_DIR:?}/scheduler_callback_${scheduler_pid}"
+	mkfifo "${sched_cb_fifo}" &&
+	exec 3<>"${sched_cb_fifo}" || { reg_failure "Failed to create FIFO '${sched_cb_fifo}'."; finalize_scheduler 1; }
 
 	print_msg ""
 
@@ -349,31 +300,50 @@ schedule_jobs()
 
 			for index in ${indexes}
 			do
-				schedule_job "${index}" "${list_type}" "${list_format}" || finalize_scheduler 1
+				eval "print_id=\"\${${list_format}_${list_type}_${index}_print_id}\""
+
+				get_remaining_time remaining_time_s || finalize_scheduler 1
+
+				# wait for job vacancy
+				while [ "${RUNNING_JOBS_CNT}" -ge "${PARALLEL_JOBS}" ] && [ -e "${sched_cb_fifo}" ] &&
+					read -t "${remaining_time_s}" -r done_pid done_rv < "${sched_cb_fifo}"
+				do
+					get_remaining_time remaining_time_s &&
+					handle_done_job "${done_pid}" "${done_rv}" || finalize_scheduler 1
+				done
+
+				get_remaining_time remaining_time_s || finalize_scheduler 1
+
+				RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
+				process_list_part "${index}" "${list_type}" "${list_format}" "${print_id}" "${bl_id}" "${scheduler_pid}" &
+
+				RUNNING_PIDS="${RUNNING_PIDS} ${!}"
+				export "JOB_PRINT_ID_${!}"="${print_id}"
 			done
 		done
 	done
 
 	# wait for jobs to finish and handle errors
-	local remaining_time_s done_pid done_rv
 	get_remaining_time remaining_time_s || return 1
-	while [ "${RUNNING_JOBS_CNT}" -gt 0 ] && [ -e "${SCHED_CB_FIFO}" ] &&
-		read -t "${remaining_time_s}" -r done_pid done_rv < "${SCHED_CB_FIFO}"
+	while [ "${RUNNING_JOBS_CNT}" -gt 0 ] && [ -e "${sched_cb_fifo}" ] &&
+		read -t "${remaining_time_s}" -r done_pid done_rv < "${sched_cb_fifo}"
 	do
 		get_remaining_time remaining_time_s &&
 		handle_done_job "${done_pid}" "${done_rv}" || finalize_scheduler 1
 	done
 	get_remaining_time remaining_time_s || finalize_scheduler 1
 	[ "${RUNNING_JOBS_CNT}" = 0 ] ||
-		{ reg_failure "Not all jobs are done: \${RUNNING_JOBS_CNT}=${RUNNING_JOBS_CNT}"; finalize_scheduler 1; }
+		{ reg_failure "Not all jobs are done: RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT}"; finalize_scheduler 1; }
 
 	finalize_scheduler 0
 }
 
-# 1 - list index
-# 2 - list type (block|ipv4_block|allow)
-# 3 - list format (raw|dnsmasq|hosts)
-# 4 - job print id
+# 1: list index
+# 2: list type (block|ipv4_block|allow)
+# 3: list format (raw|dnsmasq|hosts)
+# 4: job print ID
+# 5: blocklist ID
+# 6: scheduler PID
 # the rest of the args passed as-is to workers
 #
 # return codes:
@@ -386,7 +356,7 @@ process_list_part()
 {
 	finalize_job()
 	{
-		[ -n "${2}" ] && reg_failure "process_list_part: ${2}"
+		[ -n "${2}" ] && reg_failure "${me}: ${2}"
 		case "${1}" in
 			0)
 				local list_size_human stats_pad suffix_pad
@@ -396,10 +366,26 @@ process_list_part()
 				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${list_size_human} - ${suffix_pad}${line_count_human} lines ]" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
-				[ "${1}" = 1 ] && handle_fatal "${curr_job_pid}" "${print_id}"
+				[ "${1}" = 1 ] &&
+				{
+					if [ -n "${curr_job_pid}" ]
+					then
+						: "${print_id:=unknown}"
+						reg_failure "Fatal error in processing job (PID: ${curr_job_pid}) for list '${print_id}'."
+					else
+						reg_failure "Fatal error reported by unknown processing job."
+					fi
+
+					[ -n "${scheduler_pid}" ] && [ -d "/proc/${scheduler_pid}" ] && {
+						kill -s USR1 "${scheduler_pid}"
+						wait_on_pid "${scheduler_pid}" 5
+					}
+
+					exit 1
+				}
 		esac
 
-		printf '%s\n' "${curr_job_pid} ${1}" > "${SCHED_CB_FIFO}"
+		printf '%s\n' "${curr_job_pid} ${1}" > "${sched_cb_fifo}"
 		exit "${1}"
 	}
 
@@ -432,14 +418,17 @@ process_list_part()
 
 	case_conv() { tr 'A-Z' 'a-z'; }
 
-	local curr_job_pid msg msg_mirr pad \
+	local me=process_list_part \
+		curr_job_pid msg msg_mirr pad \
 		list_origin='' list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
-		index="${1}" list_type="${2}" list_format="${3}" print_id="${4}"
+		whitelist_mode min_line_count max_file_part_size_KB \
+		index="${1}" list_type="${2}" list_format="${3}" print_id="${4}" bl_id="${5}" scheduler_pid="${6}"
 
 	get_curr_job_pid curr_job_pid || finalize_job 1
 
 	eval "list_origin=\"\${${list_format}_${list_type}_${index}_origin}\"" &&
-	ASSERT_NOEXIT=1 assert_set F_process_list_part index list_type list_format print_id list_origin || finalize_job 1
+	ASSERT_NOEXIT=1 assert_set "F_${me}" index list_type list_format print_id bl_id scheduler_pid list_origin &&
+	get_bl_params -f "${me}" "${bl_id}" whitelist_mode max_file_part_size_KB "min_line_count=min_${list_type}list_part_line_count" || finalize_job 1
 
 	list_path="${print_id}"
 
@@ -466,7 +455,7 @@ process_list_part()
 		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${job_id}" \
 		rogue_el_file="${ABL_TMP_DIR}/rogue_el_${job_id}" \
 		list_stats_file="${ABL_TMP_DIR}/stats_${job_id}" \
-		part_line_count='' line_count_human min_line_count='' min_line_count_human \
+		part_line_count='' line_count_human min_line_count_human \
 		part_size_B='' retry=1 \
 		part_compr_or_cat="cat" fetch_cmd \
 		format_conv_or_cat="cat" \
@@ -497,8 +486,6 @@ process_list_part()
 	case "${list_type}" in
 		allow|block) case_conv_or_cat="case_conv"
 	esac
-
-	eval "min_line_count=\"\${min_${list_type}list_part_line_count}\""
 
 	while :
 	do
@@ -546,15 +533,15 @@ process_list_part()
 		if [ "${list_type}" = block ] && [ "${use_allowlist}" = 1 ]
 		then
 			case "${whitelist_mode}" in
-			0)
+			1)
+				# only print subdomains of allowlist domains
+				${AWK_CMD} 'NR==FNR { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
+					for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${PROCESSED_PARTS_DIR}/allow" - ;;
+			*)
 				# remove allowlist domains from blocklist
 				${AWK_CMD} 'NR==FNR { if ($0 ~ /^\*\./) { allow_wild[substr($0,3)]; next }; allow[$0]; next }
 					{ n=split($1,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- )
 					{ addr = arr[i] "." addr; if ( (i>1 && addr in allow_wild) || addr in allow ) next } } 1' "${PROCESSED_PARTS_DIR}/allow" - ;;
-			1)
-				# only print subdomains of allowlist domains
-				${AWK_CMD} 'NR==FNR { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
-					for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${PROCESSED_PARTS_DIR}/allow" -
 			esac
 		else
 			cat
@@ -670,13 +657,26 @@ gen_list_parts()
 		return "${rv}"
 	}
 
+	# shellcheck disable=SC2034
 	local lists schedule_req local_list_path list_format list_type \
 		preproc_cnt=0 preproc_cnt_human \
 		preproc_size_B=0 preproc_size_human \
 		invalid_urls bad_hagezi_urls \
+		test_domains \
 		list_line_count list_types \
+		raw_block_lists raw_allow_lists raw_ipv4_block_lists \
+		dnsmasq_block_lists dnsmasq_allow_lists dnsmasq_ipv4_block_lists \
+		hosts_block_lists \
+		local_allowlist_path local_blocklist_path \
 		bl_id="${1}"
 
+	get_bl_params "${bl_id}" \
+		test_domains \
+		whitelist_mode \
+		raw_block_lists raw_allow_lists raw_ipv4_block_lists \
+		dnsmasq_block_lists dnsmasq_allow_lists dnsmasq_ipv4_block_lists \
+		hosts_block_lists \
+		local_allowlist_path local_blocklist_path
 
 	[ -n "${raw_block_lists}${dnsmasq_block_lists}${hosts_block_lists}" ] ||
 		log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
@@ -770,7 +770,7 @@ gen_list_parts()
 
 		if [ -n "${schedule_req}" ]
 		then
-			schedule_jobs "${list_types}" &
+			schedule_jobs "${bl_id}" "${list_types}" &
 			SCHEDULER_PID=${!}
 
 			wait "${SCHEDULER_PID}"
@@ -800,7 +800,7 @@ gen_list_parts()
 			then
 				case "${list_type}" in
 					block)
-						[ "${whitelist_mode}" = 0 ] && return 1
+						[ "${whitelist_mode}" = 1 ] || return 1
 						log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
 					allow)
 						reg_msg "Not using any allowlist for blocklist processing."
@@ -1024,18 +1024,18 @@ gen_blocklist()
 	}
 
 	local me=gen_blocklist \
-		gen_cnt \
-		gen_cnt_human min_good_line_count_human \
 		list_type \
+		gen_cnt gen_cnt_human \
+		min_good_line_count min_good_line_count_human \
+		max_blocklist_file_size_KB \
 		errors \
-		max_size_b=$((max_blocklist_file_size_KB*1024)) \
 		dedup_cmd_or_cat="${CAT_CMD}" \
 		pack_cmd="pack_entries_sed" \
 		part_extr_or_cat_stdout \
 		final_compr_or_cat_stdout \
 		new_single_instance \
 		\
-		bl_id="${1}" \
+		bl_id="${1:?}" \
 		cnt_out_var="${2:?}" \
 		out_f="${3:?}" \
 		INITIAL_UPTIME_S="$(( ${4} / 100 ))"
@@ -1044,6 +1044,8 @@ gen_blocklist()
 
 	get_bl_params -f "${me}" "${bl_id}" \
 		part_extr_or_cat_stdout \
+		max_blocklist_file_size_KB \
+		min_good_line_count\
 		final_compr_or_cat_stdout &&
 
 	get_bl_params "${bl_id}" \
@@ -1054,6 +1056,7 @@ gen_blocklist()
 		*) assert_set "F_${me}" INTERM_COMPR_EXT || false
 	esac || return 1
 
+	local max_size_b=$((max_blocklist_file_size_KB*1024))
 	[ "${deduplication}" = 1 ] && dedup_cmd_or_cat="${SORT_CMD} -u -"
 
 	case "${AWK_CMD}" in
@@ -1135,7 +1138,7 @@ gen_blocklist()
 	if [ -f "${ABL_TMP_DIR}/abl-too-big.tmp" ]
 	then
 		rm -f "${out_f}"
-		reg_failure "Final uncompressed blocklist exceeded ${max_blocklist_file_size_KB} kiB set in max_blocklist_file_size_KB config option!"
+		reg_failure "Final uncompressed size for blocklist ${bl_id} exceeded ${max_blocklist_file_size_KB} kiB set in max_blocklist_file_size_KB config option!"
 		log_msg "Consider either increasing this value in the config or changing the blocklist URLs."
 		return 1
 	fi

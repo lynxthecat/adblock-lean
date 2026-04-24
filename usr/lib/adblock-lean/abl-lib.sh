@@ -4,8 +4,6 @@
 
 # silence shellcheck warnings
 : "${blue:=}" "${purple:=}" "${green:=}" "${red:=}" "${yellow:=}" "${n_c:=}"
-: "${raw_block_lists:=}" "${test_domains:=}" "${whitelist_mode:=}" "${compression_util:=}"
-: "${max_blocklist_file_size_KB:=}" "${min_good_line_count:=}"
 : "${luci_cron_job_creation_failed}" "${luci_pkgs_install_failed}" "${luci_tarball_url}"
 
 ### GLOBAL VARIABLES
@@ -301,14 +299,14 @@ do_create_addnmounts()
 		add_list_failed \
 		path paths_pr
 
-	get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util:?}" || return 1
-
 	## Check addmounts
 	for bl_id in ${BL_IDS:?}
 	do
 		path_ram='' ignore_paths='' ram_addnm=''
 		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs &&
-		get_bl_params "${bl_id}" persist_mode persist_dir || return 1
+		get_bl_params "${bl_id}" persist_mode persist_dir &&
+		get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util:?}" || return 1
+
 
 		# compile list of indexes, reset req_addnm_${index} vars
 		for index in ${dnsmasq_indexes}
@@ -431,8 +429,7 @@ get_pkg_name()
 
 # Error codes:
 # 1 - general error
-# 2 - gen_config failed
-# 3 - load_config failed
+# 3 - set_global_env failed
 # 4 - service enable failed
 # 5 - creating addnmount entry failed
 do_setup()
@@ -583,11 +580,11 @@ do_setup()
 
 	REPLY=n
 
-	if [ -s "${ABL_CONFIG_FILE}" ]
+	if [ -s "${GLOBAL_CFG_FILE}" ]
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg "" "Existing config file found." "Generate [n]ew config or use [e]xisting config? (n|e)"
+			print_msg "" "Existing global config file found." "Generate [n]ew config or use [e]xisting config? (n|e)"
 			pick_opt 'n|e' || return 1
 		elif [ -n "${luci_use_old_config}" ]
 		then
@@ -598,13 +595,68 @@ do_setup()
 	if [ "${REPLY}" = n ]
 	then
 		# generate config
-		gen_config || return 2
-	else
-		load_config -force || return 3
-
-		get_dnsmasq_instances &&
-		check_dnsmasq_instances || return 1
+		gen_global_config || return 2
 	fi
+
+	local bl_cfgs_found='' cfg_id cfg_path
+	for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
+	do
+		case "${cfg_path}" in
+			*"*"*)
+				continue ;;
+			"${ABL_CFG_DIR}"/*)
+				split_path _ cfg_id _  "${cfg_path}"
+				cfg_id="${cfg_id#"blocklist-"}"
+				is_alphanum "${cfg_id}" ||
+				{
+					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Deleting the file."
+					rm -f "${cfg_path}"
+					continue
+				}
+				bl_cfgs_found="${bl_cfgs_found}${bl_cfgs_found:+"${_NL_}"}${cfg_path}"
+		esac
+	done
+
+	REPLY=
+	if [ -n "${bl_cfgs_found}" ]
+	then
+		if [ "${DO_DIALOGS}" = 1 ]
+		then
+			print_msg "" "Found existing blocklist config files:${_NL_}${bl_cfgs_found}." \
+				"${_NL_}[k]eep existing blocklist config files or remove them and create a [n]ew one, or [a]bort? (k|n|a)"
+			pick_opt 'k|n|a' || return 1
+			[ "${REPLY}" = a ] && return 0
+		else
+			REPLY=k
+		fi
+	else
+		REPLY=n
+	fi
+
+	if [ "${REPLY}" = n ]
+	then
+		do_stop
+		# remove and forget old configs
+		rm -f "${META_FILE}"
+		local bl_id
+		for bl_id in ${BL_IDS}
+		do
+			unset_metadata "${bl_id}"
+			# shellcheck disable=SC2046
+			unset $(printf '%s\n' "${BL_PARAMS_MAP}" | ${SED_CMD} "/^$/d;s/^.*=//;s/$/_${bl_id}/" | tr '\n' ' ')
+		done
+		unset BL_IDS SKIP_SET_ENV ABL_ENV_SET CONFIG_LOADED
+		for cfg_path in ${bl_cfgs_found}
+		do
+			rm -f "${cfg_path}"
+		done
+
+		# generate blocklist config
+		do_add_blocklist_config || return 2
+	fi
+
+	load_config &&
+	set_global_env || return 1
 
 	# enable the service, update the cron job
 	if rc_enabled
@@ -795,38 +847,55 @@ do_calculate_limits()
 	:
 }
 
-# (optional) -d to print with allowed value types (otherwise print without)
-# (optional) -p to print with values from preset
-# (optional) -n to print with DNSMASQ_INDEXES
-# (optional) -c to print with DNSMASQ_CONF_DIRS
-print_def_config()
+print_def_cfg()
 {
 	# follow each default option with '@' and a pre-defined type: string, uint, uint_list
 	# or custom optional values, examples: opt1, opt1|opt2, ''|opt1|opt2
 
-	# process args
-	local me=print_def_config preset='' print_types='' dnsmasq_indexes='' dnsmasq_conf_dirs='' \
-		pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines
-	while getopts ":n:c:p:d" opt; do
-		case $opt in
+	local cfg_type="${1}"
+	shift
+	case "${cfg_type}" in
+		global) print_def_cfg_global "${@}" ;;
+		bl) print_def_cfg_blocklist "${@}" ;;
+		*) bad_args print_def_cfg "${cfg_type}" "${@}"; return 1 ;;
+	esac
+}
+
+# -i <blocklist_ID>
+# (optional) -d to print with allowed value types (otherwise print without)
+# (optional) -p to print with values from preset
+# (optional) -n to print with dnsmasq_indexes
+# (optional) -c to print with dnsmasq_conf_dirs
+print_def_cfg_blocklist()
+{
+	local me=print_def_cfg_blocklist \
+		preset='' print_types='' dnsmasq_indexes='' dnsmasq_conf_dirs='' \
+		pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines \
+		opt bl_id
+
+	while getopts ":i:n:c:p:d" opt; do
+		case "${opt}" in
+			i) bl_id=$OPTARG ;;
 			n) dnsmasq_indexes=$OPTARG ;;
 			c) dnsmasq_conf_dirs=$OPTARG ;;
 			p) preset=$OPTARG ;;
 			d) print_types=1 ;;
-			*) ;;
+			*) bad_args "${me}" "${@}"; return 1 ;;
 		esac
 	done
 
+	[ -n "${bl_id}" ] || { bad_args "${me}" "${@}"; return 1; }
+
 	: "${preset:=small}"
-	is_included "${preset}" "${ALL_PRESETS}" || { reg_failure "${me}: \$preset has invalid value '${preset}'."; return 1; }
+	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
 
 	get_preset "${preset}" _ _ _ _ pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines &&
 	assert_set "F_${me}" pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines || return 1
 
-	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else $SED_CMD 's/[ \t]*@.*//'; fi
+	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
 
 	# adblock-lean configuration options
-	# config_format=${CONFIG_FORMAT}
+	# config_format=${CONFIG_FORMAT:?}
 	#
 	# values must be enclosed in double-quotes
 	# custom comments are not preserved after automatic config update
@@ -853,27 +922,22 @@ print_def_config()
 	# Path to optional local *raw domain* allowlist/blocklist files in the form:
 	# site1.com
 	# site2.com
-	local_allowlist_path="${ABL_CONFIG_DIR}/allowlist" @ string
-	local_blocklist_path="${ABL_CONFIG_DIR}/blocklist" @ string
+	local_allowlist_path="${ABL_CFG_DIR}/local-allowlist-${bl_id}" @ string
+	local_blocklist_path="${ABL_CFG_DIR}/local-blocklist-${bl_id}" @ string
 
 	# Governs whether and how persistent blocklist is used
 	# 'disable' (default): persistent blocklist will not be used. The blocklist file will be stored on the ramdisk.
-	# 'manual': directory specified in PERSIST_BLOCKLIST_DIR will be checked for file named '${BLOCKLIST_BASE_FNAME:?}' (with or without extension '.gz' or '.zst') -
+	# 'manual': directory specified in option 'persist_blocklist_dir' will be checked for file named '${BLOCKLIST_BASE_FNAME:?}-${bl_id}' (with or without extension '.gz' or '.zst') -
 	#   if found, that blocklist will be loaded at boot (rather than downloading, processing and loading a new blocklist)
 	#   but adblock-lean will not create or update that file (useful to prevent flash wear, e.g. when the persistent blocklist is stored on the built-in flash of a router).
 	#   If not found, adblock-lean will act as if mode is 'disable'.
-	# 'managed': adblock-lean will use the directory specified in PERSIST_BLOCKLIST_DIR to store and update the blocklist file
+	# 'managed': adblock-lean will use the directory specified in option 'persist_blocklist_dir' to store and update the blocklist file
 	#   and no additional blocklist will be stored on the ramdisk.
 	#   If the directory is inaccessible, adblock-lean will fall back to using the ramdisk.
-	PERSIST_BLOCKLIST_MODE="disable" @ disable|manual|managed
+	persist_blocklist_mode="disable" @ disable|manual|managed
 
 	# Optional path to directory on non-volatile storage device where persistent blocklist should be stored
-	PERSIST_BLOCKLIST_DIR="" @ string
-
-	# Whether to create a hotplug script when persistent blocklist is used
-	#   The hotplug script activates on storage device removal. If the removed device is the one where the blocklist is stored,
-	#   adblock-lean will be automatically restarted and will create a new blocklist on the ramdisk.
-	PERSIST_HOTPLUG_SCRIPT="0" @ 0|1
+	persist_blocklist_dir="" @ string
 
 	# Test domains are automatically querried after loading the blocklist into dnsmasq,
 	# in order to verify that the blocklist didn't break DNS resolution
@@ -881,6 +945,61 @@ print_def_config()
 	# If backup doesn't exist, the blocklist is removed and adblock-lean is stopped
 	# Leaving this empty will disable verification
 	test_domains="google.com microsoft.com amazon.com" @ string
+
+	# Minimum number of good lines in final postprocessed blocklist
+	min_good_line_count="${pdc_min_lines}" @ uint
+
+	# Mininum number of lines of any individual downloaded part
+	min_blocklist_part_line_count="1" @ uint
+	min_ipv4_blocklist_part_line_count="1" @ uint
+	min_allowlist_part_line_count="1" @ uint
+
+	# Maximum size of any individual downloaded blocklist part
+	max_file_part_size_KB="${pdc_max_part_size}" @ uint
+
+	# Maximum total size of combined, processed blocklist
+	max_blocklist_file_size_KB="${pdc_max_bl_size}" @ uint
+
+	# If a path to custom script is specified and that script defines functions
+	# 'report_success()', 'report_failure()' or 'report_update()',
+	# one of these functions will be executed when adblock-lean completes the execution of some commands,
+	# with corresponding message passed in first argument
+	# report_success() and report_update() are only executed upon completion of the 'start' command
+	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
+	custom_script="" @ string
+
+	# dnsmasq instance indexes and config directories
+	# normally this should be set automatically by the 'setup' command
+	dnsmasq_indexes="${dnsmasq_indexes}" @ uint_list
+	dnsmasq_conf_dirs="${dnsmasq_conf_dirs}" @ string
+
+	EOT
+}
+
+# (optional) -d to print with allowed value types (otherwise print without)
+print_def_cfg_global()
+{
+	local print_types
+	while getopts ":i:n:c:p:d" opt; do
+		case "${opt}" in
+			i|n|c|p) : ;; # ignore these options
+			d) print_types=1 ;;
+			*) bad_args print_def_cfg_global "${@}"; return 1 ;;
+		esac
+	done
+
+	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
+
+	# adblock-lean configuration options
+	# config_format=${CONFIG_FORMAT}
+	#
+	# values must be enclosed in double-quotes
+	# custom comments are not preserved after automatic config update
+
+	# Whether to create a hotplug script when persistent blocklist is used
+	#   The hotplug script activates on storage device removal. If the removed device is the one where the blocklist is stored,
+	#   adblock-lean will be automatically restarted and will create a new blocklist on the ramdisk.
+	PERSIST_HOTPLUG_SCRIPT="0" @ 0|1
 
 	# List part failed action:
 	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
@@ -899,20 +1018,6 @@ print_def_config()
 	# Steven Black mirror: 'github' or 'sbc_io' for sbc.io
 	stevenblack_default_mirror="github" @ github|sbc_io
 
-	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="${pdc_min_lines}" @ uint
-
-	# Mininum number of lines of any individual downloaded part
-	min_blocklist_part_line_count="1" @ uint
-	min_ipv4_blocklist_part_line_count="1" @ uint
-	min_allowlist_part_line_count="1" @ uint
-
-	# Maximum size of any individual downloaded blocklist part
-	max_file_part_size_KB="${pdc_max_part_size}" @ uint
-
-	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB="${pdc_max_bl_size}" @ uint
-
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1" @ 0|1
 
@@ -920,39 +1025,18 @@ print_def_config()
 	# Supported options: gzip, pigz, zstd or 'none' to disable compression
 	compression_util="gzip" @ gzip|pigz|zstd|none
 
-	# Compression options: passed as-is to the compression utility
-	# Available options depend on the compression utility. '-[n]' universally specifies compression level.
-	# Busybox gzip ignores any options.
-	#   Intermediate compression. Default: '-3'.
-	intermediate_compression_options="-3" @ string
-	#   Final blocklist compression. Default: '-6'
-	final_compression_options="-6" @ string
-
-	# unload previous blocklist form memory and restart dnsmasq before generation of
-	# new blocklist in order to free up memory during generation of new blocklist - 'auto' or enable (1) or disable (0)
+	# Unload previous blocklist from memory and restart dnsmasq before generation of new blocklist.
+	# Helps to free up memory during blocklist generation - 'auto' or enable (1) or disable (0)
 	unload_blocklist_before_update="auto" @ auto|0|1
 
 	# Start delay in seconds when service is started from system boot
 	boot_start_delay_s="30" @ uint
 
+	# Crontab schedule expression for periodic list updates
+	upd_schedule="${upd_schedule:-"0 5 * * *"}" @ string
+
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
 	MAX_PARALLEL_JOBS="auto" @ auto|uint
-
-	# If a path to custom script is specified and that script defines functions
-	# 'report_success()', 'report_failure()' or 'report_update()',
-	# one of these functions will be executed when adblock-lean completes the execution of some commands,
-	# with corresponding message passed in first argument
-	# report_success() and report_update() are only executed upon completion of the 'start' command
-	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
-	custom_script="" @ string
-
-	# Crontab schedule expression for periodic list updates
-	cron_schedule="${cron_schedule:-"0 5 * * *"}" @ string
-
-	# dnsmasq instance indexes and config directories
-	# normally this should be set automatically by the 'setup' command
-	DNSMASQ_INDEXES="${dnsmasq_indexes}" @ uint_list
-	DNSMASQ_CONF_DIRS="${dnsmasq_conf_dirs}" @ string
 
 	# Log verbosity (0-5). Higher values send more messages to the syslog. Default is 1.
 	LOG_VERBOSITY="1" @ 0|1|2|3|4|5
@@ -960,8 +1044,8 @@ print_def_config()
 	EOT
 }
 
-# generates config
-do_gen_config()
+# 1: new blocklist ID
+do_add_blocklist_config()
 {
 	# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
 	get_def_preset()
@@ -991,7 +1075,31 @@ do_gen_config()
 		:
 	}
 
-	local cnt totalmem totalmem_human preset
+	local cnt totalmem totalmem_human preset \
+		dnsmasq_indexes conf_dirs \
+		new_cfg\
+		i=0 \
+		bl_id="${1:-"${luci_new_blocklist_name}"}"
+
+	while [ ${i} -le 10 ]
+	do
+		is_alphanum "${bl_id}" && break
+
+		[ -z "${bl_id}" ] && [ ${i} = 0 ] && [ "${DO_DIALOGS}" = 1 ] ||
+			print_msg "Invalid blocklist name '${bl_id}'. Use English letters and/or numbers and/or underlines."
+
+		[ -n "${luci_new_blocklist_name}" ] && return 1
+
+		[ "${DO_DIALOGS}" = 1 ] ||
+		{
+			bl_id=01
+			break
+		}
+
+		print_msg "" "Name the new blocklist:"
+		read -r bl_id
+		i=$((i+1))
+	done || return 1
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${luci_preset}" ]
 	then
@@ -1031,47 +1139,39 @@ do_gen_config()
 	is_included "${preset}" "${ALL_PRESETS}" || { reg_failure "Invalid preset '${preset}'."; return 1; }
 	reg_msg -blue "Selected preset '${preset}'."
 
-	do_select_dnsmasq_instances -n || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
+	add2list BL_IDS "${bl_id}"
+	do_select_dnsmasq_instances "${bl_id}" ||
+		{ reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; } # TODO: should err msg be here?
 
-	# create cron job
-	cron_schedule=
-	local def_schedule="0 5 * * *" def_schedule_desc="daily at 5am (5 o'clock at night)"
-
-	REPLY=n
-	if [ "${DO_DIALOGS}" = 1 ]
-	then
-		print_msg "" "${purple}Cron job configuration:${n_c}" \
-			"A cron job can be created to enable automatic list updates." \
-			"The default schedule is '${blue}${def_schedule}${n_c}': ${def_schedule_desc}" \
-			"The cron job will run with an added random number of minutes." \
-			"" "Create cron job with default schedule for automatic list updates? (y|n)" \
-			"'n' will set the 'cron_schedule' setting to 'disable'. You can later create a cron job with a custom schedule as described in:" \
-			"https://github.com/lynxthecat/adblock-lean/blob/master/README.md"
-		pick_opt "y|n" || return 1
-		cron_schedule="${def_schedule}"
-	elif [ -n "${luci_upd_cron_job}" ] && [ -n "${luci_cron_schedule}" ]
-	then
-		REPLY=y
-		cron_schedule="${luci_cron_schedule}"
-	elif  [ -n "${luci_upd_cron_job}" ]
-	then
-		reg_failure "Can not create cron job for luci because the \${luci_cron_schedule} var is empty."
-	fi
-	[ "${REPLY}" = n ] && cron_schedule=disable
-
-	reg_action -purple "" "Generating new default config for adblock-lean from preset '${preset}'." || return 1
-	write_config "$(print_def_config -p "${preset}" -n "${DNSMASQ_INDEXES}" -c "${DNSMASQ_CONF_DIRS}")" || return 1
+	get_bl_params -f add_blocklist_config "${bl_id}" dnsmasq_indexes conf_dirs &&
+	reg_action -purple "" "Generating new blocklist config '${bl_id}' from preset '${preset}'." &&
+	new_cfg="$(print_def_cfg bl -i "${bl_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
+	write_config bl "${bl_id}" "${new_cfg}" || return 1
 
 	:
 }
 
+get_cfg_path()
+{
+	local g_path
+	: "${g_path}"
+	unset_vars "${1}" || return 1
+	case "${2}" in
+		global) g_path=${GLOBAL_CFG_FILE:?} ;;
+		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blocklist-${2}.conf" ;;
+		*) bad_args get_cfg_path "${@}"; return 1 ;;
+	esac
+	eval "${1}"='${g_path}'
+}
+
 # validate config and assign to variables
 #
-# 1 - path to file
+# 1: type: <global|bl>
+# 2: config ID: <global|[bl_id]>
 # Optional:
-#   2 - var to output conf fixes
-#   3 - var to output keys requiring replacement
-#   4 - var to output keys requiring migration
+# 3: config file path
+# 4: var to output conf fixes
+# 5: var to output keys requiring replacement
 #
 # return codes:
 # 0 - Success
@@ -1080,29 +1180,47 @@ do_gen_config()
 # 3 - Internal parser error
 #
 # sets variables for luci:
-# *_curr_config_format *_def_config_format *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
-#     *_bad_conf_format *_conf_fixes *_bad_value_keys
+# *_unexp_keys *_unexp_entries *_missing_keys *_missing_entries
+#     *_bad_cfg_format *_cfg_fixes *_bad_value_keys
 parse_config()
 {
-	add_conf_fix() { p_conf_fixes="${p_conf_fixes}${1}"$'\n'; }
+	add_cfg_fix() { p_cfg_fixes="${p_cfg_fixes}${1}"$'\n'; }
 
-	local def_config='' curr_config='' \
-		i keys entries entry_type_print_lc \
-		p_migrated_keys='' migrate_keys='' migrate_entries='' \
-		bad_val_entries='' corrected_entries='' \
-		p_conf_fixes='' missing_keys='' bad_val_keys='' \
-		sed_conf_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d'
+	local me=parse_config \
+		IFS="${DEFAULT_IFS}" \
+		cfg_pr \
+		curr_config='' \
+		i keys entries entries_type_pr entries_pr \
+		migrate_opts \
+		dup_keys='' dup_entries='' \
+		unexp_keys='' unexp_entries='' \
+		missing_keys='' missing_entries='' \
+		migrate_keys='' migrate_entries='' \
+		bad_val_keys='' bad_val_entries='' corrected_entries='' \
+		def_cfg_format \
+		force_upd_cfg_format='' \
+		p_cfg_fixes='' \
+		sed_cfg_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d' \
+			cfg_type="${1:?}" cfg_id="${2:?}" cfg_path="${3}" fixes_out_var="${4}" replace_keys_out_var="${5}"
 
-	unset_vars "${2}" "${3}" "${4}" || return 1
+	: "${missing_entries}" "${migrate_keys}"  "${migrate_entries}" "${bad_val_entries}" "${corrected_entries}"
+	: "${dup_keys}" "${dup_entries}" "${unexp_keys}" "${unexp_entries}"
 
-	unset curr_config_format def_config_format \
-		luci_curr_config_format luci_def_config_format luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
-		luci_bad_conf_format luci_conf_fixes preset
+	[ -n "${cfg_path}" ] || get_cfg_path cfg_path "${cfg_id}" || return 1
+
+	cfg_pr="config file '${cfg_path}'"
+
+	unset_vars "${fixes_out_var}" "${replace_keys_out_var}" || return 1
+
+	unset luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
+		luci_bad_cfg_format luci_cfg_fixes preset
 
 	# newline-separated list of options to migrate in the format <old_key=new_key>
-	MIGRATE_OPTS='
-		DNSMASQ_INDEX=DNSMASQ_INDEXES
-		DNSMASQ_CONF_D=DNSMASQ_CONF_DIRS
+	migrate_opts='
+		DNSMASQ_INDEX=dnsmasq_indexes
+		DNSMASQ_INDEXES=dnsmasq_indexes
+		DNSMASQ_CONF_D=dnsmasq_conf_dirs
+		DNSMASQ_CONF_DIRS=dnsmasq_conf_dirs
 		blocklist_urls=raw_block_lists
 		allowlist_urls=raw_allow_lists
 		blocklist_ipv4_urls=raw_ipv4_block_lists
@@ -1110,64 +1228,63 @@ parse_config()
 		dnsmasq_blocklist_ipv4_urls=dnsmasq_ipv4_block_lists
 		dnsmasq_allowlist_urls=dnsmasq_allow_lists
 		min_blocklist_ipv4_part_line_count=min_ipv4_blocklist_part_line_count
+		cron_schedule=upd_schedule
 	'
-	local IFS="${_NL_}" migrate_opts_tmp='' opt
-	# remove leading and trailing spaces/tabs
-	for opt in ${MIGRATE_OPTS}
-	do
-		[ -n "${opt}" ] || continue
-		opt="${opt#"${opt%%[! 	]*}"}"
-		opt="${opt%"${opt##*[! 	]}"}"
-		migrate_opts_tmp="${migrate_opts_tmp}${opt}${_NL_}"
-	done
+
+	# remove newlines, extra spaces/tabs
+	set -- ${migrate_opts}
+	IFS="${_NL_}"
+	migrate_opts="${*}"
 	IFS="${DEFAULT_IFS}"
-	MIGRATE_OPTS="${migrate_opts_tmp}"
 
-	[ -z "${1}" ] && { reg_failure "parse_config(): no file specified."; return 3; }
+	[ -z "${cfg_path}" ] && { bad_args "${me}" "${@}"; return 3; }
 
-	[ ! -f "${1}" ] && { reg_failure "Config file '${1}' not found."; return 1; }
+	[ ! -f "${cfg_path}" ] && { reg_failure "Config file '${cfg_path}' not found."; return 1; }
 
-	try_mkdir -p "${ABL_CONF_STAGING_DIR}" || return 1
+	# Config format versions
+	def_cfg_format="$(print_def_cfg global | get_config_format)" || return 1
+	export "luci_def_cfg_format"="${def_cfg_format}"
+	curr_cfg_format="$(get_config_format "${cfg_path}")" || return 1
+	export "luci_curr_cfg_format_${cfg_id}"="${curr_cfg_format}"
+	is_uint "${curr_cfg_format}" ||
+	{
+		log_msg -warn "" "Config format version '${curr_cfg_format}' is unknown or invalid."
+		add_cfg_fix "Update config format version"
+		force_upd_cfg_format=1
+	}
 
-	# extract entries from default config
-	def_config="$(print_def_config)" || return 3
+	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
 
 	# read and sanitize current config
-	curr_config="$($SED_CMD "${sed_conf_san_exp}" "${1}")" || { reg_failure "Failed to read the config file '${1}'."; return 1; }
+	curr_config="$(${SED_CMD} "${sed_cfg_san_exp}" "${cfg_path}")" || { reg_failure "Failed to read the ${cfg_pr}."; return 1; }
 
 	local bad_newline=
 	case "${curr_config}" in
-		*"${CR_LF}"*) bad_newline="Windows-format (CR_LF)" ;;
-		*"${CR}"*) bad_newline="MacOS-format (CR)" ;;
+		*"${CR_LF}"*) bad_newline="Windows-style (CR_LF)" ;;
+		*"${CR}"*) bad_newline="MacOS-style (CR)" ;;
 	esac
 	[ -n "${bad_newline}" ] &&
 	{
-		reg_failure "Config file contains ${bad_newline} newlines. Convert the config file to Unix-format (LF) newlines."
+		reg_failure "${bad_newline} newlines detected in ${cfg_pr}. Convert the config file to Unix-style (LF) newlines."
 		return 1
 	}
 
-	# get config versions
-	curr_config_format="$(get_config_format "${1}")"
-	export luci_curr_config_format="${curr_config_format}"
-	def_config_format="$(printf %s "${def_config}" | get_config_format)"
-	export luci_def_config_format="${def_config_format}"
-
 	local parse_vars valid_lines entry_type
 	# extract valid values from default config
-	valid_lines="$(print_def_config -d | ${SED_CMD} "${sed_conf_san_exp}")"
+	valid_lines="$(print_def_cfg "${cfg_type}" -i "${cfg_id}" -d | ${SED_CMD} "${sed_cfg_san_exp}")"
 	# parse config
-	local parser_err_file="${ABL_CONF_STAGING_DIR}/parser_err" \
-		awk_err_file="${ABL_CONF_STAGING_DIR}/awk_err" \
-		inval_entry_file="${ABL_CONF_STAGING_DIR}/inval_entry"
+	local parser_err_file="${ABL_CFG_STAGING_DIR}/parser_err" \
+		awk_err_file="${ABL_CFG_STAGING_DIR}/awk_err" \
+		inval_entry_file="${ABL_CFG_STAGING_DIR}/inval_entry"
 	rm -f "${parser_err_file}" "${awk_err_file}" "${inval_entry_file}"
 	for entry_type in unexp bad_val missing dup migrate
 	do
-		rm -f "${ABL_CONF_STAGING_DIR}/${entry_type}_entries"
+		rm -f "${ABL_CFG_STAGING_DIR}/${entry_type}_entries"
 	done
 
 	parse_vars="$(
 		printf '%s\n' "${curr_config}" |
-		${AWK_CMD} -F"=" -v q="'" -v V="${valid_lines}" -v M="${MIGRATE_OPTS}" -v A="${ABL_CONF_STAGING_DIR}" '
+		${AWK_CMD} -F"=" -v q="'" -v ID="${cfg_id}" -v V="${valid_lines}" -v M="${migrate_opts}" -v A="${ABL_CFG_STAGING_DIR}" '
 		# return codes: 0=OK, 1=awk or default config error, 253=check double-quotes, 254=Invalid entry detected
 
 		function check_value(key,val)
@@ -1179,25 +1296,37 @@ parse_config()
 			return 0
 		}
 
+		function intern_err(msg)
+		{
+			rv=1
+			print "Internal parser error: " msg > A"/parser_err"
+		}
+
+		function get_var_name(opt)
+		{
+			if (!opt) {intern_err("get_var_name: empty opt."); exit}
+			if (ID == "global") return opt
+			return opt "_" ID
+		}
+
 		BEGIN{
 			rv=0
 			line_comp[1]="key"
 			line_comp[2]="value"
 			line_comp[3]="allowed values"
 
-			# create validation arrays
+			# Create validation arrays
 			split(V,def_lines_arr,"\n")
 			for (ind in def_lines_arr) {
-				# remove whitespaces/tabs
+				# Remove whitespaces/tabs
 				sub(/"[ \t]*@[ \t]*/,"\"@",def_lines_arr[ind])
 				def_lines_arr[ind]=def_lines_arr[ind]
-				# validate default config line
-				n=split(def_lines_arr[ind],def_line_parts,"[=@]") # split into key, value, allowed values
-				if (n!=3) {print "Invalid line in default config: " q def_lines_arr[ind] q "." > A"/parser_err"; rv=1; exit}
+				# Validate default config line
+				n=split(def_lines_arr[ind],def_line_parts,"[=@]") # Split into key, value, allowed values
+				if (n!=3) {intern_err("Invalid line in default config: " q def_lines_arr[ind] q "."); exit}
 				for (i in def_line_parts) {
 					if (! def_line_parts[i]) {
-						print "Invalid line in default config: " q def_lines_arr[ind] q " is missing the " line_comp[i] "." > A"/parser_err"
-						rv=1
+						intern_err("Invalid line in default config: " q def_lines_arr[ind] q " is missing the " line_comp[i] ".")
 						exit
 					}
 				}
@@ -1206,7 +1335,7 @@ parse_config()
 				def_arr[key]=def_line_parts[2]
 				valid_values=def_line_parts[3]
 
-				# create entry-specific validation regex array, printable valid values array
+				# Create entry-specific validation regex array, printable valid values array
 				if (valid_values_seen_regex_arr[valid_values] != "")
 				{
 					valid_values_regex_arr[key]=valid_values_seen_regex_arr[valid_values]
@@ -1234,7 +1363,7 @@ parse_config()
 				}
 			}
 
-			# create migrate_keys_arr
+			# Create migrate_keys_arr
 			split(M,migrate_lines_arr,"\n")
 			for (ind in migrate_lines_arr)
 			{
@@ -1250,65 +1379,64 @@ parse_config()
 
 		}
 
-		# process user config
+		# Process user config
 		{
-			# handle double or missing =
+			# Handle double or missing =
 			if ( $0 !~ /^[^=]+=[^=]+([ \t]+(#.*){0,1})*$/ ) {
 				print $0 > A"/inval_entry"
 				rv=254
 				exit
 			}
 
-			# key must be non-empty and alphanumeric
+			# Key must be non-empty and alphanumeric
 			if ( $1 !~ /^[a-zA-Z0-9_]+$/ ) {
 				print $0 > A"/inval_entry"
 				rv=254
 				exit
 			}
 
-			# line must have exactly 2 double-quotes after = and no characters before #
+			# Line must have exactly 2 double-quotes after = and no characters before #
 			if ( $0 !~ /^[^"]+="[^"]*"([ \t]+(#[^"]*){0,1}){0,1}$/ ) {
 				print $0 > A"/inval_entry"
 				rv=253
 				exit
 			}
 
-			# get value
+			# Get value
 			split($2,tmp,"\"")
 			val=tmp[2]
 
-			# handle migrated keys
+			# Handle migrated keys
 			if ($1 in migrate_keys_arr) {
 				new_key=migrate_keys_arr[$1]
 				if (check_value(new_key,val) == 0)
 				{
-					migrated_keys_arr[new_key]
+					config_keys[new_key]
+					print get_var_name(new_key) "=\"" val "\""
 					migrate_keys=migrate_keys $1 " "
-					migrated_keys=migrated_keys new_key " "
-					migrate_opts=migrate_opts "MIGRATE_" new_key "=\"" val "\"\n"
 					print $0 >> A"/migrate_entries"
 					next
 				}
 			}
 
-			# handle duplicate keys
+			# Handle duplicate keys
 			if ($1 in config_keys) {
 				dup_keys=dup_keys $1 " "
 				print $0 >> A"/dup_entries"
 				next
 			}
 
-			# handle unexpected keys
+			# Handle unexpected keys
 			if ($1 in def_arr) {} else {
 				unexp_keys=unexp_keys $1 " "
 				print $0 >> A"/unexp_entries"
 				next
 			}
 
-			# register the key
+			# Register the key
 			config_keys[$1]
 
-			# handle unexpected values
+			# Handle unexpected values
 			if (check_value($1,val) != 0)
 			{
 				bad_val_keys=bad_val_keys $1 " "
@@ -1317,37 +1445,35 @@ parse_config()
 				next
 			}
 
-			print $1 "=\"" val "\""
+			print get_var_name($1) "=\"" val "\""
 		}
 
 		END{
 			if (rv != 0) {exit rv}
 			for (key in def_arr) {
-				if (key in config_keys || key in migrated_keys_arr) {} else {
+				if (key in config_keys) {} else {
 					print key "=" def_arr[key] >> A"/missing_entries"
 					missing_keys=missing_keys key " "
 				}
 			}
 			print "missing_keys=\"" missing_keys "\" " \
 				"migrate_keys=\"" migrate_keys "\" " \
-				"p_migrated_keys=\"" migrated_keys "\" " \
 				"unexp_keys=\"" unexp_keys "\" " \
 				"dup_keys=\"" dup_keys "\" " \
-				"bad_val_keys=\"" bad_val_keys "\" " \
-				"\n" migrate_opts
+				"bad_val_keys=\"" bad_val_keys "\" "
 			exit rv
 		}' 2>"${awk_err_file}"
 	)" && [ ! -s "${awk_err_file}" ] && [ ! -s "${parser_err_file}" ] ||
 	{
 		local awk_rv=${?} inval_entry=''
-		[ -s "${awk_err_file}" ] && reg_failure "awk errors encountered while parsing config:${_NL_}$(cat "${awk_err_file}")"
+		[ -s "${awk_err_file}" ] && reg_failure "awk errors encountered while parsing ${cfg_pr}:${_NL_}$(cat "${awk_err_file}")"
 		[ -s "${parser_err_file}" ] && reg_failure "$(cat "${parser_err_file}")"
-		[ -s "${inval_entry_file}" ] && inval_entry=": '$(cat "${inval_entry_file}")'"
+		[ -s "${inval_entry_file}" ] && inval_entry=": ${_NL_}'$(cat "${inval_entry_file}")'"
 
 		case "${awk_rv}" in
-			253) reg_failure "Invalid entry in config (check double-quotes)${inval_entry}" ;;
-			254) reg_failure "Invalid entry in config${inval_entry}" ;;
-			*) reg_failure "Failed to parse config."; return 3
+			253) reg_failure "Invalid entry in ${cfg_pr} (check double-quotes)${inval_entry}" ;;
+			254) reg_failure "Invalid entry in ${cfg_pr}${inval_entry}" ;;
+			*) reg_failure "Failed to parse ${cfg_pr}."; return 3
 		esac
 
 		return 1
@@ -1359,92 +1485,84 @@ parse_config()
 	eval "${parse_vars}" 2> "${parser_err_file}" && [ ! -s "${parser_err_file}" ] ||
 	{
 		[ -s "${parser_err_file}" ] && err_print=" Errors: ${_NL_}$(cat "${parser_err_file}")"
-		reg_failure "Failed to parse config.${err_print}"
+		reg_failure "Failed to parse ${cfg_pr}.${err_print}"
 		return 3
 	}
 
-	if [ -n "${migrate_keys}" ]
-	then
-		log_msg -yellow "" "Following config options need to be migrated (option name has changed): '${migrate_keys% }'."
-		migrate_entries="$(cat "${ABL_CONF_STAGING_DIR}/migrate_entries")"
-		print_msg "Corresponding config entries:" "${migrate_entries%$'\n'}"
-		add_conf_fix "Migrate config entries"
-		export luci_migrate_keys="${migrate_keys% }" luci_migrate_entries="${migrate_entries%$'\n'}"
-	fi
-
 	for i in \
-		"dup|duplicate|Duplicate|Remove duplicate entries from the config" \
-		"unexp|unexpected|Unexpected|Remove unexpected entries from the config" \
-		"missing|missing|Missing|Re-add missing config entries with default values"
+		"bad_val||Replace unexpected values with defaults" \
+		"migrate||Migrate config entries" \
+		"dup|Duplicate|Remove duplicate entries from the config" \
+		"unexp|Unexpected|Remove unexpected entries from the config" \
+		"missing|Missing|Add missing config entries with default values"
 	do
 		entry_type="${i%%|*}"
 		eval "keys=\"\${${entry_type}_keys% }\""
 		[ -n "${keys}" ] || continue
 
 		i="${i#"${entry_type}|"}"
-		entry_type_print_lc="${i%%|*}"
-		i="${i#"${entry_type_print_lc}|"}"
 
-		log_msg -yellow "" "${i%%|*} keys in config: '${keys}'."
-		entries="$(cat "${ABL_CONF_STAGING_DIR}/${entry_type}_entries")"
-		print_msg "Corresponding config entries:" "${entries%$'\n'}"
-		add_conf_fix "${i##*|}"
-		export "luci_${entry_type}_keys"="${keys}" "luci_${entry_type}_entries"="${entries%$'\n'}"
+		entries="$(cat "${ABL_CFG_STAGING_DIR}/${entry_type}_entries")"
+		entries="${entries%$'\n'}"
+		entries_pr="${entries}"
+		case "${entry_type}" in
+			migrate) log_msg -yellow "" "Following config options in ${cfg_pr} need to be migrated (option name has changed):${_NL_}'${keys// /\', \'}'." ;;
+			bad_val)
+				log_msg -yellow "" "Detected entries with unexpected values in ${cfg_pr}:"
+				entries_pr="$(cat "${ABL_CFG_STAGING_DIR}/corrected_entries")"
+				entries_pr="${entries_pr%$'\n'}"
+				export "luci_corrected_entries_${cfg_id}"="${entries_pr}"
+				;;
+			*) log_msg -yellow "" "${i%%|*} keys in ${cfg_pr}:${_NL_}'${keys// /\', \'}'"
+		esac
+
+		entries_type_pr=
+		case "${entry_type}" in
+			missing|bad_val) entries_type_pr=" default"
+		esac
+
+		print_msg "Corresponding${entries_type_pr} config entries:" "${entries_pr}"
+		add_cfg_fix "${i##*|}"
+		export "luci_${entry_type}_keys_${cfg_id}"="${keys}" "luci_${entry_type}_entries_${cfg_id}"="${entries}"
 	done
 
-	if [ -n "${bad_val_keys}" ]
+	p_cfg_fixes="${p_cfg_fixes%$'\n'}"
+
+	if [ -z "${p_cfg_fixes}" ] && [ -z "${force_upd_cfg_format}" ] && [ "${curr_cfg_format}" != "${def_cfg_format}" ]
 	then
-		log_msg -yellow "" "Detected config entries with unexpected values."
-		bad_val_entries="$(cat "${ABL_CONF_STAGING_DIR}/bad_val_entries")"
-		corrected_entries="$(cat "${ABL_CONF_STAGING_DIR}/corrected_entries")"
-		print_msg "Following config entries have unexpected values:" "${bad_val_entries%$'\n'}" "" \
-			"Corresponding default config entries:" "${corrected_entries%$'\n'}"
-		add_conf_fix "Replace unexpected values with defaults"
-		export luci_bad_val_entries="${bad_val_entries%$'\n'}" luci_corrected_entries="${corrected_entries%$'\n'}"
+		log_msg -yellow "" "Current config format version '${curr_cfg_format}' differs from default config version '${def_cfg_format}'."
+		add_cfg_fix "Update config format version"
 	fi
 
-	if [ -z "${p_conf_fixes}" ]
-	then
-		if is_uint "${curr_config_format}"
-		then
-			if [ "${curr_config_format}" != "${def_config_format}" ]
-			then
-				log_msg -yellow "" "Current config format version '${curr_config_format}' differs from default config version '${def_config_format}'."
-				add_conf_fix "Update config format version"
-			fi
-		else
-			log_msg -warn "" "Config format version is unknown or invalid."
-			add_conf_fix "Update config format version"
-		fi
-	fi
+	eval "${fixes_out_var:-_}=\"${p_cfg_fixes}\" ${replace_keys_out_var:-_}=\"${missing_keys}${bad_val_keys}\""
 
-	p_conf_fixes="${p_conf_fixes%$'\n'}"
-	export luci_conf_fixes="${p_conf_fixes}"
-
-	eval "${2:-_}=\"${p_conf_fixes}\" ${3:-_}=\"${missing_keys}${bad_val_keys}\" ${4:-_}=\"${p_migrated_keys}\""
-
-	[ -n "${p_conf_fixes}" ] && return 2
+	[ -n "${p_cfg_fixes}" ] && return 2
 	:
 }
 
 load_config()
 {
 	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
-	local in_install="${ABL_IN_INSTALL:-"${upd_channel}"}"
-	[ -n "${CONFIG_LOADED}" ] && [ "${1}" != '-force' ] && [ -z "${in_install}" ] && return 0
-	try_load_config ||
+	local \
+		err_path err_cfg='' fix_cmd='' \
+		in_install="${ABL_IN_INSTALL:-"${upd_channel}"}"
+	[ -n "${CONFIG_LOADED}" ] && [ -z "${in_install}" ] && return 0
+	export BL_IDS=
+	try_load_config err_cfg ||
 	{
-		reg_failure "Failed to load config." "Fix your config file '${ABL_CONFIG_FILE}' or generate default config using 'service adblock-lean gen_config'."
+		reg_failure "Failed to load config${err_cfg:+" '${err_cfg}'"}."
+		case "${err_cfg}" in
+			global) fix_cmd=gen_global_config ;;
+			blocklist-*) fix_cmd="add_blocklist_config ${err_cfg}"
+		esac
+		[ -n "${err_cfg}" ] && [ -n "${fix_cmd}" ] &&
+		{
+			get_cfg_path err_path "${err_cfg}"
+			log_msg "Fix your config file '${err_path}' or generate default config using 'service adblock-lean ${fix_cmd}'."
+		}
 		return 1
 	}
 	export CONFIG_LOADED=1
-
-	# TODO: temporary hack for multiple blocklists
-	BL_IDS=00
-	DNSMASQ_INDEXES_00=0
-	DNSMASQ_CONF_DIRS_00=/tmp/dnsmasq.cfg01411c.d
-	PERSIST_MODE_00=disable
-
 
 	# check for missing addnmounts during version update
 	if [ -n "${in_install}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
@@ -1457,87 +1575,159 @@ load_config()
 }
 
 # shellcheck disable=SC2120
-# 1 - (optional) '-f' to force fixing the config if it has issues
+# 1: var name to output which file failed parsing
 try_load_config()
 {
-	print_conf_fixes()
+	print_cfg_fixes()
 	{
-		local fix cnt=0 IFS="${_NL_}"
-		for fix in ${l_conf_fixes}
-		do
+		local cfg_id cfg_path fix fixes cnt=0 \
 			IFS="${DEFAULT_IFS}"
-			[ -z "${fix}" ] && continue
-			cnt=$((cnt+1))
-			print_msg "${cnt}. ${fix}"
+		for cfg_id in global ${BL_IDS}
+		do
+			eval "fixes=\"\${cfg_fixes_${cfg_id}}\" cfg_path=\"\${cfg_path_${cfg_id}}\""
+			[ -n "${fixes}" ] || continue
+			print_msg "In config file '${cfg_path}':"
+			IFS="${_NL_}"
+			for fix in ${fixes}
+			do
+				IFS="${DEFAULT_IFS}"
+				[ -n "${fix}" ] || continue
+				cnt=$((cnt+1))
+				print_msg "${cnt}. ${fix}"
+			done
+			IFS="${DEFAULT_IFS}"
 		done
-		IFS="${DEFAULT_IFS}"
 	}
 
-	local force_fix='' l_replace_keys='' l_migrated_keys='' l_conf_fixes=''
+	local force_fix='' l_cfg_fixes='' l_replace_keys='' \
+		all_cfg_fixes='' \
+		curr_cfg_format \
+		cfg_path cfg_type cfg_id \
+		err_cfg_out_var="${1}"
+
 	[ -n "${ABL_LUCI_SOURCED}" ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] &&
 		DO_DIALOGS=1
 
-	if [ ! -f "${ABL_CONFIG_FILE}" ]
+	if [ ! -f "${GLOBAL_CFG_FILE:?}" ]
 	then
-		reg_failure "Config file is missing."
+		reg_failure "Global config file '${GLOBAL_CFG_FILE:?}' is missing."
 		return 1
 	fi
 
-	# validate config and assign to variables
-	local parse_ok=
-	parse_config "${ABL_CONFIG_FILE}" l_conf_fixes l_replace_keys l_migrated_keys
-	case ${?} in
-		0) parse_ok=1 ;;
-		1) return 1 ;; # config error with no automatic fix
-		2) ;; # config error(s) with automatic fix
-		3) return 1 # internal parser error
-	esac
+	for cfg_path in "${GLOBAL_CFG_FILE:?}" "${ABL_CFG_DIR:?}"/blocklist-*.conf
+	do
+		case "${cfg_path}" in
+			*"*"*)
+				continue ;;
+			"${GLOBAL_CFG_FILE}")
+				cfg_type=global
+				cfg_id=global ;;
+			"${ABL_CFG_DIR}"/*)
+				cfg_type=bl
+				split_path _ cfg_id _  "${cfg_path}"
+				cfg_id="${cfg_id#"blocklist-"}"
+				is_alphanum "${cfg_id}" ||
+				{
+					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+					continue
+				}
+				add2list BL_IDS "${cfg_id}"
+		esac
+
+		eval "${err_cfg_out_var}"='${cfg_id}'
+		eval "local cfg_path_${cfg_id}"='${cfg_path}'
+
+		# validate config and assign to variables
+		eval "local cfg_fixes_${cfg_id}='' replace_keys_${cfg_id}=''"
+		parse_config "${cfg_type}" "${cfg_id}" "" "cfg_fixes_${cfg_id}" "replace_keys_${cfg_id}"
+		case ${?} in
+			0) ;;
+			1) return 1 ;; # config error with no automatic fix
+			2) ;; # config error(s) with automatic fix
+			3) return 1 # internal parser error
+		esac
+
+		eval "all_cfg_fixes=\"${all_cfg_fixes}${all_cfg_fixes:+"${_NL_}"}\${cfg_fixes_${cfg_id}}\""
+		export "luci_cfg_fixes_${cfg_id}"="${all_cfg_fixes}"
+
+		# if not in interactive console and force-fix not set, return error
+		[ -n "${all_cfg_fixes}" ] && [ "${DO_DIALOGS}" != 1 ] && [ -z "${force_fix}" ] && return 1
+	done
 
 	# remove trailing '/' from dir paths
-	PERSIST_BLOCKLIST_DIR="${PERSIST_BLOCKLIST_DIR%/}"
+	persist_blocklist_dir="${persist_blocklist_dir%/}" # TODO
 
-	if [ -z "${parse_ok}" ]
+	if [ -n "${all_cfg_fixes}" ]
 	then
-		# if not in interactive console and force-fix not set, return error
-		[ "${DO_DIALOGS}" != 1 ] && [ -z "${force_fix}" ] && return 1
-
-		# sanity check
-		[ -z "${l_conf_fixes}" ] && { reg_failure "Failed to parse config."; return 1; }
-
+		eval "${err_cfg_out_var}"=
 		if [ "${DO_DIALOGS}" = 1 ] && [ -z "${force_fix}" ]
 		then
-			if [ -n "${l_conf_fixes}" ]
-			then
-				print_msg -blue "" "Perform following automatic changes? (y|n)"
-				print_conf_fixes
-				pick_opt "y|n" || return 1
-			fi
+			print_msg -blue "" "Perform following automatic changes? (y|n)"
+			print_cfg_fixes
+			pick_opt "y|n" &&
+			[ "${REPLY}" = y ] || return 1
 		else
 			print_msg -blue "" "Performing following config changes:"
-			print_conf_fixes
-			REPLY=y
+			print_cfg_fixes
 		fi
 
-		[ "${REPLY}" = n ] && return 1
-
-		fix_config "${l_replace_keys}" "${l_migrated_keys}" || { reg_failure "Failed to fix the config."; return 1; }
+		for cfg_id in global ${BL_IDS}
+		do
+			eval "${err_cfg_out_var}"='${cfg_id}'
+			eval \
+				"l_cfg_fixes=\"\${cfg_fixes_${cfg_id}}\"" \
+				"l_replace_keys=\"\${replace_keys_${cfg_id}}\""
+			[ -n "${l_cfg_fixes}" ] || continue
+			fix_config "${cfg_type}" "${cfg_id}" "${l_replace_keys}" || { reg_failure "Failed to fix the config."; return 1; }
+		done
 	fi
 
 	:
 }
 
-# 1 - keys to replace (whitespace-separated)
-# 2 - keys to migrate
+# 1: config type
+# 2: config ID
+# 3: keys to replace (whitespace-separated)
 fix_config()
 {
-	rebuild_config()
-	{
-		local def_line key curr_val replace_keys="${1}" migrated_keys="${2}"
-		print_def_config -n "${DNSMASQ_INDEXES}" -c "${DNSMASQ_CONF_DIRS}" |
+	local var_suffix \
+		dnsmasq_indexes conf_dirs \
+		fixed_cfg \
+			cfg_type="${1:?}" cfg_id="${2:?}" replace_keys="${3}"
+
+	[ "${cfg_type}" = global ] || var_suffix="_${cfg_id}"
+
+	if is_included dnsmasq_indexes "${replace_keys}" || is_included dnsmasq_conf_dirs "${replace_keys}"
+	then
+		do_select_dnsmasq_instances "${cfg_id}" || return 1
+	fi
+
+	[ "${cfg_type}" = bl ] &&
+		get_bl_params "${cfg_id}" dnsmasq_indexes conf_dirs
+
+	local old_cfg_f="/tmp/adblock-lean_config_${cfg_id}.old"
+	if ! cp "${GLOBAL_CFG_FILE}" "${old_cfg_f}"
+	then
+		reg_failure "Failed to save old config file as ${old_cfg_f}."
+		if [ -z "${APPROVE_UPD_CHANGES}" ]
+		then
+			[ "${DO_DIALOGS}" = 1 ] || return 1
+			print_msg "Proceed with suggested config changes? (y|n)"
+			pick_opt "y|n" || return 1
+			[ "${REPLY}" = n ] && return 1
+		fi
+	else
+		reg_msg "" "Old config file was saved as ${old_cfg_f}."
+	fi
+
+	# recreate config from default while replacing values with values from the existing config
+	fixed_cfg="$(
+		print_def_cfg "${cfg_type}" -i "${cfg_id}" -n "${dnsmasq_indexes}" -c "${conf_dirs}" |
 		while IFS="${_NL_}" read -r def_line
 		do
+			curr_val=
 			case "${def_line}" in
 				\#*|'') printf '%s\n' "${def_line}"; continue ;;
 				*=*)
@@ -1548,82 +1738,48 @@ fix_config()
 						continue
 					fi
 
-					if is_included "${key}" "${migrated_keys}"
-					then
-						eval "[ -n \"\${MIGRATE_${key}+set}\" ]" ||
-							{ reg_failure "fix_config: '\$MIGRATE_${key}' not set."; return 1; }
-						eval "curr_val=\"\${MIGRATE_${key}}\""
-					else
-						eval "curr_val=\"\${${key}}\""
-					fi
+					eval "curr_val=\"\${${key}${var_suffix}}\""
 					printf '%s\n' "${key}=\"${curr_val}\""
 					continue
 			esac
 		done
-		:
-	}
-
-	local replace_keys="${1}" migrated_keys="${2}" fixed_config
-
-	if is_included DNSMASQ_INDEXES "${replace_keys}" || is_included DNSMASQ_CONF_DIRS "${replace_keys}"
-	then
-		do_select_dnsmasq_instances -n || return 1
-		# shellcheck disable=SC2034
-		MIGRATE_DNSMASQ_INDEXES="${DNSMASQ_INDEXES}" MIGRATE_DNSMASQ_CONF_DIRS="${DNSMASQ_CONF_DIRS}"
-	fi
-
-	# recreate config from default while replacing values with values from the existing config
-	fixed_config="$(rebuild_config "${replace_keys}" "${migrated_keys}")" || return 1
-
-	local old_config_f="/tmp/adblock-lean_config.old"
-	if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
-	then
-		reg_failure "Failed to save old config file as ${old_config_f}."
-		if [ -z "${APPROVE_UPD_CHANGES}" ]
-		then
-			[ "${DO_DIALOGS}" = 1 ] || return 1
-			print_msg "Proceed with suggested config changes? (y|n)"
-			pick_opt "y|n" || return 1
-			[ "${REPLY}" = n ] && return 1
-		fi
-	else
-		reg_msg "" "Old config file was saved as ${old_config_f}."
-	fi
-
-	write_config "${fixed_config}" || return 1
+	)" &&
+	write_config "${cfg_type}" "${cfg_id}" "${fixed_cfg}" || return 1
 
 	:
 }
 
-# Writes config to temp file, validates it, moves it to permanent storage
-# 1 - new config file contents
+# Writes STDIN to to temp file, validates it, moves it to permanent storage
+# 1: config type
+# 2: config ID
+# 3: new config contents
 write_config()
 {
-	local tmp_config="${ABL_CONF_STAGING_DIR}/write-config.tmp"
+	local me=write_config \
+		cfg_file tmp_cfg_file \
+		cfg_type="${1:?}" cfg_id="${2:?}" cfg_cont="${3:?}"
 
-	[ -z "${1}" ] && { reg_failure "write_config(): no config passed."; return 1; }
+	get_cfg_path cfg_file "${cfg_id}" &&
 
-	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -f "${ABL_CONFIG_FILE}" ]
+	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -f "${cfg_file}" ]
 	then
 		print_msg "This will overwrite existing config. Proceed? (y|n)"
 		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
 	fi
 
-	try_mkdir -p "${ABL_CONF_STAGING_DIR}" || return 1
-	printf '%s\n' "${1}" > "${tmp_config}" || { reg_failure "Failed to write to file '${tmp_config}'."; return 1; }
-	parse_config "${tmp_config}" ||
-		{ rm -f "${tmp_config}"; reg_failure "Failed to validate the new config."; return 1; }
+	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
+	tmp_cfg_file="${ABL_CFG_STAGING_DIR:?}/write-config_${cfg_id}.tmp"
+	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_failure "Failed to write to file '${tmp_cfg_file}'."; return 1; }
 
-	reg_msg "" "Saving new config file to '${ABL_CONFIG_FILE}'."
-	try_mkdir -p "${ABL_CONFIG_DIR}" ||
+	parse_config "${cfg_type}" "${cfg_id}" "${tmp_cfg_file}" ||
+		{ rm -f "${tmp_cfg_file}"; reg_failure "Failed to validate config file '${tmp_cfg_file}'."; return 1; }
+
+	reg_msg "" "Saving the new config to '${cfg_file}'."
+
+	try_mkdir -p "${cfg_file%/*}" &&
+	try_mv "${tmp_cfg_file}" "${cfg_file}" ||
 		{
-			rm -f "${tmp_config}"
-			return 1
-		}
-	try_mv "${tmp_config}" "${ABL_CONFIG_FILE}" ||
-		{
-			rm -f "${tmp_config}"
-			reg_failure "Failed to move file '${tmp_config}' to '${ABL_CONFIG_FILE}'."
+			rm -f "${tmp_cfg_file}"
 			return 1
 		}
 	:
