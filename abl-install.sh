@@ -8,9 +8,9 @@ ABL_TMP_DIR=/var/run/adblock-lean/tmp
 ABL_UPD_DIR=${ABL_TMP_DIR}/update
 ABL_INST_DIR=${ABL_TMP_DIR}/remote_abl
 ABL_PID_DIR=/tmp/adblock-lean
-ABL_CONFIG_DIR=/etc/adblock-lean
+ABL_CFG_DIR=/etc/adblock-lean
 
-ABL_CONFIG_FILE=${ABL_CONFIG_DIR}/config
+ABL_CFG_FILE=${ABL_CFG_DIR}/config
 UCL_ERR_FILE="${ABL_TMP_DIR}/uclient-fetch_err"
 
 : "${ABL_REPO_AUTHOR:=lynxthecat}"
@@ -19,7 +19,7 @@ ABL_MAIN_BRANCH=master
 ABL_FILES_REG_PATH=/etc/adblock-lean/abl-reg.md5
 
 # silence shellcheck warnings
-: "${ABL_INSTALLER_VER}" "${ABL_CONFIG_FILE}"
+: "${ABL_INSTALLER_VER}" "${ABL_CFG_FILE}"
 
 LC_ALL=C
 DEFAULT_IFS='	 
@@ -284,7 +284,7 @@ get_abl_version()
 	fi
 
 	# v0.7.3 and later
-	if old_config_format="$(get_config_format "${1}")" && [ -n "${old_config_format}" ] && [ "${old_config_format}" -ge 9 ] &&
+	if old_cfg_format="$(get_config_format "${1}")" && [ -n "${old_cfg_format}" ] && [ "${old_cfg_format}" -ge 9 ] &&
 		grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
 		get_ver_str gv_upd_ch gv_ver "${1}"
 	then
@@ -330,12 +330,12 @@ failsafe_log()
 # input via STDIN or ${1}
 get_config_format()
 {
-	local conf_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
+	local cfg_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
 	if [ -n "${1}" ]
 	then
-		${SED_CMD} -En "${conf_form_sed_expr}" "${1}"
+		${SED_CMD} -En "${cfg_form_sed_expr}" "${1}"
 	else
-		${SED_CMD} -En "${conf_form_sed_expr}"
+		${SED_CMD} -En "${cfg_form_sed_expr}"
 	fi
 }
 
@@ -614,7 +614,7 @@ install_abl_files()
 {
 	local file preinst_path old_files='' exec_files='' \
 		preinst_reg_file="${dist_dir}/preinst_reg.md5" \
-		prev_config_format='' upd_config_format='' config_format_changed='' \
+		prev_cfg_format='' upd_cfg_format='' config_format_changed='' \
 		dist_dir="${1}" version="${2}" upd_channel="${3}" new_file_list="${4}"
 
 	[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] || inst_failed "Missing arguments."
@@ -650,8 +650,8 @@ install_abl_files()
 	then
 		# get currently installed file list
 		old_files="$(get_file_list "${ABL_SERVICE_PATH}" ALL)"
-		prev_config_format="$(get_config_format < "${ABL_SERVICE_PATH}")"
-		upd_config_format="$(get_config_format < "${dist_dir}${ABL_SERVICE_PATH}")"
+		prev_cfg_format="$(get_config_format < "${ABL_SERVICE_PATH}")"
+		upd_cfg_format="$(get_config_format < "${dist_dir}${ABL_SERVICE_PATH}")"
 
 		local IFS="${_NL_}"
 
@@ -800,7 +800,7 @@ install_abl_files()
 		)
 	fi
 
-	[ -n "${config_format_changed}" ] && print_msg "" "NOTE: config format has changed from v${prev_config_format} to v${upd_config_format}."
+	[ -n "${config_format_changed}" ] && print_msg "" "NOTE: config format has changed from v${prev_cfg_format} to v${upd_cfg_format}."
 
 	:
 }
@@ -828,18 +828,18 @@ fetch_and_install()
 	# v0.7.2 and earlier versions are incompatible with config v9 or later
 	rm_incompat_config()
 	{
-		[ -s "${ABL_CONFIG_FILE}" ] || return 0
-		local old_format='' old_config_f="/tmp/adblock-lean_config.old"
-		if old_format="$(get_config_format "${ABL_CONFIG_FILE}")" && [ -n "${old_format}" ] && [ "${old_format}" -ge 9 ]
+		[ -s "${ABL_CFG_FILE}" ] || return 0
+		local old_format='' old_cfg_f="/tmp/adblock-lean_config.old"
+		if old_format="$(get_config_format "${ABL_CFG_FILE}")" && [ -n "${old_format}" ] && [ "${old_format}" -ge 9 ]
 		then
 			log_msg "" "Warning: Version downgrade detected - removing incompatible config."
-			if ! cp "${ABL_CONFIG_FILE}" "${old_config_f}"
+			if ! cp "${ABL_CFG_FILE}" "${old_cfg_f}"
 			then
-				reg_failure "Failed to save old config file as ${old_config_f}."
+				reg_failure "Failed to save old config file as ${old_cfg_f}."
 			else
-				log_msg "Old config file was saved as ${old_config_f}." ""
+				log_msg "Old config file was saved as ${old_cfg_f}." ""
 			fi
-			rm -f "${ABL_CONFIG_FILE}"
+			rm -f "${ABL_CFG_FILE}"
 		fi
 	}
 
@@ -953,7 +953,7 @@ fetch_and_install()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		if [ -n "${IS_UPDATE}" ] && [ -s "${ABL_CONFIG_FILE}" ]
+		if [ -n "${IS_UPDATE}" ] && [ -s "${ABL_CFG_FILE}" ]
 		then
 			print_msg "" "Start adblock-lean now? (y|n)"
 			pick_opt "y|n"
