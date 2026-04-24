@@ -269,7 +269,7 @@ are_var_names_safe() {
 find_files()
 {
 	local me=find_files exec='' ff_file ff_found='' \
-		ff_path_out_var="${1}" ff_dir="${2}" ff_prefix="${3}" ff_suffix="${4}" bl_id="${5:?}"
+		ff_path_out_var="${1}" ff_dir="${2}" ff_prefix="${3}" ff_suffix="${4}" bl_id="${5}"
 
 	unset_vars "${ff_path_out_var}" || return 1
 
@@ -279,7 +279,8 @@ find_files()
 	do
 		case "${ff_file}" in ''|*"*") continue; esac
 		[ -f "${ff_file}" ] || continue # ignore dirs and symlinks
-		[ -n "${ff_found}" ] && [ -n "${FF_RM_EXTRA}" ] && { rm_if_writable "${bl_id}" "${ff_file}"; continue; }
+		[ -n "${ff_found}" ] && [ -n "${FF_RM_EXTRA}" ] &&
+			{ [ -n "${bl_id}" ] && rm_if_writable "${bl_id}" "${ff_file}"; continue; }
 
 		[ -n "${FF_EXEC}" ] &&
 		{
@@ -1106,7 +1107,7 @@ restart_dnsmasq()
 
 	# TODO: async
 	reg_msg -blue "Waiting for ${inst_init_pr}." || { reg_failure; return 1; }
-	hostname="$(uci get system.@system[0].hostname)"
+	hostname="$(uci get system.@system[0].hostname)" # TODO: set this globally
 	for index in ${indexes}
 	do
 		eval \
@@ -2604,10 +2605,10 @@ pause_resume()
 		dnsmasq_indexes='' \
 		action_taken_bl_ids='' \
 		final_compr_to_file \
-		failed_blocklists="${BL_IDS}" \
 		ok_blocklists='' \
 		FAIL_STOP_REQ=1 \
 		cmd_rv=1
+	local failed_blocklists="${bl_ids}"
 
 	case "${cmd}" in
 		pause)
