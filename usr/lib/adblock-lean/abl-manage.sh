@@ -992,10 +992,11 @@ get_bl_run_state()
 		bl_check_res \
 		run_state \
 		bl_in_conf_dir \
-		cs_res=0 \
+		cs_res='' \
+		cd_state='' \
 		bl_file_exists=0 \
 		dns_check_res=0 \
-		conf_dir conf_dirs cd_state \
+		conf_dir conf_dirs \
 		bl_id="${1:?}"
 
 	assert_set "F_${me}" ABL_ENV_SET || return 1
@@ -1032,6 +1033,7 @@ get_bl_run_state()
 
 		[ "${cs_res}" = "${cd_state}" ] || cs_res=2
 	done
+	: "${cs_res:=0}"
 
 	[ -n "${curr_path}" ] ||
 		# Look for blocklist file in all conf-dirs
@@ -1835,7 +1837,7 @@ try_commit_metadata()
 	# shellcheck disable=SC2034
 	local me=commit_metadata \
 		IFS="${DEFAULT_IFS}" \
-		param_set param param_val uci_fail='' \
+		param_set param_set_bl param param_val uci_fail='' \
 		bl_id \
 		curr_location curr_path persist_dir persist_meta_file
 
@@ -1849,7 +1851,7 @@ try_commit_metadata()
 	touch "${META_FILE}" || return 1
 	for bl_id in ${BL_IDS}
 	do
-		param_set=
+		param_set_bl=
 		# create/update section in meta file
 		uci_tmp set "${META_FNAME}.${bl_id}=blocklist_id" || { uci_fail=1; break; }
 		for param in ${META_PARAMS}
@@ -1857,12 +1859,12 @@ try_commit_metadata()
 			eval "param_val=\"\${${param}_${bl_id}}\""
 			[ -n "${param_val}" ] || continue
 			uci_tmp set "${META_FNAME}.${bl_id}.${param}"="${param_val}" || { uci_fail=1; break 2; }
-			param_set=1
+			[ "${param}" = PATH ] && param_set_bl=1
 		done
-		[ -n "${param_set}" ] || uci_tmp delete "${META_FNAME}.${bl_id}"
+		[ -n "${param_set_bl}" ] && param_set=1 || uci_tmp delete "${META_FNAME}.${bl_id}"
 	done
 
-	if [ -n "${param_set}" ] && [ -z "${uci_fail}" ] && uci_tmp commit "${META_FNAME}"
+	if [ -n "${param_set}" ] && [ -z "${uci_fail}" ] && uci_tmp commit "${META_FNAME}" && [ -s "${META_FILE}" ]
 	then
 		:
 	else
