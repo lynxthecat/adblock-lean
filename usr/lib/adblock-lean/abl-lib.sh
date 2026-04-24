@@ -275,7 +275,7 @@ do_create_addnmounts()
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
 		[ -n "${missing_addnm}" ] || return 0
-		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${missing_addnm} (required for ${3})"
+		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${missing_addnm} ${blue}(required for ${3})${n_c}"
 	}
 
 	local me=create_addnmounts \
@@ -299,6 +299,17 @@ do_create_addnmounts()
 		add_list_failed \
 		path paths_pr
 
+	# reset req_addnm_${index} vars, compile list of indexes
+	for bl_id in ${BL_IDS:?}
+	do
+		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes || return 1
+		for index in ${dnsmasq_indexes}
+		do
+			eval "local req_addnm_${index}=" &&
+			add2list all_dnsmasq_indexes "${index}" || return 1
+		done
+	done
+
 	## Check addmounts
 	for bl_id in ${BL_IDS:?}
 	do
@@ -306,14 +317,6 @@ do_create_addnmounts()
 		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs &&
 		get_bl_params "${bl_id}" persist_mode persist_dir &&
 		get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util:?}" || return 1
-
-
-		# compile list of indexes, reset req_addnm_${index} vars
-		for index in ${dnsmasq_indexes}
-		do
-			eval "local req_addnm_${index}=" &&
-			add2list all_dnsmasq_indexes "${index}" || return 1
-		done
 
 		# Logger
 		process_addnm "${dnsmasq_indexes}" "${LOG_CMD}" "logging failed attempts by dnsmasq to load the blocklist" || return 1
@@ -362,7 +365,7 @@ do_create_addnmounts()
 	}
 
 	## Dialog
-	log_msg -yellow "" "Detected missing addnmount entries in /etc/config/dhcp for paths:${_NL_}${all_missing_addnm}"
+	log_msg "" "${yellow}Detected missing addnmount entries in /etc/config/dhcp for paths:${n_c}${_NL_}${all_missing_addnm}"
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ]
 	then
 		print_msg -blue "Create missing addnmount entries automatically? (y|n)"
