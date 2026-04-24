@@ -560,11 +560,12 @@ rm_bk()
 rm_blocklists()
 {
 	local bl_id curr_path curr_persist_path \
+		rm_rv=0 \
 		bl_ids="${*:-"${BL_IDS}"}"
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params "${bl_id}" curr_path curr_persist_path bk_file &&
+		get_bl_params "${bl_id}" curr_path curr_persist_path bk_file || { rm_rv=1; continue; }
 		[ -n "${curr_path}" ] || [ -n "${curr_persist_path}" ] || continue
 		[ -n "${KEEP_BK}" ] && [ "${curr_path}" = "${bk_file}" ] && continue
 
@@ -577,7 +578,8 @@ rm_blocklists()
 			set_bl_params "${bl_id}" curr_persist_path= curr_persist_md5= curr_persist_cnt=
 		}
 	done
-	:
+
+	return ${rm_rv}
 }
 
 rm_conf_scripts()
@@ -585,17 +587,14 @@ rm_conf_scripts()
 	local rv=0 bl_id conf_dir conf_dirs \
 		bl_ids="${*:-"${BL_IDS}"}"
 
-	local IFS="${_NL_}"
 	for bl_id in ${bl_ids}
 	do
-		IFS="${DEFAULT_IFS}"
-		get_bl_params "${bl_id}" conf_dirs
+		get_bl_params "${bl_id}" conf_dirs || return 1
 		for conf_dir in ${conf_dirs}
 		do
 			rm -f "${conf_dir}/abl-conf-script"
 		done
 	done
-	IFS="${DEFAULT_IFS}"
 
 	:
 }
@@ -1011,7 +1010,7 @@ cleanup_and_exit()
 
 	if [ -n "${METADATA_COMMIT_REQ}" ]
 	then
-		commit_metadata "${BL_IDS}" || exit 1
+		commit_metadata || exit 1
 	fi
 
 	rm -rf "${ABL_TMP_DIR}" "${ABL_CFG_STAGING_DIR}"
@@ -2338,7 +2337,7 @@ start()
 		reg_success "${green}Successfully installed blocklists:${n_c} ${blue}${installed_blocklists}${n_c}."
 	}
 
-	commit_metadata "${bl_ids}" || { do_stop; start_rv=1; }
+	commit_metadata || { do_stop; start_rv=1; }
 
 	# if [ "${installed_path%/*}" = "${persist_blocklist_dir}" ]
 	# then
@@ -2439,7 +2438,7 @@ do_stop()
 		[ -z "${bl_params_failed}" ] &&
 		unset_metadata "${bl_ids}" &&
 		set_bl_params "${bl_ids}" run_state=4 &&
-		commit_metadata "${bl_ids}" &&
+		commit_metadata &&
 		{
 			log_msg -purple "" "Successfully stopped adblocking for ${bl_id_pr}"
 			return 0
@@ -2708,7 +2707,7 @@ pause_resume()
 		cmd_rv=0
 	fi
 
-	commit_metadata "${bl_ids}"
+	commit_metadata
 
 	return ${cmd_rv}
 }
