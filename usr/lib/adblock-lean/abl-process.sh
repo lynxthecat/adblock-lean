@@ -862,9 +862,10 @@ gen_blocklists()
 	do
 		unset "RESTORE_FROM_PERSIST_${bl_id}" "SKIP_LOAD_STOP_${bl_id}"
 
-		get_bl_params -f "${me}" "${bl_id}" run_state dnsmasq_indexes install_path || return 1
+		reg_action -purple "Processing blocklist '${bl_id}'."
 
-		get_bl_params "${bl_id}" curr_path curr_persist_path persist_dir bk_ext final_compr_ext
+		get_bl_params -f "${me}" "${bl_id}" run_state dnsmasq_indexes install_path &&
+		get_bl_params "${bl_id}" curr_path curr_persist_path persist_dir bk_ext final_compr_ext || return 1
 
 		case "${run_state}" in
 			0|3|4) ;;
