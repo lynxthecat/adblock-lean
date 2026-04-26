@@ -33,7 +33,7 @@ ABL_CUSTOM_CMDS="${ABL_CUSTOM_CMDS//"	"/ }"
 
 export EXTRA_COMMANDS="${ABL_CUSTOM_CMDS//"  "/ }"
 export EXTRA_HELP="
-adblock-lean global commands:
+Global commands:
 Usage: service adblock-lean <command> [options]
 	version                   Print adblock-lean version
 	setup                     Run automated setup for adblock-lean
@@ -44,18 +44,20 @@ Usage: service adblock-lean <command> [options]
 	gen_stats                 Generate dnsmasq stats for system log
 	upd_cron_job              Create cron job for adblock-lean with schedule set in the config option 'upd_schedule'.
 	                            If the config option is set to 'disable', remove existing cron job if any
+	create_addnmounts         Check which dnsmasq service addnmount paths are required for current adblock-lean config and add them automatically
 	update                    Update adblock-lean to the latest version
 	uninstall                 Uninstall adblock-lean, remove all adblock-lean-related files and settings
 
-adblock-lean blocklist commands: affect specified blocklists or all blocklists if blockist_ID is not specified:
+Blocklist-specific commands: affect specified blocklists or all blocklists if blockist_ID is not specified:
 Usage: service adblock-lean <command> [blocklist_ID] [... [blocklist_ID] ...]
-	add_blocklist_config      Create new blocklist config file based on one of pre-defined presets
-	rm_blocklist_config       Remove existing blocklist config file
-	status                    Print status of specified blocklists
+	start                     Process and load blocklist(s)
+	stop                      Unload blocklist(s)
 	pause                     Pause adblock-lean
 	resume                    Resume adblock-lean
+	status                    Print status of specified blocklists
+	add_blocklist_config      Create new blocklist config file based on one of pre-defined presets
+	rm_blocklist_config       Remove existing blocklist config file
 	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
-	create_addnmounts         Check which dnsmasq service addnmount paths are required for current adblock-lean config and create them automatically
 	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
 	                              Use this command to create or update persistent blocklist when persist_blocklist_mode is 'manual'
 "
@@ -470,8 +472,27 @@ pick_opt()
 	done
 }
 
+dbg_start() { DBG_INITIALIZED=1; set -x; }
+dbg_end() { DBG_INITIALIZED=''; set +x; }
+dbg_on() { [ -n "${DBG_INITIALIZED}" ] && set -x; :; }
+dbg_off() { [ -n "${DBG_INITIALIZED}" ] && set +x; :; }
+
 
 ### HELPER FUNCTIONS
+
+get_valid_bl_ids()
+{
+	local gvi_id gvi_out_var="${1}" gvi_ids="${2}"
+	[ -n "${gvi_out_var}" ] && unset_vars "${gvi_out_var}" || { bad_args get_valid_bl_ids "${@}"; return 1; }
+	shift
+
+	for gvi_id in ${gvi_ids}
+	do
+		assert_known_bl_id "${gvi_id}" || continue
+		add2list "${gvi_out_var}" "${gvi_id}"
+	done
+	:
+}
 
 # Splits path to file into dir, filename, ext
 split_path()
@@ -883,6 +904,8 @@ reg_msg()
 		[ -n "${msgs_prefix}" ] && msgs_prefix=
 	}
 
+	dbg_off
+
 	local m msgs='' msgs_nc='' msgs_prefix='' _arg err_l=info color='' _n_c='' \
 		print_req='' sys_log_req='' log_file_req='' action_req='' report_req='' noprint='' \
 		msg_level='' msgs_dest="${MSGS_DEST}" \
@@ -907,7 +930,7 @@ reg_msg()
 					do
 						[ "${msg_level}" -le "${thresh}" ] && { reg_req=1; break; }
 					done
-					[ -n "${reg_req}" ] || return 0 # short path for debug messages when ABL_DEBUG is not set
+					[ -n "${reg_req}" ] || { dbg_on; return 0; } # short path for debug messages when ABL_DEBUG is not set
 				else
 					append_msg "${_arg}"
 				fi ;;
@@ -978,6 +1001,7 @@ reg_msg()
 	fi
 
 	set +f
+	dbg_on
 }
 
 graceful_exit()
@@ -1100,7 +1124,7 @@ restart_dnsmasq()
 
 	if [ -n "${dnsmasq_inst_names}" ]
 	then
-		inst_init_pr="initialization of dnsmasq instances: ${dnsmasq_inst_names}"
+		inst_init_pr="initialization of dnsmasq instances: '${dnsmasq_inst_names// /\', \'/}'"
 	else
 		indexes=all
 		inst_init_pr="dnsmasq initialization"
@@ -2179,10 +2203,11 @@ select_dnsmasq_instances()
 	local me=select_dnsmasq_instances
 	init_command "${me}" || return 1
 
-	local bl_ids="${*:-"${BL_IDS}"}" \
+	local \
 		cfg_path \
 		upd_cfg \
-		dnsmasq_indexes conf_dirs
+		dnsmasq_indexes conf_dirs \
+		bl_ids="${*:-"${BL_IDS}"}"
 
 	do_select_dnsmasq_instances "${@}" || return 1
 	for bl_id in ${bl_ids}
@@ -2246,6 +2271,7 @@ start()
 		blocklists_to_retry='' \
 		restored_blocklists='' \
 		ok_blocklists='' \
+		failed_blocklists \
 		perm_failed_blocklists='' \
 		start_rv=1 \
 		initial_uptime_cs \
@@ -2254,9 +2280,12 @@ start()
 		install_path \
 		final_compr_to_file \
 		bk_file \
-		bl_id \
-		bl_ids="${*:-"${BL_IDS}"}"
-	local failed_blocklists="${bl_ids}"
+		bl_id bl_ids \
+		bl_ids_arg="${*:-"${BL_IDS}"}"
+
+	get_valid_bl_ids bl_ids "${bl_ids_arg}" || return 1
+
+	failed_blocklists="${bl_ids}"
 
 	FAIL_STOP_REQ=1
 
@@ -2275,6 +2304,7 @@ start()
 
 	[ -n "${BLOCKLISTS_TO_INSTALL}" ] &&
 		install_blocklists ok_blocklists perm_failed_blocklists "${BLOCKLISTS_TO_INSTALL}"
+
 	subtract_a_from_b "${ok_blocklists}" "${failed_blocklists}" failed_blocklists
 	subtract_a_from_b "${ok_blocklists} ${perm_failed_blocklists}" "${BLOCKLISTS_TO_INSTALL}" blocklists_to_retry
 
@@ -2336,7 +2366,7 @@ start()
 	{
 		set_bl_params "${installed_blocklists}" run_state=0
 		start_rv=0
-		reg_success "${green}Successfully installed blocklists:${n_c} ${blue}${installed_blocklists}${n_c}."
+		reg_success "${green}Successfully installed blocklists:${n_c} '${blue}${installed_blocklists/ /${n_c}\', \'${blue}}${n_c}'."
 	}
 
 	commit_metadata || { do_stop; start_rv=1; }
@@ -2364,8 +2394,10 @@ gen_persist_blocklist()
 {
 	init_command gen_persist_blocklist || exit 1
 
-	local err_msg bl_id ok_bl_ids persist_mode persist_dir \
-		bl_ids="${*:-"${BL_IDS}"}"
+	local err_msg bl_ids bl_id ok_bl_ids persist_mode persist_dir \
+		bl_ids_arg="${*:-"${BL_IDS}"}"
+
+	get_valid_bl_ids bl_ids "${bl_ids_arg}" || return 1
 
 	for bl_id in ${bl_ids}
 	do
@@ -2401,54 +2433,75 @@ stop()
 # Additional args: blocklist IDs (defaults to all)
 do_stop()
 {
-	local file dir bl_ids all_stop_indexes='' dnsmasq_indexes conf_dir \
-		bl_params_failed='' \
+	local file dir all_stop_indexes='' dnsmasq_indexes conf_dir \
 		ASSERT_NOEXIT=1 FAIL_STOP_REQ='' \
 		IFS="${DEFAULT_IFS}" \
-		bl_id_pr \
+		stop_ok_ids='' \
+		stop_fail_ids='' \
+		stop_state_rv \
+		bl_ids_pr \
+		bl_ids='' \
+		bl_ids_check='' \
 		bl_ids_arg="${*}"
 
 
 	init_command stop || exit 1
 	load_config
 
-	[ -n "${bl_ids_arg}" ] && ! subtract_a_from_b "${bl_ids_arg}" "${BL_IDS}" || bl_ids_arg=all
-	bl_ids="${bl_ids_arg:-"${BL_IDS}"}"
-	[ "${bl_ids}" = all ] && bl_ids="${BL_IDS}"
+	bl_ids_check="${bl_ids_arg}"
+	[ "${bl_ids_check}" = all ] && bl_ids_check="${BL_IDS}"
+	[ -n "${bl_ids_check}" ] && ! subtract_a_from_b "${bl_ids_arg}" "${BL_IDS}" || bl_ids_check="${BL_IDS}" bl_ids_arg=all
 
-	if [ -n "${bl_ids}" ]
+	[ -n "${bl_ids_check}" ] && get_valid_bl_ids bl_ids "${bl_ids_check}" || return 1
+
+	if [ -n "${BL_IDS}" ] && [ -n "${bl_ids}" ]
 	then
-		bl_id_pr="blocklists: '${bl_ids}'"
+		bl_ids_pr="blocklists: '${bl_ids// /\', \'}'"
 
+		reg_action -1 -purple "" "Stopping adblocking for ${bl_ids_pr}" &&
 		set_global_env "${bl_ids}" &&
 		for bl_id in ${bl_ids}
 		do
 			get_bl_params -f stop "${bl_id}" dnsmasq_indexes &&
 			add2list all_stop_indexes "${dnsmasq_indexes}" ||
-				{ bl_params_failed=1; break; }
-		done &&
-		[ -z "${bl_params_failed}" ] &&
-		reg_action -1 -purple "" "Stopping adblocking for ${bl_id_pr}" &&
-		rm_conf_scripts "${bl_ids}" &&
-		rm_blocklists "${bl_ids}" &&
-		restart_dnsmasq "${all_stop_indexes}" &&
+				{ stop_fail_ids="${bl_ids}"; break; }
+		done
+
+		rm_conf_scripts "${bl_ids}"
+		rm_blocklists "${bl_ids}"
+
+		[ -z "${all_stop_indexes}" ] ||
+		restart_dnsmasq "${all_stop_indexes}" ||
+		{
+			[ "${bl_ids_arg}" = all ] || { commit_metadata; return 1; }
+			stop_fail_ids="${bl_ids}"
+		}
+
 		for bl_id in ${bl_ids}
 		do
 			CA_NOERR=1 get_bl_run_state "${bl_id}"
-			[ ${?} = 4 ] || { bl_params_failed=1; break; }
-		done &&
-		[ -z "${bl_params_failed}" ] &&
-		unset_metadata "${bl_ids}" &&
-		set_bl_params "${bl_ids}" run_state=4 &&
-		commit_metadata &&
+			stop_state_rv=${?}
+			unset_metadata "${bl_id}"
+			[ ${stop_state_rv} = 4 ] || { add2list stop_fail_ids "${bl_id}"; continue; }
+			set_bl_params "${bl_id}" run_state=4
+		done
+
+		commit_metadata
+
+		subtract_a_from_b "${stop_fail_ids}" "${bl_ids}" stop_ok_ids
+
+		[ -n "${stop_ok_ids}" ] &&
 		{
-			log_msg -purple "" "Successfully stopped adblocking for ${bl_id_pr}"
+			log_msg -purple "Successfully stopped adblocking for blocklists: '${stop_ok_ids// /\', \'}'."
 			return 0
 		}
 
-		reg_failure "Failed to stop adblocking for ${bl_id_pr}."
-		[ "${bl_ids_arg}" = all ] || return 1
+		[ -z "${stop_fail_ids}" ] && return 0
+
+		reg_failure "Failed to stop adblocking for blocklists: '${stop_fail_ids// /\', \'}'."
 	fi
+
+	[ "${bl_ids_arg}" = all ] || return 1
 
 	reg_action -1 -purple "" "Stopping adblocking for any adblock-lean blocklists."
 
@@ -2512,7 +2565,10 @@ status()
 		run_state curr_path curr_cnt persist_dir persist_mode \
 		bl_id bl_id_pr bl_id_pr_lc \
 		ASSERT_NOEXIT=1 \
-		bl_ids="${*:-"${BL_IDS}"}"
+		bl_ids='' \
+		bl_ids_arg="${*:-"${BL_IDS}"}"
+
+	[ -n "${bl_ids_arg}" ] && get_valid_bl_ids bl_ids "${bl_ids_arg}" || return 1
 
 	if [ -z "${BL_IDS}" ]
 	then
@@ -2560,7 +2616,7 @@ status()
 					print_msg \
 						"  Blocklist file: ${blue}${curr_path}${n_c}" \
 						"  Entries count: ${blue}${curr_cnt_human}${n_c}" \
-						"  Blocklist was updated on: ${blue}${timestamp:-"${red}Unknown"}${n_c}"
+						"  Timestamp: ${blue}${timestamp:-"${red}Unknown"}${n_c}"
 
 					[ -n "${persist_dir}" ] && [ "${persist_mode}" = managed ] && [ "${curr_path%/*}" != "${persist_dir}" ] &&
 						print_msg -warn "Persistent blocklist directory '${persist_dir}' for ${bl_id_pr_lc} is configured but not currently used."
@@ -2589,7 +2645,7 @@ pause_resume()
 	set_global_env "${@}" || exit 1
 
 	local \
-		bl_ids="${*:-"${BL_IDS?}"}" \
+		bl_ids='' \
 		bl_id bl_id_pr \
 		run_state \
 		new_state \
@@ -2608,7 +2664,10 @@ pause_resume()
 		final_compr_to_file \
 		ok_blocklists='' \
 		FAIL_STOP_REQ=1 \
-		cmd_rv=1
+		cmd_rv=1 \
+		bl_ids_arg="${*:-"${BL_IDS?}"}"
+
+	[ -n "${bl_ids_arg}" ] && get_valid_bl_ids bl_ids "${bl_ids_arg}" || return 1
 	local failed_blocklists="${bl_ids}"
 
 	case "${cmd}" in
@@ -2649,7 +2708,7 @@ pause_resume()
 			continue
 		}
 
-		reg_action -blue "${state_progr_pr} ${bl_id_pr}."
+		reg_msg -blue "Preparing to ${cmd} ${bl_id_pr}."
 
 		get_bl_params -f "${cmd}" "${bl_id}" \
 			dnsmasq_indexes \
@@ -2673,6 +2732,7 @@ pause_resume()
 		{
 			reg_failure "Failed to ${cmd} blocklist '${bl_id}'."
 			do_stop "${bl_id}"
+			subtract_a_from_b "${bl_id}" "${failed_blocklists}" failed_blocklists
 			continue
 		}
 
@@ -2681,6 +2741,8 @@ pause_resume()
 
 	[ -n "${action_taken_bl_ids}" ] &&
 	{
+		reg_action -blue "${state_progr_pr} blocklists '${action_taken_bl_ids// /\', \'}'."
+
 		case "${cmd}" in
 			pause)
 				restart_dnsmasq "${dnsmasq_indexes_to_restart}" &&
@@ -2688,14 +2750,11 @@ pause_resume()
 			resume)
 				install_blocklists ok_blocklists _ "${action_taken_bl_ids}"
 		esac
-		cmd_rv=${?}
-		[ ${cmd_rv} = 0 ] ||
-			failed_blocklists="${action_taken_bl_ids}" ok_blocklists=''
 
 		[ -n "${ok_blocklists}" ] &&
 		{
 			set_bl_params "${ok_blocklists}" run_state=${new_state}
-			log_msg -purple "" "Adblocking is now ${state_changed_pr} for blocklists: ${blue}${ok_blocklists}${n_c}"
+			log_msg -purple "" "Adblocking is now ${state_changed_pr} for blocklists: '${blue}${ok_blocklists/ /${n_c}\', \'${blue}}${n_c}'"
 		}
 
 		subtract_a_from_b "${ok_blocklists}" "${failed_blocklists}" failed_blocklists
