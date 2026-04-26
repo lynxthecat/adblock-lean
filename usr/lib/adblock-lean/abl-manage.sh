@@ -57,6 +57,7 @@ BL_PARAMS_MAP="
 	curr_single_instance=SINGLE_INSTANCE
 	install_location=INSTALL_LOCATION
 	install_path=INSTALL_PATH
+	install_md5=INSTALL_MD5
 	install_cnt=INSTALL_CNT
 	install_path_ram=INSTALL_PATH_RAM
 	new_single_instance=NEW_SINGLE_INSTANCE
@@ -501,11 +502,12 @@ do_select_dnsmasq_instances() {
 		REPLY \
 		first diff \
 		add_dir \
-		bl_id bl_ids
-
-	bl_ids="${1:-"${BL_IDS}"}"
+		bl_id bl_ids \
+		bl_ids_arg="${1:-"${BL_IDS}"}"
 
 	assert_set "F_${me}" BL_IDS || return 1
+
+	get_valid_bl_ids bl_ids "${bl_ids_arg}" || return 1
 
 	get_dnsmasq_instances && [ -n "${DNSMASQ_RUNNING_INDEXES}" ] ||
 	{
@@ -1001,7 +1003,7 @@ get_bl_run_state()
 
 	assert_set "F_${me}" ABL_ENV_SET || return 1
 
-	print_msg -blue "Checking state of adblock-lean blocklist '${bl_id}'"
+	print_msg -blue "Checking state of blocklist '${bl_id}'"
 
 	get_bl_params "${bl_id}" curr_path curr_md5 curr_single_instance new_single_instance conf_dirs || return 1
 
@@ -1211,11 +1213,14 @@ set_global_env()
 
 	for bl_id in ${valid_ids}
 	do
+		printf '\n' > "${MSGS_DEST}"
 		set_bl_env "${bl_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}" &&
 		CA_NOERR=1 get_bl_run_state "${bl_id}"
 	done
 
 	debug_msg "End set_global_env()"
+
+	printf '\n' > "${MSGS_DEST}"
 
 	:
 }
@@ -1542,7 +1547,7 @@ assert_known_bl_id()
 	} &&
 	{
 	is_included "${1}" "${BL_IDS}" ||
-		{ akb_err="Blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS}'."; false; }
+		{ akb_err="Blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS// /\', \'}'."; false; }
 	} ||
 		{ reg_failure "${2:+"${2}: "}${akb_err}"; [ -n "${ASSERT_NOEXIT}" ] || exit 1; return 1; }
 	:
@@ -1551,6 +1556,7 @@ assert_known_bl_id()
 # Env vars: GBP_PREFIX
 get_bl_param_gl_var()
 {
+	dbg_off
 	local _gl_var
 	: "${_gl_var}"
 	eval "
@@ -1561,6 +1567,7 @@ get_bl_param_gl_var()
 	"
 
 	eval "${1:?}"='${GBP_PREFIX}${_gl_var}'
+	dbg_on
 }
 
 # 0 (optional): '-f <func_name>' to error out if value is not set
@@ -1568,6 +1575,7 @@ get_bl_param_gl_var()
 # other args: params/output var names OR <var_name>=<param> ...
 get_bl_params()
 {
+	dbg_off
 	local me=get_bl_params \
 		gl_var val force_err err_func err_func_pr var_exp var_name bl_param
 
@@ -1601,6 +1609,7 @@ get_bl_params()
 		return 1
 	done
 	:
+	dbg_on
 }
 
 # 1: blocklist IDs
@@ -1639,8 +1648,20 @@ set_bl_params()
 
 install_blocklists()
 {
+	bl_failed()
+	{
+		rm -f "${2}"
+		reg_failure "Failed to install blocklist '${1}'"
+		add2list inst_fail_ids "${1}"
+	}
+
 	local \
 		me=install_blocklists \
+		\
+		inst_fail_ids='' \
+		\
+		dnsmasq_indexes_to_restart='' \
+		dnsmasq_indexes_to_stop='' \
 		\
 		dnsmasq_indexes \
 		persist_mode \
@@ -1664,74 +1685,103 @@ install_blocklists()
 		\
 		abl_cmd="${ABL_CMD}" \
 		\
-		ok_blocklists_out_var="${1}" perm_fail_blocklists_out_var="${2}" bl_ids="${3}"
+		ok_blocklists_out_var="${1}" perm_fail_blocklists_out_var="${2}" bl_ids="${3:?}"
 
 	unset_vars "${ok_blocklists_out_var}" "${perm_fail_blocklists_out_var}" || exit 1
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params -f "${me}" "${bl_id}" conf_dirs dnsmasq_indexes final_extr_or_cat_stdout install_location install_path install_path_ram install_cnt || return 1
-		get_bl_params "${bl_id}" curr_path skip_load_stop persist_mode new_single_instance conf_script_log_avail
+		get_bl_params "${bl_id}" curr_path skip_load_stop || return 1
+		[ -n "${skip_load_stop}" ] || add2list dnsmasq_indexes_to_stop "${dnsmasq_indexes}"
+
+		[ -n "${curr_path}" ] || KEEP_PERSIST=1 rm_blocklists "${bl_id}" # TODO: is this needed?
+	done
+
+	[ -z "${dnsmasq_indexes_to_stop}" ] || stop_dnsmasq "${dnsmasq_indexes_to_stop}" || return 1
+
+	for bl_id in ${bl_ids}
+	do
+		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs final_extr_or_cat_stdout install_location install_path &&
+		get_bl_params "${bl_id}" new_single_instance conf_script_log_avail || return 1
 
 		[ "${install_location}" = PERSIST ] && install_desc=persistent
 
-		[ -n "${curr_path}" ] || KEEP_PERSIST=1 rm_blocklists "${bl_id}" # TODO: is this needed?
-
-		[ -n "${skip_load_stop}" ] || stop_dnsmasq "${dnsmasq_indexes}" || exit 1
-
 		if \
 			reg_action -blue "Installing ${install_desc} blocklist file." && # TODO: desc from args?
-			get_md5 install_md5 "${install_path}" &&
+			get_md5 install_md5 "${install_path}"
+		then
 			[ "${new_single_instance}" = 1 ] ||
 			# Make conf-script
-			{
-				for conf_dir in ${conf_dirs}
-				do
-					is_valid_dir "${conf_dir}" || return 1
+			for conf_dir in ${conf_dirs}
+			do
+				is_valid_dir "${conf_dir}" || return 1
 
-					cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${bl_id}" || { reg_failure "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
-						conf-script=\
-						${final_extr_or_cat_stdout} "${install_path}" && \
-						printf '%s\n' "address=/${install_md5}-${ABL_TEST_DOM_BASE}/#" && \
-						exit 0; \
-						${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err 'conf-script at '${conf_dir}/${CS_BASE_FNAME}-${bl_id}' failed.';"} \
-						exit 0
-					EOF
-				done
-				:
-			} &&
-			restart_dnsmasq "${dnsmasq_indexes}" &&
-			{
-				CA_CHECK_DNS=1 check_active_blocklist "${bl_id}" "${install_md5}" "${new_single_instance}" ||
-					{ reg_failure "Active blocklist check failed with ${install_desc} blocklist file."; false; }
-			}
-		then
-			some_succeeded=1
-			rm_bk "${bl_id}"
-			add2list "${ok_blocklists_out_var}" "${bl_id}"
-			set_bl_params "${bl_id}" \
-				curr_path="${install_path}" \
-				curr_location="${install_location}" \
-				curr_single_instance="${new_single_instance}" \
-				curr_md5="${install_md5}" \
-				curr_cnt="${install_cnt}"
+				cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${bl_id}" || { reg_failure "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
+					conf-script=\
+					${final_extr_or_cat_stdout} "${install_path}" && \
+					printf '%s\n' "address=/${install_md5}-${ABL_TEST_DOM_BASE}/#" && \
+					exit 0; \
+					${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err 'conf-script at '${conf_dir}/${CS_BASE_FNAME}-${bl_id}' failed.';"} \
+					exit 0
+				EOF
+			done
+
+			set_bl_params "${bl_id}" install_md5
+			add2list dnsmasq_indexes_to_restart "${dnsmasq_indexes}"
 		else
-			reg_failure "Failed to install blocklist '${bl_id}'"
-			local keep_persist=1
-			[ "${install_location}" = PERSIST ] && keep_persist=0
-			KEEP_PERSIST=${keep_persist} do_stop "${bl_id}"
-			[ "${abl_cmd}" = start ] &&
-			[ "${install_location}" = PERSIST ] && [ "${persist_mode}" = manual ] || continue
-			# fall back to RAM
-			if [ -d "${install_path_ram%/*}" ]
-			then
-				set_bl_params "${bl_id}" install_location=RAM install_path="${install_path_ram}" || return 1
-			else
-				add2list "${perm_fail_blocklists_out_var}" "${bl_id}"
-			fi
-
+			bl_failed "${bl_id}" "${install_path}"
 		fi
 	done
+
+	restart_dnsmasq "${dnsmasq_indexes_to_restart}" || return 1
+
+	for bl_id in ${bl_ids}
+	do
+		is_included "${bl_id}" "${inst_fail_ids}" && continue
+
+		printf '\n' > "${MSGS_DEST}"
+
+		get_bl_params -f "${me}" "${bl_id}" install_path install_location new_single_instance install_md5 install_cnt || return 1
+
+		CA_CHECK_DNS=1 check_active_blocklist "${bl_id}" "${install_md5}" "${new_single_instance}" ||
+			{
+				reg_failure "Active blocklist check for blocklist '${bl_id}' failed with ${install_desc} blocklist file." # TODO: set install_desc
+				bl_failed "${bl_id}" "${install_path}"
+				continue
+			}
+
+		rm_bk "${bl_id}"
+
+		set_bl_params "${bl_id}" \
+			curr_path="${install_path}" \
+			curr_location="${install_location}" \
+			curr_single_instance="${new_single_instance}" \
+			curr_md5="${install_md5}" \
+			curr_cnt="${install_cnt}"
+
+		some_succeeded=1
+		add2list "${ok_blocklists_out_var}" "${bl_id}"
+	done
+
+	[ -n "${inst_fail_ids}" ] && KEEP_PERSIST=0 do_stop "${inst_fail_ids}"
+
+	for bl_id in ${inst_fail_ids}
+	do
+		get_bl_params "${bl_id}" install_path install_path_ram install_location persist_mode
+
+		[ "${abl_cmd}" = start ] &&
+		[ "${install_location}" = PERSIST ] && [ "${persist_mode}" = manual ] || continue
+
+		# fall back to RAM
+		if [ -d "${install_path_ram%/*}" ]
+		then
+			set_bl_params "${bl_id}" install_location=RAM install_path="${install_path_ram}" || return 1
+		else
+			add2list "${perm_fail_blocklists_out_var}" "${bl_id}"
+		fi
+	done
+
+
 	[ -n "${some_succeeded}" ]
 }
 
