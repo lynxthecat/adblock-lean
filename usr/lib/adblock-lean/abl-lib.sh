@@ -1545,12 +1545,14 @@ parse_config()
 
 load_config()
 {
-	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
 	local \
 		err_path err_cfg='' fix_cmd='' \
 		in_install="${ABL_IN_INSTALL:-"${upd_channel}"}"
-	[ -n "${CONFIG_LOADED}" ] && [ -z "${in_install}" ] && return 0
+	[ -n "${CONFIG_LOADED}" ] && return 0
+
+	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
 	export BL_IDS=
+	dbg_off
 	try_load_config err_cfg ||
 	{
 		reg_failure "Failed to load config${err_cfg:+" '${err_cfg}'"}."
@@ -1563,8 +1565,10 @@ load_config()
 			get_cfg_path err_path "${err_cfg}"
 			log_msg "Fix your config file '${err_path}' or generate default config using 'service adblock-lean ${fix_cmd}'."
 		}
+		dbg_on
 		return 1
 	}
+	dbg_on
 	export CONFIG_LOADED=1
 
 	# check for missing addnmounts during version update
@@ -1758,6 +1762,7 @@ fix_config()
 # 3: new config contents
 write_config()
 {
+	dbg_off
 	local me=write_config \
 		cfg_file tmp_cfg_file \
 		cfg_type="${1:?}" cfg_id="${2:?}" cfg_cont="${3:?}"
