@@ -582,24 +582,24 @@ rm_bk()
 # KEEP_PERSIST, KEEP_BK
 rm_blocklists()
 {
-	local bl_id curr_path curr_persist_path \
+	local bl_id install_path curr_path curr_persist_path rm_enum rm_path \
 		rm_rv=0 \
 		bl_ids="${*:-"${BL_IDS}"}"
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params "${bl_id}" curr_path curr_persist_path bk_file || { rm_rv=1; continue; }
-		[ -n "${curr_path}" ] || [ -n "${curr_persist_path}" ] || continue
-		[ -n "${KEEP_BK}" ] && [ "${curr_path}" = "${bk_file}" ] && continue
+		get_bl_params "${bl_id}" install_path curr_path curr_persist_path bk_file || { rm_rv=1; continue; }
+		[ -n "${install_path}${curr_path}${curr_persist_path}" ] || continue
+		for rm_enum in "curr" "install" "curr_persist"
+		do
+			eval "rm_path=\"\${${rm_enum}_path}\""
+			[ -n "${rm_path}" ] &&
+			{ [ -z "${KEEP_BK}" ] || [ "${rm_path}" != "${bk_file}" ]; } &&
+			is_dir_writable "${bl_id}" "${rm_path%/*}" || continue
 
-		rm_if_writable "${bl_id}" "${curr_path}"
-		set_bl_params "${bl_id}" curr_path= curr_location= curr_md5= curr_cnt=
-
-		[ -n "${curr_persist_path}" ] && is_dir_writable "${curr_persist_path%/*}" "${bl_id}" &&
-		{
-			rm -f "${curr_persist_path}" "${curr_persist_path%/*}/${META_FNAME_PERSIST}"
-			set_bl_params "${bl_id}" curr_persist_path= curr_persist_md5= curr_persist_cnt=
-		}
+			rm -f "${rm_path}" "${rm_path%/*}/${META_FNAME_PERSIST:?}"
+			[ "${rm_enum}" = install ] || set_bl_params "${bl_id}" "${rm_enum}_path"=
+		done
 	done
 
 	return ${rm_rv}
@@ -612,6 +612,7 @@ rm_conf_scripts()
 
 	for bl_id in ${bl_ids}
 	do
+		debug_msg "${bl_id}: removing conf-scripts"
 		get_bl_params "${bl_id}" conf_dirs || return 1
 		for conf_dir in ${conf_dirs}
 		do
