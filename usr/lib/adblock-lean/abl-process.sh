@@ -6,8 +6,6 @@
 	"${max_download_retries:=}" "${deduplication:=}" \
 	"${blue:=}" "${green:=}" "${red:=}" "${n_c:=}"
 
-BUSYBOX_PATH="/bin/busybox"
-
 PROCESSED_PARTS_DIR="${ABL_TMP_DIR}/list_parts"
 
 ERR_F="${ABL_TMP_DIR}/process-errors"
@@ -295,13 +293,11 @@ schedule_jobs()
 	do
 		for list_format in ${ALL_LIST_FORMATS}
 		do
-			eval "indexes=\"\${${list_format}_${list_type}_indexes}\""
+			eval "indexes=\"\${${list_format}_${list_type}_indexes_${bl_id}}\""
 			[ -n "${indexes}" ] || continue
 
 			for index in ${indexes}
 			do
-				eval "print_id=\"\${${list_format}_${list_type}_${index}_print_id}\""
-
 				get_remaining_time remaining_time_s || finalize_scheduler 1
 
 				# wait for job vacancy
@@ -315,7 +311,7 @@ schedule_jobs()
 				get_remaining_time remaining_time_s || finalize_scheduler 1
 
 				RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
-				process_list_part "${index}" "${list_type}" "${list_format}" "${print_id}" "${bl_id}" "${scheduler_pid}" &
+				process_list_part "${index}" "${list_type}" "${list_format}" "${bl_id}" "${scheduler_pid}" &
 
 				RUNNING_PIDS="${RUNNING_PIDS} ${!}"
 				export "JOB_PRINT_ID_${!}"="${print_id}"
@@ -341,9 +337,8 @@ schedule_jobs()
 # 1: list index
 # 2: list type (block|ipv4_block|allow)
 # 3: list format (raw|dnsmasq|hosts)
-# 4: job print ID
-# 5: blocklist ID
-# 6: scheduler PID
+# 4: blocklist ID
+# 5: scheduler PID
 # the rest of the args passed as-is to workers
 #
 # return codes:
@@ -420,19 +415,23 @@ process_list_part()
 
 	local me=process_list_part \
 		curr_job_pid msg msg_mirr pad \
-		list_origin='' list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
+		print_id origin \
+		list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
 		whitelist_mode min_line_count max_file_part_size_KB \
-		index="${1}" list_type="${2}" list_format="${3}" print_id="${4}" bl_id="${5}" scheduler_pid="${6}"
+		index="${1:?}" list_type="${2:?}" list_format="${3:?}" bl_id="${4:?}" scheduler_pid="${5:?}"
 
 	get_curr_job_pid curr_job_pid || finalize_job 1
 
-	eval "list_origin=\"\${${list_format}_${list_type}_${index}_origin}\"" &&
-	ASSERT_NOEXIT=1 assert_set "F_${me}" index list_type list_format print_id bl_id scheduler_pid list_origin &&
+	eval \
+		"print_id=\"\${${list_format}_${list_type}_${index}_${bl_id}_print_id}\"" \
+		"origin=\"\${${list_format}_${list_type}_${index}_${bl_id}_origin}\""
+
+	ASSERT_NOEXIT=1 assert_set "F_${me}" index list_type list_format print_id bl_id scheduler_pid origin &&
 	get_bl_params -f "${me}" "${bl_id}" whitelist_mode max_file_part_size_KB "min_line_count=min_${list_type}list_part_line_count" || finalize_job 1
 
 	list_path="${print_id}"
 
-	if [ "${list_origin}" = DL ] &&
+	if [ "${origin}" = DL ] &&
 		list_author="${print_id%:*}" &&
 		case "${list_author}" in
 			hagezi|oisd|stevenblack) : ;;
@@ -449,7 +448,7 @@ process_list_part()
 		: "${curr_mirror:="${first_mirror}"}"
 	fi
 
-	local list_id="${list_type}-${list_origin}-${list_format}"
+	local list_id="${list_type}-${origin}-${list_format}"
 	local job_id="${list_id}-${curr_job_pid}"
 	local dest_file="${PROCESSED_PARTS_DIR}/${job_id}" \
 		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${job_id}" \
@@ -462,10 +461,10 @@ process_list_part()
 		case_conv_or_cat="cat" \
 		pipeline_rv
 
-	case "${list_origin}" in
+	case "${origin}" in
 		DL) fetch_cmd=dl_list ;;
 		LOCAL) fetch_cmd="cat" ;;
-		*) finalize_job 1 "Invalid list origin '${list_origin}'."
+		*) finalize_job 1 "Invalid list origin '${origin}'."
 	esac
 
 	case "${list_type}" in
@@ -490,7 +489,7 @@ process_list_part()
 	while :
 	do
 		# use forced mirror for this list author if set
-		if [ "${list_origin}" = DL ] && [ -n "${list_author}" ]
+		if [ "${origin}" = DL ] && [ -n "${list_author}" ]
 		then
 			read_str_from_file -v curr_mirror -f "${SCHEDULE_DIR}/${list_author}-forced-mirror" -a 1 -q -n 128 -V "${curr_mirror}"
 			get_list_url list_path "${print_id}" "${list_format}" "${curr_mirror}" || finalize_job 1
@@ -593,14 +592,14 @@ process_list_part()
 		int2human line_count_human "${part_line_count}" || finalize_job 1    # ${line_count_human} also used in finalize_job()
 
 		local lines_cnt_low=''
-		if [ "${list_origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
+		if [ "${origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
 		then
 			lines_cnt_low=1
 			int2human min_line_count_human "${min_line_count}" || finalize_job 1
 			reg_failure "Line count in downloaded ${list_type}list part '${print_id}' is ${line_count_human}, which is less than configured minimum: ${min_line_count_human}."
 		fi
 
-		if [ "${list_origin}" = DL ] && { ! grep -q "Download completed" "${ucl_err_file}" || [ -n "${lines_cnt_low}" ]; }
+		if [ "${origin}" = DL ] && { ! grep -q "Download completed" "${ucl_err_file}" || [ -n "${lines_cnt_low}" ]; }
 		then
 			reg_failure "Failed download attempt for list '${print_id}'."
 			[ -s "${ucl_err_file}" ] && log_msg "uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
@@ -608,7 +607,7 @@ process_list_part()
 		else
 			rm -f "${ucl_err_file}"
 			# set this mirror as forced if this is not the first DL attempt
-			[ "${list_origin}" = DL ] && [ -n "${list_author}" ] && [ "${retry}" != 1 ] &&
+			[ "${origin}" = DL ] && [ -n "${list_author}" ] && [ "${retry}" != 1 ] &&
 				printf '%s\n' "${curr_mirror}" > "${SCHEDULE_DIR}/${list_author}-forced-mirror"
 			finalize_job 0
 		fi
@@ -623,7 +622,7 @@ process_list_part()
 		sleep 5 &
 		wait ${!}
 
-		if [ "${list_origin}" = DL ] && [ -n "${list_author}" ]
+		if [ "${origin}" = DL ] && [ -n "${list_author}" ]
 		then
 			# cycle to the next mirror
 			next_mirror='' loop_prev_mirror=''
@@ -668,6 +667,8 @@ gen_list_parts()
 		dnsmasq_block_lists dnsmasq_allow_lists dnsmasq_ipv4_block_lists \
 		hosts_block_lists \
 		local_allowlist_path local_blocklist_path \
+		use_allowlist='' use_ipv4_blocklist='' \
+		origin \
 		bl_id="${1}"
 
 	get_bl_params "${bl_id}" \
@@ -698,7 +699,7 @@ gen_list_parts()
 		use_allowlist=1
 	fi
 
-	reg_action -1 -blue "" "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
+	reg_action -1 -blue "Downloading and processing blocklist parts (max parallel jobs: ${PARALLEL_JOBS})."
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	for list_types in allow "block ipv4_block"
@@ -708,10 +709,12 @@ gen_list_parts()
 		do
 			for list_format in ${ALL_LIST_FORMATS}
 			do
-				eval "lists=\"\${${list_format}_${list_type}_lists}\""
+				unset "${list_format}_${list_type}_indexes_${bl_id}"
+				eval "lists=\"\${${list_format}_${list_type}_lists_${bl_id}}\""
 				local_list_path=
-				[ "${list_format}" = raw ] && eval "local_list_path=\"\${local_${list_type}list_path}\""
-				[ -n "${lists}" ] || [ -f "${local_list_path}" ] || continue
+				[ "${list_format}" = raw ] && eval "local_list_path=\"\${local_${list_type}list_path_${bl_id}}\""
+				[ -f "${local_list_path}" ] || local_list_path=
+				[ -n "${lists}${local_list_path}" ] || continue
 
 				invalid_urls="$(printf %s "${lists}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
 				{
@@ -740,31 +743,24 @@ gen_list_parts()
 				fi
 
 				index=0
-				for list in ${lists}
+				for list in ${lists} "local=${local_list_path}"
 				do
 					index=$((index+1))
+					origin=DL
+					case "${list}" in
+						local=)
+							list="${list#"local="}"
+							[ -f "${list}" ] || { reg_msg "No local ${list_type}list identified."; continue; }
+							origin=LOCAL
+					esac
+					[ -n "${list}" ] || continue
 					schedule_req=1
-					add2list "${list_format}_${list_type}_indexes" "${index}"
-					eval "${list_format}_${list_type}_${index}_origin=DL
-						${list_format}_${list_type}_${index}_print_id=\"${list}\""
-				done
+					add2list "${list_format}_${list_type}_indexes_${bl_id}" "${index}"
 
-				if [ "${list_format}" = raw ] && [ -n "${local_list_path}" ]
-				then
-					if [ ! -f "${local_list_path}" ]
-					then
-						reg_msg "No local ${list_type}list identified."
-					elif [ ! -s "${local_list_path}" ]
-					then
-						log_msg -warn "" "Local ${list_type}list file is empty."
-					else
-						index=$((index+1))
-						schedule_req=1
-						add2list "${list_format}_${list_type}_indexes" "${index}"
-						eval "raw_${list_type}_${index}_origin=LOCAL
-							raw_${list_type}_${index}_print_id=\"${local_list_path}\""
-					fi
-				fi
+					eval \
+						"${list_format}_${list_type}_${index}_${bl_id}_print_id=${list}" \
+						"${list_format}_${list_type}_${index}_${bl_id}_origin=${origin}"
+				done
 			done
 		done
 
@@ -838,34 +834,34 @@ gen_blocklists()
 		bk_file \
 		bk_ext \
 		final_compr_ext \
-		force_unload \
+		blocklists_to_stop='' \
+		force_unload_bl \
+		force_unload="${unload_blocklist_before_update:?}" \
 		install_path install_cnt \
-		index \
-		dnsmasq_indexes \
 		totalmem \
 		blocklists_out_var="${1:?}" bl_ids="${2:?}" initial_uptime_cs="${3:?}"
 	
 	: "${install_cnt}"
 
-	if [ "${unload_blocklist_before_update}" = auto ] # global var
+	if [ "${force_unload}" = auto ]
 	then
 		read -r _ totalmem _ < /proc/meminfo
 		if is_uint "${totalmem}" && [ "${totalmem}" -ge 410000 ]
 		then
-			unload_blocklist_before_update=0
+			force_unload=0
 		else
-			unload_blocklist_before_update=1
+			force_unload=1
 		fi
 	fi
 
 	for bl_id in ${bl_ids}
 	do
-		unset "RESTORE_FROM_PERSIST_${bl_id}" "SKIP_LOAD_STOP_${bl_id}"
+		reg_msg -blue "Preparing to process blocklist '${bl_id}'."
 
-		reg_action -purple "Processing blocklist '${bl_id}'."
+		get_bl_params -f "${me}" "${bl_id}" run_state &&
+		get_bl_params "${bl_id}" curr_path curr_persist_path bk_ext || return 1
 
-		get_bl_params -f "${me}" "${bl_id}" run_state dnsmasq_indexes install_path &&
-		get_bl_params "${bl_id}" curr_path curr_persist_path persist_dir bk_ext final_compr_ext || return 1
+		set_bl_params "${bl_id}" skip_load_stop=
 
 		case "${run_state}" in
 			0|3|4) ;;
@@ -877,18 +873,21 @@ gen_blocklists()
 		esac
 
 		conn_check_req=1
-		force_unload=${unload_blocklist_before_update}
+		force_unload_bl=${force_unload}
 
 		case ${run_state} in
 			0) ;;
-			3|4) force_unload=0 conn_check_req='' ;;
+			3|4) force_unload_bl=0 conn_check_req=''; set_bl_params "${bl_id}" skip_load_stop=1 ;;
 			*) exit 1
 		esac
 
-		if [ "${force_unload}" != 1 ] && [ -n "${conn_check_req}" ]
-		then
-			test_url_domains || force_unload=1 # TODO: test per-bl-inst domains
-		fi
+		[ "${force_unload_bl}" = 1 ] ||
+		[ -z "${conn_check_req}" ] ||
+		test_url_domains || # TODO: test per-bl-inst domains
+			force_unload_bl=1
+
+		[ "${force_unload_bl}" = 1 ] &&
+			{ add2list blocklists_to_stop "${bl_id}"; set_bl_params "${bl_id}" skip_load_stop=1; }
 
 		bk_file=
 		file_to_bk=
@@ -905,7 +904,7 @@ gen_blocklists()
 		if [ -n "${file_to_bk}" ] && is_dir_writable "${bl_id}" "${file_to_bk%/*}"
 		then
 			bk_file="${BK_BL_BASE_PATH:?}-${bl_id}${bk_ext}"
-			reg_action -blue "" "Creating backup of current blocklist '${bl_id}'." &&
+			reg_action -blue "Creating backup of current blocklist '${bl_id}'." &&
 			mv_blocklist "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${bl_id}" ||
 			{
 				reg_failure "Failed to create backup of current blocklist file '${file_to_bk}'."
@@ -917,27 +916,28 @@ gen_blocklists()
 			# for persistent blocklist in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 "" "No existing file found for blocklist '${bl_id}'."
+			reg_msg -2 "No existing file found for blocklist '${bl_id}'."
 		fi
 		set_bl_params "${bl_id}" bk_file
 		debug_msg "bk_file: '${bk_file}'"
+	done
 
-		KEEP_BK=1 KEEP_PERSIST=0 rm_blocklists "${bl_id}"
+	KEEP_BK=1 KEEP_PERSIST=0 rm_blocklists "${bl_ids}"
+	[ -z "${blocklists_to_stop}" ] || KEEP_BK=1 KEEP_PERSIST=0 do_stop "${blocklists_to_stop}" || return 1
 
-		if [ "${force_unload}" = 1 ]
-		then
-			reg_action -blue "Unloading current blocklist '${bl_id}'."
-			restart_dnsmasq "${dnsmasq_indexes}" || exit 1
-			set_bl_params "${bl_id}" skip_load_stop=1
-		fi
+	for bl_id in ${bl_ids}
+	do
+		reg_action -purple "" "Processing blocklist '${bl_id}'."
+
+		get_bl_params -f "${me}" "${bl_id}" install_path &&
+		get_bl_params "${bl_id}" final_compr_ext || return 1
 
 		processed_bl_file="${ABL_TMP_DIR}/processed-blocklist-${bl_id}${final_compr_ext}"
 
-		if gen_blocklist "${bl_id}" install_cnt "${processed_bl_file}" "${initial_uptime_cs}" &&
+		if gen_blocklist "${bl_id}" "${processed_bl_file}" "${initial_uptime_cs}" &&
 			try_mv "${processed_bl_file}" "${install_path}"
 		then
 			add2list "${blocklists_out_var}" "${bl_id}"
-			set_bl_params "${bl_id}" install_cnt
 		else
 			rm -f "${processed_bl_file}"
 			reg_failure "Failed to generate new blocklist file for blocklist '${bl_id}'."
@@ -947,9 +947,8 @@ gen_blocklists()
 
 
 # 1: blocklist ID
-# 2: out var for elements count
-# 3: output file path
-# 4: initial uptime in centiseconds
+# 2: output file path
+# 3: initial uptime in centiseconds
 # shellcheck disable=SC2329
 gen_blocklist()
 {
@@ -1037,11 +1036,10 @@ gen_blocklist()
 		new_single_instance \
 		\
 		bl_id="${1:?}" \
-		cnt_out_var="${2:?}" \
-		out_f="${3:?}" \
-		INITIAL_UPTIME_S="$(( ${4} / 100 ))"
+		out_f="${2:?}" \
+		INITIAL_UPTIME_S="$(( ${3} / 100 ))"
 
-	unset_vars "${cnt_out_var}" &&
+	debug_msg "${me}: ${bl_id}: out_f:${out_f};"
 
 	get_bl_params -f "${me}" "${bl_id}" \
 		part_extr_or_cat_stdout \
@@ -1070,7 +1068,7 @@ gen_blocklist()
 		return 1
 	}
 
-	reg_action -blue "" "Sorting and merging blocklist parts into a single blocklist file." || return 1
+	reg_action -blue "Sorting and merging blocklist parts into a single blocklist file." || return 1
 
 	{
 		{
@@ -1186,9 +1184,9 @@ gen_blocklist()
 
 	rm -f "${ERR_F}"
 
-	reg_msg -green "Blocklist file check passed." ""
+	reg_msg -green "Blocklist file check passed."
 
-	eval "${cnt_out_var}"='${gen_cnt}'
+	set_bl_params "${bl_id}" install_cnt="${gen_cnt}"
 
 	:
 }
