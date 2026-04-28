@@ -990,7 +990,7 @@ get_bl_run_state()
 {
 	local me=get_bl_run_state \
 		bl_id \
-		curr_path curr_md5 curr_single_instance new_single_instance \
+		curr_path curr_md5 curr_single_instance new_single_instance bk_file \
 		bl_check_res \
 		run_state \
 		bl_in_conf_dir \
@@ -1005,7 +1005,7 @@ get_bl_run_state()
 
 	print_msg -blue "Checking state of blocklist '${bl_id}'"
 
-	get_bl_params "${bl_id}" curr_path curr_md5 curr_single_instance new_single_instance conf_dirs || return 1
+	get_bl_params "${bl_id}" curr_path curr_md5 curr_single_instance new_single_instance conf_dirs bk_file || return 1
 
 	: "${curr_single_instance:="${new_single_instance}"}"
 
@@ -1042,33 +1042,39 @@ get_bl_run_state()
 		for conf_dir in ${ALL_CONF_DIRS}
 		do
 			FF_FIRST=1 find_files curr_path "${conf_dir}" "abl-blocklist-${bl_id}"
-			[ -n "${curr_path}" ] && { bl_in_conf_dir=1 curr_single_instance=1; break; }
+			[ -n "${bl_in_conf_dir}" ] && run_state=1 # blocklist in conf-dir should only be found once, otherwise contradicts single-instance
+			[ -n "${curr_path}" ] && { bl_in_conf_dir=1 curr_single_instance=1; }
 		done
 
 	[ -n "${curr_path}" ] && bl_file_exists=1
 
 	# Summarize
 	bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${curr_single_instance}"
-	case "${bl_check_res}" in
-		1110|1101) run_state=0 ;; # running
-		0100|0101)
-			if [ -n "${bl_in_conf_dir}" ]
-			then
-				run_state=1
-			else
-				run_state=3  # paused
-			fi ;;
-		0000|0001) run_state=4 ;; # stopped
-		*) run_state=1 ;;
-	esac
+
+	[ "${run_state}" = 1 ] ||
+		case "${bl_check_res}" in
+			1110|1101) run_state=0 ;; # running
+			0100|0101)
+				if [ -n "${bl_in_conf_dir}" ]
+				then
+					run_state=1
+				elif [ "${curr_path}" = "${bk_file}" ]
+				then
+					run_state=4 # stopped
+				else
+					run_state=3  # paused
+				fi ;;
+			0000|0001) run_state=4 ;; # stopped
+			*) run_state=1 ;;
+		esac
 
 	[ "${run_state}" = 1 ] &&
-		reg_failure "Unexpected state for blocklist '${bl_id}'." \
-			"path:${curr_path}; DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${curr_single_instance:-0};"
+		reg_failure "Unexpected state for blocklist '${bl_id}' (path '${curr_path}')." \
+			"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${curr_single_instance:-0};"
 
 	set_bl_params "${bl_id}" run_state curr_path curr_single_instance
 
-	debug_msg "${me}: bl_id:'${bl_id}'; check res:'${bl_check_res}'"
+	debug_msg "${me}: bl_id:${bl_id}; run_state:${run_state}; check res:${bl_check_res};"
 
 	return "${run_state}"
 }
@@ -1691,13 +1697,13 @@ install_blocklists()
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params "${bl_id}" curr_path skip_load_stop || return 1
+		get_bl_params "${bl_id}" skip_load_stop || return 1
 		[ -n "${skip_load_stop}" ] || add2list dnsmasq_indexes_to_stop "${dnsmasq_indexes}"
-
-		[ -n "${curr_path}" ] || KEEP_PERSIST=1 rm_blocklists "${bl_id}" # TODO: is this needed?
 	done
 
 	[ -z "${dnsmasq_indexes_to_stop}" ] || stop_dnsmasq "${dnsmasq_indexes_to_stop}" || return 1
+
+	printf '\n' > "${MSGS_DEST}"
 
 	for bl_id in ${bl_ids}
 	do
@@ -1732,6 +1738,8 @@ install_blocklists()
 			bl_failed "${bl_id}" "${install_path}"
 		fi
 	done
+
+	printf '\n' > "${MSGS_DEST}"
 
 	restart_dnsmasq "${dnsmasq_indexes_to_restart}" || return 1
 
@@ -1875,7 +1883,7 @@ unset_metadata()
 commit_metadata()
 {
 	try_commit_metadata "${@}" && return 0
-	reg_failure "Failed to create or update the metadata file."
+	reg_failure "Failed to create or update the metadata file (return code ${?})."
 	return 1
 }
 
@@ -1898,7 +1906,9 @@ try_commit_metadata()
 	[ -n "${BL_IDS}" ] || return 0
 
 	# Common metadata
+	try_mkdir -p "${META_FILE%/*}" &&
 	touch "${META_FILE}" || return 1
+
 	for bl_id in ${BL_IDS}
 	do
 		param_set_bl=
@@ -1922,16 +1932,16 @@ try_commit_metadata()
 		rm -f "${META_FILE}"
 	fi
 
-	[ -n "${uci_fail}" ] && return 1
+	[ -n "${uci_fail}" ] && return 2
 
 	# Persist metadata
 	for bl_id in ${BL_IDS}
 	do
-		get_bl_params "${bl_id}" curr_location || return 1
+		get_bl_params "${bl_id}" curr_location || return 3
 
 		[ "${curr_location}" = PERSIST ] || continue
 
-		get_bl_params -f "${me}" "${bl_id}" curr_path curr_md5 curr_cnt || return 1
+		get_bl_params -f "${me}" "${bl_id}" curr_path curr_md5 curr_cnt || return 4
 
 		persist_dir="${curr_path%/*}"
 		persist_meta_file="${persist_dir:?}/${META_FNAME_PERSIST}"
