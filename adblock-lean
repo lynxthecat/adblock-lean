@@ -59,7 +59,7 @@ Usage: service adblock-lean <command> [blocklist_ID] [... [blocklist_ID] ...]
 	rm_blocklist_config       Remove existing blocklist config file
 	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
 	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
-	                              Use this command to create or update persistent blocklist when persist_blocklist_mode is 'manual'
+	                            Use this command to create or update persistent blocklist when persist_blocklist_mode is 'manual'
 "
 
 # adblock-lean - powerful and ultra efficient adblocking with dnsmasq on OpenWrt
@@ -2356,7 +2356,7 @@ start()
 		{
 			rm_bk "${failed_blocklists}"
 			do_stop "${failed_blocklists}"
-			reg_failure "Blocklists '${failed_blocklists}' failed to install and can not be restored from backup."
+			reg_failure "Blocklists '${failed_blocklists// /\', \'}' failed to install and can not be restored from backup."
 		}
 	}
 
@@ -2366,7 +2366,7 @@ start()
 	{
 		set_bl_params "${installed_blocklists}" run_state=0
 		start_rv=0
-		reg_success "${green}Successfully installed blocklists:${n_c} '${blue}${installed_blocklists/ /${n_c}\', \'${blue}}${n_c}'."
+		reg_success "" "${green}Successfully installed blocklists:${n_c} '${blue}${installed_blocklists/ /${n_c}\', \'${blue}}${n_c}'."
 	}
 
 	commit_metadata || { do_stop; start_rv=1; }
@@ -2741,7 +2741,7 @@ pause_resume()
 
 	[ -n "${action_taken_bl_ids}" ] &&
 	{
-		reg_action -blue "${state_progr_pr} blocklists '${action_taken_bl_ids// /\', \'}'."
+		reg_action -blue "" "${state_progr_pr} blocklists '${action_taken_bl_ids// /\', \'}'."
 
 		case "${cmd}" in
 			pause)
