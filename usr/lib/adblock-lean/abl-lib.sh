@@ -897,7 +897,7 @@ print_def_cfg_blocklist()
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
 
-	# adblock-lean configuration options
+	# Blocklist-specific configuration options
 	# config_format=${CONFIG_FORMAT:?}
 	#
 	# values must be enclosed in double-quotes
