@@ -350,7 +350,7 @@ do_create_addnmounts()
 			manual|managed) : ;;
 			*) false ;;
 		esac &&
-		check_persist_dir &&
+		check_persist_dir "${bl_id}" &&
 		{
 			is_included "${path_ram}" "${ignore_paths}" "${_NL_}" ||
 				ram_addnm="${_NL_}${path_ram}"
@@ -648,7 +648,7 @@ do_setup()
 			# shellcheck disable=SC2046
 			unset $(printf '%s\n' "${BL_PARAMS_MAP}" | ${SED_CMD} "/^$/d;s/^.*=//;s/$/_${bl_id}/" | tr '\n' ' ')
 		done
-		unset BL_IDS SKIP_SET_ENV ABL_ENV_SET CONFIG_LOADED
+		unset BL_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
 		for cfg_path in ${bl_cfgs_found}
 		do
 			rm -f "${cfg_path}"
@@ -1147,7 +1147,7 @@ do_add_blocklist_config()
 		{ reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; } # TODO: should err msg be here?
 
 	get_bl_params -f add_blocklist_config "${bl_id}" dnsmasq_indexes conf_dirs &&
-	reg_action -purple "" "Generating new blocklist config '${bl_id}' from preset '${preset}'." &&
+	reg_action -purple "" "Generating new blocklist config '${blue}${bl_id}${n_c}' from preset '${preset}'." &&
 	new_cfg="$(print_def_cfg bl -i "${bl_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
 	write_config bl "${bl_id}" "${new_cfg}" || return 1
 
@@ -1492,6 +1492,14 @@ parse_config()
 		return 3
 	}
 
+	# remove trailing '/' from dir path
+	[ "${cfg_id}" = global ] ||
+	{
+		local persist_dir
+		get_bl_params "${cfg_id}" persist_dir &&
+		set_bl_params "${cfg_id}" persist_dir="${persist_dir%/}"
+	} || return 3
+
 	for i in \
 		"bad_val||Replace unexpected values with defaults" \
 		"migrate||Migrate config entries" \
@@ -1663,9 +1671,6 @@ try_load_config()
 		[ -n "${all_cfg_fixes}" ] && [ "${DO_DIALOGS}" != 1 ] && [ -z "${force_fix}" ] && return 1
 	done
 
-	# remove trailing '/' from dir paths
-	persist_blocklist_dir="${persist_blocklist_dir%/}" # TODO
-
 	if [ -n "${all_cfg_fixes}" ]
 	then
 		eval "${err_cfg_out_var}"=
@@ -1813,7 +1818,7 @@ check_for_updates()
 		*) no_upd="update channel is '${upd_channel}'" ;;
 	esac
 	[ -n "${no_upd}" ] && { print_msg "" "adblock-lean ${no_upd}. Automatic updates check is disabled."; return 3; }
-	reg_action -blue "" "Checking for adblock-lean updates."
+	reg_action -purple "" "Checking for adblock-lean updates."
 	rm -rf "${ABL_UPD_DIR}"
 	try_mkdir -p "${ABL_UPD_DIR}" &&
 	get_gh_ref "${upd_channel}" "" upd_ver tarball_url _
