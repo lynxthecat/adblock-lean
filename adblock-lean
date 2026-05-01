@@ -1087,13 +1087,13 @@ dnsmasq_stop_restart_shared()
 				[ -n "${inst_name}" ] || { reg_failure "Internal error: dnsmasq instance name unknown for index '${index}'."; false; }
 			}
 		then
-			inst_pr="dnsmasq instance ${index} '${inst_name}'"
+			inst_pr="dnsmasq instance ${index} '${blue}${inst_name}${n_c}'"
 		else
 			inst_pr="all dnsmasq instances"
 			inst_name=
 		fi
 		add2list "${inst_names_out_var}" "${inst_name}"
-		reg_action -blue "${cmd_pr} ${inst_pr}." || return 1
+		reg_action -purple "" "${cmd_pr} ${inst_pr}." || return 1
 
 		/etc/init.d/dnsmasq "${cmd}" "${inst_name}" &> /dev/null ||
 		{
@@ -1125,14 +1125,14 @@ restart_dnsmasq()
 
 	if [ -n "${dnsmasq_inst_names}" ]
 	then
-		inst_init_pr="initialization of dnsmasq instances: '${dnsmasq_inst_names// /\', \'/}'"
+		inst_init_pr="initialization of dnsmasq instances: '${blue}${dnsmasq_inst_names// /${n_c}\', \'${blue}/}${n_c}'"
 	else
 		indexes=all
 		inst_init_pr="dnsmasq initialization"
 	fi
 
 	# TODO: async
-	reg_msg -blue "Waiting for ${inst_init_pr}." || { reg_failure; return 1; }
+	reg_msg "Waiting for ${inst_init_pr}." || { reg_failure; return 1; }
 	hostname="$(uci get system.@system[0].hostname)" # TODO: set this globally
 	for index in ${indexes}
 	do
@@ -1600,12 +1600,11 @@ del_addnmounts()
 		do
 			IFS="${DEFAULT_IFS}"
 			case "${path}" in
-				'') continue ;;
+				''|/) continue ;;
 				/bin/busybox*|/usr/bin/logger|*gzip*|*pigz*|*zstd*|*/"${BLOCKLIST_BASE_FNAME:-???}"*|"${ABL_RUN_DIR:-???}"*|"${LOG_CMD%% *}"|"${compression_util%% *}") : ;;
 				*) false # ignore addnmounts possibly created not by us
 			esac ||
-			is_included "${path}" "${persist_dirs}" "${_NL_}" ||
-			is_included "${path:%/*}" "${persist_dirs}" "${_NL_}" ||
+			is_included "${path%/*}" "${persist_dirs}" "${_NL_}" ||
 			continue
 			log_msg -purple "Deleting addnmount entry for '${path}' for dnsmasq instance ${index}."
 			if uci -q del_list "dhcp.@dnsmasq[${index}].addnmount=${path}"
@@ -2294,6 +2293,8 @@ start()
 
 	set_global_env "${bl_ids}" || exit 1
 
+	debug_msg "BLOCKLISTS_TO_GEN:${BLOCKLISTS_TO_GEN};BLOCKLISTS_TO_INSTALL:${BLOCKLISTS_TO_INSTALL};"
+
 	rm_conf_scripts "${bl_ids}"
 
 	# Initial values of BLOCKLISTS_TO_INSTALL, BLOCKLISTS_TO_GEN are set by set_global_env()
@@ -2301,7 +2302,7 @@ start()
 	# gen_blocklists() and install_blocklists() append values to output vars
 
 	[ -n "${BLOCKLISTS_TO_GEN}" ] &&
-		gen_blocklists BLOCKLISTS_TO_INSTALL "${BLOCKLISTS_TO_GEN}" "${initial_uptime_cs}" 
+		gen_blocklists BLOCKLISTS_TO_INSTALL "${BLOCKLISTS_TO_GEN}" "${initial_uptime_cs}"
 
 	[ -n "${BLOCKLISTS_TO_INSTALL}" ] &&
 		install_blocklists ok_blocklists perm_failed_blocklists "${BLOCKLISTS_TO_INSTALL}"
@@ -2402,25 +2403,25 @@ gen_persist_blocklist()
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params "${bl_id}" persist_mode persist_dir
+		err_msg=
+		get_bl_params "${bl_id}" persist_mode persist_dir || return 1
 		case "${persist_mode}" in
 			manual|managed) : ;;
-			*) err_msg="'persist_blocklist_mode' config option is '${persist_mode}' for blocklist ${bl_id}"; continue
+			*) err_msg="'persist_blocklist_mode' config option is '${persist_mode}' for blocklist '${bl_id}'"; false
 		esac &&
 		{
 			[ -n "${persist_dir}" ] || { err_msg="'persist_blocklist_dir' config option is not set for blocklist '${bl_id}'"; false; }
-		} ||
-		{ reg_failure "${err_msg} - can not generate persitent file for blocklist ${bl_id}."; continue; }
+		} &&
+		set_bl_params "${bl_id}" "persist_mode=managed" || # temporarily overrides the config value to enable updating the file
+			{ reg_failure "${err_msg}${err_msg:+". "}Can not generate persitent file for blocklist '${bl_id}'."; continue; }
 
-		set_bl_params "${bl_id}" "persist_mode=managed" # temporarily overrides the config value to enable updating the file
 		add2list ok_bl_ids "${bl_id}"
 	done
 
 	[ -n "${ok_bl_ids}" ] &&
 	{
-		print_msg ""
-		set_global_env "${ok_bl_ids}" || exit 1
-		start "${ok_bl_ids}"
+		printf '\n' > "${MSGS_DEST}"
+		FORCE_PERSIST_INSTALL=1 start "${ok_bl_ids}"
 	}
 }
 
@@ -2457,7 +2458,7 @@ do_stop()
 
 	if [ -n "${BL_IDS}" ] && [ -n "${bl_ids}" ]
 	then
-		bl_ids_pr="blocklists: '${bl_ids// /\', \'}'"
+		bl_ids_pr="blocklists: '${blue}${bl_ids// /${n_c}\', \'${blue}}${n_c}'"
 
 		reg_action -1 -purple "" "Stopping adblocking for ${bl_ids_pr}" &&
 		set_global_env "${bl_ids}" &&
@@ -2465,7 +2466,7 @@ do_stop()
 		do
 			get_bl_params -f stop "${bl_id}" dnsmasq_indexes &&
 			add2list all_stop_indexes "${dnsmasq_indexes}" ||
-				{ stop_fail_ids="${bl_ids}"; break; }
+				add2list stop_fail_ids "${bl_id}"
 		done
 
 		rm_conf_scripts "${bl_ids}"
@@ -2480,10 +2481,19 @@ do_stop()
 
 		for bl_id in ${bl_ids}
 		do
+			local is_persist=''
+			get_bl_params "${bl_id}" curr_path
+			[ -n "${curr_path}" ] && is_persist "${curr_path}" "${bl_id}" && is_persist=1
+
 			CA_NOERR=1 get_bl_run_state "${bl_id}"
 			stop_state_rv=${?}
 			unset_metadata "${bl_id}"
-			[ ${stop_state_rv} = 4 ] || { add2list stop_fail_ids "${bl_id}"; continue; }
+			case "${stop_state_rv}" in
+				4) : ;;
+				3) [ -n "${is_persist}" ] ;;
+				*) false
+			esac ||
+			{ add2list stop_fail_ids "${bl_id}"; continue; }
 			set_bl_params "${bl_id}" run_state=4
 		done
 
@@ -2493,7 +2503,7 @@ do_stop()
 
 		[ -n "${stop_ok_ids}" ] &&
 		{
-			log_msg -purple "Successfully stopped adblocking for blocklists: '${stop_ok_ids// /\', \'}'."
+			log_msg -purple "Successfully stopped adblocking for blocklists: '${blue}${stop_ok_ids// /${n_c}\', \'${blue}}${n_c}'."
 			return 0
 		}
 
@@ -2684,6 +2694,8 @@ pause_resume()
 			state_progr_pr=Resuming
 	esac
 
+	printf '\n' > "${MSGS_DEST}"
+
 	for bl_id in ${bl_ids}
 	do
 		get_bl_params -f "${cmd}" "${bl_id}" run_state || return 1
@@ -2709,7 +2721,7 @@ pause_resume()
 			continue
 		}
 
-		reg_msg -blue "Preparing to ${cmd} ${bl_id_pr}."
+		reg_msg "Preparing to ${cmd} blocklist '${blue}${bl_id}${n_c}'."
 
 		get_bl_params -f "${cmd}" "${bl_id}" \
 			dnsmasq_indexes \
@@ -2790,7 +2802,7 @@ update()
 	# unset vars and functions from current version to have a clean slate with the new version
 	clean_abl_env()
 	{
-		unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED ABL_ENV_SET MAIN_UTILS_DETECTED
+		unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED GLOBAL_ENV_SET MAIN_UTILS_DETECTED
 		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 	}
 
