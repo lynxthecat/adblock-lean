@@ -357,8 +357,8 @@ process_list_part()
 				local list_size_human stats_pad suffix_pad
 				bytes2human list_size_human "${part_size_B}" -p
 				get_pad stats_pad "${print_id}" 38
-				get_pad suffix_pad "${line_count_human}" 8
-				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${list_size_human} - ${suffix_pad}${line_count_human} lines ]" ;;
+				get_pad suffix_pad "${entries_cnt_human}" 9
+				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${blue}${list_size_human}${n_c}  - ${suffix_pad}${blue}${entries_cnt_human} lines${n_c} ]" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] &&
@@ -454,7 +454,7 @@ process_list_part()
 		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${job_id}" \
 		rogue_el_file="${ABL_TMP_DIR}/rogue_el_${job_id}" \
 		list_stats_file="${ABL_TMP_DIR}/stats_${job_id}" \
-		part_line_count='' line_count_human min_line_count_human \
+		part_entries_cnt='' entries_cnt_human min_line_count_human \
 		part_size_B='' retry=1 \
 		part_compr_or_cat="cat" fetch_cmd \
 		format_conv_or_cat="cat" \
@@ -555,7 +555,7 @@ process_list_part()
 		pipeline_rv=${?}
 
 		# read stats
-		read_str_from_file -v "part_line_count part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
+		read_str_from_file -v "part_entries_cnt part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
 
 		# size-exceeded check
 		if ! [ $(( 1 + part_size_B / 1024)) -lt "${max_file_part_size_KB}" ]
@@ -565,7 +565,15 @@ process_list_part()
 			finalize_job 2
 		fi
 
-		[ "${pipeline_rv}" = 0 ] || { reg_failure "Processing pipeline for list part '${print_id}' returned error code ${pipeline_rv}."; finalize_job 1; }
+		[ "${pipeline_rv}" = 0 ] ||
+		{
+			reg_failure "Processing pipeline for list part '${print_id}' returned error code ${pipeline_rv}."
+			print_ucl_err
+			finalize_job 2
+		}
+
+		local dl_completed=
+		grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
 
 		# rogue elements check
 		if [ -s "${rogue_el_file}" ]
@@ -579,31 +587,36 @@ process_list_part()
 				rogue_el_print="Unknown rogue element"
 			fi
 
-			case "${rogue_element}" in
-				*"${CR_LF}"*)
-					log_msg -warn "${list_type}list part '${print_id}' contains Windows-format (CR LF) newlines." \
-						"This file needs to be converted to Unix newline format (LF)." ;;
-				*) log_msg -warn "${rogue_el_print} identified in ${list_type}list part '${print_id}'."
+			case "${rogue_element}" in *"${CR_LF}"*)
+				log_msg -warn "${list_type}list part '${print_id}' contains Windows-format (CR LF) newlines." \
+					"This file needs to be converted to Unix newline format (LF)."
+					finalize_job 3 ;;
 			esac
-			finalize_job 3
+
+			log_msg -warn "${rogue_el_print} identified in ${list_type}list part '${print_id}'."
+			[ -n "${rogue_element}" ] || finalize_job 3
 		fi
 
 		# min_line_count check
-		int2human line_count_human "${part_line_count}" || finalize_job 1    # ${line_count_human} also used in finalize_job()
+		int2human entries_cnt_human "${part_entries_cnt}" || finalize_job 1    # ${entries_cnt_human} also used in finalize_job()
 
 		local lines_cnt_low=''
-		if [ "${origin}" = DL ] && [ "${part_line_count}" -lt "${min_line_count}" ]
+		if [ "${origin}" = DL ] && [ "${part_entries_cnt}" -lt "${min_line_count}" ]
 		then
 			lines_cnt_low=1
 			int2human min_line_count_human "${min_line_count}" || finalize_job 1
-			reg_failure "Line count in downloaded ${list_type}list part '${print_id}' is ${line_count_human}, which is less than configured minimum: ${min_line_count_human}."
+			reg_failure "Entries count in downloaded ${list_type}list part '${print_id}' is ${entries_cnt_human}, which is less than configured minimum: ${min_line_count_human}."
 		fi
 
-		if [ "${origin}" = DL ] && { ! grep -q "Download completed" "${ucl_err_file}" || [ -n "${lines_cnt_low}" ]; }
+		if [ "${origin}" = DL ] && { [ "${pipeline_rv}" != 0 ] || [ -n "${lines_cnt_low}" ] || [ -z "${dl_completed}" ] || [ -n "${rogue_element}" ] ; }
 		then
 			reg_failure "Failed download attempt for list '${print_id}'."
+			print_ucl_err
 			[ -s "${ucl_err_file}" ] && log_msg "uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
 			rm -f "${ucl_err_file}"
+		elif [ "${pipeline_rv}" != 0 ]
+		then
+			finalize_job 1
 		else
 			rm -f "${ucl_err_file}"
 			# set this mirror as forced if this is not the first DL attempt
@@ -641,9 +654,9 @@ gen_list_parts()
 	# shellcheck disable=SC2329
 	read_stats_cb()
 	{
-		read_str_from_file -v "part_line_count part_size_B" -f "${1}" -V 0 &&
-		is_uint "${part_line_count}" "${part_size_B}" || return 1
-		list_line_count=$((list_line_count+part_line_count))
+		read_str_from_file -v "part_entries_cnt part_size_B" -f "${1}" -V 0 &&
+		is_uint "${part_entries_cnt}" "${part_size_B}" || return 1
+		list_entries_cnt=$((list_entries_cnt+part_entries_cnt))
 		list_size_B=$((list_size_B+part_size_B))
 	}
 
@@ -662,7 +675,7 @@ gen_list_parts()
 		preproc_size_B=0 preproc_size_human \
 		invalid_urls bad_hagezi_urls \
 		test_domains \
-		list_line_count list_types \
+		list_entries_cnt list_types \
 		raw_block_lists raw_allow_lists raw_ipv4_block_lists \
 		dnsmasq_block_lists dnsmasq_allow_lists dnsmasq_ipv4_block_lists \
 		hosts_block_lists \
@@ -786,13 +799,13 @@ gen_list_parts()
 		# process results
 		for list_type in ${list_types}
 		do
-			# count lines for current list type
-			local part_line_count=0 list_line_count=0 part_size_B=0 list_size_B=0
+			# count entries for current list type
+			local part_entries_cnt=0 list_entries_cnt=0 part_size_B=0 list_size_B=0
 			FF_EXEC="read_stats_cb {}" \
 				find_files _ "${ABL_TMP_DIR}" "stats_${list_type}-" "" "${bl_id}" || [ ${?} != 1 ] ||
 					{ reg_failure "Failed to read processed ${list_type}list parts stats."; return 1; }
 
-			if ! [ "${list_line_count}" -gt 0 ] || ! [ "${list_size_B}" -gt 0 ]
+			if ! [ "${list_entries_cnt}" -gt 0 ] || ! [ "${list_size_B}" -gt 0 ]
 			then
 				case "${list_type}" in
 					block)
@@ -809,14 +822,14 @@ gen_list_parts()
 				reg_msg "Will remove any (sub)domain matches present in the allowlist from the blocklist and append corresponding server entries to the blocklist."
 				use_allowlist=1
 			fi
-			preproc_cnt=$((preproc_cnt+list_line_count))
+			preproc_cnt=$((preproc_cnt+list_entries_cnt))
 			preproc_size_B=$((preproc_size_B+list_size_B))
 		done
 	done
 
 	int2human preproc_cnt_human "${preproc_cnt}" &&
 	bytes2human preproc_size_human "${preproc_size_B}" || return 1
-	reg_msg "" "${green}Successfully generated preprocessed blocklist files${n_c} (total uncompressed size: ${blue}${preproc_size_human}${n_c}, entries count: ${blue}${preproc_cnt_human}${n_c})."
+	reg_msg "${green}Successfully generated preprocessed blocklist files${n_c} (total uncompressed size: ${blue}${preproc_size_human}${n_c}, entries count: ${blue}${preproc_cnt_human}${n_c})."
 	:
 }
 
@@ -840,7 +853,7 @@ gen_blocklists()
 		install_path install_cnt \
 		totalmem \
 		blocklists_out_var="${1:?}" bl_ids="${2:?}" initial_uptime_cs="${3:?}"
-	
+
 	: "${install_cnt}"
 
 	if [ "${force_unload}" = auto ]
@@ -854,31 +867,24 @@ gen_blocklists()
 		fi
 	fi
 
+	printf '\n' > "${MSGS_DEST}"
+
 	for bl_id in ${bl_ids}
 	do
-		reg_msg -blue "Preparing to process blocklist '${bl_id}'."
+		reg_msg "Preparing to process blocklist '${blue}${bl_id}${n_c}'."
 
 		get_bl_params -f "${me}" "${bl_id}" run_state &&
 		get_bl_params "${bl_id}" curr_path curr_persist_path bk_ext || return 1
 
 		set_bl_params "${bl_id}" skip_load_stop=
 
-		case "${run_state}" in
-			0|3|4) ;;
-			*)
-				KEEP_PERSIST=1 do_stop "${bl_id}"
-				CA_NOERR=1 get_bl_run_state "${bl_id}"
-				run_state=${?}
-				set_bl_params "${bl_id}" run_state ;;
-		esac
-
 		conn_check_req=1
 		force_unload_bl=${force_unload}
 
-		case ${run_state} in
+		case "${run_state}" in
 			0) ;;
 			3|4) force_unload_bl=0 conn_check_req=''; set_bl_params "${bl_id}" skip_load_stop=1 ;;
-			*) exit 1
+			*) reg_failure "${me}: unexpected run state '${run_state}' for blocklist '${bl_id}'."; exit 1
 		esac
 
 		[ "${force_unload_bl}" = 1 ] ||
@@ -904,7 +910,7 @@ gen_blocklists()
 		if [ -n "${file_to_bk}" ] && is_dir_writable "${bl_id}" "${file_to_bk%/*}"
 		then
 			bk_file="${BK_BL_BASE_PATH:?}-${bl_id}${bk_ext}"
-			reg_action -blue "Creating backup of current blocklist '${bl_id}'." &&
+			reg_action "Creating backup of current blocklist '${blue}${bl_id}${n_c}'." &&
 			mv_blocklist "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${bl_id}" ||
 			{
 				reg_failure "Failed to create backup of current blocklist file '${file_to_bk}'."
@@ -916,7 +922,7 @@ gen_blocklists()
 			# for persistent blocklist in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 "No existing file found for blocklist '${bl_id}'."
+			reg_msg -2 "No existing file found for blocklist '${blue}${bl_id}${n_c}'."
 		fi
 		set_bl_params "${bl_id}" bk_file
 		debug_msg "bk_file: '${bk_file}'"
@@ -927,7 +933,7 @@ gen_blocklists()
 
 	for bl_id in ${bl_ids}
 	do
-		reg_action -purple "" "Processing blocklist '${bl_id}'."
+		reg_action -purple "" "Processing blocklist '${blue}${bl_id}${n_c}'."
 
 		get_bl_params -f "${me}" "${bl_id}" install_path &&
 		get_bl_params "${bl_id}" final_compr_ext || return 1
@@ -1068,7 +1074,7 @@ gen_blocklist()
 		return 1
 	}
 
-	reg_action -blue "Sorting and merging blocklist parts into a single blocklist file." || return 1
+	reg_action -blue "" "Sorting and merging blocklist parts into a single blocklist file." || return 1
 
 	{
 		{
