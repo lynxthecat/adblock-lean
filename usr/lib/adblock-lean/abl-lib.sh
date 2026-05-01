@@ -655,7 +655,7 @@ do_setup()
 		done
 
 		# generate blocklist config
-		do_add_blocklist_config || return 2
+		do_gen_blocklist_config || return 2
 	fi
 
 	load_config &&
@@ -1048,7 +1048,7 @@ print_def_cfg_global()
 }
 
 # 1: new blocklist ID
-do_add_blocklist_config()
+do_gen_blocklist_config()
 {
 	# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
 	get_def_preset()
@@ -1146,7 +1146,7 @@ do_add_blocklist_config()
 	do_select_dnsmasq_instances "${bl_id}" ||
 		{ reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; } # TODO: should err msg be here?
 
-	get_bl_params -f add_blocklist_config "${bl_id}" dnsmasq_indexes conf_dirs &&
+	get_bl_params -f gen_blocklist_config "${bl_id}" dnsmasq_indexes conf_dirs &&
 	reg_action -purple "" "Generating new blocklist config '${blue}${bl_id}${n_c}' from preset '${preset}'." &&
 	new_cfg="$(print_def_cfg bl -i "${bl_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
 	write_config bl "${bl_id}" "${new_cfg}" || return 1
@@ -1566,7 +1566,7 @@ load_config()
 		reg_failure "Failed to load config${err_cfg:+" '${err_cfg}'"}."
 		case "${err_cfg}" in
 			global) fix_cmd=gen_global_config ;;
-			blocklist-*) fix_cmd="add_blocklist_config ${err_cfg}"
+			blocklist-*) fix_cmd="gen_blocklist_config ${err_cfg}"
 		esac
 		[ -n "${err_cfg}" ] && [ -n "${fix_cmd}" ] &&
 		{

@@ -21,7 +21,7 @@ ABL_CUSTOM_CMDS="\
 	update \
 	uninstall \
 	\
-	add_blocklist_config \
+	gen_blocklist_config \
 	rm_blocklist_config \
 	status \
 	pause \
@@ -55,7 +55,7 @@ Usage: service adblock-lean <command> [blocklist_ID] [... [blocklist_ID] ...]
 	pause                     Pause adblock-lean
 	resume                    Resume adblock-lean
 	status                    Print status of specified blocklists
-	add_blocklist_config      Create new blocklist config file based on one of pre-defined presets
+	gen_blocklist_config      Create new blocklist config file (or replace an existing one) based on a pre-defined preset
 	rm_blocklist_config       Remove existing blocklist config file
 	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
 	gen_persist_blocklist     Generate persistent blocklist file and accompanying md5 hash file
@@ -1657,7 +1657,7 @@ init_command()
 		gen_stats|calculate_limits) libs_req=1 ;;
 		status) local SBE_STATUS=1; config_req=1 work_dir_req=1 ;;
 		upd_cron_job) config_req=1 ;;
-		setup|gen_global_config|add_blocklist_config|rm_blocklist_config) libs_req=1 LOCK_REQ=1 ;;
+		setup|gen_global_config|gen_blocklist_config|rm_blocklist_config) libs_req=1 LOCK_REQ=1 ;;
 		boot|gen_persist_blocklist|create_addnmounts) config_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
 		pause) work_dir_req=1 config_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
 		start|resume) work_dir_req=1 config_req=1 bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
@@ -1698,7 +1698,7 @@ init_command()
 	# enable writing session log for commands which require it if we have the lock
 	case ${init_lock_status} in 0|3)
 		case "${ABL_CMD}" in
-			boot|start|setup|gen_global_config|add_blocklist_config|rm_blocklist_config|reload|restart)
+			boot|start|setup|gen_global_config|gen_blocklist_config|rm_blocklist_config|reload|restart)
 				export ABL_CURR_LOG_FILE="${ABL_SESSION_LOG_FILE}"
 				log_rotate_req=1
 				log_rotated="${ABL_SESSION_LOG_ROTATED}" ;;
@@ -1756,7 +1756,7 @@ init_command()
 	[ -z "${config_req}" ] || load_config || exit 1
 
 	[ -z "${bl_ids_req}" ] || [ -n "${BL_IDS}" ] ||
-		{ reg_failure "No blocklist configs found. Use 'service adblock-lean add_blocklist_config' to generate a new blocklist config."; exit 1; }
+		{ reg_failure "No blocklist configs found. Use 'service adblock-lean gen_blocklist_config' to generate a new blocklist config."; exit 1; }
 
 	# check dnsmasq, source custom script
 	case ${ABL_CMD} in
@@ -2089,10 +2089,10 @@ version()
 	print_msg "adblock-lean version: '${ABL_VERSION}', update channel: '${ABL_UPD_CHANNEL}'."
 }
 
-add_blocklist_config()
+gen_blocklist_config()
 {
-	init_command add_blocklist_config &&
-	do_add_blocklist_config "${@}"
+	init_command gen_blocklist_config &&
+	do_gen_blocklist_config "${@}"
 }
 
 # TODO
