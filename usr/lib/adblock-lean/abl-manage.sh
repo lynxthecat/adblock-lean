@@ -5,8 +5,8 @@
 META_FNAME="blocklist-metadata"
 META_FNAME_PERSIST="persist_blocklist-metadata"
 META_FILE="${ABL_RUN_DIR}/${META_FNAME}"
-META_PARAMS="LOCATION PATH SINGLE_INSTANCE MD5 CNT"
-PERSIST_META_PARAMS="PATH MD5 CNT"
+META_PARAMS="PATH SINGLE_INSTANCE MD5 CNT"
+META_PARAMS_PERSIST="PATH MD5 CNT"
 
 IP_REGEX_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
 IP_REGEX_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
@@ -50,12 +50,10 @@ BL_PARAMS_MAP="
 	curr_persist_path=PERSIST_PATH
 	curr_persist_cnt=PERSIST_CNT
 	curr_persist_md5=PERSIST_MD5
-	curr_location=LOCATION
 	curr_path=PATH
 	curr_md5=MD5
 	curr_cnt=CNT
 	curr_single_instance=SINGLE_INSTANCE
-	install_location=INSTALL_LOCATION
 	install_path=INSTALL_PATH
 	install_md5=INSTALL_MD5
 	install_cnt=INSTALL_CNT
@@ -279,6 +277,7 @@ get_dnsmasq_instances() {
 	DNSMASQ_INSTANCES_CNT=0
 	reg_action -blue "Checking dnsmasq instances."
 
+	dbg_off
 	[ -n "${DHCP_LOADED}" ] ||
 	{
 		# gather conf dirs from /etc/config/dhcp
@@ -373,6 +372,7 @@ get_dnsmasq_instances() {
 	done
 	json_cleanup
 	cnt_lines DNSMASQ_INSTANCES_CNT "${running_instances}"
+	dbg_on
 
 	export DNSMASQ_INST_SET=1
 
@@ -565,7 +565,7 @@ do_select_dnsmasq_instances() {
 					reg_msg "${index}. Instance '${instance}': network interfaces '${ifaces}'"
 					indexes_regex="${indexes_regex}${index}|"
 				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking for blocklist '${bl_id}', or 'a' to abort." \
+				print_msg "" "Please select which dnsmasq instance should have active adblocking for blocklist '${blue}${bl_id}${n_c}', or 'a' to abort." \
 					"To adblock on multiple instances, enter their indexes separated by whitespaces."
 				while :
 				do
@@ -595,7 +595,7 @@ do_select_dnsmasq_instances() {
 			add2list select_ifaces "${ifaces}"
 		done
 
-		log_msg "Selected dnsmasq indexes for blocklist '${bl_id}': '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
+		log_msg "Selected dnsmasq indexes for blocklist '${blue}${bl_id}${n_c}': '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
 
 		for index in ${select_indexes}
 		do
@@ -648,6 +648,7 @@ get_dnsmasq_ips()
 		odevs="${odevs}${odevs:+$'\n'}${dev}"
 	}
 
+	dbg_off
 	config_load network &&
 	config_foreach get_odevs_cb device &&
 
@@ -724,7 +725,7 @@ get_dnsmasq_ips()
 	)" &&
 	[ -n "${dnp_res}" ] ||
 		{ reg_failure "Failed to get network params for dnsmasq instances. Found Linux ifaces: '${linux_ifaces//"${_NL_}"/ }', OpenWrt devices: '${odevs}', "; return 1; }
-
+	dbg_on
 
 	# dnsmasq nameserver IP's
 	local line index dnsmasq_indexes \
@@ -874,15 +875,27 @@ try_mv_blocklist()
 	:
 }
 
+is_persist()
+{
+	local persist_dir
+	get_bl_params "${2}" persist_dir &&
+	[ -n "${persist_dir}" ] &&
+	[ -n "${1%/*}" ] &&
+	[ "${1%/*}" = "${persist_dir}" ]
+}
+
 # Make sure the directory is not the same as the mount point
 check_persist_dir()
 {
-	local mnt_point persist_dir="${persist_blocklist_dir}" # TODO
+	local mnt_point persist_dir \
+		bl_id="${1}"
+
+	get_bl_params "${bl_id}" persist_dir || return 1
 
 	[ -d "${persist_dir}" ] ||
 	{
 		case "${persist_dir}" in
-			''|/) reg_failure "Empty or invalid persistent blocklist directory'${persist_dir}' specified in config option persist_blocklist_dir." ;;
+			''|/) reg_failure "Empty or invalid persistent blocklist directory '${persist_dir}' specified in config option persist_blocklist_dir." ;;
 			*) reg_failure "Can not find persistent blocklist directory: ${persist_dir}."
 		esac
 		return 1
@@ -897,6 +910,69 @@ check_persist_dir()
 		{  reg_failure "Persistent directory '${persist_dir}' is the same as the mount point. Please use a subdirectory."; return 1; }
 
 	:
+}
+
+check_persist_blocklist()
+{
+	local max_blocklist_file_size_KB min_good_line_count min_good_line_count_human \
+		persist_fail \
+		persist_ext persist_mode curr_persist_path curr_persist_cnt curr_persist_cnt_human curr_persist_size_b \
+		curr_cnt \
+		bl_id="${1}" final_compr_ext="${2}"
+
+	get_bl_params "${bl_id}" persist_mode curr_persist_path min_good_line_count max_blocklist_file_size_KB || return 1
+	reg_msg -blue "Checking the persistent blocklist ${curr_persist_path}"
+
+	{
+		[ -n "${curr_persist_path}" ] ||
+			{
+				[ "${persist_mode}" = manual ]
+				persist_fail="Persistent blocklist not found in directory '${persist_dir}'."
+				false
+			}
+	} &&
+
+	{
+		get_compr_spec persist_ext _ "${curr_persist_path}" ||
+			{ persist_fail="Can not find utility to extract persistent blocklist file '${curr_persist_path}'."; false; }
+	} &&
+
+	{
+		[ "${persist_ext}" = "${final_compr_ext}" ] ||
+			{
+				persist_fail="Extension '${persist_ext}' of persistent blocklist file '${curr_persist_path}' does not match required extension '${final_compr_ext}'."
+				false
+			}
+	} &&
+
+	curr_persist_size_b="$(get_file_size "${curr_persist_path}")" &&
+	{
+		[ $(( curr_persist_size_b/1024 )) -le "${max_blocklist_file_size_KB}" ] ||
+		{ persist_fail="Persistent blocklist file '${curr_persist_path}' is larger than the maximum value set in config (${max_blocklist_file_size_KB} KiB)."; false; }
+	} &&
+
+	{
+		read_blocklist_metadata -persist "${curr_persist_path%/*}/${META_FNAME_PERSIST:?}" "${bl_id}" &&
+		get_bl_params "${bl_id}" curr_persist_cnt &&
+		[ -n "${curr_persist_cnt}" ] ||
+		{ persist_fail="Failed to process metadata for persistent blocklist file '${curr_persist_path}'."; false; }
+	} &&
+
+	{
+		int2human curr_persist_cnt_human "${curr_persist_cnt}" &&
+		int2human min_good_line_count_human "${min_good_line_count}" || return 1
+	} &&
+
+	{
+		[ "${curr_persist_cnt}" -ge "${min_good_line_count}" ] ||
+			{
+				persist_fail="Entries count (${curr_persist_cnt_human}) in the persistent blocklist '${curr_persist_path}' is below the minimum value set in config (${min_good_line_count_human})."
+				false
+			}
+	} && return 0
+
+	[ -n "${persist_fail}" ] && log_msg -warn "${persist_fail}"
+	return 1
 }
 
 # Env vars:
@@ -914,12 +990,12 @@ check_active_blocklist()
 	lookup_failed() { reg_failure "Lookup of test domain '${1}' failed."; }
 	ca_print() { [ -n "${CA_NOPROGRESS}" ] || reg_msg "${@}"; }
 
-	reg_action -blue "Checking the active blocklist." || return 1
-
 	local me=check_active_blocklist \
 		test_domains \
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
 		bl_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
+
+	reg_action "Checking if blocklist '${blue}${bl_id}${n_c}' is active." || return 1
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
@@ -957,7 +1033,7 @@ check_active_blocklist()
 		ca_print "Testing dnsmasq instance ${index}."
 		ca_print "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
 
-		ca_print -blue "Testing adblocking."
+		ca_print "Testing adblocking."
 
 		try_lookup_domain "${ca_test_dom}" "${ns_ips}" 1 -n || { [ -n "${CA_NOERR}" ] || lookup_failed "${ca_test_dom}"; return 2; }
 
@@ -974,8 +1050,6 @@ check_active_blocklist()
 	:
 }
 
-# Sets global var RUN_STATE_${bl_id}
-#
 # 1: blocklist ID
 #
 # Run states:
@@ -999,15 +1073,17 @@ get_bl_run_state()
 		bl_file_exists=0 \
 		dns_check_res=0 \
 		conf_dir conf_dirs \
-		bl_id="${1:?}"
+		bl_id="${1:?}" path_out_var="${2:-_}" single_inst_out_var="${3:-_}"
 
-	assert_set "F_${me}" ABL_ENV_SET || return 1
+	reg_msg -purple "" "Checking state of blocklist '${blue}${bl_id}${n_c}'."
 
-	print_msg -blue "Checking state of blocklist '${bl_id}'"
+	unset_vars "${path_out_var}" "${single_inst_out_var}" &&
+	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
 
 	get_bl_params "${bl_id}" curr_path curr_md5 curr_single_instance new_single_instance conf_dirs bk_file || return 1
 
 	: "${curr_single_instance:="${new_single_instance}"}"
+	: "${curr_single_instance:=0}"
 
 	debug_msg "${me}: curr_single_instance=${curr_single_instance};curr_md5=${curr_md5}"
 
@@ -1070,9 +1146,9 @@ get_bl_run_state()
 
 	[ "${run_state}" = 1 ] &&
 		reg_failure "Unexpected state for blocklist '${bl_id}' (path '${curr_path}')." \
-			"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${curr_single_instance:-0};"
+			"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${curr_single_instance};"
 
-	set_bl_params "${bl_id}" run_state curr_path curr_single_instance
+	eval "${path_out_var}"='${curr_path}' "${single_inst_out_var}"='${curr_single_instance}'
 
 	debug_msg "${me}: bl_id:${bl_id}; run_state:${run_state}; check res:${bl_check_res};"
 
@@ -1151,6 +1227,7 @@ set_global_env()
 		sge_err='' \
 		valid_ids='' \
 		bl_id \
+		sge_rv=0 \
 		bl_ids="${*:-"${BL_IDS}"}"
 
 	export \
@@ -1214,21 +1291,18 @@ set_global_env()
 
 	debug_msg "compr_util_path: '${compr_util_path}', compr_ext: '${compr_ext}'"
 
-	export ABL_ENV_SET=1 # must precede call to get_bl_run_state()
+	export GLOBAL_ENV_SET=1
 	[ "${ABL_CMD}" = start ] && export SKIP_SET_ENV=1
 
 	for bl_id in ${valid_ids}
 	do
-		printf '\n' > "${MSGS_DEST}"
-		set_bl_env "${bl_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}" &&
-		CA_NOERR=1 get_bl_run_state "${bl_id}"
+		set_bl_env "${bl_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}"
+		sge_rv=$(( sge_rv + ${?} ))
 	done
 
 	debug_msg "End set_global_env()"
 
-	printf '\n' > "${MSGS_DEST}"
-
-	:
+	return ${sge_rv}
 }
 
 
@@ -1248,6 +1322,8 @@ set_bl_env()
 	local me=set_bl_env \
 		IFS="${DEFAULT_IFS}" \
 		\
+		bl_id_pr="'${blue}${bl_id}${n_c}'" \
+		\
 		dnsmasq_indexes \
 		conf_dirs \
 		\
@@ -1266,7 +1342,6 @@ set_bl_env()
 		\
 		pause_path \
 		\
-		install_location=RAM \
 		install_path \
 		install_path_ram \
 		install_path_ram_check \
@@ -1277,13 +1352,10 @@ set_bl_env()
 		persist_mode \
 		\
 		curr_path \
-		curr_location \
-		curr_cnt \
+		curr_single_instance \
 		\
 		curr_persist_path \
 		curr_persist_cnt \
-		curr_persist_cnt_human \
-		curr_persist_size_b \
 		\
 		part_extr_or_cat_stdout \
 		\
@@ -1292,9 +1364,6 @@ set_bl_env()
 		final_extr_or_cat_stdout="${CAT_CMD}" \
 		final_compr_or_cat_stdout="${CAT_CMD}" \
 		final_compr_to_file \
-		\
-		max_blocklist_file_size_KB \
-		min_good_line_count \
 		\
 		start_action=gen
 
@@ -1307,16 +1376,11 @@ set_bl_env()
 	get_bl_params -f "${me}" "${bl_id}" \
 		dnsmasq_indexes \
 		conf_dirs \
-		min_good_line_count \
-		max_blocklist_file_size_KB \
 		persist_mode &&
 
 	get_bl_params "${bl_id}" \
 		persist_dir \
-		curr_path \
-		curr_location \
-		curr_cnt \
-		run_state || return 1
+		curr_path || return 1
 
 	bl_base_fname=${BLOCKLIST_BASE_FNAME:?}-${bl_id}
 
@@ -1382,121 +1446,93 @@ set_bl_env()
 		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${install_path_ram}" || return 1
 	[ -z "${sbe_missing_addnm}" ] || { wont_work "adblock-lean" "${sbe_missing_addnm}"; [ -n "${SBE_STATUS}" ] || return 1; }
 
+	CA_NOERR=1 get_bl_run_state "${bl_id}" curr_path curr_single_instance
+	run_state=${?}
+	case "${run_state}" in
+		0|3|4) ;;
+		*)
+			case "${ABL_CMD}" in start|pause|resume)
+				KEEP_PERSIST=1 do_stop "${bl_id}"
+				CA_NOERR=1 get_bl_run_state "${bl_id}" curr_path curr_single_instance
+				run_state=${?}
+			esac
+	esac
+	set_bl_params "${bl_id}" run_state curr_path curr_single_instance
+
 	# Persistent blocklist
-	case "${persist_mode}" in manual|managed)
-		if check_persist_dir
-		then
-			check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${persist_dir}" || return 1
-			if [ -z "${sbe_missing_addnm}" ]
+	case "${ABL_CMD}" in start|pause|resume|status)
+		case "${persist_mode}" in manual|managed)
+			if check_persist_dir "${bl_id}"
 			then
-				persist_avail=1
-				[ "${persist_mode}" = managed ] && bl_path_persist="${persist_dir}/${bl_full_fname}"
+				check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${persist_dir}" || return 1
+				if [ -z "${sbe_missing_addnm}" ]
+				then
+					persist_avail=1
+					[ "${persist_mode}" = managed ] &&
+					{
+						bl_path_persist="${persist_dir}/${bl_full_fname}"
+						install_path="${bl_path_persist}"
+					}
+				else
+					wont_work "Persistent blocklist" "${sbe_missing_addnm}"
+				fi
 			else
-				wont_work "Persistent blocklist" "${sbe_missing_addnm}"
+				log_msg -warn "" "Persistent file can not be used or updated for blocklist '${bl_id}'."
 			fi
-		else
-			log_msg -warn "" "Persistent blocklist can not be used or updated."
+		esac
+
+		if [ "${persist_avail}" = 1 ]
+		then
+			if \
+				case "${ABL_INIT_ACTION}" in
+					boot|status) : ;;
+					resume) [ "${run_state}" = 3 ] && is_persist "${curr_path}" "${bl_id}" ;;
+					*) false
+				esac
+			then
+				FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${bl_base_fname}"
+				set_bl_params "${bl_id}" curr_persist_path
+
+				debug_msg "curr_persist_path for bl_id '${bl_id}': '${curr_persist_path}'"
+
+				check_persist_blocklist "${bl_id}" "${final_compr_ext}"
+				if [ ${?} = 0 ]
+				then
+					case "${ABL_INIT_ACTION}" in boot|resume)
+						start_action=load
+						install_path=${curr_persist_path}
+						get_bl_params "${bl_id}" curr_persist_cnt || return 1
+						set_bl_params "${bl_id}" install_cnt="${curr_persist_cnt}"
+					esac
+				else
+					[ "${persist_mode}" = manual ] && rebuild_req_notice "gen_persist_blocklist" "persistent"
+
+					{ [ "${ABL_INIT_ACTION}" = status ] ||
+					{
+						KEEP_PERSIST=0 rm_if_writable "${bl_id}" "${curr_persist_path}" "${curr_persist_path%/*}/${META_FNAME_PERSIST}"; }
+						[ "${curr_path}" = "${curr_persist_path}" ] && unset_metadata "${bl_id}"
+						set_bl_params "${bl_id}" curr_persist_path= curr_persist_cnt=
+					}
+
+					[ "${ABL_CMD}" = start ] &&
+					{
+						local start_act_msg="Will create a new blocklist file on the ramdisk for blocklist ${bl_id_pr}."
+						[ "${persist_mode}" = managed ] &&
+							start_act_msg="Will rebuild the persistent file for blocklist ${bl_id_pr}."
+						log_msg "${start_act_msg}"
+					}
+				fi
+			elif [ "${persist_mode}" = managed ] && [ "${ABL_CMD}" = start ]
+			then
+				reg_msg "Will update the persistent file for blocklist ${bl_id_pr}."
+			fi
 		fi
 	esac
 
-	if [ "${persist_avail}" = 1 ]
-	then
-		FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${bl_base_fname}"
-		set_bl_params "${bl_id}" curr_persist_path
-
-		debug_msg "curr_persist_path for bl_id '${bl_id}': '${curr_persist_path}'"
-
-		if \
-			case "${ABL_CMD}" in
-				start|status) : ;;
-				resume) [ "${run_state}" = 3 ] && [ "${curr_path}" = "${curr_persist_path}" ] ;;
-				*) false ;;
-			esac
-		then
-			reg_msg -blue "Checking the persistent blocklist ${curr_persist_path}"
-			local min_good_line_count_human='' persist_ext='' persist_fail='' curr_persist_cnt='' curr_persist_cnt_human=''
-
-			if
-				{
-					[ -n "${curr_persist_path}" ] ||
-						{
-							[ "${persist_mode}" = manual ] && persist_mode=disable
-							persist_fail="Persistent blocklist not found in directory '${persist_dir}'."
-							false
-						}
-				} &&
-
-				{
-					get_compr_spec persist_ext _ "${curr_persist_path}" ||
-						{ persist_fail="Can not find utility to extract persistent blocklist file '${curr_persist_path}'."; false; }
-				} &&
-
-				{
-					[ "${persist_ext}" = "${final_compr_ext}" ] ||
-						{
-							persist_fail="Extension '${persist_ext}' of persistent blocklist file '${curr_persist_path}' does not match required extension '${final_compr_ext}'."
-							false
-						}
-				} &&
-
-				curr_persist_size_b="$(get_file_size "${curr_persist_path}")" &&
-				{
-					[ $(( curr_persist_size_b/1024 )) -le "${max_blocklist_file_size_KB}" ] ||
-					{ persist_fail="Persistent blocklist file '${curr_persist_path}' is larger than the maximum value set in config (${max_blocklist_file_size_KB} KiB)."; false; }
-				} &&
-
-				{
-					{ [ "${curr_location}" = PERSIST ] && [ -n "${curr_cnt}" ] && curr_persist_cnt="${curr_cnt}"; } ||
-					{
-						read_blocklist_metadata -persist "${curr_persist_path%/*}/${META_FNAME}" "${bl_id}" &&
-						get_bl_params "${bl_id}" curr_persist_cnt
-					}
-				} &&
-
-				{
-					int2human curr_persist_cnt_human "${curr_persist_cnt}" &&
-					int2human min_good_line_count_human "${min_good_line_count}" || return 1
-				} &&
-
-				{
-					[ "${curr_persist_cnt}" -ge "${min_good_line_count}" ] ||
-						{
-							persist_fail="Entries count (${curr_persist_cnt_human}) in the persistent blocklist '${curr_persist_path}' is below the minimum value set in config (${min_good_line_count_human})."
-							false
-						}
-				}
-			then
-				start_action=load
-				install_path=${curr_persist_path}
-			else
-				{ [ "${ABL_INIT_ACTION}" = status ] ||
-				{
-					KEEP_PERSIST=0 rm_if_writable "${bl_id}" "${curr_persist_path}" "${curr_persist_path%/*}/${META_FNAME}"; }
-					[ "${curr_path}" = "${curr_persist_path}" ] && unset_metadata "${bl_id}"
-					curr_persist_path=
-					curr_persist_cnt=
-					set_bl_params "${bl_id}" curr_persist_path curr_persist_cnt
-				}
-
-				local start_act_msg="Will create a new blocklist on the ramdisk."
-				[ "${persist_mode}" = managed ] &&
-				{
-					start_act_msg="Will rebuild the persistent blocklist."
-					install_path=${bl_path_persist}
-				}
-
-				[ -n "${persist_fail}" ] && log_msg -warn "${persist_fail}"
-				[ "${ABL_CMD}" = start ] && [ -n "${start_act_msg}" ] && log_msg "${start_act_msg}"
-				[ "${persist_mode}" = manual ] && rebuild_req_notice "gen_persist_blocklist" "persistent"
-			fi
-		elif [ "${persist_mode}" = managed ]
-		then
-			[ "${ABL_CMD}" = start ] && reg_msg "" "Will update the persistent blocklist." ""
-			install_path=${bl_path_persist}
-		fi
-	fi
-
 	: "${install_path:="${install_path_ram}"}"
+
+	[ -z "${FORCE_PERSIST_INSTALL}" ] || is_persist "${install_path}" "${bl_id}" ||
+		{ reg_failure "Can not generate persistent file for blocklist '${bl_id}'."; return 1; }
 
 	[ -n "${install_path}" ] &&
 	case "${start_action}" in
@@ -1506,14 +1542,11 @@ set_bl_env()
 	esac ||
 		{ reg_failure "No usable path to install or load the blocklist."; rebuild_req_notice "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
 
-	[ "${install_path}" = "${bl_path_persist}" ] && install_location=PERSIST
-
 	pause_path="${install_path}"
 	[ "${new_single_instance}" = 1 ] &&
 		pause_path="${ABL_RUN_DIR}/${bl_full_fname}"
 
 	set_bl_params "${bl_id}" \
-		install_location \
 		install_path \
 		install_path_ram \
 		new_single_instance \
@@ -1534,7 +1567,7 @@ set_bl_env()
 		"${conf_script_log_avail}"
 
 	debug_msg \
-		"install_location: '${install_location}'" \
+		"${bl_id}:" \
 		"install_path: '${install_path}'" \
 		"part_extr_or_cat_stdout: '${part_extr_or_cat_stdout}'" \
 		"final_compr_or_cat_stdout: '${final_compr_or_cat_stdout}'" \
@@ -1675,10 +1708,8 @@ install_blocklists()
 		\
 		curr_path \
 		\
-		install_location \
 		install_path \
 		install_path_ram \
-		install_desc \
 		install_md5 \
 		install_cnt \
 		new_single_instance \
@@ -1707,13 +1738,11 @@ install_blocklists()
 
 	for bl_id in ${bl_ids}
 	do
-		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs final_extr_or_cat_stdout install_location install_path &&
+		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs final_extr_or_cat_stdout install_path &&
 		get_bl_params "${bl_id}" new_single_instance conf_script_log_avail || return 1
 
-		[ "${install_location}" = PERSIST ] && install_desc=persistent
-
 		if \
-			reg_action -blue "Installing ${install_desc} blocklist file." && # TODO: desc from args?
+			reg_action -purple "Installing blocklist '${blue}${bl_id}${n_c}'." &&
 			get_md5 install_md5 "${install_path}"
 		then
 			[ "${new_single_instance}" = 1 ] ||
@@ -1733,13 +1762,12 @@ install_blocklists()
 			done
 
 			set_bl_params "${bl_id}" install_md5
+
 			add2list dnsmasq_indexes_to_restart "${dnsmasq_indexes}"
 		else
 			bl_failed "${bl_id}" "${install_path}"
 		fi
 	done
-
-	printf '\n' > "${MSGS_DEST}"
 
 	restart_dnsmasq "${dnsmasq_indexes_to_restart}" || return 1
 
@@ -1749,11 +1777,11 @@ install_blocklists()
 
 		printf '\n' > "${MSGS_DEST}"
 
-		get_bl_params -f "${me}" "${bl_id}" install_path install_location new_single_instance install_md5 install_cnt || return 1
+		get_bl_params -f "${me}" "${bl_id}" install_path new_single_instance install_md5 install_cnt || return 1
 
 		CA_CHECK_DNS=1 check_active_blocklist "${bl_id}" "${install_md5}" "${new_single_instance}" ||
 			{
-				reg_failure "Active blocklist check for blocklist '${bl_id}' failed with ${install_desc} blocklist file." # TODO: set install_desc
+				reg_failure "Active blocklist check for blocklist '${bl_id}' failed."
 				bl_failed "${bl_id}" "${install_path}"
 				continue
 			}
@@ -1762,7 +1790,6 @@ install_blocklists()
 
 		set_bl_params "${bl_id}" \
 			curr_path="${install_path}" \
-			curr_location="${install_location}" \
 			curr_single_instance="${new_single_instance}" \
 			curr_md5="${install_md5}" \
 			curr_cnt="${install_cnt}"
@@ -1775,15 +1802,15 @@ install_blocklists()
 
 	for bl_id in ${inst_fail_ids}
 	do
-		get_bl_params "${bl_id}" install_path install_path_ram install_location persist_mode
+		get_bl_params "${bl_id}" install_path install_path_ram persist_mode
 
 		[ "${abl_cmd}" = start ] &&
-		[ "${install_location}" = PERSIST ] && [ "${persist_mode}" = manual ] || continue
+		[ "${persist_mode}" = manual ] && is_persist "${install_path}" "${bl_id}" || continue
 
 		# fall back to RAM
 		if [ -d "${install_path_ram%/*}" ]
 		then
-			set_bl_params "${bl_id}" install_location=RAM install_path="${install_path_ram}" || return 1
+			set_bl_params "${bl_id}" install_path="${install_path_ram}" || return 1
 		else
 			add2list "${perm_fail_blocklists_out_var}" "${bl_id}"
 		fi
@@ -1865,6 +1892,7 @@ try_lookup_domain()
 
 ### METADATA
 
+# Env vars: UNSET_PREFIX
 # 1 (optional): blocklist IDs
 unset_metadata()
 {
@@ -1875,7 +1903,8 @@ unset_metadata()
 	do
 		for meta_param in ${META_PARAMS:?}
 		do
-			unset "${meta_param}_${bl_id}"
+			debug_msg "unset ${UNSET_PREFIX}${meta_param}_${bl_id}"
+			unset "${UNSET_PREFIX}${meta_param}_${bl_id}"
 		done
 	done
 }
@@ -1889,71 +1918,83 @@ commit_metadata()
 
 try_commit_metadata()
 {
-	uci_tmp() { uci -c "${META_FILE%/*}" "${@}"; }
-	uci_persist() { uci -c "${persist_dir}" "${@}"; }
+	uci_tmp() { uci -c "${meta_file%/*}" "${@}"; }
 
 	# shellcheck disable=SC2034
 	local me=commit_metadata \
 		IFS="${DEFAULT_IFS}" \
+		GBP_PREFIX='' \
 		param_set param_set_bl param param_val uci_fail='' \
 		bl_id \
-		curr_location curr_path persist_dir persist_meta_file
+		curr_path curr_persist_path \
+		meta_fname \
+		meta_file="${META_FILE}"
 
 	debug_msg "Creating metadata, blocklists: '${BL_IDS}'."
 
-	rm -f "${META_FILE}"
+	rm -f "${meta_file}"
 
 	[ -n "${BL_IDS}" ] || return 0
 
 	# Common metadata
-	try_mkdir -p "${META_FILE%/*}" &&
-	touch "${META_FILE}" || return 1
+	try_mkdir -p "${meta_file%/*}" &&
+	touch "${meta_file}" || return 1
 
 	for bl_id in ${BL_IDS}
 	do
-		param_set_bl=
-		# create/update section in meta file
+		get_bl_params "${bl_id}" curr_path
+		[ -n "${curr_path}" ] || continue
+
 		uci_tmp set "${META_FNAME}.${bl_id}=blocklist_id" || { uci_fail=1; break; }
 		for param in ${META_PARAMS}
 		do
 			eval "param_val=\"\${${param}_${bl_id}}\""
 			[ -n "${param_val}" ] || continue
 			uci_tmp set "${META_FNAME}.${bl_id}.${param}"="${param_val}" || { uci_fail=1; break 2; }
-			[ "${param}" = PATH ] && param_set_bl=1
+			param_set=1
 		done
-		[ -n "${param_set_bl}" ] && param_set=1 || uci_tmp delete "${META_FNAME}.${bl_id}"
 	done
 
-	if [ -n "${param_set}" ] && [ -z "${uci_fail}" ] && uci_tmp commit "${META_FNAME}" && [ -s "${META_FILE}" ]
-	then
-		:
-	else
+	[ -n "${param_set}" ] &&
+	[ -z "${uci_fail}" ] &&
+	uci_tmp commit "${META_FNAME}" ||
+	{
 		uci_tmp revert "${META_FNAME}"
-		rm -f "${META_FILE}"
-	fi
-
-	[ -n "${uci_fail}" ] && return 2
+		rm -f "${meta_file}"
+		[ -n "${uci_fail}" ] &&
+			{ reg_failure "Failed to create/update the metadata file '${meta_file}'."; return 2; }
+	}
 
 	# Persist metadata
+	meta_fname="${META_FNAME_PERSIST}"
 	for bl_id in ${BL_IDS}
 	do
-		get_bl_params "${bl_id}" curr_location || return 3
+		local persist_dir
+		get_bl_params "${bl_id}" persist_dir curr_path
+		is_persist "${curr_path}" "${bl_id}" || continue
 
-		[ "${curr_location}" = PERSIST ] || continue
+		[ -d "${persist_dir}" ] || { reg_failure "Can not update metadata file for blocklist '${bl_id}' because directory '${persist_dir}' is not found."; continue; }
 
-		get_bl_params -f "${me}" "${bl_id}" curr_path curr_md5 curr_cnt || return 4
+		uci_fail=
+		meta_file="${persist_dir%/}/${meta_fname:?}"
+		rm -f "${meta_file}"
 
-		persist_dir="${curr_path%/*}"
-		persist_meta_file="${persist_dir:?}/${META_FNAME_PERSIST}"
-		uci_persist set "${META_FNAME_PERSIST}.${bl_id}=blocklist_id" &&
-		uci_persist set "${META_FNAME_PERSIST}.${bl_id}.PATH=${curr_path}" &&
-		uci_persist set "${META_FNAME_PERSIST}.${bl_id}.MD5=${curr_md5}" &&
-		uci_persist set "${META_FNAME_PERSIST}.${bl_id}.CNT=${curr_cnt}" &&
-		uci_persist commit "${META_FNAME_PERSIST}" && continue
+		touch "${meta_file}" &&
+		uci_tmp set "${meta_fname}.${bl_id}=blocklist_id" &&
+		for param in ${META_PARAMS_PERSIST}
+		do
+			eval "param_val=\"\${${param}_${bl_id}}\""
+			[ -n "${param_val}" ] || continue
+			uci_tmp set "${meta_fname}.${bl_id}.${param}"="${param_val}" || { uci_fail=1; break; }
+		done &&
 
-		reg_failure "Failed to create/update persistent metadata file '${persist_meta_file}'."
-		uci_persist revert "${META_FNAME_PERSIST}"
-		rm -f "${persist_meta_file}"
+		[ -z "${uci_fail}" ] &&
+		uci_tmp commit "${meta_fname}" && [ -s "${meta_file}" ] ||
+			{
+				reg_failure "Failed to create/update persistent metadata file '${meta_file}' for blocklist '${bl_id}'."
+				uci_tmp revert "${meta_fname}"
+				rm -f "${meta_file}"
+			}
 	done
 
 	:
@@ -1989,7 +2030,7 @@ read_blocklist_metadata()
 
 		is_included "${bl_id}" "${req_ids}" || return 0
 
-		debug_msg "Populating vars for ${bl_id_pr}."
+		debug_msg "" "Populating vars for ${bl_id_pr}."
 
 		is_included "${bl_id}" "${seen_ids}" &&
 			append_err "Multiple entries for ${bl_id_pr} in ${sp_f_pr}."
@@ -2000,6 +2041,7 @@ read_blocklist_metadata()
 		do
 			config_get meta_val "${bl_id}" "${pv_param}" # accept empty values
 			eval "${rbm_prefix}${pv_param}_${bl_id}"='${meta_val}'
+			debug_msg "${rbm_prefix}${pv_param}_${bl_id}=${meta_val}"
 		done
 
 		# check md5
@@ -2064,12 +2106,14 @@ read_blocklist_metadata()
 	debug_msg "${me}: req_ids: ${req_ids}"
 
 	# Reset global vars
-	unset_metadata "${req_ids}"
+	UNSET_PREFIX="${rbm_prefix}" unset_metadata "${req_ids}"
 
-	[ "${rbm_type}" = PERSIST ] && meta_params="${PERSIST_META_PARAMS}"
+	[ "${rbm_type}" = PERSIST ] && meta_params="${META_PARAMS_PERSIST}"
 
+	dbg_off
 	UCI_CONFIG_DIR="${meta_file%/*}" config_load "${meta_file##*/}" ||
 		{ reg_failure "${me}: failed to load ${sp_f_pr}."; return 1; }
+	dbg_on
 
 	config_foreach populate_vars blocklist_id
 
