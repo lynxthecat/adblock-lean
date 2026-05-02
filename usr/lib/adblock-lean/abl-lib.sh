@@ -1081,14 +1081,13 @@ do_gen_blocklist_config()
 	local cnt totalmem totalmem_human preset \
 		dnsmasq_indexes conf_dirs \
 		new_cfg\
-		i=0 \
 		bl_id="${1:-"${luci_new_blocklist_name}"}"
 
-	while [ ${i} -le 10 ]
+	while :
 	do
 		is_alphanum "${bl_id}" && break
 
-		[ -z "${bl_id}" ] && [ ${i} = 0 ] && [ "${DO_DIALOGS}" = 1 ] ||
+		[ -z "${bl_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
 			print_msg "Invalid blocklist name '${bl_id}'. Use English letters and/or numbers and/or underlines."
 
 		[ -n "${luci_new_blocklist_name}" ] && return 1
@@ -1101,8 +1100,7 @@ do_gen_blocklist_config()
 
 		print_msg "" "Name the new blocklist:"
 		read -r bl_id
-		i=$((i+1))
-	done || return 1
+	done
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${luci_preset}" ]
 	then
