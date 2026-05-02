@@ -532,12 +532,14 @@ is_valid_dir()
 	:
 }
 
+# Env vars: FORCE_PERSIST_WRITE
 is_dir_writable()
 {
 	local persist_dir persist_mode
 	is_valid_dir -q "${2}" &&
 	get_bl_params "${1}" persist_dir persist_mode || return 1
 
+	[ -n "${FORCE_PERSIST_WRITE}" ] ||
 	{ [ -n "${persist_dir}" ] && [ "${2}" != "${persist_dir}" ]; } ||
 	{ [ "${persist_mode}" = managed ] && [ "${KEEP_PERSIST}" != 1 ]; } ||
 	{
@@ -1632,8 +1634,8 @@ del_addnmounts()
 init_command()
 {
 	ABL_CMD="${1}"
-	local config_req=''  work_dir_req='' act_pr='' init_action_pr='' init_action_short='' \
-		log_rotated='' log_rotate_req='' bl_ids_req=''
+	local config_req='' libs_req='' work_dir_req='' act_pr='' init_action_pr='' init_action_short='' \
+		log_rotated='' log_rotate_req='' bl_ids_req='' set_bl_ids_req=''
 
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 		DO_DIALOGS=1
@@ -1655,12 +1657,13 @@ init_command()
 	case ${ABL_CMD} in
 		enabled|enable|disable|uninstall) ;;
 		gen_stats|calculate_limits) libs_req=1 ;;
-		status) local SBE_STATUS=1; config_req=1 work_dir_req=1 ;;
+		status) local SBE_STATUS=1; config_req=1 set_bl_ids_req=1 bl_ids_req=1 work_dir_req=1 ;;
 		upd_cron_job) config_req=1 ;;
-		setup|gen_global_config|gen_blocklist_config|rm_blocklist_config) libs_req=1 LOCK_REQ=1 ;;
-		boot|gen_persist_blocklist|create_addnmounts) config_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
-		pause) work_dir_req=1 config_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
-		start|resume) work_dir_req=1 config_req=1 bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		setup|gen_global_config|gen_blocklist_config) set_bl_ids_req=1 libs_req=1 LOCK_REQ=1 ;;
+		rm_blocklist_config) set_bl_ids_req=1 bl_ids_req=1 libs_req=1 LOCK_REQ=1 ;;
+		boot|gen_persist_blocklist|create_addnmounts) config_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
+		pause) work_dir_req=1 config_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
+		start|resume) work_dir_req=1 config_req=1 set_bl_ids_req=1 bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			kill_abl_pids
 			check_lock
@@ -1668,9 +1671,9 @@ init_command()
 				1) exit 1 ;;
 				2) reg_failure "Failed to kill running adblock-lean processes."; exit 1
 			esac
-			libs_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+			libs_req=1 set_bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
-			libs_req=1 bl_ids_req=1 LOCK_REQ=1
+			libs_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1
 			[ "${action}" = select_dnsmasq_instances ] && config_req=1 # require config when called directly
 			;;
 		reload|restart) ;;
@@ -1683,6 +1686,12 @@ init_command()
 	then
 		source_libs || exit 1
 	fi
+
+	[ -z "${set_bl_ids_req}" ] ||
+		set_bl_ids || exit 1
+
+	[ -z "${bl_ids_req}" ] || [ -n "${BL_IDS}" ] ||
+		{ reg_failure "No blocklist configs found. Use 'service adblock-lean gen_blocklist_config' to generate a new blocklist config."; exit 1; }
 
 	# register lock status at init
 	check_lock
@@ -1754,9 +1763,6 @@ init_command()
 	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_TMP_DIR}" || exit 1; }
 
 	[ -z "${config_req}" ] || load_config || exit 1
-
-	[ -z "${bl_ids_req}" ] || [ -n "${BL_IDS}" ] ||
-		{ reg_failure "No blocklist configs found. Use 'service adblock-lean gen_blocklist_config' to generate a new blocklist config."; exit 1; }
 
 	# check dnsmasq, source custom script
 	case ${ABL_CMD} in
@@ -2095,11 +2101,30 @@ gen_blocklist_config()
 	do_gen_blocklist_config "${@}"
 }
 
-# TODO
 rm_blocklist_config()
 {
 	init_command rm_blocklist_config &&
 	do_rm_blocklist_config "${@}"
+}
+
+do_rm_blocklist_config()
+{
+	local cfg_path \
+		bl_id="${1}"
+
+	assert_known_bl_id "${bl_id}" rm_blocklist_config &&
+	get_cfg_path cfg_path "${bl_id}" &&
+	read_blocklist_metadata "${META_FILE:?}" "${bl_id}" || return 1
+
+	reg_action -purple "Removing blocklist '${blue}${bl_id}${n_c}'."
+
+	rm -f "${cfg_path}"
+	FORCE_PERSIST_WRITE=1 rm_blocklists "${bl_id}" &&
+	unset_metadata "${bl_id}" &&
+	commit_metadata ||
+		{ reg_failure "Failed to remove blocklist config '${bl_id}'."; return 1; }
+
+	log_msg -green "Successfully removed blocklist config '${bl_id}'."
 }
 
 gen_global_config()
@@ -2454,7 +2479,7 @@ do_stop()
 	[ "${bl_ids_check}" = all ] && bl_ids_check="${BL_IDS}"
 	[ -n "${bl_ids_check}" ] && ! subtract_a_from_b "${bl_ids_arg}" "${BL_IDS}" || bl_ids_check="${BL_IDS}" bl_ids_arg=all
 
-	[ -n "${bl_ids_check}" ] && get_valid_bl_ids bl_ids "${bl_ids_check}" || return 1
+	[ -n "${bl_ids_check}" ] && { get_valid_bl_ids bl_ids "${bl_ids_check}" || return 1; }
 
 	if [ -n "${BL_IDS}" ] && [ -n "${bl_ids}" ]
 	then
@@ -2529,13 +2554,13 @@ do_stop()
 	do
 		[ -n "${dir}" ] || continue
 		IFS="${DEFAULT_IFS}"
-		rm -f "${dir}/${CS_BASE_FNAME}"* "${dir}/${BLOCKLIST_BASE_FNAME:-???}"*
+		rm -f "${dir}/${CS_BASE_FNAME:-???}"* "${dir}/${BLOCKLIST_BASE_FNAME:-???}"*
 	done
 	IFS="${DEFAULT_IFS}"
 
 	restart_dnsmasq # all dnsmasq instances
 
-	return 1
+	:
 }
 
 restart()
