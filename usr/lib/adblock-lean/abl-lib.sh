@@ -1160,7 +1160,7 @@ get_cfg_path()
 	case "${2}" in
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
 		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blocklist-${2}.conf" ;;
-		*) bad_args get_cfg_path "${@}"; return 1 ;;
+		*) reg_failure "Invalid config name '${2}'."; return 1 ;;
 	esac
 	eval "${1}"='${g_path}'
 }
@@ -1557,7 +1557,6 @@ load_config()
 	[ -n "${CONFIG_LOADED}" ] && return 0
 
 	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
-	export BL_IDS=
 	dbg_off
 	try_load_config err_cfg ||
 	{
@@ -1629,25 +1628,13 @@ try_load_config()
 		return 1
 	fi
 
-	for cfg_path in "${GLOBAL_CFG_FILE:?}" "${ABL_CFG_DIR:?}"/blocklist-*.conf
+	for cfg_id in global ${BL_IDS}
 	do
-		case "${cfg_path}" in
-			*"*"*)
-				continue ;;
-			"${GLOBAL_CFG_FILE}")
-				cfg_type=global
-				cfg_id=global ;;
-			"${ABL_CFG_DIR}"/*)
-				cfg_type=bl
-				split_path _ cfg_id _  "${cfg_path}"
-				cfg_id="${cfg_id#"blocklist-"}"
-				is_alphanum "${cfg_id}" ||
-				{
-					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
-					continue
-				}
-				add2list BL_IDS "${cfg_id}"
+		case "${cfg_id}" in
+			global) cfg_type=global ;;
+			*) cfg_type=bl
 		esac
+		get_cfg_path cfg_path "${cfg_id}" || return 1
 
 		eval "${err_cfg_out_var}"='${cfg_id}'
 		eval "local cfg_path_${cfg_id}"='${cfg_path}'
@@ -1774,7 +1761,7 @@ write_config()
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -f "${cfg_file}" ]
 	then
-		print_msg "This will overwrite existing config. Proceed? (y|n)"
+		print_msg "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
 		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
 	fi
 
