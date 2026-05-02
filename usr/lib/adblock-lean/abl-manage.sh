@@ -801,6 +801,29 @@ get_dnsmasq_ips()
 
 ### GENERAL HELPER FUNCTIONS
 
+# Sets BL_IDS global var
+set_bl_ids()
+{
+	local cfg_path cfg_id
+	export BL_IDS=
+	for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
+	do
+		case "${cfg_path}" in
+			*"*"*) continue ;;
+			*)
+				split_path _ cfg_id _  "${cfg_path}"
+				cfg_id="${cfg_id#"blocklist-"}"
+				is_alphanum "${cfg_id}" ||
+				{
+					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+					continue
+				}
+				add2list BL_IDS "${cfg_id}"
+		esac
+	done
+	:
+}
+
 mv_blocklist()
 {
 	local me=mv_blocklist mv_rv \
@@ -1269,7 +1292,10 @@ set_global_env()
 		add2list valid_ids "${bl_id}"
 	done
 
-	[ -n "${valid_ids}" ] || { reg_failure "${me}: no known blocklist IDs specified."; [ -n "${ASSERT_NOT_EXIT}" ] || exit 1; return 1; }
+	[ -n "${valid_ids}" ] || {
+		[ -z "${bl_ids}" ] && return 0
+		reg_msg -yellow "No known blocklist IDs specified."; [ -n "${ASSERT_NOT_EXIT}" ] || exit 1; return 1
+	}
 
 	read_blocklist_metadata "${META_FILE}" "${valid_ids}" || sge_err=1
 
@@ -2008,7 +2034,7 @@ try_commit_metadata()
 #
 # 0 (optional): '-persist'
 # 1: path to the meta file
-# 2: blocklist IDs
+# 2 (optional): required blocklist IDs (errors with other read ID's will be ignored)
 
 # shellcheck disable=SC2329
 read_blocklist_metadata()
@@ -2096,7 +2122,6 @@ read_blocklist_metadata()
 	# read metadata for all ID's unless previously read
 	for bl_id in ${BL_IDS}
 	do
-		assert_known_bl_id "${bl_id}" "${me}" || return 1
 		# ignore previously processed blocklist ID's
 		is_included "${bl_id}" "${read_ids}" && continue
 		add2list req_ids "${bl_id}"
