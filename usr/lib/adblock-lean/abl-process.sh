@@ -358,7 +358,7 @@ process_list_part()
 				bytes2human list_size_human "${part_size_B}" -p
 				get_pad stats_pad "${print_id}" 38
 				get_pad suffix_pad "${entries_cnt_human}" 9
-				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${blue}${list_size_human}${n_c}  - ${suffix_pad}${blue}${entries_cnt_human} lines${n_c} ]" ;;
+				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${blue}${list_size_human}${n_c}  - ${suffix_pad}${blue}${entries_cnt_human} entries${n_c} ]" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] &&
