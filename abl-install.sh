@@ -10,8 +10,8 @@ ABL_INST_DIR=${ABL_TMP_DIR}/remote_abl
 ABL_PID_DIR=/tmp/adblock-lean
 ABL_CFG_DIR=/etc/adblock-lean
 
-ABL_CFG_FILE=${ABL_CFG_DIR}/config
-UCL_ERR_FILE="${ABL_TMP_DIR}/uclient-fetch_err"
+GLOBAL_CFG_FILE=${ABL_CFG_DIR}/global.conf
+UCL_ERR_FILE=${ABL_TMP_DIR}/uclient-fetch_err
 
 : "${ABL_REPO_AUTHOR:=lynxthecat}"
 ABL_GH_URL_API="https://api.github.com/repos/${ABL_REPO_AUTHOR}/adblock-lean"
@@ -19,7 +19,7 @@ ABL_MAIN_BRANCH=master
 ABL_FILES_REG_PATH=/etc/adblock-lean/abl-reg.md5
 
 # silence shellcheck warnings
-: "${ABL_INSTALLER_VER}" "${ABL_CFG_FILE}"
+: "${ABL_INSTALLER_VER}"
 
 LC_ALL=C
 DEFAULT_IFS='	 
@@ -238,6 +238,31 @@ reg_failure()
 {
 	log_msg -err "" "${1}"
 	luci_errors="${luci_errors}${1}${_NL_}"
+}
+
+find_abl_config()
+{
+	[ -s "${GLOBAL_CFG_FILE}" ] || return 1
+	local cfg_path cfg_id
+	for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
+	do
+		case "${cfg_path}" in
+			*"*"*) continue ;;
+			*)
+				cfg_id="${cfg_path##*"/blocklist-"}"
+				cfg_id="${cfg_id%.conf}"
+				case "${cfg_id}" in
+					''|*[!a-zA-Z0-9_]*) false ;;
+					*) :
+				esac ||
+				{
+					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+					continue
+				}
+				return 0
+		esac
+	done
+	return 1
 }
 
 # Get version and update channel of adblock-lean file
@@ -645,8 +670,7 @@ install_abl_files()
 	exec_files="$(get_file_list "${dist_dir}${ABL_SERVICE_PATH}" EXEC)"
 
 	# handle update
-	export ABL_IN_INSTALL=1
-	if [ -n "${IS_UPDATE}" ]
+	if [ -n "${ABL_IS_UPDATE}" ]
 	then
 		# get currently installed file list
 		old_files="$(get_file_list "${ABL_SERVICE_PATH}" ALL)"
@@ -788,7 +812,7 @@ install_abl_files()
 	fi
 	IFS="${DEFAULT_IFS}"
 
-	if [ -n "${IS_UPDATE}" ] && grep -m1 -q '[ 	]*abl_post_update_2()' "${dist_dir}${ABL_SERVICE_PATH}"
+	if [ -n "${ABL_IS_UPDATE}" ] && grep -m1 -q '[ 	]*abl_post_update_2()' "${dist_dir}${ABL_SERVICE_PATH}"
 	then
 		(
 			clean_abl_env
@@ -828,18 +852,18 @@ fetch_and_install()
 	# v0.7.2 and earlier versions are incompatible with config v9 or later
 	rm_incompat_config()
 	{
-		[ -s "${ABL_CFG_FILE}" ] || return 0
+		[ -s "${GLOBAL_CFG_FILE}" ] || return 0
 		local old_format='' old_cfg_f="/tmp/adblock-lean_config.old"
-		if old_format="$(get_config_format "${ABL_CFG_FILE}")" && [ -n "${old_format}" ] && [ "${old_format}" -ge 9 ]
+		if old_format="$(get_config_format "${GLOBAL_CFG_FILE}")" && [ -n "${old_format}" ] && [ "${old_format}" -ge 9 ]
 		then
 			log_msg "" "Warning: Version downgrade detected - removing incompatible config."
-			if ! cp "${ABL_CFG_FILE}" "${old_cfg_f}"
+			if ! cp "${GLOBAL_CFG_FILE}" "${old_cfg_f}"
 			then
 				reg_failure "Failed to save old config file as ${old_cfg_f}."
 			else
 				log_msg "Old config file was saved as ${old_cfg_f}." ""
 			fi
-			rm -f "${ABL_CFG_FILE}"
+			rm -f "${GLOBAL_CFG_FILE}"
 		fi
 	}
 
@@ -880,10 +904,10 @@ fetch_and_install()
 		*) fetch_failed "Invalid version string '${ver_str_arg}'."
 	esac
 
-	if ${ABL_SERVICE_PATH} enabled
+	if ${ABL_SERVICE_PATH} enabled 2>/dev/null
 	then
 		DO_DIALOGS=0 ${ABL_SERVICE_PATH} stop
-	fi 2>/dev/null
+	fi
 
 	rm -rf "${ABL_UPD_DIR:-???}"
 	try_mkdir -p "${ABL_UPD_DIR}" || fetch_failed
@@ -953,7 +977,7 @@ fetch_and_install()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		if [ -n "${IS_UPDATE}" ] && [ -s "${ABL_CFG_FILE}" ]
+		if [ -n "${ABL_INST_CFG_FOUND}" ]
 		then
 			print_msg "" "Start adblock-lean now? (y|n)"
 			pick_opt "y|n"
@@ -997,7 +1021,12 @@ dnsmasq --help | grep -qe "--conf-script" ||
 	inst_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
 
 
-[ -s "${ABL_SERVICE_PATH}" ] && IS_UPDATE=1
+export ABL_IN_INSTALL=1
+[ -s "${ABL_SERVICE_PATH}" ] && export ABL_IS_UPDATE=1
+
+export ABL_INST_CFG_FOUND=
+find_abl_config &&
+	ABL_INST_CFG_FOUND=1
 
 if [ -z "${INST_SOURCED}" ]
 then
