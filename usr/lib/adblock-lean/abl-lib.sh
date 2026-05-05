@@ -432,7 +432,7 @@ get_pkg_name()
 
 # Error codes:
 # 1 - general error
-# 3 - set_global_env failed
+# 3 - set_all_env failed
 # 4 - service enable failed
 # 5 - creating addnmount entry failed
 do_setup()
@@ -647,6 +647,7 @@ do_setup()
 			unset_metadata "${bl_id}"
 			# shellcheck disable=SC2046
 			unset $(printf '%s\n' "${BL_PARAMS_MAP}" | ${SED_CMD} "/^$/d;s/^.*=//;s/$/_${bl_id}/" | tr '\n' ' ')
+			unset "BL_ENV_SET_${bl_id}"
 		done
 		unset BL_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
 		for cfg_path in ${bl_cfgs_found}
@@ -659,7 +660,7 @@ do_setup()
 	fi
 
 	load_config &&
-	set_global_env || return 1
+	set_all_env || return 3
 
 	# enable the service, update the cron job
 	if rc_enabled
@@ -1577,7 +1578,7 @@ load_config()
 	export CONFIG_LOADED=1
 
 	# check for missing addnmounts during version update
-	if [ -n "${in_install}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
+	if [ -n "${in_install}" ] && [ -n "${ABL_INST_CFG_FOUND}" ] && [ -n "${BL_IDS}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
 	then
 		export ADDNMOUNTS_CHECKED=1
 		get_dnsmasq_instances &&
@@ -1641,8 +1642,11 @@ try_load_config()
 
 		# validate config and assign to variables
 		eval "local cfg_fixes_${cfg_id}='' replace_keys_${cfg_id}=''"
+		dbg_off
 		parse_config "${cfg_type}" "${cfg_id}" "" "cfg_fixes_${cfg_id}" "replace_keys_${cfg_id}"
-		case ${?} in
+		local parse_rv=${?}
+		dbg_on
+		case ${parse_rv} in
 			0) ;;
 			1) return 1 ;; # config error with no automatic fix
 			2) ;; # config error(s) with automatic fix
@@ -1770,7 +1774,8 @@ write_config()
 	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_failure "Failed to write to file '${tmp_cfg_file}'."; return 1; }
 
 	parse_config "${cfg_type}" "${cfg_id}" "${tmp_cfg_file}" ||
-		{ rm -f "${tmp_cfg_file}"; reg_failure "Failed to validate config file '${tmp_cfg_file}'."; return 1; }
+		{ rm -f "${tmp_cfg_file}"; reg_failure "Failed to validate config file '${tmp_cfg_file}'."; dbg_on; return 1; }
+	dbg_on
 
 	reg_msg "" "Saving the new config to '${cfg_file}'."
 
