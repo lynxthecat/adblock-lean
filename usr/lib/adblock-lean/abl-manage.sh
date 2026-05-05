@@ -801,26 +801,33 @@ get_dnsmasq_ips()
 
 ### GENERAL HELPER FUNCTIONS
 
-# Sets BL_IDS global var
+# Looks for blocklist-*.conf files and sets BL_IDS global var
 set_bl_ids()
 {
-	local cfg_path cfg_id
+	# shellcheck disable=SC2329
+	append_bl_id()
+	{
+		local cfg_id
+		split_path _ cfg_id _  "${1}"
+		cfg_id="${cfg_id#"blocklist-"}"
+		is_alphanum "${cfg_id}" ||
+		{
+			reg_failure "Invalid blocklist name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			return 0
+		}
+		add2list BL_IDS "${cfg_id}"
+	}
+
 	export BL_IDS=
-	for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
-	do
-		case "${cfg_path}" in
-			*"*"*) continue ;;
-			*)
-				split_path _ cfg_id _  "${cfg_path}"
-				cfg_id="${cfg_id#"blocklist-"}"
-				is_alphanum "${cfg_id}" ||
-				{
-					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
-					continue
-				}
-				add2list BL_IDS "${cfg_id}"
-		esac
-	done
+
+	FF_EXEC="append_bl_id {}" \
+		find_files _ "${ABL_CFG_DIR:?}" "blocklist-" ".conf"
+
+	case ${?} in
+		0|2) ;;
+		*) return 1
+	esac
+
 	:
 }
 
@@ -944,7 +951,7 @@ check_persist_blocklist()
 		bl_id="${1}" final_compr_ext="${2}"
 
 	get_bl_params "${bl_id}" persist_mode curr_persist_path min_good_line_count max_blocklist_file_size_KB || return 1
-	reg_msg -blue "Checking the persistent blocklist ${curr_persist_path}"
+	reg_msg "Checking persistent blocklist file '${blue}${curr_persist_path}${n_c}'"
 
 	{
 		[ -n "${curr_persist_path}" ] ||
@@ -1086,7 +1093,6 @@ check_active_blocklist()
 get_bl_run_state()
 {
 	local me=get_bl_run_state \
-		bl_id \
 		curr_path curr_md5 curr_single_instance new_single_instance bk_file \
 		bl_check_res \
 		run_state \
@@ -1230,6 +1236,12 @@ try_check_addnmounts()
 	:
 }
 
+set_all_env()
+{
+	set_global_env &&
+	set_blocklists_env "${@}"
+}
+
 # Populates global vars required for processing, status and cleanup
 # Env vars:
 #   SBE_STATUS: do not exit on non-critical errors
@@ -1239,19 +1251,10 @@ set_global_env()
 {
 	[ -n "${SKIP_SET_ENV}" ] && return 0
 
-	local me=set_global_env \
-		IFS="${DEFAULT_IFS}" \
+	local \
 		compr_util_path \
 		compr_ext \
-		extr_cmd_stdout \
-		compr_cmd_to_file \
-		compr_cmd_stdout \
-		cpu_cnt \
-		sge_err='' \
-		valid_ids='' \
-		bl_id \
-		sge_rv=0 \
-		bl_ids="${*:-"${BL_IDS}"}"
+		cpu_cnt
 
 	export \
 		PARALLEL_JOBS='' \
@@ -1284,7 +1287,37 @@ set_global_env()
 
 	# dnsmasq instances - independent of other params
 	get_dnsmasq_instances &&
-	check_dnsmasq_instances || sge_err=1
+	check_dnsmasq_instances || return 1
+
+	# Interm compr commands
+	[ -n "${compr_ext}" ] &&
+	{
+		INTERM_COMPR_OR_CAT_STDOUT="${compr_util_path} -c"
+		INTERM_COMPR_TO_FILE="${compr_util_path} -f"
+		INTERM_COMPR_EXT=${compr_ext}
+	}
+
+	debug_msg "compr_util_path: '${compr_util_path}', compr_ext: '${compr_ext}'"
+
+	export GLOBAL_ENV_SET=1
+	[ "${ABL_CMD}" = start ] && export SKIP_SET_ENV=1
+
+	debug_msg "End set_global_env()"
+
+	:
+}
+
+set_blocklists_env()
+{
+	local \
+		me=set_blocklists_env \
+		valid_ids='' \
+		bl_id \
+		sbe_rv='' \
+		compr_util_path='' compr_ext='' compr_cmd_to_file='' compr_cmd_stdout='' extr_cmd_stdout='' \
+		bl_ids="${*:-"${BL_IDS}"}"
+
+	debug_msg "" "${me} start, blocklists '${bl_ids}'"
 
 	for bl_id in ${bl_ids}
 	do
@@ -1294,41 +1327,32 @@ set_global_env()
 
 	[ -n "${valid_ids}" ] || {
 		[ -z "${bl_ids}" ] && return 0
-		reg_msg -yellow "No known blocklist IDs specified."; [ -n "${ASSERT_NOT_EXIT}" ] || exit 1; return 1
+		reg_msg -yellow "No known blocklist IDs specified."
+		[ -n "${ASSERT_NOT_EXIT}" ] || exit 1
+		return 1
 	}
 
-	read_blocklist_metadata "${META_FILE}" "${valid_ids}" || sge_err=1
+	get_compr_util_spec compr_util_path compr_ext "${compression_util:?}" || return 1
 
-	get_dnsmasq_ips "${valid_ids}" &&
-	[ -z "${sge_err}" ] ||
-		return 1
-
-	# Interm compr commands
 	[ -n "${compr_ext}" ] &&
 	{
 		compr_cmd_to_file="${compr_util_path} -f"
 		compr_cmd_stdout="${compr_util_path} -c"
 		extr_cmd_stdout="${compr_util_path} -cd"
-
-		INTERM_COMPR_OR_CAT_STDOUT=${compr_cmd_stdout}
-		INTERM_COMPR_TO_FILE=${compr_cmd_to_file}
-		INTERM_COMPR_EXT=${compr_ext}
 	}
 
-	debug_msg "compr_util_path: '${compr_util_path}', compr_ext: '${compr_ext}'"
-
-	export GLOBAL_ENV_SET=1
-	[ "${ABL_CMD}" = start ] && export SKIP_SET_ENV=1
+	read_blocklist_metadata "${META_FILE:?}" "${valid_ids}" &&
+	get_dnsmasq_ips "${valid_ids}" || sbe_rv=1
 
 	for bl_id in ${valid_ids}
 	do
 		set_bl_env "${bl_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}"
-		sge_rv=$(( sge_rv + ${?} ))
+		sbe_rv=$(( ${sbe_rv:-0} + ${?} ))
 	done
 
-	debug_msg "End set_global_env()"
+	debug_msg "${me} end" ""
 
-	return ${sge_rv}
+	return ${sbe_rv}
 }
 
 
@@ -1339,11 +1363,11 @@ set_bl_env()
 {
 	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${1}' to rebuild the ${2}${2:+ }blocklist."; }
 	wont_work() {
-		reg_failure "${1} can not be used with blocklist '${bl_id}' because of missing addnmounts in /etc/config/dhcp: ${2}" \
+		reg_failure "" "${1} can not be used with blocklist '${bl_id}' because of missing addnmounts in /etc/config/dhcp: ${2}" \
 			"Please run 'service adblock-lean create_addnmounts' to create required addnmount entries."
 	}
 
-	local bl_id="${1}" compr_ext="${2}" extr_cmd_stdout="${3}" compr_cmd_stdout="${4}" compr_cmd_to_file="${5}"
+	local bl_id="${1:?}" compr_ext="${2}" extr_cmd_stdout="${3}" compr_cmd_stdout="${4}" compr_cmd_to_file="${5}"
 
 	local me=set_bl_env \
 		IFS="${DEFAULT_IFS}" \
@@ -1393,6 +1417,8 @@ set_bl_env()
 		\
 		start_action=gen
 
+	eval "BL_ENV_SET_${bl_id}="
+
 	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and persistent blocklist creation,
 	#   get final blocklist paths,
 	#   compression util path and extension
@@ -1416,14 +1442,10 @@ set_bl_env()
 
 	# Compression
 	part_extr_or_cat_stdout="${CAT_CMD:?}"
-	set_bl_params "${bl_id}" part_extr_or_cat_stdout
-
-	# Final blocklist compr commands, filenames, ramdisk blocklist path
 	if [ -n "${compr_ext}" ]
 	then
 		assert_set "F_${me}" compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout || return 1
 		part_extr_or_cat_stdout="try_extract -stdout ${bl_id}"
-		set_bl_params "${bl_id}" part_extr_or_cat_stdout
 		bl_full_fname_check=${bl_base_fname:?}${compr_ext}
 		install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
 		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${extr_cmd_stdout%% *}${_NL_}${install_path_ram_check}" || return 1
@@ -1442,6 +1464,7 @@ set_bl_env()
 			wont_work "Final blocklist compression" "${sbe_missing_addnm}"
 		fi
 	fi
+	set_bl_params "${bl_id}" part_extr_or_cat_stdout
 
 	# Final blocklist full filename
 	: "${bl_full_fname:="${bl_base_fname:?}"}"
@@ -1583,7 +1606,9 @@ set_bl_env()
 		final_extr_or_cat_stdout \
 		final_compr_or_cat_stdout \
 		final_compr_to_file \
-		conf_script_log_avail
+		conf_script_log_avail || return 1
+
+	eval "BL_ENV_SET_${bl_id}=1"
 
 	: \
 		"${new_single_instance}" \
@@ -1603,6 +1628,7 @@ set_bl_env()
 	:
 }
 
+# Env vars: ACCEPT_UNKNOWN_BL_IDS
 assert_known_bl_id()
 {
 	local akb_err
@@ -1611,10 +1637,11 @@ assert_known_bl_id()
 			{ akb_err="Invalid blocklist ID '${1}'."; false; }
 	} &&
 	{
-	is_included "${1}" "${BL_IDS}" ||
-		{ akb_err="Blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS// /\', \'}'."; false; }
+		[ -n "${ACCEPT_UNKNOWN_BL_IDS}" ] ||
+		is_included "${1}" "${BL_IDS}" ||
+			{ akb_err="Blocklist '${1}' is not included in registered blocklist IDs '${BL_IDS// /\', \'}'."; false; }
 	} ||
-		{ reg_failure "${2:+"${2}: "}${akb_err}"; [ -n "${ASSERT_NOEXIT}" ] || exit 1; return 1; }
+		{ reg_failure "${2:+"${2}: "}${akb_err}"; return 1; }
 	:
 }
 
@@ -1645,7 +1672,7 @@ get_bl_params()
 		gl_var val force_err err_func err_func_pr var_exp var_name bl_param
 
 	[ "${1}" = '-f' ] && { force_err=1 err_func="${2}" err_func_pr="-f ${2} "; shift 2; }
-	bl_id="${1:?}"
+	local bl_id="${1:?}"
 	shift
 
 	for var_exp in "${@}"
@@ -1689,7 +1716,7 @@ set_bl_params()
 
 	for bl_id in ${bl_ids}
 	do
-		assert_known_bl_id "${bl_id}" "${me}"
+		assert_known_bl_id "${bl_id}" "${me}" || continue
 
 		for pair in "${@}"
 		do
@@ -1747,6 +1774,8 @@ install_blocklists()
 		some_succeeded \
 		\
 		abl_cmd="${ABL_CMD}" \
+		\
+		bl_id \
 		\
 		ok_blocklists_out_var="${1}" perm_fail_blocklists_out_var="${2}" bl_ids="${3:?}"
 
@@ -1935,9 +1964,10 @@ unset_metadata()
 	done
 }
 
+# Env vars: COMMIT_META_LOCATIONS
 commit_metadata()
 {
-	try_commit_metadata "${@}" && return 0
+	try_commit_metadata && return 0
 	reg_failure "Failed to create or update the metadata file (return code ${?})."
 	return 1
 }
@@ -1954,6 +1984,7 @@ try_commit_metadata()
 		bl_id \
 		curr_path curr_persist_path \
 		meta_fname \
+		meta_locations="${COMMIT_META_LOCATIONS:-"RAM PERSIST"}" \
 		meta_file="${META_FILE}"
 
 	debug_msg "Creating metadata, blocklists: '${BL_IDS}'."
@@ -1963,33 +1994,38 @@ try_commit_metadata()
 	[ -n "${BL_IDS}" ] || return 0
 
 	# Common metadata
-	try_mkdir -p "${meta_file%/*}" &&
-	touch "${meta_file}" || return 1
-
-	for bl_id in ${BL_IDS}
-	do
-		get_bl_params "${bl_id}" curr_path
-		[ -n "${curr_path}" ] || continue
-
-		uci_tmp set "${META_FNAME}.${bl_id}=blocklist_id" || { uci_fail=1; break; }
-		for param in ${META_PARAMS}
-		do
-			eval "param_val=\"\${${param}_${bl_id}}\""
-			[ -n "${param_val}" ] || continue
-			uci_tmp set "${META_FNAME}.${bl_id}.${param}"="${param_val}" || { uci_fail=1; break 2; }
-			param_set=1
-		done
-	done
-
-	[ -n "${param_set}" ] &&
-	[ -z "${uci_fail}" ] &&
-	uci_tmp commit "${META_FNAME}" ||
+	is_included RAM "${meta_locations}" &&
 	{
-		uci_tmp revert "${META_FNAME}"
-		rm -f "${meta_file}"
-		[ -n "${uci_fail}" ] &&
-			{ reg_failure "Failed to create/update the metadata file '${meta_file}'."; return 2; }
+		try_mkdir -p "${meta_file%/*}" &&
+		touch "${meta_file}" || return 1
+
+		for bl_id in ${BL_IDS}
+		do
+			get_bl_params "${bl_id}" curr_path
+			[ -n "${curr_path}" ] || continue
+
+			uci_tmp set "${META_FNAME}.${bl_id}=blocklist_id" || { uci_fail=1; break; }
+			for param in ${META_PARAMS}
+			do
+				eval "param_val=\"\${${param}_${bl_id}}\""
+				[ -n "${param_val}" ] || continue
+				uci_tmp set "${META_FNAME}.${bl_id}.${param}"="${param_val}" || { uci_fail=1; break 2; }
+				param_set=1
+			done
+		done
+
+		[ -n "${param_set}" ] &&
+		[ -z "${uci_fail}" ] &&
+		uci_tmp commit "${META_FNAME}" ||
+		{
+			uci_tmp revert "${META_FNAME}"
+			rm -f "${meta_file}"
+			[ -n "${uci_fail}" ] &&
+				{ reg_failure "Failed to create/update the metadata file '${meta_file}'."; return 2; }
+		}
 	}
+
+	is_included PERSIST "${meta_locations}" || return 0
 
 	# Persist metadata
 	meta_fname="${META_FNAME_PERSIST}"
@@ -2054,7 +2090,15 @@ read_blocklist_metadata()
 			bl_id="${1}"
 		local bl_id_pr="blocklist '${bl_id}'"
 
-		is_included "${bl_id}" "${req_ids}" || return 0
+		if ! is_included "${bl_id}" "${BL_IDS}"
+		then
+			log_msg -warn "The metadata file contains stale entry for non-existing blocklist '${bl_id}'."
+			add2list stale_ids "${bl_id}"
+		elif
+			! is_included "${bl_id}" "${req_ids}"
+		then
+			return 0
+		fi
 
 		debug_msg "" "Populating vars for ${bl_id_pr}."
 
@@ -2104,11 +2148,11 @@ read_blocklist_metadata()
 		req_ids='' \
 		seen_ids='' \
 		read_ids='' \
+		stale_ids='' \
 		meta_params="${META_PARAMS}" \
 		meta_file="${1}" meta_ids="${2:-"${BL_IDS}"}"
-	local sp_f_pr="metadata file '${meta_file}'"
-
-	: "${meta_val}"
+	local sp_f_pr="metadata file '${meta_file}'" \
+		ACCEPT_UNKNOWN_BL_IDS=1
 
 	debug_msg "${me} start, IDs ${meta_ids}"
 
@@ -2149,6 +2193,12 @@ read_blocklist_metadata()
 		reg_failure "${me}: ${rbm_err}"
 	done
 	IFS="${DEFAULT_IFS}"
+
+	[ -n "${stale_ids}" ] &&
+	{
+		reg_action -purple "Removing stale blocklists '${blue}${stale_ids// /"${n_c}', '${blue}"}${n_c}'."
+		COMMIT_META_LOCATIONS=RAM FORCE_STOP_ALL=1 do_stop all
+	}
 
 	return ${rbm_rv}
 }
