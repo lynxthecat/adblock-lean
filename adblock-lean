@@ -1198,6 +1198,7 @@ mk_lock()
 # 3 - lock file belongs to current PID
 check_lock()
 {
+	[ "${LOCK_PID}" = "${$}" ] && return 3
 	unset LOCK_PID
 	[ -z "${PID_FILE}" ] && { reg_failure "\${PID_FILE} variable is unset."; return 1; }
 	[ ! -f "${PID_FILE}" ] && return 0
@@ -1244,15 +1245,12 @@ report_curr_action()
 	local reported_pid report_cmd=print_msg curr_action=''
 	[ -n "${ACTION_FILE}" ] || { reg_failure "\$ACTION_FILE var is unset."; return 1; }
 	[ -f "${ACTION_FILE}" ] || return 0
-	if [ -z "${LOCK_PID}" ]
-	then
-		check_lock
-		case ${?} in
-			0) return 0 ;;
-			1) return 1 ;;
-			2|3) ;;
-		esac
-	fi
+	check_lock
+	case ${?} in
+		0) return 0 ;;
+		1) return 1 ;;
+		2|3) ;;
+	esac
 	reported_pid="${LOCK_PID:-unknown}"
 
 	read_str_from_file -v curr_action -f "${ACTION_FILE}" -a 2 -D action -V "unknown action"
@@ -1665,12 +1663,20 @@ init_command()
 		pause) work_dir_req=1 config_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
 		start|resume) work_dir_req=1 config_req=1 set_bl_ids_req=1 bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
-			kill_abl_pids
 			check_lock
 			case ${?} in
 				1) exit 1 ;;
-				2) reg_failure "Failed to kill running adblock-lean processes."; exit 1
-			esac
+				0|3) ;;
+				*) false
+			esac ||
+			{
+				kill_abl_pids
+				check_lock
+				case ${?} in
+					1) exit 1 ;;
+					2) reg_failure "Failed to kill running adblock-lean processes."; exit 1
+				esac
+			}
 			libs_req=1 set_bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
 			libs_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1
@@ -2098,7 +2104,10 @@ version()
 gen_blocklist_config()
 {
 	init_command gen_blocklist_config &&
-	do_gen_blocklist_config "${@}"
+	do_gen_blocklist_config "${@}" &&
+	load_config &&
+	set_all_env &&
+	do_create_addnmounts "${@}"
 }
 
 rm_blocklist_config()
@@ -2116,12 +2125,15 @@ do_rm_blocklist_config()
 	get_cfg_path cfg_path "${bl_id}" &&
 	read_blocklist_metadata "${META_FILE:?}" "${bl_id}" || return 1
 
+	get_bl_params "${bl_id}" persist_dir
+	[ -n "${persist_dir}" ] &&
+	persist_meta_file="${persist_dir}/${META_FNAME_PERSIST:?}" &&
+	read_blocklist_metadata -persist "${persist_meta_file}" "${bl_id}"
+
 	reg_action -purple "Removing blocklist '${blue}${bl_id}${n_c}'."
 
-	rm -f "${cfg_path}"
-	FORCE_PERSIST_WRITE=1 rm_blocklists "${bl_id}" &&
-	unset_metadata "${bl_id}" &&
-	commit_metadata ||
+	FORCE_PERSIST_WRITE=1 do_stop "${bl_id}" &&
+	rm -f "${cfg_path}" ||
 		{ reg_failure "Failed to remove blocklist config '${bl_id}'."; return 1; }
 
 	log_msg -green "Successfully removed blocklist config '${bl_id}'."
@@ -2229,6 +2241,7 @@ select_dnsmasq_instances()
 	init_command "${me}" || return 1
 
 	local \
+		bl_id \
 		cfg_path \
 		upd_cfg \
 		dnsmasq_indexes conf_dirs \
@@ -2316,13 +2329,13 @@ start()
 
 	get_uptime_cs initial_uptime_cs
 
-	set_global_env "${bl_ids}" || exit 1
+	set_all_env "${bl_ids}" || exit 1
 
 	debug_msg "BLOCKLISTS_TO_GEN:${BLOCKLISTS_TO_GEN};BLOCKLISTS_TO_INSTALL:${BLOCKLISTS_TO_INSTALL};"
 
 	rm_conf_scripts "${bl_ids}"
 
-	# Initial values of BLOCKLISTS_TO_INSTALL, BLOCKLISTS_TO_GEN are set by set_global_env()
+	# Initial values of BLOCKLISTS_TO_INSTALL, BLOCKLISTS_TO_GEN are set by set_blocklists_env()
 
 	# gen_blocklists() and install_blocklists() append values to output vars
 
@@ -2457,93 +2470,54 @@ stop()
 	exit ${?}
 }
 
-# Additional args: blocklist IDs (defaults to all)
+# Env vars: FORCE_STOP_ALL
+# Args: blocklist IDs (defaults to all)
 do_stop()
 {
-	local file dir all_stop_indexes='' dnsmasq_indexes conf_dir \
+	[ -n "${IN_STOP}" ] && return 0 # prevent infinite loop
+	[ -n "${ABL_IN_INSTALL}" ] && [ -z "${ABL_IS_UPDATE}" ] && return 0 # no need to stop
+
+	local \
 		ASSERT_NOEXIT=1 FAIL_STOP_REQ='' \
 		IFS="${DEFAULT_IFS}" \
-		stop_ok_ids='' \
-		stop_fail_ids='' \
-		stop_state_rv \
-		bl_ids_pr \
+		stop_failed='' \
+		dir \
+		IN_STOP=1 \
+		force_stop_all="${FORCE_STOP_ALL:-}" \
+		bl_id \
 		bl_ids='' \
-		bl_ids_check='' \
 		bl_ids_arg="${*}"
 
+	debug_msg "" "Running STOP" ""
 
 	init_command stop || exit 1
 	load_config
 
-	bl_ids_check="${bl_ids_arg}"
-	[ "${bl_ids_check}" = all ] && bl_ids_check="${BL_IDS}"
-	[ -n "${bl_ids_check}" ] && ! subtract_a_from_b "${bl_ids_arg}" "${BL_IDS}" || bl_ids_check="${BL_IDS}" bl_ids_arg=all
+	bl_ids="${bl_ids_arg:-"${BL_IDS}"}"
+	[ -z "${force_stop_all}" ] && { get_valid_bl_ids bl_ids "${bl_ids}" || return 1; }
+	[ -n "${bl_ids}" ] || force_stop_all=1
 
-	[ -n "${bl_ids_check}" ] && { get_valid_bl_ids bl_ids "${bl_ids_check}" || return 1; }
-
-	if [ -n "${BL_IDS}" ] && [ -n "${bl_ids}" ]
-	then
-		bl_ids_pr="blocklists: '${blue}${bl_ids// /${n_c}\', \'${blue}}${n_c}'"
-
-		reg_action -1 -purple "" "Stopping adblocking for ${bl_ids_pr}" &&
-		set_global_env "${bl_ids}" &&
+	[ -z "${force_stop_all}" ] && [ -n "${CONFIG_LOADED}" ] && [ -n "${BL_IDS}" ] &&
+		{
+			[ -n "${GLOBAL_ENV_SET}" ] ||
+			set_global_env
+		} &&
+		[ -n "${bl_ids}" ] &&
 		for bl_id in ${bl_ids}
 		do
-			get_bl_params -f stop "${bl_id}" dnsmasq_indexes &&
-			add2list all_stop_indexes "${dnsmasq_indexes}" ||
-				add2list stop_fail_ids "${bl_id}"
-		done
-
-		rm_conf_scripts "${bl_ids}"
-		rm_blocklists "${bl_ids}"
-
-		[ -z "${all_stop_indexes}" ] ||
-		restart_dnsmasq "${all_stop_indexes}" ||
-		{
-			[ "${bl_ids_arg}" = all ] || { commit_metadata; return 1; }
-			stop_fail_ids="${bl_ids}"
-		}
-
-		for bl_id in ${bl_ids}
-		do
-			local is_persist=''
-			get_bl_params "${bl_id}" curr_path
-			[ -n "${curr_path}" ] && is_persist "${curr_path}" "${bl_id}" && is_persist=1
-
-			CA_NOERR=1 get_bl_run_state "${bl_id}"
-			stop_state_rv=${?}
-			unset_metadata "${bl_id}"
-			case "${stop_state_rv}" in
-				4) : ;;
-				3) [ -n "${is_persist}" ] ;;
-				*) false
-			esac ||
-			{ add2list stop_fail_ids "${bl_id}"; continue; }
-			set_bl_params "${bl_id}" run_state=4
-		done
-
-		commit_metadata
-
-		subtract_a_from_b "${stop_fail_ids}" "${bl_ids}" stop_ok_ids
-
-		[ -n "${stop_ok_ids}" ] &&
-		{
-			log_msg -purple "Successfully stopped adblocking for blocklists: '${blue}${stop_ok_ids// /${n_c}\', \'${blue}}${n_c}'."
+			eval "[ -n \"\${BL_ENV_SET_${bl_id}}\" ]" || set_blocklists_env "${bl_id}" || { stop_failed=1; break; }
+		done &&
+		[ -z "${stop_failed}" ] &&
+		stop_blocklists "${bl_ids}" &&
 			return 0
-		}
 
-		[ -z "${stop_fail_ids}" ] && return 0
-
-		reg_failure "Failed to stop adblocking for blocklists: '${stop_fail_ids// /\', \'}'."
-	fi
-
-	[ "${bl_ids_arg}" = all ] || return 1
+	[ -n "${force_stop_all}" ] || { commit_metadata; return 1; }
 
 	reg_action -1 -purple "" "Stopping adblocking for any adblock-lean blocklists."
 
 	rm -f "${META_FILE}" "${ABL_RUN_DIR:?}/${BLOCKLIST_BASE_FNAME:-???}"*
 
-	[ -n "${BL_IDS}" ] && 
+	[ -n "${BL_IDS}" ] && [ -n "${CONFIG_LOADED}" ] &&
 	{
 		rm_conf_scripts &&
 		rm_bk
@@ -2561,6 +2535,66 @@ do_stop()
 	restart_dnsmasq # all dnsmasq instances
 
 	:
+}
+
+stop_blocklists()
+{
+	local bl_id \
+		stop_ok_ids='' \
+		stop_fail_ids='' \
+		dnsmasq_indexes \
+		all_stop_indexes='' \
+		stop_state_rv \
+		is_persist \
+		curr_path \
+		bl_ids="${1}"
+
+	[ -n "${bl_ids}" ] || return 0
+
+	reg_action -1 -purple "" "Stopping adblocking for blocklists: '${blue}${bl_ids// /${n_c}\', \'${blue}}${n_c}'"
+
+	for bl_id in ${bl_ids}
+	do
+		get_bl_params -f stop_blocklists "${bl_id}" dnsmasq_indexes &&
+		add2list all_stop_indexes "${dnsmasq_indexes}" ||
+			add2list stop_fail_ids "${bl_id}"
+	done
+
+	rm_conf_scripts "${bl_ids}"
+	rm_blocklists "${bl_ids}"
+
+	[ -z "${all_stop_indexes}" ] ||
+	restart_dnsmasq "${all_stop_indexes}" || return 1
+
+	for bl_id in ${bl_ids}
+	do
+		is_persist=''
+		get_bl_params "${bl_id}" curr_path
+		[ -n "${curr_path}" ] && is_persist "${curr_path}" "${bl_id}" && is_persist=1
+
+		CA_NOERR=1 get_bl_run_state "${bl_id}"
+		stop_state_rv=${?}
+		unset_metadata "${bl_id}"
+		case "${stop_state_rv}" in
+			4) : ;;
+			3) [ -n "${is_persist}" ] ;;
+			*) false
+		esac ||
+		{ add2list stop_fail_ids "${bl_id}"; continue; }
+		set_bl_params "${bl_id}" run_state=4
+	done
+
+	commit_metadata
+
+	subtract_a_from_b "${stop_fail_ids}" "${bl_ids}" stop_ok_ids
+
+	[ -n "${stop_ok_ids}" ] &&
+		log_msg -purple "Successfully stopped adblocking for blocklists: '${blue}${stop_ok_ids// /${n_c}\', \'${blue}}${n_c}'."
+
+	[ -z "${stop_fail_ids}" ] && return 0
+
+	reg_failure "Failed to stop adblocking for blocklists: '${stop_fail_ids// /\', \'}'."
+	return 1
 }
 
 restart()
@@ -2606,15 +2640,17 @@ status()
 
 	[ -n "${bl_ids_arg}" ] && get_valid_bl_ids bl_ids "${bl_ids_arg}" || return 1
 
+	set_global_env || status_rv=1
+
 	if [ -z "${BL_IDS}" ]
 	then
 		reg_failure "No blocklist configs found."
 		status_rv=1
 	elif [ -z "${bl_ids}" ]
 	then
-		reg_failure "No blocklist IDs specified."
+		reg_failure "No valid blocklist IDs specified."
 		status_rv=1
-	elif ! set_global_env "${bl_ids}"
+	elif ! set_blocklists_env "${bl_ids}"
 	then
 		reg_failure "Failed to load environment for blocklists '${bl_ids}'."
 		status_rv=1
@@ -2678,7 +2714,7 @@ pause_resume()
 	local cmd="${1:?}"
 	shift
 	init_command "${cmd}" &&
-	set_global_env "${@}" || exit 1
+	set_all_env "${@}" || exit 1
 
 	local \
 		bl_ids='' \
@@ -2779,7 +2815,7 @@ pause_resume()
 
 	[ -n "${action_taken_bl_ids}" ] &&
 	{
-		reg_action -blue "" "${state_progr_pr} blocklists '${action_taken_bl_ids// /\', \'}'."
+		reg_action -purple "" "${state_progr_pr} blocklists '${action_taken_bl_ids// /\', \'}'."
 
 		case "${cmd}" in
 			pause)
