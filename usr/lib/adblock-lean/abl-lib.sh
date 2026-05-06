@@ -587,7 +587,7 @@ do_setup()
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg "" "Existing global config file found." "Generate [n]ew config or use [e]xisting config? (n|e)"
+			print_msg "" "Existing global config file found." "Generate [${blue}n${n_c}]ew config or use [${blue}e${n_c}]xisting config? (n|e)"
 			pick_opt 'n|e' || return 1
 		elif [ -n "${luci_use_old_config}" ]
 		then
@@ -689,7 +689,7 @@ do_setup()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		print_msg "" "${purple}Setup is complete.${n_c}" "" "Start adblock-lean now? (y|n)"
+		print_msg "" "${purple}Setup is complete.${n_c}" "" "${blue}Start adblock-lean now?${n_c} (y|n)"
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" != y ] && return 0
 		echo > "${MSGS_DEST}"
@@ -1099,7 +1099,7 @@ do_gen_blocklist_config()
 			break
 		}
 
-		print_msg "" "Name the new blocklist:"
+		print_msg -blue "" "Name the new blocklist:"
 		read -r bl_id
 	done
 
@@ -1111,7 +1111,7 @@ do_gen_blocklist_config()
 			bytes2human totalmem_human $((totalmem*1024)) || return 1
 			print_msg "" "Based on the total usable memory of this device (${totalmem_human}), the recommended preset is '${purple}${preset}${n_c}':"
 			GP_PRINT_DESC=1 GP_PRINT_VALS=1 get_preset "${preset}" || return 1
-			print_msg "" "[C]onfirm this preset or [p]ick another preset?"
+			print_msg "" "[${blue}C${n_c}]onfirm this preset or [${blue}p${n_c}]ick another preset?"
 			pick_opt "c|p"
 		else
 			REPLY=p
@@ -1126,7 +1126,7 @@ do_gen_blocklist_config()
 				add2list presets_case_opts "${preset}" "|"
 				GP_PRINT_DESC=1 GP_PRINT_VALS=1 get_preset "${preset}" || return 1
 			done
-			print_msg "" "Pick preset:"
+			print_msg -blue "" "Pick preset:"
 			pick_opt "${presets_case_opts}"
 			preset="${REPLY}"
 		fi
@@ -1715,7 +1715,7 @@ fix_config()
 		if [ -z "${APPROVE_UPD_CHANGES}" ]
 		then
 			[ "${DO_DIALOGS}" = 1 ] || return 1
-			print_msg "Proceed with suggested config changes? (y|n)"
+			print_msg -blue "Proceed with suggested config changes? (y|n)"
 			pick_opt "y|n" || return 1
 			[ "${REPLY}" = n ] && return 1
 		fi
@@ -1765,7 +1765,7 @@ write_config()
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -f "${cfg_file}" ]
 	then
-		print_msg "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
+		print_msg -blue "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
 		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
 	fi
 
