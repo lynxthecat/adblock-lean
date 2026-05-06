@@ -1632,7 +1632,7 @@ del_addnmounts()
 init_command()
 {
 	ABL_CMD="${1}"
-	local config_req='' libs_req='' work_dir_req='' act_pr='' init_action_pr='' init_action_short='' \
+	local cfg_req='' global_cfg_req='' libs_req='' work_dir_req='' act_pr='' init_action_pr='' init_action_short='' \
 		log_rotated='' log_rotate_req='' bl_ids_req='' set_bl_ids_req=''
 
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
@@ -1655,13 +1655,14 @@ init_command()
 	case ${ABL_CMD} in
 		enabled|enable|disable|uninstall) ;;
 		gen_stats|calculate_limits) libs_req=1 ;;
-		status) local SBE_STATUS=1; config_req=1 set_bl_ids_req=1 bl_ids_req=1 work_dir_req=1 ;;
-		upd_cron_job) config_req=1 ;;
-		setup|gen_global_config|gen_blocklist_config) set_bl_ids_req=1 libs_req=1 LOCK_REQ=1 ;;
+		status) local SBE_STATUS=1; cfg_req=1 set_bl_ids_req=1 bl_ids_req=1 work_dir_req=1 ;;
+		upd_cron_job) cfg_req=1 ;;
+		setup|gen_global_config) set_bl_ids_req=1 libs_req=1 LOCK_REQ=1 ;;
+		gen_blocklist_config) global_cfg_req=1 set_bl_ids_req=1 libs_req=1 LOCK_REQ=1 ;;
 		rm_blocklist_config) set_bl_ids_req=1 bl_ids_req=1 libs_req=1 LOCK_REQ=1 ;;
-		boot|gen_persist_blocklist|create_addnmounts) config_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
-		pause) work_dir_req=1 config_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
-		start|resume) work_dir_req=1 config_req=1 set_bl_ids_req=1 bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		boot|gen_persist_blocklist|create_addnmounts) cfg_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
+		pause) work_dir_req=1 cfg_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1 ;;
+		start|resume) work_dir_req=1 cfg_req=1 set_bl_ids_req=1 bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			check_lock
 			case ${?} in
@@ -1680,7 +1681,7 @@ init_command()
 			libs_req=1 set_bl_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
 			libs_req=1 set_bl_ids_req=1 bl_ids_req=1 LOCK_REQ=1
-			[ "${action}" = select_dnsmasq_instances ] && config_req=1 # require config when called directly
+			[ "${action}" = select_dnsmasq_instances ] && cfg_req=1 # require config when called directly
 			;;
 		reload|restart) ;;
 		update) work_dir_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
@@ -1688,13 +1689,18 @@ init_command()
 	esac
 
 	# source library scripts
-	if [ -n "${libs_req}" ] || [ -n "${config_req}" ]
+	if [ -n "${libs_req}" ] || [ -n "${cfg_req}" ]
 	then
 		source_libs || exit 1
 	fi
 
+	[ -n "${cfg_req}" ] && global_cfg_req=1
+
 	[ -z "${set_bl_ids_req}" ] ||
 		set_bl_ids || exit 1
+
+	[ -z "${global_cfg_req}" ] || [ -n "${CONFIG_LOADED}" ] || [ -s "${GLOBAL_CFG_FILE:?}" ] ||
+		{ reg_failure "Global config file '${GLOBAL_CFG_FILE}' is missing." "Use the command 'service adblock-lean gen_global_config' to create new config."; exit 1; }
 
 	[ -z "${bl_ids_req}" ] || [ -n "${BL_IDS}" ] ||
 		{ reg_failure "No blocklist configs found. Use 'service adblock-lean gen_blocklist_config' to generate a new blocklist config."; exit 1; }
@@ -1768,7 +1774,7 @@ init_command()
 
 	[ -n "${work_dir_req}" ] && { try_mkdir -p "${ABL_TMP_DIR}" || exit 1; }
 
-	[ -z "${config_req}" ] || load_config || exit 1
+	[ -z "${cfg_req}" ] || load_config || exit 1
 
 	# check dnsmasq, source custom script
 	case ${ABL_CMD} in
