@@ -275,7 +275,7 @@ get_dnsmasq_instances() {
 
 	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
 	DNSMASQ_INSTANCES_CNT=0
-	reg_action -blue "Checking dnsmasq instances."
+	reg_action -purple "Checking dnsmasq instances."
 
 	dbg_off
 	[ -n "${DHCP_LOADED}" ] ||
@@ -1008,7 +1008,6 @@ check_persist_blocklist()
 # Env vars:
 #   CA_CHECK_DOMAINS: test DNS resolution
 #   CA_NOERR: do not print error for test domain lookup failing
-#   CA_NOPROGRESS: do not print progress messages
 #
 # return values:
 # 0: All checks passed
@@ -1017,15 +1016,14 @@ check_persist_blocklist()
 # 3: One of the test domains failed to resolve
 check_active_blocklist()
 {
-	lookup_failed() { reg_failure "Lookup of test domain '${1}' failed."; }
-	ca_print() { [ -n "${CA_NOPROGRESS}" ] || reg_msg "${@}"; }
+	lookup_failed() { reg_failure "Lookup of test domain '${1}' failed (dnsmasq instance ${2}, IP addresses '${3}')."; }
 
 	local me=check_active_blocklist \
 		test_domains \
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
 		bl_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
 
-	reg_action "Checking if blocklist '${blue}${bl_id}${n_c}' is active." || return 1
+	reg_action -purple "Checking if blocklist '${blue}${bl_id}${n_c}' is active." || return 1
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
@@ -1060,16 +1058,19 @@ check_active_blocklist()
 			add2list ns_ips_sp "${blue}${instance_ns}${n_c}" ", "
 		done
 
-		ca_print "Testing dnsmasq instance ${index}."
-		ca_print "Using following nameservers for DNS resolution verification: ${ns_ips_sp}"
+		debug_msg "Testing dnsmasq instance ${index}." \
+			"Using following nameservers for DNS resolution verification: ${ns_ips_sp}" \
+			"Testing adblocking."
 
-		ca_print "Testing adblocking."
-
-		try_lookup_domain "${ca_test_dom}" "${ns_ips}" 1 -n || { [ -n "${CA_NOERR}" ] || lookup_failed "${ca_test_dom}"; return 2; }
+		try_lookup_domain "${ca_test_dom}" "${ns_ips}" 1 -n ||
+			{
+				[ -n "${CA_NOERR}" ] || lookup_failed "${ca_test_dom}" "${index}" "${ns_ips_sp}"
+				return 2
+			}
 
 		[ -n "${CA_CHECK_DOMAINS}" ] &&
 		{
-			ca_print -blue "Testing DNS resolution."
+			debug_msg "Testing DNS resolution."
 			for domain in ${test_domains}
 			do
 				try_lookup_domain "${domain}" "${ns_ips}" 5 || { lookup_failed "${domain}"; return 3; }
@@ -1104,7 +1105,7 @@ get_bl_run_state()
 		conf_dir conf_dirs \
 		bl_id="${1:?}" path_out_var="${2:-_}" single_inst_out_var="${3:-_}"
 
-	reg_msg -purple "" "Checking state of blocklist '${blue}${bl_id}${n_c}'."
+	debug_msg "" "Checking state of blocklist '${blue}${bl_id}${n_c}'."
 
 	unset_vars "${path_out_var}" "${single_inst_out_var}" &&
 	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
@@ -1826,11 +1827,11 @@ install_blocklists()
 
 	restart_dnsmasq "${dnsmasq_indexes_to_restart}" || return 1
 
+	printf '\n' > "${MSGS_DEST}"
+
 	for bl_id in ${bl_ids}
 	do
 		is_included "${bl_id}" "${inst_fail_ids}" && continue
-
-		printf '\n' > "${MSGS_DEST}"
 
 		get_bl_params -f "${me}" "${bl_id}" install_path new_single_instance install_md5 install_cnt || return 1
 
