@@ -462,12 +462,12 @@ pick_opt()
 	update_action_file "Waiting for user input in console" || return 1
 	while :
 	do
-		printf %s "$1: " > "${MSGS_DEST}"
+		printf %s "${blue}${1//"|"/"${n_c}|${blue}"}${n_c}: " > "${MSGS_DEST}"
 		read -r REPLY
-		case "$REPLY" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter $1" > "${MSGS_DEST}"; continue; esac
-		eval "case \"$REPLY\" in 
-				$1) return 0 ;;
-				*) printf '\n%s\n\n' \"Please enter $1\" > \"${MSGS_DEST}\"
+		case "${REPLY}" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter ${1}" > "${MSGS_DEST}"; continue; esac
+		eval "case \"${REPLY}\" in
+				${1}) return 0 ;;
+				*) printf '\n%s\n\n' \"Please enter ${1}\" > \"${MSGS_DEST}\"
 			esac"
 	done
 }
@@ -2412,7 +2412,7 @@ start()
 	{
 		set_bl_params "${installed_blocklists}" run_state=0
 		start_rv=0
-		reg_success "" "${green}Successfully installed blocklists:${n_c} '${blue}${installed_blocklists/ /${n_c}\', \'${blue}}${n_c}'."
+		reg_success "" "${green}Successfully installed blocklists:${n_c} '${blue}${installed_blocklists// /${n_c}\', \'${blue}}${n_c}'."
 	}
 
 	commit_metadata || { do_stop; start_rv=1; }
@@ -2834,7 +2834,7 @@ pause_resume()
 		[ -n "${ok_blocklists}" ] &&
 		{
 			set_bl_params "${ok_blocklists}" run_state=${new_state}
-			log_msg -purple "" "Adblocking is now ${state_changed_pr} for blocklists: '${blue}${ok_blocklists/ /${n_c}\', \'${blue}}${n_c}'"
+			log_msg -purple "" "Adblocking is now ${state_changed_pr} for blocklists: '${blue}${ok_blocklists// /"${n_c}', '${blue}"}${n_c}'"
 		}
 
 		subtract_a_from_b "${ok_blocklists}" "${failed_blocklists}" failed_blocklists
