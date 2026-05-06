@@ -1067,6 +1067,8 @@ cleanup_and_exit()
 	fi
 
 	[ -n "${ABL_LUCI_SOURCED}" ] && abl_luci_exit "${1}"
+
+	printf '\n' > "${MSGS_DEST}"
 	exit "${1}"
 }
 
@@ -2767,12 +2769,12 @@ pause_resume()
 	do
 		get_bl_params -f "${cmd}" "${bl_id}" run_state || return 1
 
-		bl_id_pr="blocklist '${bl_id}'"
+		bl_id_pr="blocklist '${blue}${bl_id}${n_c}'"
 
 		case "${run_state}" in
 			0|3|4) ;;
 			*)
-				reg_failure "Run state of ${bl_id_pr} is '${run_state}'."
+				reg_failure "Run state of blocklist '${bl_id}' is '${run_state}'."
 				do_stop "${bl_id}"
 				continue
 		esac
@@ -2788,7 +2790,7 @@ pause_resume()
 			continue
 		}
 
-		reg_msg "Preparing to ${cmd} blocklist '${blue}${bl_id}${n_c}'."
+		reg_msg "Preparing to ${cmd} ${bl_id_pr}."
 
 		get_bl_params -f "${cmd}" "${bl_id}" \
 			dnsmasq_indexes \
@@ -2821,7 +2823,7 @@ pause_resume()
 
 	[ -n "${action_taken_bl_ids}" ] &&
 	{
-		reg_action -purple "" "${state_progr_pr} blocklists '${action_taken_bl_ids// /\', \'}'."
+		reg_action -purple "" "${state_progr_pr} blocklists '${blue}${action_taken_bl_ids// /"${n_c}', '${blue}"}${n_c}'."
 
 		case "${cmd}" in
 			pause)
@@ -2983,7 +2985,7 @@ update()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		print_msg "" "Start adblock-lean now? (y|n)"
+		print_msg -blue "" "Start adblock-lean now? (y|n)"
 		pick_opt "y|n"
 	else
 		REPLY=y
