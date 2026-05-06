@@ -906,7 +906,7 @@ fetch_and_install()
 
 	if ${ABL_SERVICE_PATH} enabled 2>/dev/null
 	then
-		DO_DIALOGS=0 ${ABL_SERVICE_PATH} stop
+		ABL_IN_INSTALL='' DO_DIALOGS=0 ${ABL_SERVICE_PATH} stop
 	fi
 
 	rm -rf "${ABL_UPD_DIR:-???}"
@@ -928,7 +928,7 @@ fetch_and_install()
 
 		[ -d "${sim_path}" ] || fetch_failed "Simulation source directory doesn't exist."
 		cp -rT "${sim_path}" "${dist_dir}"
-		log_msg "" "Installing adblock-lean version '${upd_ver}' (update channel: '${upd_channel}')."
+		log_msg -purple "" "Installing adblock-lean version '${blue}${upd_ver}${n_c}' (update channel: '${blue}${upd_channel}${n_c}')."
 	else
 		get_gh_ref "${upd_channel}" "${req_ver}" upd_ver tarball_url ver_type || fetch_failed
 		case "${upd_channel}" in
@@ -1007,6 +1007,8 @@ fetch_and_install()
 	fi
 }
 
+
+set_ansi
 
 # Test process substitution support
 printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
