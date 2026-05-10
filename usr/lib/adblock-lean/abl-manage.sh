@@ -275,7 +275,7 @@ get_dnsmasq_instances() {
 
 	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
 	DNSMASQ_INSTANCES_CNT=0
-	reg_action -purple "Checking dnsmasq instances."
+	reg_action -purple "" "Checking dnsmasq instances."
 
 	dbg_off
 	[ -n "${DHCP_LOADED}" ] ||
@@ -565,7 +565,7 @@ do_select_dnsmasq_instances() {
 					reg_msg "${index}. Instance '${instance}': network interfaces '${ifaces}'"
 					indexes_regex="${indexes_regex}${index}|"
 				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking for blocklist '${blue}${bl_id}${n_c}', or 'a' to abort." \
+				print_msg "" "Please select which dnsmasq instance should have active adblocking for blocklist ${blue}${bl_id}${n_c}, or 'a' to abort." \
 					"To adblock on multiple instances, enter their indexes separated by whitespaces."
 				while :
 				do
@@ -595,7 +595,7 @@ do_select_dnsmasq_instances() {
 			add2list select_ifaces "${ifaces}"
 		done
 
-		log_msg "Selected dnsmasq indexes for blocklist '${blue}${bl_id}${n_c}': '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
+		log_msg "Selected dnsmasq indexes for blocklist ${blue}${bl_id}${n_c}: '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
 
 		for index in ${select_indexes}
 		do
@@ -951,7 +951,7 @@ check_persist_blocklist()
 		bl_id="${1}" final_compr_ext="${2}"
 
 	get_bl_params "${bl_id}" persist_mode curr_persist_path min_good_line_count max_blocklist_file_size_KB || return 1
-	reg_msg "Checking persistent blocklist file '${blue}${curr_persist_path}${n_c}'"
+	reg_msg "Checking persistent blocklist file: ${blue}${curr_persist_path}${n_c}"
 
 	{
 		[ -n "${curr_persist_path}" ] ||
@@ -1023,7 +1023,7 @@ check_active_blocklist()
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
 		bl_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
 
-	reg_action -purple "Checking if blocklist '${blue}${bl_id}${n_c}' is active." || return 1
+	reg_action -purple "Checking if blocklist ${blue}${bl_id}${n_c} is active." || return 1
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
@@ -1038,14 +1038,14 @@ check_active_blocklist()
 	fi
 	ca_test_dom="${ca_id}-${ABL_TEST_DOM_BASE:?}"
 
-	debug_msg "${me}: bl_id:'${bl_id}', indexes:'${dnsmasq_indexes}', id:'${ca_id}'"
+	debug_msg "${me}: bl_id:${bl_id}; indexes:${dnsmasq_indexes}; id:${ca_id};"
 
 	for index in ${dnsmasq_indexes}
 	do
 		ns_ips='' ns_ips_sp=''
 
 		eval "ca_ns_4=\"\${NS4_${index}}\"" "ca_ns_6=\"\${NS6_${index}}\""
-		debug_msg "${me}: ips: '${ca_ns_4}', '${ca_ns_6}'"
+		debug_msg "${me}: ips:${ca_ns_4};${ca_ns_6};"
 
 		for family in 4 6
 		do
@@ -1105,7 +1105,7 @@ get_bl_run_state()
 		conf_dir conf_dirs \
 		bl_id="${1:?}" path_out_var="${2:-_}" single_inst_out_var="${3:-_}"
 
-	debug_msg "" "Checking state of blocklist '${blue}${bl_id}${n_c}'."
+	debug_msg "" "Checking state of blocklist ${blue}${bl_id}${n_c}."
 
 	unset_vars "${path_out_var}" "${single_inst_out_var}" &&
 	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
@@ -1290,6 +1290,13 @@ set_global_env()
 	get_dnsmasq_instances &&
 	check_dnsmasq_instances || return 1
 
+	# check for missing addnmounts during version update
+	if [ -n "${ABL_IN_INSTALL:-"${upd_channel}"}" ] && [ -n "${BL_IDS}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
+	then
+		export ADDNMOUNTS_CHECKED=1
+		do_create_addnmounts
+	fi
+
 	# Interm compr commands
 	[ -n "${compr_ext}" ] &&
 	{
@@ -1373,7 +1380,7 @@ set_bl_env()
 	local me=set_bl_env \
 		IFS="${DEFAULT_IFS}" \
 		\
-		bl_id_pr="'${blue}${bl_id}${n_c}'" \
+		bl_id_pr="${blue}${bl_id}${n_c}" \
 		\
 		dnsmasq_indexes \
 		conf_dirs \
@@ -1798,7 +1805,7 @@ install_blocklists()
 		get_bl_params "${bl_id}" new_single_instance conf_script_log_avail || return 1
 
 		if \
-			reg_action -purple "Installing blocklist '${blue}${bl_id}${n_c}'." &&
+			reg_action -purple "Installing blocklist ${blue}${bl_id}${n_c}." &&
 			get_md5 install_md5 "${install_path}"
 		then
 			[ "${new_single_instance}" = 1 ] ||
@@ -2197,7 +2204,7 @@ read_blocklist_metadata()
 
 	[ -n "${stale_ids}" ] &&
 	{
-		reg_action -purple "Removing stale blocklists '${blue}${stale_ids// /"${n_c}', '${blue}"}${n_c}'."
+		reg_action -purple "Removing stale blocklists: ${blue}${stale_ids// /"${n_c}, ${blue}"}${n_c}."
 		COMMIT_META_LOCATIONS=RAM FORCE_STOP_ALL=1 do_stop all
 	}
 

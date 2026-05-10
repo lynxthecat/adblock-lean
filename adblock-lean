@@ -1091,7 +1091,7 @@ dnsmasq_stop_restart_shared()
 				[ -n "${inst_name}" ] || { reg_failure "Internal error: dnsmasq instance name unknown for index '${index}'."; false; }
 			}
 		then
-			inst_pr="dnsmasq instance ${index} '${blue}${inst_name}${n_c}'"
+			inst_pr="dnsmasq instance ${blue}${inst_name}${n_c}"
 		else
 			inst_pr="all dnsmasq instances"
 			inst_name=
@@ -1129,7 +1129,7 @@ restart_dnsmasq()
 
 	if [ -n "${dnsmasq_inst_names}" ]
 	then
-		inst_init_pr="initialization of dnsmasq instances: '${blue}${dnsmasq_inst_names// /${n_c}\', \'${blue}/}${n_c}'"
+		inst_init_pr="initialization of dnsmasq instances: ${blue}${dnsmasq_inst_names// /"${n_c}, ${blue}"}${n_c}"
 	else
 		indexes=all
 		inst_init_pr="dnsmasq initialization"
@@ -1162,7 +1162,7 @@ restart_dnsmasq()
 			sleep 1
 		done
 
-		reg_failure "DNS self-test failed${dnsmasq_inst_name:+" for dnsmasq instance ${index} ('$dnsmasq_inst_name')"}."
+		reg_failure "DNS self-test failed${dnsmasq_inst_name:+" for dnsmasq instance ${index} ('${dnsmasq_inst_name}')"}."
 		return 1
 	done
 
@@ -1481,6 +1481,7 @@ check_libs()
 	:
 }
 
+# Env vars: ABL_SOURCE_PATH_PREFIX
 source_libs()
 {
 	[ -n "${LIBS_SOURCED}" ] && return 0
@@ -1493,7 +1494,7 @@ source_libs()
 		[ -n "${curr_upd_ch}" ] && [ -n "${curr_ver}" ] &&
 		ver_upd_fixup "${curr_ver}" "${curr_upd_ch}" &&
 		local abl_cmd="${ABL_CMD}" &&
-		. "${ABL_SERVICE_PATH}" || return 1
+		. "${ABL_SOURCE_PATH_PREFIX}${ABL_SERVICE_PATH}" || return 1
 		ABL_CMD="${abl_cmd}"
 	fi
 
@@ -1512,11 +1513,11 @@ source_libs()
 	esac
 
 	# source libs
-	for file in ${ABL_LIB_FILES}
+	for file in ${ABL_LIB_FILES:?}
 	do
 		file="${file##*/}"
-		[ -f "${ABL_LIB_DIR}/${file}" ] || { libs_source_failed=1 libs_missing=1; break; }
-		. "${ABL_LIB_DIR}/${file}" || { libs_source_failed=1; break; }
+		[ -f "${ABL_SOURCE_PATH_PREFIX}${ABL_LIB_DIR}/${file}" ] || { libs_source_failed=1 libs_missing=1; break; }
+		. "${ABL_SOURCE_PATH_PREFIX}${ABL_LIB_DIR}/${file}" || { libs_source_failed=1; break; }
 	done
 
 	[ -n "${libs_source_failed}" ] &&
@@ -2138,7 +2139,7 @@ do_rm_blocklist_config()
 	persist_meta_file="${persist_dir}/${META_FNAME_PERSIST:?}" &&
 	read_blocklist_metadata -persist "${persist_meta_file}" "${bl_id}"
 
-	reg_action -purple "Removing blocklist '${blue}${bl_id}${n_c}'."
+	reg_action -purple "Removing blocklist ${blue}${bl_id}${n_c}."
 
 	FORCE_PERSIST_WRITE=1 do_stop "${bl_id}" &&
 	rm -f "${cfg_path}" ||
@@ -2182,6 +2183,7 @@ gen_global_config()
 	[ "${REPLY}" = n ] && upd_schedule=disable
 
 	new_cfg="$(print_def_cfg global)" &&
+	confirm_cfg_write global &&
 	write_config global global "${new_cfg}" || return 1
 }
 
@@ -2404,7 +2406,7 @@ start()
 		{
 			rm_bk "${failed_blocklists}"
 			do_stop "${failed_blocklists}"
-			reg_failure "Blocklists '${failed_blocklists// /\', \'}' failed to install and can not be restored from backup."
+			reg_failure "Following blocklists failed to install and can not be restored from backup: ${failed_blocklists// /, }."
 		}
 	}
 
@@ -2414,7 +2416,7 @@ start()
 	{
 		set_bl_params "${installed_blocklists}" run_state=0
 		start_rv=0
-		reg_success "" "${green}Successfully installed blocklists:${n_c} '${blue}${installed_blocklists// /${n_c}\', \'${blue}}${n_c}'."
+		reg_success "" "${green}Successfully installed blocklists${n_c}: ${blue}${installed_blocklists// /"${n_c}, ${blue}"}${n_c}."
 	}
 
 	commit_metadata || { do_stop; start_rv=1; }
@@ -2559,7 +2561,7 @@ stop_blocklists()
 
 	[ -n "${bl_ids}" ] || return 0
 
-	reg_action -1 -purple "" "Stopping adblocking for blocklists: '${blue}${bl_ids// /${n_c}\', \'${blue}}${n_c}'"
+	reg_action -1 -purple "" "Stopping adblocking for blocklists: ${blue}${bl_ids// /"${n_c}, ${blue}"}${n_c}."
 
 	for bl_id in ${bl_ids}
 	do
@@ -2597,11 +2599,11 @@ stop_blocklists()
 	subtract_a_from_b "${stop_fail_ids}" "${bl_ids}" stop_ok_ids
 
 	[ -n "${stop_ok_ids}" ] &&
-		log_msg -purple "Successfully stopped adblocking for blocklists: '${blue}${stop_ok_ids// /${n_c}\', \'${blue}}${n_c}'."
+		log_msg -purple "Successfully stopped adblocking for blocklists: ${blue}${stop_ok_ids// /"${n_c}, ${blue}"}${n_c}."
 
 	[ -z "${stop_fail_ids}" ] && return 0
 
-	reg_failure "Failed to stop adblocking for blocklists: '${stop_fail_ids// /\', \'}'."
+	reg_failure "Failed to stop adblocking for blocklists: ${stop_fail_ids// /, }."
 	return 1
 }
 
@@ -2641,7 +2643,7 @@ status()
 	local timestamp curr_cnt_human \
 		status_rv=0 \
 		run_state curr_path curr_cnt persist_dir persist_mode \
-		bl_id bl_id_pr bl_id_pr_lc \
+		bl_id bl_id_pr \
 		ASSERT_NOEXIT=1 \
 		bl_ids='' \
 		bl_ids_arg="${*:-"${BL_IDS}"}"
@@ -2666,9 +2668,8 @@ status()
 		for bl_id in ${bl_ids}
 		do
 			run_state=1
-			bl_id_pr="Blocklist '${blue}${bl_id}${n_c}'"
-			bl_id_pr_lc="blocklist '${blue}${bl_id}${n_c}'"
-			print_msg "" "Status of ${bl_id_pr_lc}:"
+			bl_id_pr="blocklist ${blue}${bl_id}${n_c}"
+			print_msg "" "Status of ${bl_id_pr}:"
 			get_bl_params "${bl_id}" run_state curr_path curr_cnt persist_dir persist_mode &&
 			{
 				: "${curr_cnt:=0}"
@@ -2676,18 +2677,9 @@ status()
 					[ -n "${curr_path}" ] || run_state=1
 					[ "${curr_cnt}" -gt 0 ] ||
 					{
-						log_msg -warn "  Blocklist file for ${bl_id_pr_lc} not found or no entries found in the blocklist file."
+						log_msg -warn "  Blocklist file for ${bl_id_pr} not found or no entries found in the blocklist file."
 						run_state=1
 					}
-				esac
-
-				case ${run_state} in
-					0) print_msg -green  "  Adblocking is active.";;
-					3) print_msg -yellow "  Adblocking is paused." ;;
-					4) print_msg -yellow "  Adblocking is stopped." ;;
-					*)
-						run_state=1
-						reg_failure "${bl_id_pr} is not working correctly. Consider running 'service adblock-lean restart ${bl_id}' in order to restore adblocking." ;;
 				esac
 
 				case "${run_state}" in 0|3)
@@ -2699,8 +2691,18 @@ status()
 						"  Timestamp: ${blue}${timestamp:-"${red}Unknown"}${n_c}"
 
 					[ -n "${persist_dir}" ] && [ "${persist_mode}" = managed ] && [ "${curr_path%/*}" != "${persist_dir}" ] &&
-						print_msg -warn "Persistent blocklist directory '${persist_dir}' for ${bl_id_pr_lc} is configured but not currently used."
+						print_msg -warn "Persistent blocklist directory '${persist_dir}' for ${bl_id_pr} is configured but not currently used."
 				esac
+
+				case ${run_state} in
+					0) print_msg -green  "  Adblocking is active.";;
+					3) print_msg -yellow "  Adblocking is paused." ;;
+					4) print_msg -yellow "  Adblocking is stopped." ;;
+					*)
+						run_state=1
+						reg_failure "Blocklist '${bl_id}' is not working correctly. Consider running 'service adblock-lean restart ${bl_id}' in order to restore adblocking." ;;
+				esac
+
 			}
 
 			luci_good_line_count=${curr_cnt:-0}
@@ -2769,7 +2771,7 @@ pause_resume()
 	do
 		get_bl_params -f "${cmd}" "${bl_id}" run_state || return 1
 
-		bl_id_pr="blocklist '${blue}${bl_id}${n_c}'"
+		bl_id_pr="blocklist ${blue}${bl_id}${n_c}"
 
 		case "${run_state}" in
 			0|3|4) ;;
@@ -2823,7 +2825,7 @@ pause_resume()
 
 	[ -n "${action_taken_bl_ids}" ] &&
 	{
-		reg_action -purple "" "${state_progr_pr} blocklists '${blue}${action_taken_bl_ids// /"${n_c}', '${blue}"}${n_c}'."
+		reg_action -purple "" "${state_progr_pr} blocklists: ${blue}${action_taken_bl_ids// /"${n_c}, ${blue}"}${n_c}."
 
 		case "${cmd}" in
 			pause)
@@ -2836,7 +2838,7 @@ pause_resume()
 		[ -n "${ok_blocklists}" ] &&
 		{
 			set_bl_params "${ok_blocklists}" run_state=${new_state}
-			log_msg -purple "" "Adblocking is now ${state_changed_pr} for blocklists: '${blue}${ok_blocklists// /"${n_c}', '${blue}"}${n_c}'"
+			log_msg -purple "" "Adblocking is now ${state_changed_pr} for blocklists: ${blue}${ok_blocklists// /"${n_c}, ${blue}"}${n_c}."
 		}
 
 		subtract_a_from_b "${ok_blocklists}" "${failed_blocklists}" failed_blocklists

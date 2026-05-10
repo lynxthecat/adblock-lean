@@ -275,7 +275,7 @@ do_create_addnmounts()
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
 		[ -n "${missing_addnm}" ] || return 0
-		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${missing_addnm} ${blue}(required for ${3})${n_c}"
+		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${blue}${missing_addnm}${n_c} (required for ${3})"
 	}
 
 	local me=create_addnmounts \
@@ -1048,6 +1048,15 @@ print_def_cfg_global()
 	EOT
 }
 
+confirm_cfg_write()
+{
+	local cfg_file cfg_id="${1:?}"
+	get_cfg_path cfg_file "${cfg_id}" || return 1
+	[ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -z "${APPROVE_CFG_WRITE}" ] && [ -f "${cfg_file}" ] || return 0
+	print_msg -blue "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
+	pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
+}
+
 # 1: new blocklist ID
 do_gen_blocklist_config()
 {
@@ -1146,8 +1155,9 @@ do_gen_blocklist_config()
 		{ reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; } # TODO: should err msg be here?
 
 	get_bl_params -f gen_blocklist_config "${bl_id}" dnsmasq_indexes conf_dirs &&
-	reg_action -purple "" "Generating new blocklist config '${blue}${bl_id}${n_c}' from preset '${preset}'." &&
+	reg_action -purple "" "Generating new blocklist config ${blue}${bl_id}${n_c} from preset '${preset}'." &&
 	new_cfg="$(print_def_cfg bl -i "${bl_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
+	confirm_cfg_write "${bl_id}" &&
 	write_config bl "${bl_id}" "${new_cfg}" || return 1
 
 	:
@@ -1166,7 +1176,19 @@ get_cfg_path()
 	eval "${1}"='${g_path}'
 }
 
+san_config()
+{
+	local cfg_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d'
+	if [ -n "${1}" ]
+	then
+		${SED_CMD:?} "${cfg_san_exp}" "${1}"
+	else
+		${SED_CMD:?} "${cfg_san_exp}" # read from STDIN
+	fi
+}
+
 # validate config and assign to variables
+# Env vars (used by the install script): CFG_IGNORE_NONCRIT, CFG_MIGRATE_OPTS
 #
 # 1: type: <global|bl>
 # 2: config ID: <global|[bl_id]>
@@ -1193,19 +1215,16 @@ parse_config()
 		cfg_pr \
 		curr_config='' \
 		i keys entries entries_type_pr entries_pr \
-		migrate_opts \
 		dup_keys='' dup_entries='' \
 		unexp_keys='' unexp_entries='' \
 		missing_keys='' missing_entries='' \
-		migrate_keys='' migrate_entries='' \
 		bad_val_keys='' bad_val_entries='' corrected_entries='' \
 		def_cfg_format \
 		force_upd_cfg_format='' \
 		p_cfg_fixes='' \
-		sed_cfg_san_exp='/^\s*#.*$/d; s/^\s+//; s/\s+=/=/; s/=\s+/=/; s/\s+$//; /^$/d' \
 			cfg_type="${1:?}" cfg_id="${2:?}" cfg_path="${3}" fixes_out_var="${4}" replace_keys_out_var="${5}"
 
-	: "${missing_entries}" "${migrate_keys}"  "${migrate_entries}" "${bad_val_entries}" "${corrected_entries}"
+	: "${missing_entries}" "${bad_val_entries}" "${corrected_entries}"
 	: "${dup_keys}" "${dup_entries}" "${unexp_keys}" "${unexp_entries}"
 
 	[ -n "${cfg_path}" ] || get_cfg_path cfg_path "${cfg_id}" || return 1
@@ -1217,48 +1236,29 @@ parse_config()
 	unset luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_cfg_format luci_cfg_fixes preset
 
-	# newline-separated list of options to migrate in the format <old_key=new_key>
-	migrate_opts='
-		DNSMASQ_INDEX=dnsmasq_indexes
-		DNSMASQ_INDEXES=dnsmasq_indexes
-		DNSMASQ_CONF_D=dnsmasq_conf_dirs
-		DNSMASQ_CONF_DIRS=dnsmasq_conf_dirs
-		blocklist_urls=raw_block_lists
-		allowlist_urls=raw_allow_lists
-		blocklist_ipv4_urls=raw_ipv4_block_lists
-		dnsmasq_blocklist_urls=dnsmasq_block_lists
-		dnsmasq_blocklist_ipv4_urls=dnsmasq_ipv4_block_lists
-		dnsmasq_allowlist_urls=dnsmasq_allow_lists
-		min_blocklist_ipv4_part_line_count=min_ipv4_blocklist_part_line_count
-		cron_schedule=upd_schedule
-	'
-
-	# remove newlines, extra spaces/tabs
-	set -- ${migrate_opts}
-	IFS="${_NL_}"
-	migrate_opts="${*}"
-	IFS="${DEFAULT_IFS}"
-
 	[ -z "${cfg_path}" ] && { bad_args "${me}" "${@}"; return 3; }
 
 	[ ! -f "${cfg_path}" ] && { reg_failure "Config file '${cfg_path}' not found."; return 1; }
 
 	# Config format versions
-	def_cfg_format="$(print_def_cfg global | get_config_format)" || return 1
-	export "luci_def_cfg_format"="${def_cfg_format}"
-	curr_cfg_format="$(get_config_format "${cfg_path}")" || return 1
-	export "luci_curr_cfg_format_${cfg_id}"="${curr_cfg_format}"
-	is_uint "${curr_cfg_format}" ||
+	[ -n "${CFG_IGNORE_NONCRIT}" ] ||
 	{
-		log_msg -warn "" "Config format version '${curr_cfg_format}' is unknown or invalid."
-		add_cfg_fix "Update config format version"
-		force_upd_cfg_format=1
+		def_cfg_format="$(print_def_cfg global | get_config_format)" || return 1
+		export "luci_def_cfg_format"="${def_cfg_format}"
+		curr_cfg_format="$(get_config_format "${cfg_path}")" || return 1
+		export "luci_curr_cfg_format_${cfg_id}"="${curr_cfg_format}"
+		is_uint "${curr_cfg_format}" ||
+		{
+			log_msg -warn "" "Config format version '${curr_cfg_format}' is unknown or invalid."
+			add_cfg_fix "Update config format version"
+			force_upd_cfg_format=1
+		}
 	}
 
 	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
 
 	# read and sanitize current config
-	curr_config="$(${SED_CMD} "${sed_cfg_san_exp}" "${cfg_path}")" || { reg_failure "Failed to read the ${cfg_pr}."; return 1; }
+	curr_config="$(san_config "${cfg_path}")" || { reg_failure "Failed to read the ${cfg_pr}."; return 1; }
 
 	local bad_newline=
 	case "${curr_config}" in
@@ -1271,22 +1271,33 @@ parse_config()
 		return 1
 	}
 
-	local parse_vars valid_lines entry_type
-	# extract valid values from default config
-	valid_lines="$(print_def_cfg "${cfg_type}" -i "${cfg_id}" -d | ${SED_CMD} "${sed_cfg_san_exp}")"
 	# parse config
-	local parser_err_file="${ABL_CFG_STAGING_DIR}/parser_err" \
+	local parse_vars entry_type \
+		valid_lines \
+		parser_err_file="${ABL_CFG_STAGING_DIR}/parser_err" \
 		awk_err_file="${ABL_CFG_STAGING_DIR}/awk_err" \
 		inval_entry_file="${ABL_CFG_STAGING_DIR}/inval_entry"
 	rm -f "${parser_err_file}" "${awk_err_file}" "${inval_entry_file}"
-	for entry_type in unexp bad_val missing dup migrate
+	for entry_type in unexp bad_val missing dup
 	do
 		rm -f "${ABL_CFG_STAGING_DIR}/${entry_type}_entries"
 	done
 
+	# extract valid values from default config
+	valid_lines="$(print_def_cfg "${cfg_type}" -i "${cfg_id}" -d | san_config | tr '\n' "${_DELIM_:?}")" || return 1
+
 	parse_vars="$(
 		printf '%s\n' "${curr_config}" |
-		${AWK_CMD} -F"=" -v q="'" -v ID="${cfg_id}" -v V="${valid_lines}" -v M="${migrate_opts}" -v A="${ABL_CFG_STAGING_DIR}" '
+		${AWK_CMD:?} -F"=" \
+			-v q="'" \
+			-v blue="${blue}" \
+			-v n_c="${n_c}" \
+			-v ID="${cfg_id}" \
+			-v IGN="${CFG_IGNORE_NONCRIT}" \
+			-v DELIM="${_DELIM_:?}" \
+			-v V="${valid_lines}" \
+			-v M="${CFG_MIGRATE_OPTS}" \
+			-v A="${ABL_CFG_STAGING_DIR:?}" '
 		# return codes: 0=OK, 1=awk or default config error, 253=check double-quotes, 254=Invalid entry detected
 
 		function check_value(key,val)
@@ -1318,13 +1329,14 @@ parse_config()
 			line_comp[3]="allowed values"
 
 			# Create validation arrays
-			split(V,def_lines_arr,"\n")
+			split(V,def_lines_arr,DELIM)
 			for (ind in def_lines_arr) {
 				# Remove whitespaces/tabs
 				sub(/"[ \t]*@[ \t]*/,"\"@",def_lines_arr[ind])
 				def_lines_arr[ind]=def_lines_arr[ind]
 				# Validate default config line
 				n=split(def_lines_arr[ind],def_line_parts,"[=@]") # Split into key, value, allowed values
+				if (n==0) continue
 				if (n!=3) {intern_err("Invalid line in default config: " q def_lines_arr[ind] q "."); exit}
 				for (i in def_line_parts) {
 					if (! def_line_parts[i]) {
@@ -1356,25 +1368,25 @@ parse_config()
 					valid_values_regex_arr[key]=val_regex
 					valid_values_seen_regex_arr[valid_values]=val_regex
 
-					val_print=valid_values
+					val_print=blue valid_values n_c
 					if ( ! sub(/uint_list/,"space-separated list of non-negative integers",val_print) )
 						sub(/uint/,"non-negative integer",val_print)
-					gsub(/\|/," or ", val_print)
+					gsub(/\|/,n_c " or " blue, val_print)
 					valid_values_print_arr[key]=val_print
 					valid_values_seen_print_arr[valid_values]=val_print
 				}
 			}
 
 			# Create migrate_keys_arr
-			split(M,migrate_lines_arr,"\n")
-			for (ind in migrate_lines_arr)
+			split(M,migrate_entries_arr,DELIM)
+			for (ind in migrate_entries_arr)
 			{
-				line=migrate_lines_arr[ind]
-				n = index(line, "=")
+				entry=migrate_entries_arr[ind]
+				n = index(entry, "=")
 				if(n)
 				{
-					old_key = substr(line, 1, n-1)
-					new_key = substr(line, n+1)
+					old_key = substr(entry, 1, n-1)
+					new_key = substr(entry, n+1)
 					migrate_keys_arr[old_key] = new_key
 				}
 			}
@@ -1415,14 +1427,13 @@ parse_config()
 				{
 					config_keys[new_key]
 					print get_var_name(new_key) "=\"" val "\""
-					migrate_keys=migrate_keys $1 " "
-					print $0 >> A"/migrate_entries"
 					next
 				}
 			}
 
 			# Handle duplicate keys
 			if ($1 in config_keys) {
+				if (IGN) next
 				dup_keys=dup_keys $1 " "
 				print $0 >> A"/dup_entries"
 				next
@@ -1430,6 +1441,7 @@ parse_config()
 
 			# Handle unexpected keys
 			if ($1 in def_arr) {} else {
+				if (IGN) next
 				unexp_keys=unexp_keys $1 " "
 				print $0 >> A"/unexp_entries"
 				next
@@ -1441,6 +1453,7 @@ parse_config()
 			# Handle unexpected values
 			if (check_value($1,val) != 0)
 			{
+				if (IGN) next
 				bad_val_keys=bad_val_keys $1 " "
 				print $1 "=" $2 " (should be " valid_values_print_arr[$1] ")" >> A"/bad_val_entries"
 				print $1 "=" def_arr[$1] >> A"/corrected_entries"
@@ -1459,19 +1472,21 @@ parse_config()
 				}
 			}
 			print "missing_keys=\"" missing_keys "\" " \
-				"migrate_keys=\"" migrate_keys "\" " \
 				"unexp_keys=\"" unexp_keys "\" " \
 				"dup_keys=\"" dup_keys "\" " \
 				"bad_val_keys=\"" bad_val_keys "\" "
 			exit rv
-		}' 2>"${awk_err_file}"
-	)" && [ ! -s "${awk_err_file}" ] && [ ! -s "${parser_err_file}" ] ||
+		}'
+	)" &&
+	[ ! -s "${awk_err_file}" ] &&
+	[ ! -s "${parser_err_file}" ] ||
 	{
 		local awk_rv=${?} inval_entry=''
 		[ -s "${awk_err_file}" ] && reg_failure "awk errors encountered while parsing ${cfg_pr}:${_NL_}$(cat "${awk_err_file}")"
 		[ -s "${parser_err_file}" ] && reg_failure "$(cat "${parser_err_file}")"
 		[ -s "${inval_entry_file}" ] && inval_entry=": ${_NL_}'$(cat "${inval_entry_file}")'"
 
+		rm -f "${awk_err_file}" "${parser_err_file}"
 		case "${awk_rv}" in
 			253) reg_failure "Invalid entry in ${cfg_pr} (check double-quotes)${inval_entry}" ;;
 			254) reg_failure "Invalid entry in ${cfg_pr}${inval_entry}" ;;
@@ -1499,9 +1514,10 @@ parse_config()
 		set_bl_params "${cfg_id}" persist_dir="${persist_dir%/}"
 	} || return 3
 
+	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0
+
 	for i in \
 		"bad_val||Replace unexpected values with defaults" \
-		"migrate||Migrate config entries" \
 		"dup|Duplicate|Remove duplicate entries from the config" \
 		"unexp|Unexpected|Remove unexpected entries from the config" \
 		"missing|Missing|Add missing config entries with default values"
@@ -1516,9 +1532,9 @@ parse_config()
 		entries="${entries%$'\n'}"
 		entries_pr="${entries}"
 		case "${entry_type}" in
-			migrate) log_msg -yellow "" "Following config options in ${cfg_pr} need to be migrated (option name has changed):${_NL_}'${keys// /\', \'}'." ;;
 			bad_val)
 				log_msg -yellow "" "Detected entries with unexpected values in ${cfg_pr}:"
+				cat "${ABL_CFG_STAGING_DIR}/bad_val_entries"
 				entries_pr="$(cat "${ABL_CFG_STAGING_DIR}/corrected_entries")"
 				entries_pr="${entries_pr%$'\n'}"
 				export "luci_corrected_entries_${cfg_id}"="${entries_pr}"
@@ -1531,7 +1547,7 @@ parse_config()
 			missing|bad_val) entries_type_pr=" default"
 		esac
 
-		print_msg "Corresponding${entries_type_pr} config entries:" "${entries_pr}"
+		print_msg "" "${yellow}Corresponding${entries_type_pr} config entries:${n_c}" "${entries_pr}"
 		add_cfg_fix "${i##*|}"
 		export "luci_${entry_type}_keys_${cfg_id}"="${keys}" "luci_${entry_type}_entries_${cfg_id}"="${entries}"
 	done
@@ -1553,8 +1569,7 @@ parse_config()
 load_config()
 {
 	local \
-		err_path err_cfg='' fix_cmd='' \
-		in_install="${ABL_IN_INSTALL:-"${upd_channel}"}"
+		err_path err_cfg='' fix_cmd=''
 	[ -n "${CONFIG_LOADED}" ] && return 0
 
 	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
@@ -1576,14 +1591,6 @@ load_config()
 	}
 	dbg_on
 	export CONFIG_LOADED=1
-
-	# check for missing addnmounts during version update
-	if [ -n "${in_install}" ] && [ -n "${ABL_INST_CFG_FOUND}" ] && [ -n "${BL_IDS}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
-	then
-		export ADDNMOUNTS_CHECKED=1
-		get_dnsmasq_instances &&
-		do_create_addnmounts
-	fi
 	:
 }
 
@@ -1593,13 +1600,14 @@ try_load_config()
 {
 	print_cfg_fixes()
 	{
-		local cfg_id cfg_path fix fixes cnt=0 \
+		local cfg_id cfg_path fix fixes cnt \
 			IFS="${DEFAULT_IFS}"
 		for cfg_id in global ${BL_IDS}
 		do
+			cnt=0
 			eval "fixes=\"\${cfg_fixes_${cfg_id}}\" cfg_path=\"\${cfg_path_${cfg_id}}\""
 			[ -n "${fixes}" ] || continue
-			print_msg "In config file '${cfg_path}':"
+			print_msg "" "In config file '${cfg_path}':"
 			IFS="${_NL_}"
 			for fix in ${fixes}
 			do
@@ -1614,7 +1622,6 @@ try_load_config()
 
 	local force_fix='' l_cfg_fixes='' l_replace_keys='' \
 		all_cfg_fixes='' \
-		curr_cfg_format \
 		cfg_path cfg_type cfg_id \
 		err_cfg_out_var="${1}"
 
@@ -1681,11 +1688,22 @@ try_load_config()
 				"l_cfg_fixes=\"\${cfg_fixes_${cfg_id}}\"" \
 				"l_replace_keys=\"\${replace_keys_${cfg_id}}\""
 			[ -n "${l_cfg_fixes}" ] || continue
-			fix_config "${cfg_type}" "${cfg_id}" "${l_replace_keys}" || { reg_failure "Failed to fix the config."; return 1; }
+			fix_config "${cfg_id}" "${l_replace_keys}" || { reg_failure "Failed to fix the config."; return 1; }
 		done
 	fi
 
 	:
+}
+
+get_cfg_type()
+{
+	local _cfg_type
+	case "${2:?}" in
+		global) _cfg_type=global ;;
+		'') return 1 ;;
+		*) _cfg_type=bl ;;
+	esac
+	eval "${1}=\"${_cfg_type}\""
 }
 
 # 1: config type
@@ -1696,7 +1714,11 @@ fix_config()
 	local var_suffix \
 		dnsmasq_indexes conf_dirs \
 		fixed_cfg \
-			cfg_type="${1:?}" cfg_id="${2:?}" replace_keys="${3}"
+		cfg_type \
+			cfg_id="${1:?}" replace_keys="${2}"
+
+	get_cfg_type cfg_type "${cfg_id}" &&
+	get_cfg_path cfg_path "${cfg_id}" || return 1
 
 	[ "${cfg_type}" = global ] || var_suffix="_${cfg_id}"
 
@@ -1709,7 +1731,7 @@ fix_config()
 		get_bl_params "${cfg_id}" dnsmasq_indexes conf_dirs
 
 	local old_cfg_f="/tmp/adblock-lean_config_${cfg_id}.old"
-	if ! cp "${GLOBAL_CFG_FILE}" "${old_cfg_f}"
+	if ! cp "${cfg_path}" "${old_cfg_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_cfg_f}."
 		if [ -z "${APPROVE_UPD_CHANGES}" ]
@@ -1762,12 +1784,6 @@ write_config()
 		cfg_type="${1:?}" cfg_id="${2:?}" cfg_cont="${3:?}"
 
 	get_cfg_path cfg_file "${cfg_id}" &&
-
-	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -f "${cfg_file}" ]
-	then
-		print_msg -blue "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
-		pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
-	fi
 
 	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
 	tmp_cfg_file="${ABL_CFG_STAGING_DIR:?}/write-config_${cfg_id}.tmp"

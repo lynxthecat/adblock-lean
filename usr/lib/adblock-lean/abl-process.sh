@@ -265,7 +265,7 @@ schedule_jobs()
 		{
 			reg_msg -yellow "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
 			kill_pids_recursive "${RUNNING_PIDS}"
-			rm -rf "${PROCESSED_PARTS_DIR}" 2>/dev/null
+			rm -rf "${PROCESSED_PARTS_DIR}"
 		}
 		rm -f "${sched_cb_fifo}"
 		exit "${1}"
@@ -871,7 +871,7 @@ gen_blocklists()
 
 	for bl_id in ${bl_ids}
 	do
-		reg_msg "Preparing to process blocklist '${blue}${bl_id}${n_c}'."
+		reg_msg "Preparing to process blocklist ${blue}${bl_id}${n_c}."
 
 		get_bl_params -f "${me}" "${bl_id}" run_state &&
 		get_bl_params "${bl_id}" curr_path curr_persist_path bk_ext || return 1
@@ -922,7 +922,7 @@ gen_blocklists()
 			# for persistent blocklist in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 "No existing file found for blocklist '${blue}${bl_id}${n_c}'."
+			reg_msg -2 "No existing file found for blocklist ${blue}${bl_id}${n_c}."
 		fi
 		set_bl_params "${bl_id}" bk_file
 		debug_msg "bk_file: '${bk_file}'"
@@ -933,7 +933,7 @@ gen_blocklists()
 
 	for bl_id in ${bl_ids}
 	do
-		reg_action -purple "" "Processing blocklist '${blue}${bl_id}${n_c}'."
+		reg_action -purple "" "Processing blocklist ${blue}${bl_id}${n_c}."
 
 		get_bl_params -f "${me}" "${bl_id}" install_path &&
 		get_bl_params "${bl_id}" final_compr_ext || return 1

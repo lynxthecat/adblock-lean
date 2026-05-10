@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC1090,SC3044
+# shellcheck disable=SC3043,SC1090,SC3044,SC3060,SC3040
 
 ABL_INSTALLER_VER=3
 
@@ -9,6 +9,7 @@ ABL_UPD_DIR=${ABL_TMP_DIR}/update
 ABL_INST_DIR=${ABL_TMP_DIR}/remote_abl
 ABL_PID_DIR=/tmp/adblock-lean
 ABL_CFG_DIR=/etc/adblock-lean
+
 
 GLOBAL_CFG_FILE=${ABL_CFG_DIR}/global.conf
 UCL_ERR_FILE=${ABL_TMP_DIR}/uclient-fetch_err
@@ -51,7 +52,9 @@ then
 else
 	SED_CMD="busybox sed"
 fi
+export AWK_CMD="/bin/busybox awk"
 
+set -o pipefail
 
 # sets global variables for colors, tab delimiter and cr_lf
 set_ansi()
@@ -65,7 +68,7 @@ set_ansi()
 
 # exit with code ${1}
 # if function 'abl_luci_exit' is defined, execute it before exit
-cleanup_and_exit()
+cleanup_and_exit_install()
 {
 	trap - INT TERM EXIT
 	rm -rf "${ABL_TMP_DIR}" "${ABL_PID_DIR}"
@@ -75,7 +78,7 @@ cleanup_and_exit()
 }
 
 # check if var names are safe to use with eval
-are_var_names_safe() {
+are_var_names_safe_install() {
 	local var_name
 	for var_name in "${@}"
 	do
@@ -84,14 +87,9 @@ are_var_names_safe() {
 	:
 }
 
-check_func()
+check_func_install()
 {
 	[ "$(type "${1}" 2>/dev/null | head -n1)" = "${1} is a function" ]
-}
-
-check_util()
-{
-	command -v "${1}" 1>/dev/null
 }
 
 # asks the user to pick an option
@@ -240,29 +238,27 @@ reg_failure()
 	luci_errors="${luci_errors}${1}${_NL_}"
 }
 
-find_abl_config()
+get_cfg_id_install()
 {
-	[ -s "${GLOBAL_CFG_FILE}" ] || return 1
-	local cfg_path cfg_id
-	for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
-	do
-		case "${cfg_path}" in
-			*"*"*) continue ;;
-			*)
-				cfg_id="${cfg_path##*"/blocklist-"}"
-				cfg_id="${cfg_id%.conf}"
-				case "${cfg_id}" in
-					''|*[!a-zA-Z0-9_]*) false ;;
-					*) :
-				esac ||
-				{
-					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
-					continue
-				}
-				return 0
-		esac
-	done
-	return 1
+	local _cfg_id \
+		_cfg_fname="${2##*"/"}"
+
+	case "${_cfg_fname}" in
+		config|global.conf|blocklist-*.conf) : ;;
+		*)
+			reg_failure "Invalid config filename '${_cfg_fname}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			return 1
+	esac
+
+	_cfg_id="${_cfg_fname#"blocklist-"}"
+	_cfg_id="${_cfg_id%".conf"}"
+	case "${_cfg_id}" in
+		''|*[!a-zA-Z0-9_]*)
+			reg_failure "Invalid config name '${_cfg_id}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			return 1 ;;
+	esac
+	eval "${1}"='${_cfg_id}'
+	:
 }
 
 # Get version and update channel of adblock-lean file
@@ -278,7 +274,7 @@ get_abl_version()
 {
 	get_ver_str()
 	{
-		[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] && are_var_names_safe "${1}" "${2}" || return 1
+		[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] && are_var_names_safe_install "${1}" "${2}" || return 1
 		local _par res_version='' res_upd_channel=''
 		for _par in version upd_channel
 		do
@@ -304,7 +300,7 @@ get_abl_version()
 	local gv_ver='' gv_upd_ch='' gv_rv=''
 	if [ -n "${2}${3}" ]
 	then
-		are_var_names_safe "${2}" "${3}" || return 1
+		are_var_names_safe_install "${2}" "${3}" || return 1
 		eval "${2}"='' "${3}"=''
 	fi
 
@@ -434,7 +430,7 @@ get_gh_ref()
 
 	local gr_ucl_err_file="${gr_fetch_tmp_dir}/ucl_err"
 
-	are_var_names_safe "${3}" "${4}" "${5}" || return 1
+	are_var_names_safe_install "${3}" "${4}" "${5}" || return 1
 	eval "${3}='' ${4}='' ${5}=''"
 
 	eval "prev_ref=\"\${prev_ref}\"
@@ -614,10 +610,10 @@ get_file_list()
 	local _file_types="${2}"
 	# shellcheck source=/dev/null
 	[ -f "${1}" ] && . "${1}" || return 1
-	if check_func print_file_list # v0.7.2 and later
+	if check_func_install print_file_list # v0.7.2 and later
 	then
 		print_file_list "${_file_types}"
-	elif check_func install_abl_files # v0.6.0-v0.7.1
+	elif check_func_install install_abl_files # v0.6.0-v0.7.1
 	then
 		case "${_file_types}" in
 			EXEC) printf '%s\n' "${ABL_SERVICE_PATH}" ;;
@@ -639,7 +635,7 @@ install_abl_files()
 {
 	local file preinst_path old_files='' exec_files='' \
 		preinst_reg_file="${dist_dir}/preinst_reg.md5" \
-		prev_cfg_format='' upd_cfg_format='' config_format_changed='' \
+		prev_cfg_format='' upd_cfg_format='' \
 		dist_dir="${1}" version="${2}" upd_channel="${3}" new_file_list="${4}"
 
 	[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] || inst_failed "Missing arguments."
@@ -674,12 +670,9 @@ install_abl_files()
 	then
 		# get currently installed file list
 		old_files="$(get_file_list "${ABL_SERVICE_PATH}" ALL)"
-		prev_cfg_format="$(get_config_format < "${ABL_SERVICE_PATH}")"
-		upd_cfg_format="$(get_config_format < "${dist_dir}${ABL_SERVICE_PATH}")"
-
-		local IFS="${_NL_}"
 
 		# delete obsolete files
+		local IFS="${_NL_}"
 		for file in ${old_files}
 		do
 			case "${file}" in /*) ;; *) continue; esac # only accept absolute paths
@@ -694,7 +687,7 @@ install_abl_files()
 		(
 			clean_abl_env
 			# shellcheck source=/dev/null
-			if . "${dist_dir}${ABL_SERVICE_PATH}" && check_func abl_post_update_1
+			if . "${dist_dir}${ABL_SERVICE_PATH}" && check_func_install abl_post_update_1
 			then
 				abl_post_update_1
 			fi
@@ -812,27 +805,203 @@ install_abl_files()
 	fi
 	IFS="${DEFAULT_IFS}"
 
-	if [ -n "${ABL_IS_UPDATE}" ] && grep -m1 -q '[ 	]*abl_post_update_2()' "${dist_dir}${ABL_SERVICE_PATH}"
+	[ -n "${ABL_IS_UPDATE}" ] &&
+	grep -m1 -q '[ 	]*abl_post_update_2()' "${dist_dir}${ABL_SERVICE_PATH}" &&
+	(
+		clean_abl_env
+		# shellcheck source=/dev/null
+		. "${dist_dir}${ABL_SERVICE_PATH}" &&
+		check_func_install abl_post_update_2 &&
+		abl_post_update_2
+	)
+
+	# Migrate old (unified) config file (config format < 12) to split config
+
+	local unified_cfg_path="/etc/adblock-lean/config"
+	upd_cfg_format="$(get_config_format < "${dist_dir}${ABL_SERVICE_PATH}")"
+	if \
+		[ -n "${upd_cfg_format}" ] &&
+		{
+			{
+				[ -s "${GLOBAL_CFG_FILE}" ] &&
+				prev_cfg_format="$(get_config_format < "${ABL_SERVICE_PATH}")" &&
+				[ -n "${prev_cfg_format}" ]
+			} ||
+			{
+				[ -s "${unified_cfg_path}" ] &&
+				prev_cfg_format="$(get_config_format < "${unified_cfg_path}")"
+				[ -n "${prev_cfg_format}" ]
+			}
+		} &&
+		[ "${prev_cfg_format}" -lt "${upd_cfg_format}" ]
 	then
+		log_msg "" "Config format has changed from v${prev_cfg_format} to v${upd_cfg_format}."
+		log_msg -purple "Migrating previous adblock-lean config."
 		(
+			# Newline-separated list of options to migrate in the format <old_key=new_key>
+			migrate_opts_global='
+				cron_schedule=upd_schedule
+			'
+
+			migrate_opts_blocklist='
+				DNSMASQ_INDEX=dnsmasq_indexes
+				DNSMASQ_INDEXES=dnsmasq_indexes
+				DNSMASQ_CONF_D=dnsmasq_conf_dirs
+				DNSMASQ_CONF_DIRS=dnsmasq_conf_dirs
+				blocklist_urls=raw_block_lists
+				allowlist_urls=raw_allow_lists
+				blocklist_ipv4_urls=raw_ipv4_block_lists
+				dnsmasq_blocklist_urls=dnsmasq_block_lists
+				dnsmasq_blocklist_ipv4_urls=dnsmasq_ipv4_block_lists
+				dnsmasq_allowlist_urls=dnsmasq_allow_lists
+				min_blocklist_ipv4_part_line_count=min_ipv4_blocklist_part_line_count
+			'
+
+			# convert into _DELIM_ separated lists
+			for cfg_type in global blocklist
+			do
+				IFS="${DEFAULT_IFS:?}"
+				eval "set -- \${migrate_opts_${cfg_type}}"
+				IFS="${_DELIM_:?}"
+				eval "migrate_opts_${cfg_type}=\"\${*}\""
+			done
+			IFS="${DEFAULT_IFS}"
+
 			clean_abl_env
+			migr_fail=
+
 			# shellcheck source=/dev/null
-			if . "${dist_dir}${ABL_SERVICE_PATH}" && check_func abl_post_update_2
-			then
-				abl_post_update_2
-			fi
+			. "${dist_dir}${ABL_SERVICE_PATH}" &&
+			check_func_install source_libs &&
+			ABL_SOURCE_PATH_PREFIX="${dist_dir}" source_libs &&
+			check_func_install parse_config &&
+			check_func_install print_def_cfg &&
+			check_func_install try_mkdir &&
+			cfg_staging_dir="/tmp/abl-conf-staging" &&
+			try_mkdir -p "${cfg_staging_dir}" || migr_fail=1
+
+			[ -z "${migr_fail}" ] &&
+			for cfg_type in global bl
+			do
+				prev_cfg_files=''
+				case "${cfg_type}" in
+					global)
+						migrate_opts="${migrate_opts_global}"
+						if [ -s "${GLOBAL_CFG_FILE}" ]
+						then
+							prev_cfg_files="${GLOBAL_CFG_FILE}"
+						elif
+							[ -s "${unified_cfg_path}" ]
+						then
+							prev_cfg_files="${unified_cfg_path}"
+						fi
+						;;
+					bl)
+						migrate_opts="${migrate_opts_blocklist}"
+						find_files prev_cfg_files "${ABL_CFG_DIR:?}" "blocklist-" ".conf"
+						[ -z "${prev_cfg_files}" ] && [ -s "${unified_cfg_path}" ] &&
+							prev_cfg_files="${unified_cfg_path}"
+						;;
+				esac
+				[ -n "${prev_cfg_files}" ] || continue
+
+				IFS="${_NL_}"
+				for cfg_file in ${prev_cfg_files}
+				do
+					IFS="${DEFAULT_IFS}"
+					cfg_id_orig=
+					get_cfg_id_install cfg_id_orig "${cfg_file}" || { migr_fail=1; break; }
+					cfg_id="${cfg_id_orig}"
+
+					# Handle old (unified) config
+					[ "${cfg_id}" = "config" ] &&
+					{
+						case "${cfg_type}" in
+							global) cfg_id=global ;;
+							bl) cfg_id=01
+						esac
+					}
+
+					case "${cfg_type}" in
+						global)
+							new_cfg_path="${GLOBAL_CFG_FILE}"
+							var_suffix=''
+							bk_f_prefix="blocklist-" ;;
+						bl)
+							var_suffix="_${cfg_id}"
+							new_cfg_path="${ABL_CFG_DIR}/blocklist-${cfg_id}.conf"
+							bk_f_prefix="blocklist-"
+					esac
+
+					bk_cfg_f="/tmp/adblock-lean_config_${bk_f_prefix}${cfg_id}.old"
+					[ "${cfg_id_orig}" != "config" ] && # unified config is backed up later
+						if cp "${cfg_file}" "${bk_cfg_f}"
+						then
+							reg_msg "Old config file was saved as ${bk_cfg_f}."
+						else
+							reg_failure "Failed to save old config file as ${bk_cfg_f}."
+						fi
+
+					CFG_IGNORE_NONCRIT=1 \
+					CFG_MIGRATE_OPTS="${migrate_opts}" \
+						parse_config "${cfg_type}" "${cfg_id}" "${cfg_file}" &&
+
+					fixed_cfg="$(
+						print_def_cfg "${cfg_type}" -i "${cfg_id}" |
+						while IFS="${_NL_}" read -r def_line
+						do
+							curr_val=
+							case "${def_line}" in
+								\#*|'') printf '%s\n' "${def_line}"; continue ;;
+								*=*)
+									key=${def_line%%=*}
+									eval "[ -n \"\${${key}${var_suffix}+x}\" ]" || continue # ignore keys corresponding to unset variables
+									eval "curr_val=\"\${${key}${var_suffix}}\""
+									printf '%s\n' "${key}=\"${curr_val}\""
+									continue
+							esac
+						done
+					)" &&
+					printf '%s\n' "${fixed_cfg}" > "${new_cfg_path}" &&
+					continue
+
+					migr_fail=1
+					break 2
+				done
+				IFS="${DEFAULT_IFS}"
+			done
+			IFS="${DEFAULT_IFS}"
+
+			rm -rf "${cfg_staging_dir}"
+			[ -z "${migr_fail}" ] &&
+			{
+				bk_cfg_f="/tmp/adblock-lean_config.old"
+				[ -s "${unified_cfg_path}" ] &&
+					if cp "${unified_cfg_path}" "${bk_cfg_f}"
+					then
+						reg_msg "" "Old config file was saved as ${bk_cfg_f}."
+					else
+						reg_failure "Failed to save old config file as ${bk_cfg_f}."
+					fi
+
+				rm -f "${unified_cfg_path}"
+				log_msg -green "Successfully migrated config."
+				exit 0
+			}
+
+			reg_failure "Failed to migrate config."
+			[ -s "${unified_cfg_path}" ] &&
+				log_msg -yellow "Please rename or delete the config file '${unified_cfg_path}' and use the command 'service adblock-lean setup' to create new config."
 		)
 	fi
-
-	[ -n "${config_format_changed}" ] && print_msg "" "NOTE: config format has changed from v${prev_cfg_format} to v${upd_cfg_format}."
 
 	:
 }
 
 fetch_and_install()
 {
-	trap 'cleanup_and_exit 1' INT TERM
-	trap 'cleanup_and_exit ${?}' EXIT
+	trap 'cleanup_and_exit_install 1' INT TERM
+	trap 'cleanup_and_exit_install ${?}' EXIT
 
 	# unset vars and functions from current version to have a clean slate with the new version
 	fetch_failed()
@@ -928,7 +1097,7 @@ fetch_and_install()
 
 		[ -d "${sim_path}" ] || fetch_failed "Simulation source directory doesn't exist."
 		cp -rT "${sim_path}" "${dist_dir}"
-		log_msg -purple "" "Installing adblock-lean version '${blue}${upd_ver}${n_c}' (update channel: '${blue}${upd_channel}${n_c}')."
+		log_msg -purple "" "Installing adblock-lean version ${blue}${upd_ver}${n_c} (update channel: ${blue}${upd_channel}${n_c})."
 	else
 		get_gh_ref "${upd_channel}" "${req_ver}" upd_ver tarball_url ver_type || fetch_failed
 		case "${upd_channel}" in
@@ -977,7 +1146,19 @@ fetch_and_install()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		if [ -n "${ABL_INST_CFG_FOUND}" ]
+		local cfg_found='' cfg_path cfg_id
+		if \
+			[ -s "${GLOBAL_CFG_FILE}" ] &&
+			for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
+			do
+				case "${cfg_path}" in
+					*"*"*) continue ;;
+					*)
+						get_cfg_id_install _ "${cfg_path}" && { cfg_found=1; break; }
+						continue
+				esac
+			done &&
+			[ -n "${cfg_found}" ]
 		then
 			print_msg "" "Start adblock-lean now? (y|n)"
 			pick_opt "y|n"
@@ -1025,10 +1206,6 @@ dnsmasq --help | grep -qe "--conf-script" ||
 
 export ABL_IN_INSTALL=1
 [ -s "${ABL_SERVICE_PATH}" ] && export ABL_IS_UPDATE=1
-
-export ABL_INST_CFG_FOUND=
-find_abl_config &&
-	ABL_INST_CFG_FOUND=1
 
 if [ -z "${INST_SOURCED}" ]
 then
