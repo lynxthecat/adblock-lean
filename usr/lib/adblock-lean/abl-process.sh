@@ -113,15 +113,22 @@ get_elapsed_time_human() {
 
 # HELPER FUNCTIONS
 
+# Env vars: TESTED_URLS
 # TODO: Parallelize domains lookup
 test_url_domains()
 {
-	local list lists list_author url mirror all_urls='' list_type list_format dom IFS="${DEFAULT_IFS}"
-	for list_type in block ipv4_block allow
+	local list lists list_cat list_author url mirror all_urls='' type format dom \
+		set_id="${1:?}"
+
+	for type in block ipv4_block allow
 	do
-		for list_format in ${ALL_LIST_FORMATS}
+		for format in ${ALL_LIST_FORMATS:?}
 		do
-			eval "lists=\"\${${list_format}_${list_type}_lists}\""
+			local list_cat="${format}_${type}_lists"
+			get_bl_param_gl_var _ "${list_cat}" || continue # ignore invalid combinations
+			local "${list_cat}="
+			get_params "${set_id}" lists="${list_cat}" || return 1
+
 			[ -z "${lists}" ] && continue
 			for list in ${lists}
 			do
@@ -131,26 +138,30 @@ test_url_domains()
 						list_author="${list%%":"*}"
 						eval "mirror=\"\${${list_author}_default_mirror}\""
 						eval "url=\"\${${list_author}_${mirror}_url}\""
-						[ -n "${url}" ] && all_urls="${all_urls:+"${all_urls}${_NL_}"}${url}" ;;
-					*) all_urls="${all_urls:+"${all_urls}${_NL_}"}${list}"
-				esac
+						[ -n "${url}" ] ;;
+					*) url="${list}"
+				esac &&
+				! is_included "${url}" "${TESTED_URLS}" "${_NL_}" &&
+				all_urls="${all_urls:+"${all_urls}${_NL_}"}${url}"
 			done
 		done
 	done
 
 	[ -n "${all_urls}" ] || return 0
 
-	reg_action -blue "Testing connectivity." || exit 1
+	reg_action "Testing connectivity." || exit 1
+	debug_msg "URLs:${_NL_}${all_urls}"
 
 	printf '%s\n' "${all_urls}" |
-	${SED_CMD} -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}' |
-	${SORT_CMD} -u |
+	${SED_CMD:?} -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}' |
+	${SORT_CMD:?} -u |
 	while IFS="${_NL_}" read -r dom || [ -n "${dom}" ]
 	do
 		[ -n "${dom}" ] || continue
-		try_lookup_domain "${dom}" "127.0.0.1" 2 || # TODO: blockset-specific NS
+		try_lookup_domain "${dom}" "127.0.0.1" 2 ||
 			{ reg_failure "Lookup of '${dom}' failed."; exit 1; }
 	done || return 1
+	TESTED_URLS="${TESTED_URLS:+"${TESTED_URLS}${_NL_}"}${all_urls}"
 	:
 }
 
@@ -717,6 +728,7 @@ gen_blocksets()
 		force_unload="${unload_blockset_before_update:?}" \
 		install_path \
 		totalmem \
+		TESTED_URLS \
 		\
 		raw_block_lists \
 		dnsmasq_block_lists\
@@ -857,7 +869,7 @@ gen_blocksets()
 
 		[ "${force_unload_bl}" = 1 ] ||
 		[ -z "${conn_check_req}" ] ||
-		test_url_domains || # TODO: test per-bl-inst domains
+		test_url_domains "${set_id}" ||
 			force_unload_bl=1
 
 		[ "${force_unload_bl}" = 1 ] &&
