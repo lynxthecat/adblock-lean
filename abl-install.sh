@@ -61,9 +61,8 @@ set_ansi()
 {
 	local IFS=" "
 	# shellcheck disable=SC2046
-	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[0m \35 \t \r')
-	# shellcheck disable=SC2034
-	red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" n_c="${6}" _DELIM_="${7}" TAB="${8}" CR="${9}" CR_LF="${9}${_NL_}"
+	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[38;5;214m \033[0m \35 \t \r')
+	export red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" orange="${6}" n_c="${7}" _DELIM_="${8}" TAB="${9}" CR="${10}" CR_LF="${10}${_NL_}"
 }
 
 # exit with code ${1}
@@ -244,13 +243,13 @@ get_cfg_id_install()
 		_cfg_fname="${2##*"/"}"
 
 	case "${_cfg_fname}" in
-		config|global.conf|blocklist-*.conf) : ;;
+		config|global.conf|blockset-*.conf) : ;;
 		*)
 			reg_failure "Invalid config filename '${_cfg_fname}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 1
 	esac
 
-	_cfg_id="${_cfg_fname#"blocklist-"}"
+	_cfg_id="${_cfg_fname#"blockset-"}"
 	_cfg_id="${_cfg_id%".conf"}"
 	case "${_cfg_id}" in
 		''|*[!a-zA-Z0-9_]*)
@@ -824,13 +823,19 @@ install_abl_files()
 		{
 			{
 				[ -s "${GLOBAL_CFG_FILE}" ] &&
-				prev_cfg_format="$(get_config_format < "${ABL_SERVICE_PATH}")" &&
+				prev_cfg_format="$(get_config_format < "${GLOBAL_CFG_FILE}")" &&
 				[ -n "${prev_cfg_format}" ]
 			} ||
 			{
 				[ -s "${unified_cfg_path}" ] &&
 				prev_cfg_format="$(get_config_format < "${unified_cfg_path}")"
 				[ -n "${prev_cfg_format}" ]
+			} ||
+			{
+				[ -s "${ABL_SERVICE_PATH}" ] &&
+				prev_cfg_format="$(get_config_format < "${ABL_SERVICE_PATH}")" &&
+				[ -n "${prev_cfg_format}" ] &&
+				{ [ -s "${GLOBAL_CFG_FILE}" ] || [ -s "${unified_cfg_path}" ]; }
 			}
 		} &&
 		[ "${prev_cfg_format}" -lt "${upd_cfg_format}" ]
@@ -841,9 +846,15 @@ install_abl_files()
 			# Newline-separated list of options to migrate in the format <old_key=new_key>
 			migrate_opts_global='
 				cron_schedule=upd_schedule
+				unload_blocklist_before_update=unload_blockset_before_update
+				min_blocklist_part_line_count=min_block_part_entries
+				min_blocklist_ipv4_part_line_count=min_ipv4_block_part_entries
+				min_ipv4_blocklist_part_line_count=min_ipv4_block_part_entries
+				min_allowlist_part_line_count=min_allow_part_entries
+				max_file_part_size_KB=max_part_size_KB
 			'
 
-			migrate_opts_blocklist='
+			migrate_opts_blockset='
 				DNSMASQ_INDEX=dnsmasq_indexes
 				DNSMASQ_INDEXES=dnsmasq_indexes
 				DNSMASQ_CONF_D=dnsmasq_conf_dirs
@@ -854,11 +865,12 @@ install_abl_files()
 				dnsmasq_blocklist_urls=dnsmasq_block_lists
 				dnsmasq_blocklist_ipv4_urls=dnsmasq_ipv4_block_lists
 				dnsmasq_allowlist_urls=dnsmasq_allow_lists
-				min_blocklist_ipv4_part_line_count=min_ipv4_blocklist_part_line_count
+				min_good_line_count=min_good_entries
+				max_blocklist_file_size_KB=max_blockset_file_size_KB
 			'
 
 			# convert into _DELIM_ separated lists
-			for cfg_type in global blocklist
+			for cfg_type in global blockset
 			do
 				IFS="${DEFAULT_IFS:?}"
 				eval "set -- \${migrate_opts_${cfg_type}}"
@@ -897,8 +909,8 @@ install_abl_files()
 						fi
 						;;
 					bl)
-						migrate_opts="${migrate_opts_blocklist}"
-						find_files prev_cfg_files "${ABL_CFG_DIR:?}" "blocklist-" ".conf"
+						migrate_opts="${migrate_opts_blockset}"
+						find_files prev_cfg_files "${ABL_CFG_DIR:?}" "blockset-" "*" ".conf"
 						[ -z "${prev_cfg_files}" ] && [ -s "${unified_cfg_path}" ] &&
 							prev_cfg_files="${unified_cfg_path}"
 						;;
@@ -926,11 +938,11 @@ install_abl_files()
 						global)
 							new_cfg_path="${GLOBAL_CFG_FILE}"
 							var_suffix=''
-							bk_f_prefix="blocklist-" ;;
+							bk_f_prefix="" ;;
 						bl)
 							var_suffix="_${cfg_id}"
-							new_cfg_path="${ABL_CFG_DIR}/blocklist-${cfg_id}.conf"
-							bk_f_prefix="blocklist-"
+							new_cfg_path="${ABL_CFG_DIR}/blockset-${cfg_id}.conf"
+							bk_f_prefix="blockset-"
 					esac
 
 					bk_cfg_f="/tmp/adblock-lean_config_${bk_f_prefix}${cfg_id}.old"
@@ -1149,7 +1161,7 @@ fetch_and_install()
 		local cfg_found='' cfg_path cfg_id
 		if \
 			[ -s "${GLOBAL_CFG_FILE}" ] &&
-			for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
+			for cfg_path in "${ABL_CFG_DIR:?}"/blockset-*.conf
 			do
 				case "${cfg_path}" in
 					*"*"*) continue ;;
