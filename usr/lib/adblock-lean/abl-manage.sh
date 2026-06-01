@@ -501,15 +501,7 @@ check_dnsmasq_instances()
 # analyze dnsmasq instances and set $dnsmasq_conf_dirs
 # 1 (optional): blockset ID's (defaults to all)
 do_select_dnsmasq_instances() {
-	validate_indexes()
-	{
-		printf '%s\n' "${1}" | grep -qE "^(a|(${indexes_regex}( +${indexes_regex})+))$" && # TODO: test
-		case "${1}" in
-			a) : ;;
-			''|*[!0-9\ ]*) false ;;
-			*) :
-		esac
-	}
+	validate_indexes() { printf '%s\n' "${1}" | grep -qE "^ *(a|${indexes_regex})( +(${indexes_regex}))*$"; }
 
 	local me=select_dnsmasq_instances \
 		conf_dirs conf_dirs_instance \
@@ -583,16 +575,16 @@ do_select_dnsmasq_instances() {
 						"ifaces=\"\${IFACES_${index}}\""
 					ifaces="${ifaces//"${_NL_}"/, }"
 					reg_msg "${index}. Instance '${instance}': network interfaces '${ifaces}'"
-					indexes_regex="${indexes_regex}${index}|"
+					indexes_regex="${indexes_regex}${indexes_regex:+|}${index}"
 				done
 				print_msg "" "Please select which dnsmasq instance should have active adblocking for blockset ${blue}${set_id}${n_c}, or 'a' to abort." \
 					"To adblock on multiple instances, enter their indexes separated by whitespaces."
 				while :
 				do
-					printf %s "${indexes_regex}a: " > "${MSGS_DEST}"
+					printf %s "${indexes_regex}|a: " > "${MSGS_DEST}"
 					read -r REPLY
 					validate_indexes "${REPLY}" ||
-						{ printf '\n%s\n\n' "Please enter ${indexes_regex}a" > "${MSGS_DEST}"; continue; }
+						{ printf '\n%s\n\n' "Please enter ${indexes_regex}|a" > "${MSGS_DEST}"; continue; }
 					break
 				done
 			elif [ -n "${luci_indexes}" ]
@@ -2171,7 +2163,6 @@ try_read_blockset_metadata()
 		get_md5 bl_md5 "${curr_path}" ||
 			{ append_err "Failed to get MD5 sum of ${set_id_pr} file at ${curr_path}."; return 1; }
 
-		# TODO: handle non-matching md5
 		[ "${curr_md5}" = "${bl_md5}" ] ||
 			append_err "MD5 sum not matching in ${sp_f_pr} for ${set_id_pr}, path '${curr_path}'. Metadata file has: '${curr_md5}', blockset file has: '${bl_md5}'."
 		
