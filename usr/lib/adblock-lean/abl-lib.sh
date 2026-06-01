@@ -197,7 +197,7 @@ try_mk_hotplug_script()
 	}
 
 	case "${hp_dev}" in /dev/root|tmpfs|/dev/loop*|overlayfs)
-		reg_msg "" "Persistent blocklist is on device '${hp_dev}'. Hotplug script not required."
+		reg_msg "" "Persistent blockset is on device '${hp_dev}'. Hotplug script not required."
 		disable_hotplug_script
 		return 0
 	esac
@@ -285,7 +285,7 @@ do_create_addnmounts()
 		index dnsmasq_indexes all_dnsmasq_indexes \
 		req_addnm_index \
 		\
-		bl_id \
+		set_id \
 		bl_full_fname \
 		path_ram \
 		ignore_paths \
@@ -300,9 +300,9 @@ do_create_addnmounts()
 		path paths_pr
 
 	# reset req_addnm_${index} vars, compile list of indexes
-	for bl_id in ${BL_IDS:?}
+	for set_id in ${SET_IDS:?}
 	do
-		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes || return 1
+		get_params -f "${me}" "${set_id}" dnsmasq_indexes || return 1
 		for index in ${dnsmasq_indexes}
 		do
 			eval "local req_addnm_${index}=" &&
@@ -311,30 +311,30 @@ do_create_addnmounts()
 	done
 
 	## Check addmounts
-	for bl_id in ${BL_IDS:?}
+	for set_id in ${SET_IDS:?}
 	do
-		path_ram='' ignore_paths='' ram_addnm=''
-		get_bl_params -f "${me}" "${bl_id}" dnsmasq_indexes conf_dirs &&
-		get_bl_params "${bl_id}" persist_mode persist_dir &&
+		path_ram='' ignore_paths=''
+		get_params -f "${me}" "${set_id}" dnsmasq_indexes conf_dirs &&
+		get_params "${set_id}" persist_mode persist_dir &&
 		get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util:?}" || return 1
 
 		# Logger
-		process_addnm "${dnsmasq_indexes}" "${LOG_CMD}" "logging failed attempts by dnsmasq to load the blocklist" || return 1
+		process_addnm "${dnsmasq_indexes}" "${LOG_CMD}" "logging failed attempts by dnsmasq to load the blockset" || return 1
 
-		bl_full_fname=${BLOCKLIST_BASE_FNAME:?}-${bl_id}${cra_compr_ext}
+		bl_full_fname=${BLOCKSET_BASE_FNAME:?}-${set_id}${cra_compr_ext}
 
 		# Compression
 		if [ -n "${cra_compr_ext}" ]
 		then
 			path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-			process_addnm "${dnsmasq_indexes}" "${cra_compr_util_path%% *}${_NL_}${path_ram}" "final blocklist compression" || return 1
+			process_addnm "${dnsmasq_indexes}" "${cra_compr_util_path%% *}${_NL_}${path_ram}" "final blockset compression" || return 1
 		fi
 
 		# Multiple dnsmasq instances
 		case "${dnsmasq_indexes}" in
 			*[0-9]*" "*[0-9]*)
 				path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-				process_addnm "${dnsmasq_indexes}" "${path_ram}" "final blocklist compression or blocklist loading by multiple dnsmasq instances" || return 1 ;;
+				process_addnm "${dnsmasq_indexes}" "${path_ram}" "final blockset compression or blockset loading by multiple dnsmasq instances" || return 1 ;;
 			*)
 				first_conf_dir="${conf_dirs%% *}"
 				is_valid_dir "${first_conf_dir}" || return 1
@@ -345,16 +345,18 @@ do_create_addnmounts()
 
 		assert_set "F_${me}" path_ram || return 1
 
-		# Persistent blocklist
+		# Persistent blockset
 		case "${persist_mode}" in
 			manual|managed) : ;;
 			*) false ;;
 		esac &&
-		check_persist_dir "${bl_id}" &&
+		check_persist_dir "${set_id}" &&
 		{
+			local ram_addnm='' cat_addnm=''
 			is_included "${path_ram}" "${ignore_paths}" "${_NL_}" ||
 				ram_addnm="${_NL_}${path_ram}"
-			process_addnm "${dnsmasq_indexes}" "${persist_dir}${ram_addnm}" "persistent blocklist functionality" || return 1
+			[ -n "${cra_compr_ext}" ] || cat_addnm="${_NL_}${CAT_CMD}"
+			process_addnm "${dnsmasq_indexes}" "${persist_dir}${ram_addnm}${cat_addnm}" "persistent blockset functionality" || return 1
 		}
 	done
 
@@ -602,17 +604,17 @@ do_setup()
 	fi
 
 	local bl_cfgs_found='' cfg_id cfg_path
-	for cfg_path in "${ABL_CFG_DIR:?}"/blocklist-*.conf
+	for cfg_path in "${ABL_CFG_DIR:?}"/blockset-*.conf
 	do
 		case "${cfg_path}" in
 			*"*"*)
 				continue ;;
 			"${ABL_CFG_DIR}"/*)
 				split_path _ cfg_id _  "${cfg_path}"
-				cfg_id="${cfg_id#"blocklist-"}"
+				cfg_id="${cfg_id#"blockset-"}"
 				is_alphanum "${cfg_id}" ||
 				{
-					reg_failure "Invalid blocklist name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Deleting the file."
+					reg_failure "Invalid blockset name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Deleting the file."
 					rm -f "${cfg_path}"
 					continue
 				}
@@ -625,8 +627,8 @@ do_setup()
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg "" "Found existing blocklist config files:${_NL_}${bl_cfgs_found}." \
-				"${_NL_}[k]eep existing blocklist config files or remove them and create a [n]ew one, or [a]bort? (k|n|a)"
+			print_msg "" "Found existing blockset config files:${_NL_}${bl_cfgs_found}." \
+				"${_NL_}[k]eep existing blockset config files or remove them and create a [n]ew one, or [a]bort? (k|n|a)"
 			pick_opt 'k|n|a' || return 1
 			[ "${REPLY}" = a ] && return 0
 		else
@@ -641,22 +643,22 @@ do_setup()
 		do_stop
 		# remove and forget old configs
 		rm -f "${META_FILE}"
-		local bl_id
-		for bl_id in ${BL_IDS}
+		local set_id
+		for set_id in ${SET_IDS}
 		do
-			unset_metadata "${bl_id}"
+			unset_metadata "${set_id}"
 			# shellcheck disable=SC2046
-			unset $(printf '%s\n' "${BL_PARAMS_MAP}" | ${SED_CMD} "/^$/d;s/^.*=//;s/$/_${bl_id}/" | tr '\n' ' ')
-			unset "BL_ENV_SET_${bl_id}"
+			unset $(printf '%s\n' "${BL_PARAMS_MAP}" | ${SED_CMD} "/^$/d;s/^.*=//;s/$/_${set_id}/" | tr '\n' ' ')
+			unset "BL_ENV_SET_${set_id}"
 		done
-		unset BL_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
+		unset SET_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
 		for cfg_path in ${bl_cfgs_found}
 		do
 			rm -f "${cfg_path}"
 		done
 
-		# generate blocklist config
-		do_gen_blocklist_config || return 2
+		# generate blockset config
+		do_gen_blockset_config || return 2
 	fi
 
 	load_config &&
@@ -684,7 +686,7 @@ do_setup()
 				"Consider to check for their presence and install if needed."
 	esac
 
-	# create addnmount entries - enables blocklist compression and adblocking on multiple instances
+	# create addnmount entries - enables blockset compression and adblocking on multiple instances
 	do_create_addnmounts || return 1
 
 	if [ "${DO_DIALOGS}" = 1 ]
@@ -710,7 +712,7 @@ do_setup()
 #  5: mem
 #  6: list identifiers
 #  7: max part size
-#  8: max blocklist size
+#  8: max blockset size
 #  9: min line count
 get_preset()
 {
@@ -737,9 +739,9 @@ get_preset()
 		int2human gp_entr_cnt_human "${gp_entr_cnt}" || return 1
 		print_msg "${blue}Elements count:${n_c} ~${gp_entr_cnt_human}" \
 			"${blue}raw_block_lists${n_c}=\"${gp_lists}\"" \
-			"${blue}max_file_part_size_KB${n_c}=\"${gp_max_part_size}\"" \
-			"${blue}max_blocklist_file_size_KB${n_c}=\"${gp_max_bl_size}\"" \
-			"${blue}min_good_line_count${n_c}=\"${gp_min_lines}\""
+			"${blue}max_part_size_KB${n_c}=\"${gp_max_part_size}\"" \
+			"${blue}max_blockset_file_size_KB${n_c}=\"${gp_max_bl_size}\"" \
+			"${blue}min_good_entries${n_c}=\"${gp_min_lines}\""
 	}
 
 	eval "${2:-_}"='${gp_entr_cnt}' \
@@ -762,7 +764,7 @@ get_preset()
 #  3: limit coeff
 # Output vars:
 #  4: min lines
-#  5: max blocklist size
+#  5: max blockset size
 #  6: max part size
 do_calculate_limits()
 {
@@ -795,7 +797,7 @@ do_calculate_limits()
 	[ -z "${tgt_entries_cnt}" ] && [ -n "${CL_INTERACTIVE}" ] &&
 	while :
 	do
-		print_msg "Enter target entries count for the final blocklist:"
+		print_msg "Enter target entries count for the final blockset:"
 		read -r tgt_entries_cnt
 		[ "${tgt_entries_cnt}" -gt 0 ] || { print_msg "Invalid input '${tgt_entries_cnt}'. Please enter a number."; continue; }
 		break
@@ -842,9 +844,9 @@ do_calculate_limits()
 		local lists_pr=lists
 		[ "${lists_cnt}" = 1 ] && lists_pr=list
 		print_msg "" "Recommended values for ${lists_cnt} ${lists_pr} with ${tgt_entries_cnt_human} total entries:" \
-			"${blue}max_file_part_size_KB${n_c}=\"${cl_max_part_size_kb}\"" \
-			"${blue}max_blocklist_file_size_KB${n_c}=\"${cl_max_bl_size_kb}\"" \
-			"${blue}min_good_line_count${n_c}=\"${cl_min_lines}\""
+			"${blue}max_part_size_KB${n_c}=\"${cl_max_part_size_kb}\"" \
+			"${blue}max_blockset_file_size_KB${n_c}=\"${cl_max_bl_size_kb}\"" \
+			"${blue}min_good_entries${n_c}=\"${cl_min_lines}\""
 	}
 
 	eval "${4:-_}"='${cl_min_lines}' "${5:-_}"='${cl_max_bl_size_kb}' "${6:-_}"='${cl_max_part_size_kb}' || return 1
@@ -860,26 +862,26 @@ print_def_cfg()
 	shift
 	case "${cfg_type}" in
 		global) print_def_cfg_global "${@}" ;;
-		bl) print_def_cfg_blocklist "${@}" ;;
+		bl) print_def_cfg_blockset "${@}" ;;
 		*) bad_args print_def_cfg "${cfg_type}" "${@}"; return 1 ;;
 	esac
 }
 
-# -i <blocklist_ID>
+# -i <blockset_ID>
 # (optional) -d to print with allowed value types (otherwise print without)
 # (optional) -p to print with values from preset
 # (optional) -n to print with dnsmasq_indexes
 # (optional) -c to print with dnsmasq_conf_dirs
-print_def_cfg_blocklist()
+print_def_cfg_blockset()
 {
-	local me=print_def_cfg_blocklist \
+	local me=print_def_cfg_blockset \
 		preset='' print_types='' dnsmasq_indexes='' dnsmasq_conf_dirs='' \
-		pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines \
-		opt bl_id
+		pdc_lists pdc_max_part_size pdc_max_set_size pdc_min_lines \
+		opt set_id
 
 	while getopts ":i:n:c:p:d" opt; do
 		case "${opt}" in
-			i) bl_id=$OPTARG ;;
+			i) set_id=$OPTARG ;;
 			n) dnsmasq_indexes=$OPTARG ;;
 			c) dnsmasq_conf_dirs=$OPTARG ;;
 			p) preset=$OPTARG ;;
@@ -888,17 +890,17 @@ print_def_cfg_blocklist()
 		esac
 	done
 
-	[ -n "${bl_id}" ] || { bad_args "${me}" "${@}"; return 1; }
+	[ -n "${set_id}" ] || { bad_args "${me}" "${@}"; return 1; }
 
 	: "${preset:=small}"
 	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
 
-	get_preset "${preset}" _ _ _ _ pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines &&
-	assert_set "F_${me}" pdc_lists pdc_max_part_size pdc_max_bl_size pdc_min_lines || return 1
+	get_preset "${preset}" _ _ _ _ pdc_lists _ pdc_max_set_size pdc_min_lines &&
+	assert_set "F_${me}" pdc_lists pdc_max_set_size pdc_min_lines || return 1
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
 
-	# Blocklist-specific configuration options
+	# Blockset-specific configuration options
 	# config_format=${CONFIG_FORMAT:?}
 	#
 	# values must be enclosed in double-quotes
@@ -926,43 +928,35 @@ print_def_cfg_blocklist()
 	# Path to optional local *raw domain* allowlist/blocklist files in the form:
 	# site1.com
 	# site2.com
-	local_allowlist_path="${ABL_CFG_DIR}/local-allowlist-${bl_id}" @ string
-	local_blocklist_path="${ABL_CFG_DIR}/local-blocklist-${bl_id}" @ string
+	local_allowlist_path="${ABL_CFG_DIR}/local-allowlist-${set_id}" @ string
+	local_blocklist_path="${ABL_CFG_DIR}/local-blocklist-${set_id}" @ string
 
-	# Governs whether and how persistent blocklist is used
-	# 'disable' (default): persistent blocklist will not be used. The blocklist file will be stored on the ramdisk.
-	# 'manual': directory specified in option 'persist_blocklist_dir' will be checked for file named '${BLOCKLIST_BASE_FNAME:?}-${bl_id}' (with or without extension '.gz' or '.zst') -
-	#   if found, that blocklist will be loaded at boot (rather than downloading, processing and loading a new blocklist)
-	#   but adblock-lean will not create or update that file (useful to prevent flash wear, e.g. when the persistent blocklist is stored on the built-in flash of a router).
+	# Governs whether and how persistent blockset is used
+	# 'disable' (default): persistent blockset will not be used. The blockset file will be stored on the ramdisk.
+	# 'manual': directory specified in option 'persist_blockset_dir' will be checked for file named '${BLOCKSET_BASE_FNAME:?}-${set_id}' (with or without extension '.gz' or '.zst') -
+	#   if found, that blockset will be loaded at boot (rather than downloading, processing and loading a new blockset)
+	#   but adblock-lean will not create or update that file (useful to prevent flash wear, e.g. when the persistent blockset is stored on the built-in flash of a router).
 	#   If not found, adblock-lean will act as if mode is 'disable'.
-	# 'managed': adblock-lean will use the directory specified in option 'persist_blocklist_dir' to store and update the blocklist file
-	#   and no additional blocklist will be stored on the ramdisk.
+	# 'managed': adblock-lean will use the directory specified in option 'persist_blockset_dir' to store and update the blockset file
+	#   and no additional blockset will be stored on the ramdisk.
 	#   If the directory is inaccessible, adblock-lean will fall back to using the ramdisk.
-	persist_blocklist_mode="disable" @ disable|manual|managed
+	persist_blockset_mode="disable" @ disable|manual|managed
 
-	# Optional path to directory on non-volatile storage device where persistent blocklist should be stored
-	persist_blocklist_dir="" @ string
+	# Optional path to directory on non-volatile storage device where persistent blockset should be stored
+	persist_blockset_dir="" @ string
 
-	# Test domains are automatically querried after loading the blocklist into dnsmasq,
-	# in order to verify that the blocklist didn't break DNS resolution
-	# If query for any of the test domains fails, previous blocklist is restored from backup
-	# If backup doesn't exist, the blocklist is removed and adblock-lean is stopped
+	# Test domains are automatically querried after loading the blockset into dnsmasq,
+	# in order to verify that the blockset didn't break DNS resolution
+	# If query for any of the test domains fails, previous blockset is restored from backup
+	# If backup doesn't exist, the blockset is removed and adblock-lean is stopped
 	# Leaving this empty will disable verification
 	test_domains="google.com microsoft.com amazon.com" @ string
 
-	# Minimum number of good lines in final postprocessed blocklist
-	min_good_line_count="${pdc_min_lines}" @ uint
+	# Minimum number of good lines in final postprocessed blockset
+	min_good_entries="${pdc_min_lines}" @ uint
 
-	# Mininum number of lines of any individual downloaded part
-	min_blocklist_part_line_count="1" @ uint
-	min_ipv4_blocklist_part_line_count="1" @ uint
-	min_allowlist_part_line_count="1" @ uint
-
-	# Maximum size of any individual downloaded blocklist part
-	max_file_part_size_KB="${pdc_max_part_size}" @ uint
-
-	# Maximum total size of combined, processed blocklist
-	max_blocklist_file_size_KB="${pdc_max_bl_size}" @ uint
+	# Maximum total size of combined, processed blockset
+	max_blockset_file_size_KB="${pdc_max_set_size}" @ uint
 
 	# If a path to custom script is specified and that script defines functions
 	# 'report_success()', 'report_failure()' or 'report_update()',
@@ -983,14 +977,21 @@ print_def_cfg_blocklist()
 # (optional) -d to print with allowed value types (otherwise print without)
 print_def_cfg_global()
 {
-	local print_types
+	local me=print_def_cfg_global print_types pdc_max_part_size preset=''
 	while getopts ":i:n:c:p:d" opt; do
 		case "${opt}" in
-			i|n|c|p) : ;; # ignore these options
+			i|n|c) : ;; # ignore these options
+			p) preset=$OPTARG ;;
 			d) print_types=1 ;;
-			*) bad_args print_def_cfg_global "${@}"; return 1 ;;
+			*) bad_args "${me}" "${@}"; return 1 ;;
 		esac
 	done
+
+	: "${preset:=small}"
+	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
+
+	get_preset "${preset}" _ _ _ _ _ pdc_max_part_size &&
+	assert_set "F_${me}" pdc_max_part_size || return 1
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
 
@@ -1000,16 +1001,24 @@ print_def_cfg_global()
 	# values must be enclosed in double-quotes
 	# custom comments are not preserved after automatic config update
 
-	# Whether to create a hotplug script when persistent blocklist is used
-	#   The hotplug script activates on storage device removal. If the removed device is the one where the blocklist is stored,
-	#   adblock-lean will be automatically restarted and will create a new blocklist on the ramdisk.
+	# Whether to create a hotplug script when persistent blockset is used
+	#   The hotplug script activates on storage device removal. If the removed device is the one where the blockset is stored,
+	#   adblock-lean will be automatically restarted and will create a new blockset on the ramdisk.
 	PERSIST_HOTPLUG_SCRIPT="0" @ 0|1
 
 	# List part failed action:
-	# This option applies to blocklist/allowlist parts which failed to download or couldn't pass validation checks
-	# SKIP - skip failed blocklist file part and continue blocklist generation
-	# STOP - stop blocklist generation (and fall back to previous blocklist if available)
+	# This option applies to blockset parts which failed to download or couldn't pass validation checks
+	# SKIP - skip failed blockset file part and continue blockset generation
+	# STOP - stop blockset generation (and fall back to previous blockset if available)
 	list_part_failed_action="SKIP" @ SKIP|STOP
+
+	# Mininum number of entries in any individual downloaded part
+	min_block_part_entries="1" @ uint
+	min_ipv4_block_part_entries="1" @ uint
+	min_allow_part_entries="1" @ uint
+
+	# Maximum size of any individual downloaded part
+	max_part_size_KB="${pdc_max_part_size}" @ uint
 
 	# Maximum number of download retries
 	max_download_retries="3" @ uint
@@ -1025,13 +1034,13 @@ print_def_cfg_global()
 	# Whether to perform sorting and deduplication of entries (usually doesn't cause much slowdown, uses a bit more memory) - enable (1) or disable (0)
 	deduplication="1" @ 0|1
 
-	# Utility to compress final blocklist, intermediate blocklist parts and the backup blocklist to save memory
+	# Utility to compress final blockset, intermediate blockset parts and the backup blockset to save memory
 	# Supported options: gzip, pigz, zstd or 'none' to disable compression
 	compression_util="gzip" @ gzip|pigz|zstd|none
 
-	# Unload previous blocklist from memory and restart dnsmasq before generation of new blocklist.
-	# Helps to free up memory during blocklist generation - 'auto' or enable (1) or disable (0)
-	unload_blocklist_before_update="auto" @ auto|0|1
+	# Unload previous blockset from memory and restart dnsmasq before generation of new blockset.
+	# Helps to free up memory during blockset generation - 'auto' or enable (1) or disable (0)
+	unload_blockset_before_update="auto" @ auto|0|1
 
 	# Start delay in seconds when service is started from system boot
 	boot_start_delay_s="30" @ uint
@@ -1057,8 +1066,8 @@ confirm_cfg_write()
 	pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
 }
 
-# 1: new blocklist ID
-do_gen_blocklist_config()
+# 1: new blockset ID
+do_gen_blockset_config()
 {
 	# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
 	get_def_preset()
@@ -1091,25 +1100,25 @@ do_gen_blocklist_config()
 	local cnt totalmem totalmem_human preset \
 		dnsmasq_indexes conf_dirs \
 		new_cfg\
-		bl_id="${1:-"${luci_new_blocklist_name}"}"
+		set_id="${1:-"${luci_new_blockset_name}"}"
 
 	while :
 	do
-		is_alphanum "${bl_id}" && break
+		is_alphanum "${set_id}" && break
 
-		[ -z "${bl_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
-			print_msg "Invalid blocklist name '${bl_id}'. Use English letters and/or numbers and/or underlines."
+		[ -z "${set_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
+			print_msg "Invalid blockset name '${set_id}'. Use English letters and/or numbers and/or underlines."
 
-		[ -n "${luci_new_blocklist_name}" ] && return 1
+		[ -n "${luci_new_blockset_name}" ] && return 1
 
 		[ "${DO_DIALOGS}" = 1 ] ||
 		{
-			bl_id=01
+			set_id=01
 			break
 		}
 
-		print_msg -blue "" "Name the new blocklist:"
-		read -r bl_id
+		print_msg -blue "" "Name the new blockset:"
+		read -r set_id
 	done
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${luci_preset}" ]
@@ -1150,15 +1159,15 @@ do_gen_blocklist_config()
 	is_included "${preset}" "${ALL_PRESETS}" || { reg_failure "Invalid preset '${preset}'."; return 1; }
 	reg_msg -blue "Selected preset '${preset}'."
 
-	add2list BL_IDS "${bl_id}"
-	do_select_dnsmasq_instances "${bl_id}" ||
+	add2list SET_IDS "${set_id}"
+	do_select_dnsmasq_instances "${set_id}" ||
 		{ reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; } # TODO: should err msg be here?
 
-	get_bl_params -f gen_blocklist_config "${bl_id}" dnsmasq_indexes conf_dirs &&
-	reg_action -purple "" "Generating new blocklist config ${blue}${bl_id}${n_c} from preset '${preset}'." &&
-	new_cfg="$(print_def_cfg bl -i "${bl_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
-	confirm_cfg_write "${bl_id}" &&
-	write_config bl "${bl_id}" "${new_cfg}" || return 1
+	get_params -f gen_blockset_config "${set_id}" dnsmasq_indexes conf_dirs &&
+	reg_action -purple "" "Generating new blockset config ${blue}${set_id}${n_c} from preset '${preset}'." &&
+	new_cfg="$(print_def_cfg bl -i "${set_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
+	confirm_cfg_write "${set_id}" &&
+	write_config bl "${set_id}" "${new_cfg}" || return 1
 
 	:
 }
@@ -1170,7 +1179,7 @@ get_cfg_path()
 	unset_vars "${1}" || return 1
 	case "${2}" in
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
-		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blocklist-${2}.conf" ;;
+		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
 		*) reg_failure "Invalid config name '${2}'."; return 1 ;;
 	esac
 	eval "${1}"='${g_path}'
@@ -1191,7 +1200,7 @@ san_config()
 # Env vars (used by the install script): CFG_IGNORE_NONCRIT, CFG_MIGRATE_OPTS
 #
 # 1: type: <global|bl>
-# 2: config ID: <global|[bl_id]>
+# 2: config ID: <global|[set_id]>
 # Optional:
 # 3: config file path
 # 4: var to output conf fixes
@@ -1395,6 +1404,9 @@ parse_config()
 
 		# Process user config
 		{
+			sub(/^[ 	]+/,"")
+			sub(/[ 	]+$/,"")
+
 			# Handle double or missing =
 			if ( $0 !~ /^[^=]+=[^=]+([ \t]+(#.*){0,1})*$/ ) {
 				print $0 > A"/inval_entry"
@@ -1496,13 +1508,11 @@ parse_config()
 		return 1
 	}
 
-	local err_print=''
 	rm -f "${parser_err_file}"
 
-	eval "${parse_vars}" 2> "${parser_err_file}" && [ ! -s "${parser_err_file}" ] ||
+	eval "${parse_vars}" ||
 	{
-		[ -s "${parser_err_file}" ] && err_print=" Errors: ${_NL_}$(cat "${parser_err_file}")"
-		reg_failure "Failed to parse ${cfg_pr}.${err_print}"
+		reg_failure "Failed to parse ${cfg_pr}."
 		return 3
 	}
 
@@ -1510,8 +1520,8 @@ parse_config()
 	[ "${cfg_id}" = global ] ||
 	{
 		local persist_dir
-		get_bl_params "${cfg_id}" persist_dir &&
-		set_bl_params "${cfg_id}" persist_dir="${persist_dir%/}"
+		get_params "${cfg_id}" persist_dir &&
+		set_params "${cfg_id}" persist_dir="${persist_dir%/}"
 	} || return 3
 
 	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0
@@ -1579,7 +1589,7 @@ load_config()
 		reg_failure "Failed to load config${err_cfg:+" '${err_cfg}'"}."
 		case "${err_cfg}" in
 			global) fix_cmd=gen_global_config ;;
-			blocklist-*) fix_cmd="gen_blocklist_config ${err_cfg}"
+			blockset-*) fix_cmd="gen_blockset_config ${err_cfg}"
 		esac
 		[ -n "${err_cfg}" ] && [ -n "${fix_cmd}" ] &&
 		{
@@ -1602,7 +1612,7 @@ try_load_config()
 	{
 		local cfg_id cfg_path fix fixes cnt \
 			IFS="${DEFAULT_IFS}"
-		for cfg_id in global ${BL_IDS}
+		for cfg_id in global ${SET_IDS}
 		do
 			cnt=0
 			eval "fixes=\"\${cfg_fixes_${cfg_id}}\" cfg_path=\"\${cfg_path_${cfg_id}}\""
@@ -1636,7 +1646,7 @@ try_load_config()
 		return 1
 	fi
 
-	for cfg_id in global ${BL_IDS}
+	for cfg_id in global ${SET_IDS}
 	do
 		case "${cfg_id}" in
 			global) cfg_type=global ;;
@@ -1681,7 +1691,7 @@ try_load_config()
 			print_cfg_fixes
 		fi
 
-		for cfg_id in global ${BL_IDS}
+		for cfg_id in global ${SET_IDS}
 		do
 			eval "${err_cfg_out_var}"='${cfg_id}'
 			eval \
@@ -1728,7 +1738,7 @@ fix_config()
 	fi
 
 	[ "${cfg_type}" = bl ] &&
-		get_bl_params "${cfg_id}" dnsmasq_indexes conf_dirs
+		get_params "${cfg_id}" dnsmasq_indexes conf_dirs
 
 	local old_cfg_f="/tmp/adblock-lean_config_${cfg_id}.old"
 	if ! cp "${cfg_path}" "${old_cfg_f}"
