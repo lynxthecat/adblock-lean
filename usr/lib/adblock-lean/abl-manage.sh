@@ -1960,47 +1960,6 @@ try_install_blocksets()
 	:
 }
 
-# TODO: Parallelize domains lookup
-test_url_domains()
-{
-	local list lists list_author url mirror all_urls='' list_type list_format dom IFS="${DEFAULT_IFS}"
-	for list_type in block ipv4_block allow
-	do
-		for list_format in ${ALL_LIST_FORMATS}
-		do
-			eval "lists=\"\${${list_format}_${list_type}_lists}\""
-			[ -z "${lists}" ] && continue
-			for list in ${lists}
-			do
-				case "${list}" in
-					'') continue ;;
-					hagezi:*|oisd:*|stevenblack:*)
-						list_author="${list%%":"*}"
-						eval "mirror=\"\${${list_author}_default_mirror}\""
-						eval "url=\"\${${list_author}_${mirror}_url}\""
-						[ -n "${url}" ] && all_urls="${all_urls:+"${all_urls}${_NL_}"}${url}" ;;
-					*) all_urls="${all_urls:+"${all_urls}${_NL_}"}${list}"
-				esac
-			done
-		done
-	done
-
-	[ -n "${all_urls}" ] || return 0
-
-	reg_action -blue "Testing connectivity." || exit 1
-
-	printf '%s\n' "${all_urls}" |
-	${SED_CMD} -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}' |
-	${SORT_CMD} -u |
-	while IFS="${_NL_}" read -r dom || [ -n "${dom}" ]
-	do
-		[ -n "${dom}" ] || continue
-		try_lookup_domain "${dom}" "127.0.0.1" 2 || # TODO: blockset-specific NS
-			{ reg_failure "Lookup of '${dom}' failed."; exit 1; }
-	done || return 1
-	:
-}
-
 # 1 - domain
 # 2 - nameservers
 # 3 - max attempts
