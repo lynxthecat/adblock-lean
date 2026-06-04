@@ -30,8 +30,7 @@ tolower()
 		*[A-Z]*) tl_str="$(printf '%s' "${2}" | tr 'A-Z' 'a-z' )" ;;
 		*) tl_str="${2}"
 	esac
-	eval "${1}"='${tl_str}'
-	: "${tl_str}"
+	export -n "${1}=${tl_str}"
 }
 
 trim_spaces()
@@ -40,7 +39,7 @@ trim_spaces()
 	eval "tr_in=\"\${$1}\""
 	tr_out="${tr_in%"${tr_in##*[! 	]}"}"
 	tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
-	eval "${1}=\"\${tr_out}\""
+	export -n "${1}=${tr_out}"
 }
 
 try_mv()
@@ -65,7 +64,7 @@ cnt_lines()
 			*) cnt=$((cnt+1))
 		esac
 	done
-	eval "${1}"='${cnt}'
+	export -n "${1}=${cnt}"
 }
 
 get_file_size() { du -b "$1" | ${AWK_CMD} '{print $1}'; }
@@ -75,7 +74,7 @@ get_pad()
 	local spaces='                                      ' \
 		pad_len=$(( ${3} - ${#2} ))
 	[ "$pad_len" -lt 0 ] && pad_len=0
-	eval "${1}=\"${spaces:1:${pad_len}}\""
+	export -n "${1}=${spaces:1:${pad_len}}"
 }
 
 # converts unsigned integer to [xB|xKiB|xMiB|xGiB|xTiB]
@@ -112,9 +111,8 @@ bytes2human()
 			fi
 	esac
 	: "${bh_res:="$(printf "%s.%${fp}d %s\n" "${i}" "${d}" "${S}")"}"
-	: "${pad}"
 	[ -n "${align}" ] && get_pad pad "${bh_res}" 10
-	eval "${1}"='${pad}${bh_res}'
+	export -n "${1}=${pad}${bh_res}"
 }
 
 # 1 - var name for output
@@ -127,14 +125,14 @@ int2human()
 	local in_num="${2#"${2%%[!0]*}"}" out_num=
 	while :
 	do
-		case "${in_num}" in 
+		case "${in_num}" in
 			????*)
 				out_num=",${in_num: -3}${out_num}"
 				in_num="${in_num%???}" ;;
 			*) break
 		esac
 	done
-	eval "${1}"='${in_num:-0}${out_num}'
+	export -n "${1}=${in_num:-0}${out_num}"
 }
 
 get_md5()
@@ -144,7 +142,7 @@ get_md5()
 	g_md5="$(${MD5_CMD} "${2}")" &&
 	g_md5="${g_md5%% *}" &&
 	is_hex_lc "${g_md5}" &&
-	eval "${1}"='${g_md5}' && return 0
+	export -n "${1}=${g_md5}" && return 0
 
 	reg_failure "Failed to get MD5 sum for file '${2}'"
 	return 1
@@ -305,7 +303,7 @@ do_create_addnmounts()
 		get_params -f "${me}" "${set_id}" dnsmasq_indexes || return 1
 		for index in ${dnsmasq_indexes}
 		do
-			eval "local req_addnm_${index}=" &&
+			local "req_addnm_${index}=" &&
 			add2list all_dnsmasq_indexes "${index}" || return 1
 		done
 	done
@@ -427,8 +425,7 @@ get_pkg_name()
 		sed) _name="sed" ;;
 		sort) _name="coreutils-sort"
 	esac
-	: "${_name}"
-	eval "${1}"='${_name}'
+	export -n "${1}=${_name}"
 }
 
 
@@ -572,6 +569,8 @@ do_setup()
 		:
 	}
 
+	local CUR_CMD=setup
+
 	[ -f "${ABL_SERVICE_PATH}" ] || { reg_failure "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
 
 	# make the script executable
@@ -641,16 +640,14 @@ do_setup()
 	if [ "${REPLY}" = n ]
 	then
 		do_stop
-		# remove and forget old configs
+		# Remove and forget old configs
 		rm -f "${META_FILE}"
 		local set_id
 		for set_id in ${SET_IDS}
 		do
-			unset_metadata "${set_id}"
-			# shellcheck disable=SC2046
-			unset $(printf '%s\n' "${BL_PARAMS_MAP}" | ${SED_CMD} "/^$/d;s/^.*=//;s/$/_${set_id}/" | tr '\n' ' ')
 			unset "BL_ENV_SET_${set_id}"
 		done
+		unset_param_vars "${SET_IDS}"
 		unset SET_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
 		for cfg_path in ${bl_cfgs_found}
 		do
@@ -744,14 +741,15 @@ get_preset()
 			"${blue}min_good_entries${n_c}=\"${gp_min_lines}\""
 	}
 
-	eval "${2:-_}"='${gp_entr_cnt}' \
-		"${3:-_}"='${gp_lists_cnt}' \
-		"${4:-_}"='${gp_lim_coeff}' \
-		"${5:-_}"='${gp_mem}' \
-		"${6:-_}"='${gp_lists}' \
-		"${7:-_}"='${gp_max_part_size}' \
-		"${8:-_}"='${gp_max_bl_size}' \
-		"${9:-_}"='${gp_min_lines}' || return 1
+	export -n \
+		"${2:-_}=${gp_entr_cnt}" \
+		"${3:-_}=${gp_lists_cnt}" \
+		"${4:-_}=${gp_lim_coeff}" \
+		"${5:-_}=${gp_mem}" \
+		"${6:-_}=${gp_lists}" \
+		"${7:-_}=${gp_max_part_size}" \
+		"${8:-_}=${gp_max_bl_size}" \
+		"${9:-_}=${gp_min_lines}" || return 1
 	:
 }
 
@@ -783,7 +781,7 @@ do_calculate_limits()
 			????????????*) reg_failure "${me}: input '${input}' too large."; return 1 ;;
 			*)
 				factor=$(( 10**(${#input}-2) ))
-				eval "${1}=${neg}$(( (input/factor) * factor ))"
+				export -n "${1}=${neg}$(( (input/factor) * factor ))"
 		esac
 		:
 	}
@@ -849,7 +847,7 @@ do_calculate_limits()
 			"${blue}min_good_entries${n_c}=\"${cl_min_lines}\""
 	}
 
-	eval "${4:-_}"='${cl_min_lines}' "${5:-_}"='${cl_max_bl_size_kb}' "${6:-_}"='${cl_max_part_size_kb}' || return 1
+	export -n "${4:-_}=${cl_min_lines}" "${5:-_}=${cl_max_bl_size_kb}" "${6:-_}=${cl_max_part_size_kb}" || return 1
 	:
 }
 
@@ -1093,7 +1091,7 @@ do_gen_blockset_config()
 			[ "${_totalmem}" -ge $((_mem * 800)) ] && break
 		done
 
-		eval "${1}"='${_preset}' "${2}"='${_totalmem}'
+		export -n "${1}=${_preset}" "${2}=${_totalmem}"
 		:
 	}
 
@@ -1160,8 +1158,7 @@ do_gen_blockset_config()
 	reg_msg -blue "Selected preset '${preset}'."
 
 	add2list SET_IDS "${set_id}"
-	do_select_dnsmasq_instances "${set_id}" ||
-		{ reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; } # TODO: should err msg be here?
+	do_select_dnsmasq_instances "${set_id}" || return 1
 
 	get_params -f gen_blockset_config "${set_id}" dnsmasq_indexes conf_dirs &&
 	reg_action -purple "" "Generating new blockset config ${blue}${set_id}${n_c} from preset '${preset}'." &&
@@ -1175,14 +1172,13 @@ do_gen_blockset_config()
 get_cfg_path()
 {
 	local g_path
-	: "${g_path}"
 	unset_vars "${1}" || return 1
 	case "${2}" in
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
 		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
 		*) reg_failure "Invalid config name '${2}'."; return 1 ;;
 	esac
-	eval "${1}"='${g_path}'
+	export -n "${1}=${g_path}"
 }
 
 san_config()
@@ -1253,9 +1249,9 @@ parse_config()
 	[ -n "${CFG_IGNORE_NONCRIT}" ] ||
 	{
 		def_cfg_format="$(print_def_cfg global | get_config_format)" || return 1
-		export "luci_def_cfg_format"="${def_cfg_format}"
+		export -n "luci_def_cfg_format"="${def_cfg_format}"
 		curr_cfg_format="$(get_config_format "${cfg_path}")" || return 1
-		export "luci_curr_cfg_format_${cfg_id}"="${curr_cfg_format}"
+		export -n "luci_curr_cfg_format_${cfg_id}"="${curr_cfg_format}"
 		is_uint "${curr_cfg_format}" ||
 		{
 			log_msg -warn "" "Config format version '${curr_cfg_format}' is unknown or invalid."
@@ -1342,7 +1338,6 @@ parse_config()
 			for (ind in def_lines_arr) {
 				# Remove whitespaces/tabs
 				sub(/"[ \t]*@[ \t]*/,"\"@",def_lines_arr[ind])
-				def_lines_arr[ind]=def_lines_arr[ind]
 				# Validate default config line
 				n=split(def_lines_arr[ind],def_line_parts,"[=@]") # Split into key, value, allowed values
 				if (n==0) continue
@@ -1547,7 +1542,7 @@ parse_config()
 				cat "${ABL_CFG_STAGING_DIR}/bad_val_entries"
 				entries_pr="$(cat "${ABL_CFG_STAGING_DIR}/corrected_entries")"
 				entries_pr="${entries_pr%$'\n'}"
-				export "luci_corrected_entries_${cfg_id}"="${entries_pr}"
+				export -n "luci_corrected_entries_${cfg_id}"="${entries_pr}"
 				;;
 			*) log_msg -yellow "" "${i%%|*} keys in ${cfg_pr}:${_NL_}'${keys// /\', \'}'"
 		esac
@@ -1559,7 +1554,7 @@ parse_config()
 
 		print_msg "" "${yellow}Corresponding${entries_type_pr} config entries:${n_c}" "${entries_pr}"
 		add_cfg_fix "${i##*|}"
-		export "luci_${entry_type}_keys_${cfg_id}"="${keys}" "luci_${entry_type}_entries_${cfg_id}"="${entries}"
+		export -n "luci_${entry_type}_keys_${cfg_id}"="${keys}" "luci_${entry_type}_entries_${cfg_id}"="${entries}"
 	done
 
 	p_cfg_fixes="${p_cfg_fixes%$'\n'}"
@@ -1570,7 +1565,7 @@ parse_config()
 		add_cfg_fix "Update config format version"
 	fi
 
-	eval "${fixes_out_var:-_}=\"${p_cfg_fixes}\" ${replace_keys_out_var:-_}=\"${missing_keys}${bad_val_keys}\""
+	export -n "${fixes_out_var:-_}=${p_cfg_fixes}" "${replace_keys_out_var:-_}=${missing_keys}${bad_val_keys}"
 
 	[ -n "${p_cfg_fixes}" ] && return 2
 	:
@@ -1600,7 +1595,7 @@ load_config()
 		return 1
 	}
 	dbg_on
-	export CONFIG_LOADED=1
+	export -n CONFIG_LOADED=1
 	:
 }
 
@@ -1654,11 +1649,11 @@ try_load_config()
 		esac
 		get_cfg_path cfg_path "${cfg_id}" || return 1
 
-		eval "${err_cfg_out_var}"='${cfg_id}'
-		eval "local cfg_path_${cfg_id}"='${cfg_path}'
+		export -n "${err_cfg_out_var}=${cfg_id}"
+		local "cfg_path_${cfg_id}=${cfg_path}"
 
 		# validate config and assign to variables
-		eval "local cfg_fixes_${cfg_id}='' replace_keys_${cfg_id}=''"
+		local "cfg_fixes_${cfg_id}=" "replace_keys_${cfg_id}="
 		dbg_off
 		parse_config "${cfg_type}" "${cfg_id}" "" "cfg_fixes_${cfg_id}" "replace_keys_${cfg_id}"
 		local parse_rv=${?}
@@ -1671,7 +1666,7 @@ try_load_config()
 		esac
 
 		eval "all_cfg_fixes=\"${all_cfg_fixes}${all_cfg_fixes:+"${_NL_}"}\${cfg_fixes_${cfg_id}}\""
-		export "luci_cfg_fixes_${cfg_id}"="${all_cfg_fixes}"
+		export -n "luci_cfg_fixes_${cfg_id}"="${all_cfg_fixes}"
 
 		# if not in interactive console and force-fix not set, return error
 		[ -n "${all_cfg_fixes}" ] && [ "${DO_DIALOGS}" != 1 ] && [ -z "${force_fix}" ] && return 1
@@ -1679,7 +1674,7 @@ try_load_config()
 
 	if [ -n "${all_cfg_fixes}" ]
 	then
-		eval "${err_cfg_out_var}"=
+		export -n "${err_cfg_out_var}"=
 		if [ "${DO_DIALOGS}" = 1 ] && [ -z "${force_fix}" ]
 		then
 			print_msg -blue "" "Perform following automatic changes? (y|n)"
@@ -1693,7 +1688,7 @@ try_load_config()
 
 		for cfg_id in global ${SET_IDS}
 		do
-			eval "${err_cfg_out_var}"='${cfg_id}'
+			export -n "${err_cfg_out_var}=${cfg_id}"
 			eval \
 				"l_cfg_fixes=\"\${cfg_fixes_${cfg_id}}\"" \
 				"l_replace_keys=\"\${replace_keys_${cfg_id}}\""
@@ -1713,7 +1708,7 @@ get_cfg_type()
 		'') return 1 ;;
 		*) _cfg_type=bl ;;
 	esac
-	eval "${1}=\"${_cfg_type}\""
+	export -n "${1}=${_cfg_type}"
 }
 
 # 1: config type
@@ -1856,8 +1851,7 @@ check_for_updates()
 	else
 		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${upd_ver}')"
 		UPD_DIRECTIONS="Consider running: 'service adblock-lean update' to update it to the latest version."
-		UPD_AVAIL_MSG="adblock-lean update is available ${upd_details}"
-		: "${UPD_AVAIL_MSG}" # silence shellcheck warning
+		export -n UPD_AVAIL_MSG="adblock-lean update is available ${upd_details}"
 		reg_msg -2 -yellow "The locally installed adblock-lean seems to be outdated ${upd_details}."
 		print_msg "${UPD_DIRECTIONS}"
 		return 1
