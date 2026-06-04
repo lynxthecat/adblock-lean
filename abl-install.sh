@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC1090,SC3044,SC3060,SC3040
+# shellcheck disable=SC3043,SC1090,SC3044,SC3060,SC3040,SC3045
 
 ABL_INSTALLER_VER=3
 
@@ -23,10 +23,9 @@ ABL_FILES_REG_PATH=/etc/adblock-lean/abl-reg.md5
 : "${ABL_INSTALLER_VER}"
 
 LC_ALL=C
-DEFAULT_IFS='	 
-'
 _NL_='
 '
+DEFAULT_IFS="	${_NL_}"
 IFS="${DEFAULT_IFS}"
 _DELIM_="$(printf '\35')"
 
@@ -41,7 +40,7 @@ then
 fi
 
 # $luci_skip_dialogs is set if sourced from external RPC script for luci
-[ -n "${luci_skip_dialogs}" ] && export ABL_LUCI_SOURCED=1
+[ -n "${luci_skip_dialogs}" ] && export -n ABL_LUCI_SOURCED=1
 
 [ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 	DO_DIALOGS=1
@@ -52,7 +51,7 @@ then
 else
 	SED_CMD="busybox sed"
 fi
-export AWK_CMD="/bin/busybox awk"
+export -n AWK_CMD="/bin/busybox awk"
 
 set -o pipefail
 
@@ -62,7 +61,7 @@ set_ansi()
 	local IFS=" "
 	# shellcheck disable=SC2046
 	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[38;5;214m \033[0m \35 \t \r')
-	export red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" orange="${6}" n_c="${7}" _DELIM_="${8}" TAB="${9}" CR="${10}" CR_LF="${10}${_NL_}"
+	export -n red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" orange="${6}" n_c="${7}" _DELIM_="${8}" TAB="${9}" CR="${10}" CR_LF="${10}${_NL_}"
 }
 
 # exit with code ${1}
@@ -101,9 +100,9 @@ pick_opt()
 		printf %s "${1}: " 1>"${MSGS_DEST}"
 		read -r REPLY
 		case "${REPLY}" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter ${1}" 1>"${MSGS_DEST}"; continue; esac
-		eval "case \"${REPLY}\" in 
+		eval "case \"\${REPLY}\" in
 				${1}) return 0 ;;
-				*) printf '\n%s\n\n' \"Please enter ${1}\" 1>\"${MSGS_DEST}\"
+				*) printf '\n%s\n\n' \"Please enter \${1}\" 1>\"\${MSGS_DEST}\"
 			esac"
 	done
 }
@@ -171,7 +170,7 @@ reg_msg()
 
 	local msgs_dest="${MSGS_DEST}" session_log_thresh=3 \
 		sys_log_thresh="${ABL_LOG_LEVEL:-"1"}" print_thresh=4
-	
+
 	[ -n "${ABL_DEBUG}" ] && print_thresh=5
 
 	local IFS="${DEFAULT_IFS}"
@@ -256,7 +255,7 @@ get_cfg_id_install()
 			reg_failure "Invalid config name '${_cfg_id}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 1 ;;
 	esac
-	eval "${1}"='${_cfg_id}'
+	export -n "${1}=${_cfg_id}"
 	:
 }
 
@@ -290,9 +289,9 @@ get_abl_version()
 
 			res="$(${SED_CMD} -n "/^${key_ptrn}=/{s/^${key_ptrn}=//;s/#.*$//;s/\"//g;${migr_ptrn}p;:1 n;b1;}" "${3}")" &&
 				[ -n "${res}" ] || return 1
-			eval "res_${_par}=\"\${res}\""
+			export -n "res_${_par}=${res}"
 		done
-		eval "${1}=\"\${res_upd_channel}\" ${2}=\"\${res_version}\""
+		export -n "${1}=${res_upd_channel}" "${2}=${res_version}"
 		: "${res_upd_channel}" "${res_version}"
 	}
 
@@ -300,7 +299,7 @@ get_abl_version()
 	if [ -n "${2}${3}" ]
 	then
 		are_var_names_safe_install "${2}" "${3}" || return 1
-		eval "${2}"='' "${3}"=''
+		export -n "${2}=" "${3}="
 	fi
 
 	# v0.7.3 and later
@@ -315,16 +314,15 @@ get_abl_version()
 	then
 		gv_rv=4
 	# version format in v0.6.0 - v0.7.1
-	elif grep -q '^\s*#\s*ABL_VERSION=' "${1}" &&	
+	elif grep -q '^\s*#\s*ABL_VERSION=' "${1}" &&
 		get_ver_str gv_upd_ch gv_ver "${1}" -o
 	then
 		gv_rv=3
 	else
 		gv_rv=2
 	fi
-	: "${gv_ver}" "${gv_upd_ch}"
-	[ -n "${2}" ] && eval "${2}"='${gv_ver}'
-	[ -n "${3}" ] && eval "${3}"='${gv_upd_ch}'
+	export -n "${2:-_}=${gv_ver}"
+	export -n "${3:-_}=${gv_upd_ch}"
 	return ${gv_rv}
 }
 
@@ -384,9 +382,9 @@ get_gh_ref()
 			*) gr_version="${gr_ref}"
 		esac
 
-		eval "${3}"='${gr_version}' "${4}"='${ABL_GH_URL_API}/tarball/${gr_ref}' "${5}"='${gr_ver_type}' \
-			"prev_ref"='${gr_ref}' "prev_ver_type"='${gr_ver_type}' \
-			"prev_upd_channel"='${gr_channel}' "prev_version"='${gr_version}'
+		export -n "${3}=${gr_version}" "${4}=${ABL_GH_URL_API}/tarball/${gr_ref}" "${5}=${gr_ver_type}" \
+			"PREV_REF=${gr_ref}" "PREV_VER_TYPE=${gr_ver_type}" \
+			"PREV_UPD_CHANNEL=${gr_channel}" "PREV_VERSION=${gr_version}"
 	}
 
 	get_and_process_ref()
@@ -422,7 +420,6 @@ get_gh_ref()
 
 	local gr_branches='' gr_grep_ptrn='' gr_ref='' gr_ver_type='' gr_fetch_rv=0 \
 		gr_fetch_tmp_dir="${ABL_UPD_DIR}/ref_fetch" \
-		prev_ref prev_ver_type prev_upd_channel prev_version \
 		gr_channel="${1}" gr_version="${2}"
 
 	[ "$gr_channel" = release ] && gr_version="${gr_version#v}"
@@ -430,12 +427,7 @@ get_gh_ref()
 	local gr_ucl_err_file="${gr_fetch_tmp_dir}/ucl_err"
 
 	are_var_names_safe_install "${3}" "${4}" "${5}" || return 1
-	eval "${3}='' ${4}='' ${5}=''"
-
-	eval "prev_ref=\"\${prev_ref}\"
-		prev_ver_type=\"\${prev_ver_type}\"
-		prev_upd_channel=\"\${prev_upd_channel}\"
-		prev_version=\"\${prev_version}\""
+	export -n "${3}=" "${4}=" "${5}="
 
 	# if commit hash is specified and it's 40-char long, use it directly without API query or cache check
 	case "${gr_channel}" in
@@ -443,10 +435,10 @@ get_gh_ref()
 	esac
 
 	# if previously stored data exists, use it without API query or cache check
-	if [ -z "${gr_ref}" ] && [ -n "${prev_ref}" ] && [ -n "${prev_ver_type}" ] && \
-		[ "${prev_upd_channel}" = "${gr_channel}" ] && [ "${gr_version}" = "${prev_version}" ]
+	if [ -z "${gr_ref}" ] && [ -n "${PREV_REF}" ] && [ -n "${PREV_VER_TYPE}" ] && \
+		[ "${PREV_UPD_CHANNEL}" = "${gr_channel}" ] && [ "${gr_version}" = "${PREV_VERSION}" ]
 	then
-			gr_ref="${prev_ref}" gr_ver_type="${prev_ver_type}"
+			gr_ref="${PREV_REF}" gr_ver_type="${PREV_VER_TYPE}"
 	elif [ -z "${gr_ref}" ]
 	then
 		# ref cache
@@ -475,10 +467,10 @@ get_gh_ref()
 			*)
 				# found cached query
 				if [ -z "${IGNORE_CACHE}" ] && [ -f "${cache_file}" ] &&
-					read -r prev_ref prev_ver_type < "${cache_file}" &&
-					[ -n "${prev_ref}" ] && [ -n "${prev_ver_type}" ]
+					read -r PREV_REF PREV_VER_TYPE < "${cache_file}" &&
+					[ -n "${PREV_REF}" ] && [ -n "${PREV_VER_TYPE}" ]
 				then
-					gr_ref="${prev_ref}" gr_ver_type="${prev_ver_type}"
+					gr_ref="${PREV_REF}" gr_ver_type="${PREV_VER_TYPE}"
 				else
 					rm -f "${cache_file:-???}"
 				fi
@@ -596,7 +588,13 @@ fetch_abl_dist()
 
 clean_abl_env()
 {
-	unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED ABL_ENV_SET MAIN_UTILS_DETECTED
+	local set_id
+	[ -n "${BL_PARAMS_MAP}" ] && check_func_install unset_param_vars && unset_param_vars "${SET_IDS}"
+	for set_id in ${SET_IDS}
+	do
+		unset "BL_ENV_SET_${set_id}"
+	done
+	unset action ABL_INIT_ACT ABL_CMD CUR_CMD CUR_ACT ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED BL_PARAMS_MAP VAR2CFG_MAP SET_IDS GLOBAL_ENV_SET SKIP_SET_ENV MAIN_UTILS_DETECTED
 	unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 }
 
@@ -615,10 +613,10 @@ get_file_list()
 	elif check_func_install install_abl_files # v0.6.0-v0.7.1
 	then
 		case "${_file_types}" in
-			EXEC) printf '%s\n' "${ABL_SERVICE_PATH}" ;;
+			EXEC) printf '%s\n' "${ABL_SERVICE_PATH:?}" ;;
 			*)
 				printf '%s\n' "${ABL_SERVICE_PATH}${_NL_}${ABL_LIB_FILES}${_NL_}${ABL_EXTRA_FILES}" |
-					${SED_CMD} 's/\s\s*/\n/g' | ${SED_CMD} '/^$/d'
+					${SED_CMD:?} 's/\s\s*/\n/g' | ${SED_CMD} '/^$/d'
 		esac
 	else # v0.5.4 and earlier
 		printf '%s\n' "${ABL_SERVICE_PATH}"
@@ -694,11 +692,11 @@ install_abl_files()
 	fi
 
 	# version and update channel string replacement
-	busybox sed -i "
+	${SED_CMD:?} -i "
 		/^\s*ABL_VERSION\s*=/{s/.*/ABL_VERSION=\"${version}\"/;}
 		/^\s*ABL_UPD_CHANNEL\s*=/{s/.*/ABL_UPD_CHANNEL=\"${upd_channel}\"/;}" \
 			"${dist_dir}${ABL_SERVICE_PATH}"
-	
+
 	# Check for changed files
 	local changed_files='' unchanged_files='' man_changed_files=''
 
@@ -875,7 +873,7 @@ install_abl_files()
 				IFS="${DEFAULT_IFS:?}"
 				eval "set -- \${migrate_opts_${cfg_type}}"
 				IFS="${_DELIM_:?}"
-				eval "migrate_opts_${cfg_type}=\"\${*}\""
+				export -n "migrate_opts_${cfg_type}=${*}"
 			done
 			IFS="${DEFAULT_IFS}"
 
@@ -1051,6 +1049,10 @@ fetch_and_install()
 	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
 		upd_channel='' req_upd_channel='' force_upd_channel=''
 
+	PREV_REF=
+	PREV_VER_TYPE=
+	PREV_UPD_CHANNEL=
+	PREV_VERSION=
 	IGNORE_CACHE=
 	while getopts ":s:v:U:W:i" opt
 	do
