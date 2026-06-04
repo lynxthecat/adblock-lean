@@ -31,8 +31,8 @@ ABL_CUSTOM_CMDS="\
 	gen_persist_blockset"
 ABL_CUSTOM_CMDS="${ABL_CUSTOM_CMDS//"	"/ }"
 
-export EXTRA_COMMANDS="${ABL_CUSTOM_CMDS//"  "/ }"
-export EXTRA_HELP="
+export -n EXTRA_COMMANDS="${ABL_CUSTOM_CMDS//"  "/ }"
+export -n EXTRA_HELP="
 Global commands:
 Usage: service adblock-lean <command> [options]
 	version                   Print adblock-lean version
@@ -95,8 +95,8 @@ then
 	fi
 fi
 
-export ABL_RUN_DIR="/var/run/adblock-lean"
-export ABL_TMP_DIR="${ABL_RUN_DIR}/tmp"
+export -n ABL_RUN_DIR="/var/run/adblock-lean"
+export -n ABL_TMP_DIR="${ABL_RUN_DIR}/tmp"
 
 export ABL_UPD_DIR=${ABL_TMP_DIR}/update \
 	ABL_PID_DIR="/tmp/abl-pid" \
@@ -115,7 +115,7 @@ export ABL_UPD_DIR=${ABL_TMP_DIR}/update \
 	\
 	BK_SET_BASE_PATH="${ABL_TMP_DIR:?}/bk-blockset"
 
-export ABL_HOTPLUG_PATH_SRC="${ABL_CFG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
+export -n ABL_HOTPLUG_PATH_SRC="${ABL_CFG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_PATH_ENABLED="${ABL_HOTPLUG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_PATH_DISABLED="${ABL_HOTPLUG_DIR}/.${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_REG_FILE="${ABL_RUN_DIR}/hotplug-device"
@@ -149,7 +149,7 @@ SCHEDULER_PID=
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-export \
+export -n \
 	RECOMMENDED_PKGS="gawk sed coreutils-sort" \
 	RECOMMENDED_UTILS="awk sed sort"
 
@@ -162,7 +162,7 @@ DEBUG_THRESH=5 # DEBUG_THRESH must be > PRINT_THRESH
 # silence shellcheck warnings
 : "${action:=}" "${boot_start_delay_s:=}" "${CONFIG_FORMAT}" "${SBE_STATUS:=}" "${compression_util:=}"
 
-export luci_log luci_pid_action luci_errors luci_dnsmasq_status luci_good_entries luci_update_status luci_pkgs_install_failed luci_cron_job_creation_failed
+export -n luci_log luci_pid_action luci_errors luci_dnsmasq_status luci_good_entries luci_update_status luci_pkgs_install_failed luci_cron_job_creation_failed
 
 
 ### UTILITY FUNCTIONS
@@ -252,7 +252,7 @@ unset_vars()
 	local var
 	for var in "${@}"
 	do
-		[ -n "${var}" ] && eval "${var}="
+		[ -n "${var}" ] && export -n "${var}="
 	done
 	:
 }
@@ -308,7 +308,7 @@ find_files()
 
 	[ -n "${ff_found}" ] || return 2
 
-	eval "${ff_path_out_var:-_}"='${ff_found}' || return 1
+	export -n "${ff_path_out_var:-_}=${ff_found}" || return 1
 	:
 }
 
@@ -364,7 +364,7 @@ add2list() {
 		is_included "${a2l_val}" "${curr_list}" "${delim}" && continue
 		curr_list="${curr_list}${curr_list:+"${delim}"}${a2l_val}"
 	done
-	eval "${1}"='${curr_list}'
+	export -n "${1}=${curr_list}"
 	:
 }
 
@@ -374,15 +374,15 @@ add2list() {
 subtract_a_from_b() {
 	local sab_out="${3:-___dummy}" IFS="${DEFAULT_IFS}"
 	are_var_names_safe "${sab_out}" || return 1
-	case "${2}" in '') eval "${sab_out}=''"; return 0; esac
-	case "${1}" in '') eval "${sab_out}"='${2}'; [ ! "${2}" ]; return; esac
+	case "${2}" in '') export -n "${sab_out}="; return 0; esac
+	case "${1}" in '') export -n "${sab_out}=${2}"; [ ! "${2}" ]; return; esac
 	local _fs_su="${4:-" "}"
 	local e rv_su=0 _subt=
 	local IFS="${_fs_su}"
 	for e in ${2}; do
 		is_included "${e}" "${1}" "${_fs_su}" || { add2list _subt "${e}" "${_fs_su}"; rv_su=1; }
 	done
-	eval "${sab_out}"='$_subt'
+	export -n "${sab_out}=${_subt}"
 	return ${rv_su}
 }
 
@@ -445,7 +445,7 @@ read_str_from_file()
 
 	for rs_var in ${rs_outvars}
 	do
-		eval "${rs_var}=\"${rs_def_val}\""
+		export -n "${rs_var}=${rs_def_val}"
 	done
 
 	[ -n "${rs_quiet}" ] || reg_failure "Failed to read${rs_file_desc:+ }${rs_file_desc} file '${rs_file}'."
@@ -512,10 +512,9 @@ split_path()
 
 	sp_dir="${sp_path%"${sp_file}"}"
 	sp_dir="${sp_dir%"/"}"
-	: "${sp_ext}"
 
 	[ -n "${sp_dir}" ] && [ -n "${sp_fname}" ] &&
-	eval "${sp_dir_out_var}"='${sp_dir}' "${sp_fname_out_var}"='${sp_fname}' "${sp_ext_out_var}"='${sp_ext}'
+	export -n "${sp_dir_out_var}=${sp_dir}" "${sp_fname_out_var}=${sp_fname}" "${sp_ext_out_var}=${sp_ext}"
 }
 
 is_valid_dir()
@@ -655,10 +654,9 @@ get_abl_version()
 
 			res="$(${SED_CMD} -n "/^${key_ptrn}=/{s/^${key_ptrn}=//;s/#.*$//;s/\"//g;${migr_ptrn}p;:1 n;b1;}" "${3}")" &&
 				[ -n "${res}" ] || return 1
-			eval "res_${_par}=\"\${res}\""
+			export -n "res_${_par}=${res}"
 		done
-		eval "${1}=\"\${res_upd_channel}\" ${2}=\"\${res_version}\""
-		: "${res_upd_channel}" "${res_version}"
+		export -n "${1}=${res_upd_channel}" "${2}=${res_version}"
 	}
 
 	local gv_ver='' gv_upd_ch='' gv_rv=''
@@ -685,9 +683,8 @@ get_abl_version()
 	else
 		gv_rv=2
 	fi
-	: "${gv_ver}" "${gv_upd_ch}"
-	[ -n "${2}" ] && eval "${2}"='${gv_ver}'
-	[ -n "${3}" ] && eval "${3}"='${gv_upd_ch}'
+	export -n "${2:-_}=${gv_ver}"
+	export -n "${3:-_}=${gv_upd_ch}"
 	return ${gv_rv}
 }
 
@@ -724,13 +721,13 @@ detect_pkg_manager() {
 
 	if [ -n "$apk_present" ]
 	then
-		export \
+		export -n \
 			PKG_MANAGER=apk \
 			PKG_INSTALL_CMD="apk add" \
 			PKG_FILE_LIST_CMD="apk info --contents"
 	elif [ -n "$opkg_present" ]
 	then
-		export \
+		export -n \
 			PKG_MANAGER=opkg \
 			PKG_INSTALL_CMD="opkg install" \
 			PKG_FILE_LIST_CMD="opkg files"
@@ -752,7 +749,7 @@ report_utils()
 		case "${PKG_MANAGER}" in
 			opkg|apk)
 				get_pkg_name pkg_name "${util}" || return 1
-				eval "${util}_inst_tip=\" (${PKG_INSTALL_CMD} ${pkg_name})\"" ;;
+				export -n "${util}_inst_tip= (${PKG_INSTALL_CMD} ${pkg_name})" ;;
 			*)
 				unset "${util}_inst_tip" ;;
 		esac
@@ -819,7 +816,7 @@ detect_util()
 	try_detect_util &&
 	{
 		debug_msg "${du_out_var}=${_util_path}"
-		export "${du_out_var}=${_util_path}"
+		export -n "${du_out_var}=${_util_path}"
 		return 0
 	}
 
@@ -857,7 +854,7 @@ detect_main_utils()
 	done
 
 	[ -z "${failed_utils}" ] || { reg_failure "Can not find essential utilities: ${failed_utils}.";  return 1; }
-	export MAIN_UTILS_DETECTED=1
+	export -n MAIN_UTILS_DETECTED=1
 	:
 }
 
@@ -885,7 +882,7 @@ debug_msg()
 	case ${#} in
 		1) reg_msg -5 "${prefix} ${1}" ;;
 		*) reg_msg -5 "" "${prefix}" "${@}" ""
-	esac	
+	esac
 }
 
 # Depending on msg-specific log level, on global ${LOG_VERBOSITY} and on ${ABL_DEBUG}:
@@ -1159,7 +1156,7 @@ restart_dnsmasq()
 		restart_ok_ids \
 		restart_fail_ids='' \
 		ns ns4 ns6 \
-		host hostname \
+		host \
 		inst_init_pr \
 		new_run_state="${1:?}" restart_ok_ids_out_var="${2:-_}" set_ids="${3}"
 
@@ -1177,14 +1174,13 @@ restart_dnsmasq()
 
 	# TODO: async
 	reg_msg "Waiting for ${inst_init_pr}." || return 1
-	hostname="$(uci get system.@system[0].hostname)" # TODO: set this globally
 	for index in ${indexes}
 	do
 		eval \
 			"inst_name=\"\${DNSMASQ_INST_NAME_${index}}\"" \
 			"ns4=\"\${NS4_${index}}\"" \
 			"ns6=\"\${NS6_${index}}\""
-		
+
 		for ns in "${ns4}" "${ns6}"
 		do
 			[ -n "${ns}" ] && break
@@ -1194,9 +1190,10 @@ restart_dnsmasq()
 
 		for i in $(seq 1 60)
 		do
-			for host in "${hostname}" "localhost" "${ns}"
+			for host in "localhost" "${ns}" "${ABL_HOSTNAME}"
 			do
 				[ -n "${host}" ] || continue
+				debug_msg "Lookup cmd: '${NSLOOKUP_CMD} \"${host}\" \"${ns}\"'"
 				${NSLOOKUP_CMD:?} "${host}" "${ns}" &> /dev/null && continue 3
 			done
 			sleep 1
@@ -1223,7 +1220,7 @@ restart_dnsmasq()
 
 	subtract_a_from_b "${restart_fail_ids}" "${set_ids}" restart_ok_ids
 	[ -n "${restart_ok_ids}" ] && set_params "${restart_ok_ids}" run_state="${new_run_state}"
-	eval "${restart_ok_ids_out_var}=\"\${restart_ok_ids}\""
+	export -n "${restart_ok_ids_out_var}=${restart_ok_ids}"
 	return "${rv:-0}"
 }
 
@@ -1383,7 +1380,7 @@ kill_pids_recursive()
 		do
 			[ -d "/proc/${_pid}" ] && _pids="${_pids}${_pid} "
 		done
-		eval "${1}"='${_pids}'
+		export -n "${1}=${_pids}"
 	}
 
 	# recursively add child pid's of pid $2 to whitespace-separated list stored in var $1
@@ -1525,7 +1522,7 @@ check_libs()
 
 	files="$(print_file_list ALL)" && [ -n "${files}" ] ||
 		{ reg_failure "check_libs: failed to get file list."; return 1; }
-	
+
 	local IFS="${_NL_}"
 	for file in ${reg_file}${_NL_}${files}
 	do
@@ -1551,9 +1548,9 @@ source_libs()
 		read_str_from_file -f "${ABL_CFG_DIR}/ver_migration" -d -v "curr_upd_ch curr_ver" &&
 		[ -n "${curr_upd_ch}" ] && [ -n "${curr_ver}" ] &&
 		ver_upd_fixup "${curr_ver}" "${curr_upd_ch}" &&
-		local abl_cmd="${ABL_CMD}" &&
+		local abl_cmd="${CUR_CMD}" &&
 		. "${ABL_SOURCE_PATH_PREFIX}${ABL_SERVICE_PATH}" || return 1
-		ABL_CMD="${abl_cmd}"
+		CUR_CMD="${abl_cmd}"
 	fi
 
 	local file libs_missing='' libs_source_failed=''
@@ -1652,7 +1649,7 @@ del_addnmounts()
 			${AWK_CMD} -v quoted="'[^']*'" '
 				{
 					while (match($0,quoted)) { print substr($0,RSTART+1,RLENGTH-2); before=substr($0,1,RSTART-1); after=substr($0,RSTART+RLENGTH+1); $0 = before after }
-					for (i = 1; i <= NF; i++) print $i 
+					for (i = 1; i <= NF; i++) print $i
 				}
 			'
 		)"
@@ -1662,7 +1659,7 @@ del_addnmounts()
 			IFS="${DEFAULT_IFS}"
 			case "${path}" in
 				''|/) continue ;;
-				/bin/busybox*|/usr/bin/logger|*gzip*|*pigz*|*zstd*|*/"${BLOCKSET_BASE_FNAME:-???}"*|"${ABL_RUN_DIR:-???}"*|"${LOG_CMD%% *}"|"${compression_util%% *}") : ;;
+				/bin/busybox*|/usr/bin/logger|*gzip*|*pigz*|*zstd*|*/"${BLOCKSET_BASE_FNAME:?}"*|"${ABL_RUN_DIR:?}"*|"${LOG_CMD%% *}"|"${compression_util%% *}") : ;;
 				*) false # ignore addnmounts possibly created not by us
 			esac ||
 			{
@@ -1671,7 +1668,7 @@ del_addnmounts()
 				is_included "${dir}" "${persist_dirs}" "${_NL_}"
 			} ||
 			continue
-			log_msg -purple "Deleting addnmount entry for '${path}' for dnsmasq instance ${index}."
+			log_msg -purple "Deleting addnmount entry for dnsmasq instance ${index} (path: ${path})"
 			if uci -q del_list "dhcp.@dnsmasq[${index}].addnmount=${path}"
 			then
 				entry_deleted=1
@@ -1694,14 +1691,24 @@ del_addnmounts()
 }
 
 ### Commands init
-init_command()
+init_act()
 {
-	ABL_CMD="${1}"
-	local cfg_req='' global_cfg_req='' libs_req='' work_dir_req='' act_pr='' init_action_pr='' init_action_short='' \
-		log_rotated='' log_rotate_req='' set_ids_req='' find_set_configs_req=''
+	local \
+		cfg_req \
+		global_cfg_req \
+		libs_req \
+		work_dir_req \
+		log_rotate_req \
+		set_ids_req \
+		find_set_configs_req \
+		act_pr_tmp act_pr act_pr_short \
+		log_rotated \
+		cur_act="${1}"
 
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 		DO_DIALOGS=1
+
+	debug_msg "init_act '${cur_act}'"
 
 	detect_main_utils || graceful_exit 1
 
@@ -1717,7 +1724,7 @@ init_command()
 	fi
 
 	# set requirements
-	case ${ABL_CMD} in
+	case ${cur_act} in
 		enabled|enable|disable|uninstall) ;;
 		gen_stats|calculate_limits) libs_req=1 ;;
 		status) local SBE_STATUS=1; cfg_req=1 find_set_configs_req=1 set_ids_req=1 work_dir_req=1 ;;
@@ -1750,7 +1757,7 @@ init_command()
 			;;
 		reload|restart) ;;
 		update) work_dir_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
-		*) reg_failure "Invalid command '${ABL_CMD}'."; exit 1
+		*) reg_failure "Invalid command '${cur_act}'."; exit 1
 	esac
 
 	# source library scripts
@@ -1762,7 +1769,11 @@ init_command()
 	[ -n "${cfg_req}" ] && global_cfg_req=1
 
 	[ -z "${find_set_configs_req}" ] ||
+	{
 		find_set_configs || exit 1
+		[ -n "${PARAMS_RESET}" ] || unset_param_vars "${SET_IDS}"
+		PARAMS_RESET=1
+	}
 
 	[ -z "${global_cfg_req}" ] || [ -n "${CONFIG_LOADED}" ] || [ -s "${GLOBAL_CFG_FILE:?}" ] ||
 		{ reg_failure "Global config file '${GLOBAL_CFG_FILE}' is missing." "Use the command 'service adblock-lean gen_global_config' to create new config."; exit 1; }
@@ -1778,12 +1789,12 @@ init_command()
 	if [ -n "${LOCK_REQ}" ]
 	then
 		mk_lock || { local rv=${?}; unset LOCK_REQ CLEANUP_REQ; exit ${rv}; }
-		init_action_short="${ABL_CMD}"
+		act_pr_short="${cur_act}"
 	fi
 
 	# enable writing session log for commands which require it if we have the lock
 	case ${init_lock_status} in 0|3)
-		case "${ABL_CMD}" in
+		case "${cur_act}" in
 			boot|start|setup|gen_global_config|gen_blockset_config|rm_blockset_config|reload|restart)
 				export ABL_CURR_LOG_FILE="${ABL_SESSION_LOG_FILE}"
 				log_rotate_req=1
@@ -1802,36 +1813,36 @@ init_command()
 	if [ -n "${log_rotate_req}" ] && [ -n "${ABL_CURR_LOG_FILE}" ] && [ -z "${log_rotated}" ]
 	then
 		[ -f "${ABL_CURR_LOG_FILE}" ] && mv "${ABL_CURR_LOG_FILE}" "${ABL_CURR_LOG_FILE}.0"
-		case "${ABL_CMD}" in
+		case "${cur_act}" in
 			update) ABL_UPD_LOG_ROTATED=1 ;;
 			*) ABL_SESSION_LOG_ROTATED=1
 		esac
 	fi
 
 	local ver_pr="(version '${ABL_VERSION}')"
-	case ${ABL_CMD} in
-		boot) init_action_pr="Initializing adblock-lean ${ver_pr} at boot." ;;
-		start) init_action_pr="Starting adblock-lean ${ver_pr}." ;;
+	case ${cur_act} in
+		boot) act_pr="Initializing adblock-lean ${ver_pr} at boot." ;;
+		start) act_pr="Starting adblock-lean ${ver_pr}." ;;
 		status) print_msg -purple "" "adblock-lean ${ver_pr} status:" ;;
-		enable) init_action_pr="Enabling the adblock-lean service." ;;
-		disable) init_action_pr="Disabling the adblock-lean service." ;;
-		uninstall) act_pr=Uninstalling ;;
-		gen_stats) init_action_pr="Generating dnsmasq stats." ;;
-		upd_cron_job) act_pr="Updating cron job for" ;;
-		gen_persist_blockset) init_action_pr="Generating persistent blockset." ;;
+		enable) act_pr="Enabling the adblock-lean service." ;;
+		disable) act_pr="Disabling the adblock-lean service." ;;
+		uninstall) act_pr_tmp=Uninstalling ;;
+		gen_stats) act_pr="Generating dnsmasq stats." ;;
+		upd_cron_job) act_pr_tmp="Updating cron job for" ;;
+		gen_persist_blockset) act_pr="Generating persistent blockset." ;;
 	esac
-	[ -n "${init_action_pr}" ] || init_action_pr="${act_pr:+"${act_pr} adblock-lean."}"
+	[ -n "${act_pr}" ] || act_pr="${act_pr_tmp:+"${act_pr_tmp} adblock-lean."}"
 
-	if [ -n "${init_action_pr}" ]
+	if [ -n "${act_pr}" ]
 	then
-		reg_action -1 -purple "" "${init_action_pr}" || exit 1
-	elif [ -n "${init_action_short}" ]
+		reg_action -1 -purple "" "${act_pr}" || exit 1
+	elif [ -n "${act_pr_short}" ]
 	then
-		update_action_file "${init_action_short}"
+		update_action_file "${act_pr_short}"
 	fi
 
 	# report installed utils
-	if [ "${ABL_CMD}" = start ]
+	if [ "${cur_act}" = start ]
 	then
 		detect_pkg_manager
 		report_utils
@@ -1842,7 +1853,7 @@ init_command()
 	[ -z "${cfg_req}" ] || load_config || exit 1
 
 	# check dnsmasq, source custom script
-	case ${ABL_CMD} in
+	case ${cur_act} in
 		start|pause|resume)
 			if [ -n "${custom_script}" ]
 			then
@@ -1864,6 +1875,7 @@ get_gh_ref()
 {
 	set_res_vars()
 	{
+		unset_vars "${3}" "${4}" "${5}" || return 1
 		# validate resulting ref
 		case "${gr_ref}" in
 			*[^"${_NL_}"]*"${_NL_}"*[^"${_NL_}"]*)
@@ -1880,9 +1892,9 @@ get_gh_ref()
 			*) gr_version="${gr_ref}"
 		esac
 
-		eval "${3}"='${gr_version}' "${4}"='${ABL_GH_URL_API}/tarball/${gr_ref}' "${5}"='${gr_ver_type}' \
-			"prev_ref"='${gr_ref}' "prev_ver_type"='${gr_ver_type}' \
-			"prev_upd_channel"='${gr_channel}' "prev_version"='${gr_version}'
+		export -n "${3}=${gr_version}" "${4}=${ABL_GH_URL_API}/tarball/${gr_ref}" "${5}=${gr_ver_type}" \
+			"PREV_REF=${gr_ref}" "PREV_VER_TYPE=${gr_ver_type}" \
+			"PREV_UPD_CHANNEL=${gr_channel}" "PREV_VERSION=${gr_version}"
 	}
 
 	get_and_process_ref()
@@ -1918,7 +1930,6 @@ get_gh_ref()
 
 	local gr_branches='' gr_grep_ptrn='' gr_ref='' gr_ver_type='' gr_fetch_rv=0 \
 		gr_fetch_tmp_dir="${ABL_UPD_DIR}/ref_fetch" \
-		prev_ref prev_ver_type prev_upd_channel prev_version \
 		gr_channel="${1}" gr_version="${2}"
 
 	[ "$gr_channel" = release ] && gr_version="${gr_version#v}"
@@ -1927,21 +1938,16 @@ get_gh_ref()
 
 	unset_vars "${3}" "${4}" "${5}" || return 1
 
-	eval "prev_ref=\"\${prev_ref}\"
-		prev_ver_type=\"\${prev_ver_type}\"
-		prev_upd_channel=\"\${prev_upd_channel}\"
-		prev_version=\"\${prev_version}\""
-
 	# if commit hash is specified and it's 40-char long, use it directly without API query or cache check
 	case "${gr_channel}" in
 		snapshot|branch=*|commit=*) [ "${#gr_version}" = 40 ] && gr_ref="${gr_version}"
 	esac
 
 	# if previously stored data exists, use it without API query or cache check
-	if [ -z "${gr_ref}" ] && [ -n "${prev_ref}" ] && [ -n "${prev_ver_type}" ] && \
-		[ "${prev_upd_channel}" = "${gr_channel}" ] && [ "${gr_version}" = "${prev_version}" ]
+	if [ -z "${gr_ref}" ] && [ -n "${PREV_REF}" ] && [ -n "${PREV_VER_TYPE}" ] && \
+		[ "${PREV_UPD_CHANNEL}" = "${gr_channel}" ] && [ "${gr_version}" = "${PREV_VERSION}" ]
 	then
-			gr_ref="${prev_ref}" gr_ver_type="${prev_ver_type}"
+			gr_ref="${PREV_REF}" gr_ver_type="${PREV_VER_TYPE}"
 	elif [ -z "${gr_ref}" ]
 	then
 		# ref cache
@@ -1970,10 +1976,10 @@ get_gh_ref()
 			*)
 				# found cached query
 				if [ -z "${IGNORE_CACHE}" ] && [ -f "${cache_file}" ] &&
-					read -r prev_ref prev_ver_type < "${cache_file}" &&
-					[ -n "${prev_ref}" ] && [ -n "${prev_ver_type}" ]
+					read -r PREV_REF PREV_VER_TYPE < "${cache_file}" &&
+					[ -n "${PREV_REF}" ] && [ -n "${PREV_VER_TYPE}" ]
 				then
-					gr_ref="${prev_ref}" gr_ver_type="${prev_ver_type}"
+					gr_ref="${PREV_REF}" gr_ver_type="${PREV_VER_TYPE}"
 				else
 					rm -f "${cache_file:-???}"
 				fi
@@ -2174,7 +2180,9 @@ version()
 
 gen_blockset_config()
 {
-	init_command gen_blockset_config &&
+	local CUR_ACT=gen_blockset_config
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" &&
 	do_gen_blockset_config "${@}" &&
 	load_config &&
 	set_all_env &&
@@ -2183,7 +2191,9 @@ gen_blockset_config()
 
 rm_blockset_config()
 {
-	init_command rm_blockset_config &&
+	local CUR_ACT=rm_blockset_config
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" &&
 	do_rm_blockset_config "${@}"
 }
 
@@ -2212,7 +2222,9 @@ do_rm_blockset_config()
 
 gen_global_config()
 {
-	init_command gen_global_config &&
+	local CUR_ACT=gen_global_config
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" &&
 	reg_action -purple "" "Generating new default global config for adblock-lean." || return 1
 
 	# create cron job
@@ -2254,7 +2266,8 @@ setup()
 	# set luci feedback vars to failed, unset later upon success
 	luci_pkgs_install_failed=1 luci_cron_job_creation_failed=1
 
-	init_command setup &&
+	local CUR_ACT=setup
+	init_act "${CUR_ACT}" || return 1
 	do_setup
 }
 
@@ -2269,7 +2282,9 @@ print_log()
 
 upd_cron_job()
 {
-	init_command upd_cron_job || return 1
+	local CUR_ACT=upd_cron_job
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || return 1
 
 	local me="upd_cron_job" curr_cron cron_line
 
@@ -2301,7 +2316,8 @@ upd_cron_job()
 
 create_addnmounts()
 {
-	init_command create_addnmounts &&
+	local CUR_ACT=create_addnmounts
+	init_act "${CUR_ACT}" &&
 	get_dnsmasq_instances &&
 	check_dnsmasq_instances &&
 	do_create_addnmounts
@@ -2310,15 +2326,16 @@ create_addnmounts()
 select_dnsmasq_instances()
 {
 	local me=select_dnsmasq_instances
-	init_command "${me}" || return 1
-
 	local \
+		CUR_ACT="${me}" \
+		CUR_CMD="${me}" \
 		set_id \
 		cfg_path \
 		upd_cfg \
 		dnsmasq_indexes conf_dirs \
 		set_ids="${*:-"${SET_IDS}"}"
 
+	init_act "${CUR_ACT}" &&
 	do_select_dnsmasq_instances "${@}" || return 1
 	for set_id in ${set_ids}
 	do
@@ -2338,7 +2355,9 @@ select_dnsmasq_instances()
 # 1 - (optional) '-noexit' to return to the calling function
 gen_stats()
 {
-	init_command gen_stats || exit 1
+	local CUR_ACT=gen_stats
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || exit 1
 	local dnsmasq_pid IFS="${DEFAULT_IFS}"
 	dnsmasq_pid="$(${PIDOF_CMD} /usr/sbin/dnsmasq)" || { reg_failure "Failed to detect dnsmasq PID or dnsmasq is not running."; exit 1; }
 	kill -USR1 "${dnsmasq_pid}"
@@ -2349,7 +2368,9 @@ gen_stats()
 
 boot()
 {
-	init_command boot || exit 1
+	local CUR_ACT=boot
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || exit 1
 	[ "${boot_start_delay_s}" -gt 0 ] &&
 	{
 		reg_action -1 -purple "Sleeping for ${boot_start_delay_s} seconds."
@@ -2361,6 +2382,9 @@ boot()
 
 start()
 {
+	local CUR_ACT=start
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || exit 1
 	FAIL_STOP_REQ=1 do_start "${@}"
 	start_rv=${?}
 	check_for_updates
@@ -2374,7 +2398,7 @@ do_start()
 	BLOCKSETS_TO_INSTALL=''
 	BLOCKSETS_TO_GEN=''
 
-	init_command start || exit 1
+	local CUR_CMD=start
 
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
@@ -2461,7 +2485,7 @@ do_start()
 					rm_bk "${set_id}"
 				fi
 			else
-				log_msg -yellow "" "Previous blockset file does not exist - can not restore."
+				log_msg -yellow "" "Can not restore blockset '${set_id}' from backup because previous blockset file does not exist."
 			fi
 		done
 
@@ -2481,7 +2505,7 @@ do_start()
 
 	subtract_a_from_b "${fail_ids} ${restored_ids}" "${set_ids}" installed_ids
 
-	[ -n "${installed_ids}" ] && 
+	[ -n "${installed_ids}" ] &&
 	{
 		set_params "${installed_ids}" run_state=0
 		do_start_rv=0
@@ -2508,7 +2532,9 @@ do_start()
 
 gen_persist_blockset()
 {
-	init_command gen_persist_blockset || exit 1
+	local CUR_ACT=gen_persist_blockset
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || exit 1
 
 	local err_msg set_ids set_id ok_set_ids persist_mode persist_dir \
 		set_ids_arg="${*:-"${SET_IDS}"}"
@@ -2542,6 +2568,9 @@ gen_persist_blockset()
 
 stop()
 {
+	local CUR_ACT=stop
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" &&
 	do_stop "${@}"
 	exit ${?}
 }
@@ -2553,6 +2582,7 @@ do_stop()
 	[ -n "${IN_STOP}" ] && return 0 # prevent infinite loop
 
 	local \
+		CUR_CMD=stop \
 		ASSERT_NOEXIT=1 \
 		FAIL_STOP_REQ='' \
 		IFS="${DEFAULT_IFS}" \
@@ -2563,10 +2593,9 @@ do_stop()
 		set_id \
 		set_ids
 
-	debug_msg "" "STOP ${set_ids}, force all: ${force_stop_all}" ""
+	debug_msg "" "STOP ${*:-"${SET_IDS}"}, force all: ${force_stop_all}" ""
 
-	init_command stop || exit 1
-	load_config
+	[ -n "${CONFIG_LOADED}" ] || load_config
 
 	set_ids="${*:-"${SET_IDS}"}"
 	[ -n "${set_ids}" ] || force_stop_all=1
@@ -2620,6 +2649,7 @@ do_stop()
 	:
 }
 
+# Env vars: FORCE_STOP
 stop_blocksets()
 {
 	local set_id \
@@ -2638,7 +2668,7 @@ stop_blocksets()
 		get_params "${set_id}" run_state || return 1
 		[ "${run_state}" = 4 ] && [ -z "${FORCE_STOP}" ] &&
 		{
-			[ "${ABL_CMD}" = stop ] && reg_msg "Blockset ${blue}${set_id}${n_c} is already stopped."
+			[ "${CUR_ACT}" = stop ] && reg_msg "Blockset ${blue}${set_id}${n_c} is already stopped."
 			continue
 		}
 		add2list stop_ids "${set_id}" || return 1
@@ -2669,9 +2699,12 @@ stop_blocksets()
 
 restart()
 {
-	init_command restart || exit 1
-	KEEP_PERSIST=0 do_stop "${@}" || exit 1
+	local CUR_ACT=restart
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" &&
+	KEEP_PERSIST=0 do_stop "${@}" &&
 	start "${@}"
+	exit ${?}
 }
 
 reload() { restart "${@}"; }
@@ -2692,7 +2725,9 @@ status()
 			exit 2
 	esac
 
-	init_command status || exit 1
+	local CUR_ACT=status
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || exit 1
 
 	rc_enabled
 	case ${?} in
@@ -2789,13 +2824,14 @@ pause_resume()
 			resume)
 				rm_conf_scripts "${2}"
 				rm_blocksets "${2}"
-				unset_metadata "${2}"
+				unset_param_vars "${2}"
 		esac
 	}
 
 	local cmd="${1:?}"
+	local CUR_ACT="${cmd}" CUR_CMD="${cmd}"
 	shift
-	init_command "${cmd}" || exit 1
+	init_act "${CUR_ACT}" || exit 1
 
 	local \
 		set_ids='' \
@@ -2828,11 +2864,11 @@ pause_resume()
 
 	case "${cmd}" in
 		pause)
-			state_ok_pr="already paused" 
+			state_ok_pr="already paused"
 			state_changed_pr=paused
 			state_progr_pr=Pausing ;;
 		resume)
-			state_ok_pr="not paused" 
+			state_ok_pr="not paused"
 			state_changed_pr=resumed
 			state_progr_pr=Resuming
 	esac
@@ -2920,7 +2956,7 @@ pause_resume()
 
 	commit_metadata
 
-	[ -n "${ok_ids}" ] 
+	[ -n "${ok_ids}" ]
 }
 
 # 1 (optional): blockset IDs - defaults to all IDs
@@ -2939,7 +2975,13 @@ update()
 	# unset vars and functions from current version to have a clean slate with the new version
 	clean_abl_env()
 	{
-		unset action ABL_CMD ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED GLOBAL_ENV_SET MAIN_UTILS_DETECTED
+		local set_id
+		unset_param_vars "${SET_IDS}"
+		for set_id in ${SET_IDS}
+		do
+			unset "BL_ENV_SET_${set_id}"
+		done
+		unset action ABL_INIT_ACT ABL_CMD CUR_CMD CUR_ACT ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED BL_PARAMS_MAP VAR2CFG_MAP SET_IDS GLOBAL_ENV_SET SKIP_SET_ENV MAIN_UTILS_DETECTED
 		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 	}
 
@@ -2952,13 +2994,12 @@ update()
 		rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 	}
 
-	unexp_arg()
-	{
-		upd_failed "update: unexpected argument '${1}'."
-	}
+	unexp_arg() { upd_failed "update: unexpected argument '${1}'."; }
 
 	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
 		upd_channel='' req_upd_channel='' force_upd_channel='' upd_nostop=''
+	local CUR_ACT=update
+	local CUR_CMD=${CUR_ACT}
 
 	IGNORE_CACHE=
 	while getopts ":s:v:U:W:yfi" opt
@@ -2977,7 +3018,7 @@ update()
 	shift $((OPTIND-1))
 	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
 
-	init_command update || { upd_failed; return 1; }
+	init_act "${CUR_ACT}" || { upd_failed; return 1; }
 
 	[ -n "${upd_nostop}" ] || do_stop
 
@@ -3072,7 +3113,9 @@ update()
 uninstall()
 {
 	local ASSERT_NOEXIT=1
-	init_command uninstall || return 1
+	local CUR_ACT=uninstall
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || return 1
 	KEEP_PERSIST=0 do_stop
 	if rc_enabled
 		then
@@ -3138,7 +3181,9 @@ uninstall()
 
 enable()
 {
-	init_command enable || return 1
+	local CUR_ACT=enable
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || return 1
 	if rc_enabled
 	then
 		reg_msg -green "The adblock-lean service is already enabled."
@@ -3153,7 +3198,9 @@ enable()
 
 disable()
 {
-	init_command disable || return 1
+	local CUR_ACT=disable
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || return 1
 	local rv=0
 	if rc_enabled
 	then
@@ -3169,14 +3216,25 @@ disable()
 
 calculate_limits()
 {
-	init_command calculate_limits || return 1
+	local CUR_ACT=calculate_limits
+	local CUR_CMD=${CUR_ACT}
+	init_act "${CUR_ACT}" || return 1
 	CL_PRINT=1 CL_INTERACTIVE=1 do_calculate_limits "${@}"
 	exit ${?}
 }
 
 
+ABL_INIT_ACT=
+CUR_ACT=
+CUR_CMD=
 LIBS_SOURCED=
 MAIN_UTILS_DETECTED=
+
+PREV_REF=
+PREV_VER_TYPE=
+PREV_UPD_CHANNEL=
+PREV_VERSION=
+
 
 set_ansi
 
@@ -3186,18 +3244,17 @@ set_ansi
 # detect when sourced from update() in older versions
 check_func failsafe_log && UPD_SOURCED=1
 
-export ABL_INIT_ACTION="${action}"
+export -n ABL_INIT_ACT="${action}" # ${action} is set by procd
 
-# register 1st arg as $SH_CMD when called by 'sh /etc/init.d/adblock-lean'
+# register 1st arg as ${ABL_INIT_ACT} when called by 'sh /etc/init.d/adblock-lean'
 if [ "${0}" = "${ABL_SERVICE_PATH}" ] &&
 	{
 		is_included "${1}" "${ABL_BUILTIN_CMDS} ${ABL_CUSTOM_CMDS}" || { print_msg -err "Unexpected command '${1}'"; exit 1; }
 	}
 then
-	SH_CMD="${1}"
-	ABL_INIT_ACTION=${SH_CMD}
+	ABL_INIT_ACT="${1}"
 	shift
-	${SH_CMD} "${@}"
+	${ABL_INIT_ACT} "${@}"
 	exit ${?}
 fi
 
