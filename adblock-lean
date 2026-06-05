@@ -327,8 +327,8 @@ set_ansi()
 {
 	local IFS=" "
 	# shellcheck disable=SC2046
-	set -- $(printf '\033[0;31m \033[0;32m \033[1;34m \033[1;33m \033[0;35m \033[38;5;214m \033[0m \35 \t \r')
-	export red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" orange="${6}" n_c="${7}" _DELIM_="${8}" TAB="${9}" CR="${10}" CR_LF="${10}${_NL_}"
+	set -- $(printf '\033[0;31m \033[0;32m \033[0;34m \033[38;5;39m \033[1;33m \033[0;35m \033[38;5;214m \033[0m \35 \t \r')
+	export red="${1}" green="${2}" blue="${3}" lblue="${4}" yellow="${5}" purple="${6}" orange="${7}" n_c="${8}" _DELIM_="${9}" TAB="${10}" CR="${11}" CR_LF="${11}${_NL_}"
 }
 
 # checks if string $1 is included in space-separated list $2
@@ -472,7 +472,7 @@ pick_opt()
 	update_action_file "Waiting for user input in console" || return 1
 	while :
 	do
-		printf %s "${blue}${1//"|"/"${n_c}|${blue}"}${n_c}: " > "${MSGS_DEST}"
+		printf %s "${lblue}${1//"|"/"${n_c}|${lblue}"}${n_c}: " > "${MSGS_DEST}"
 		read -r REPLY
 		case "${REPLY}" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter ${1}" > "${MSGS_DEST}"; continue; esac
 		eval "case \"${REPLY}\" in
@@ -593,7 +593,7 @@ rm_blocksets()
 			[ "${curr_persist_path}" = "${bk_file}" ] && curr_persist_path=
 		}
 		[ -n "${install_path}${curr_path}${curr_persist_path}" ] || continue
-		[ -n "${curr_path}${curr_persist_path}" ] && reg_msg "Removing any existing files for blockset ${blue}${set_id}${n_c}."
+		[ -n "${curr_path}${curr_persist_path}" ] && reg_msg "Removing any existing files for blockset ${lblue}${set_id}${n_c}."
 		for rm_enum in curr install curr_persist
 		do
 			eval "rm_path=\"\${${rm_enum}_path}\""
@@ -742,8 +742,6 @@ report_utils()
 {
 	local util pkg_name awk_inst_tip='' sed_inst_tip='' sort_inst_tip=''
 
-	printf '\n' > "${MSGS_DEST}"
-
 	for util in ${RECOMMENDED_UTILS}
 	do
 		case "${PKG_MANAGER}" in
@@ -756,23 +754,23 @@ report_utils()
 	done
 
 	case "${AWK_CMD}" in
-		*gawk*) reg_msg -green "gawk detected so using gawk for fast (sub)domain match removal and entries packing." ;;
+		*gawk*) ;;
 		*)
-			reg_msg -yellow "gawk not detected so allowlist (sub)domains removal from blocksest will be slow and list processing will not be as efficient."
+			reg_msg -yellow "" "gawk not detected so allowlist (sub)domains removal from blockset will be slow and list processing will not be as efficient."
 			reg_msg "Consider installing the gawk package${awk_inst_tip} for faster processing and (sub)domain match removal."
 	esac
 
 	case "${SED_CMD}" in
-		*gnu*) reg_msg -green "GNU sed detected so list processing will be fast." ;;
+		*gnu*) ;;
 		*)
-			reg_msg -yellow "GNU sed not detected so list processing will be a little slower."
+			reg_msg -yellow "" "GNU sed not detected so list processing will be a little slower."
 			reg_msg "Consider installing the GNU sed package${sed_inst_tip} for faster processing." ;;
 	esac
 
 	case "${SORT_CMD}" in
-		*coreutils*) reg_msg -green "coreutils-sort detected so sort will be fast." ;;
+		*coreutils*) ;;
 		*)
-			reg_msg -yellow "coreutils-sort not detected so sort will be a little slower."
+			reg_msg -yellow "" "coreutils-sort not detected so sort will be a little slower."
 			reg_msg "Consider installing the coreutils-sort package${sort_inst_tip} for faster sort." ;;
 	esac
 }
@@ -934,7 +932,7 @@ reg_msg()
 			-action) [ -n "${LOCK_REQ}" ] && action_req=1 ;;
 			-err) err_l=err color="${red}" msgs_prefix="Error: " ;;
 			-warn) err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
-			-blue|-red|-green|-purple|-yellow|-orange) eval "color=\"\$${_arg#"-"}\"" ;;
+			-blue|-lblue|-red|-green|-purple|-yellow|-orange) eval "color=\"\$${_arg#"-"}\"" ;;
 			'') msgs="${msgs}dummy${_DELIM_}" ;;
 			*) append_msg "${_arg}"
 		esac
@@ -974,7 +972,7 @@ reg_msg()
 	if [ -n "${sys_log_req}" ] || [ -n "${log_file_req}" ] || [ -n "${report_req}" ] || [ -n "${action_req}" ]
 	then
 		msgs_nc="${msgs}"
-		for c in "${red}" "${green}" "${blue}" "${purple}" "${yellow}" "${orange}"
+		for c in "${red}" "${green}" "${blue}" "${lblue}" "${purple}" "${yellow}" "${orange}"
 		do
 			msgs_nc="${msgs_nc//"${c}"/}"
 		done
@@ -1107,7 +1105,7 @@ dnsmasq_stop_restart_shared()
 				[ -n "${inst_name}" ] || { reg_failure "Internal error: dnsmasq instance name unknown for index '${index}'."; false; }
 			}
 		then
-			inst_pr="dnsmasq instance ${blue}${inst_name}${n_c}"
+			inst_pr="dnsmasq instance ${lblue}${inst_name}${n_c}"
 		else
 			inst_pr="all dnsmasq instances"
 			inst_name=
@@ -1166,7 +1164,7 @@ restart_dnsmasq()
 
 	if [ -n "${inst_names}" ] && [ -n "${indexes}" ]
 	then
-		inst_init_pr="initialization of dnsmasq instances: ${blue}${inst_names// /"${n_c}, ${blue}"}${n_c}"
+		inst_init_pr="initialization of dnsmasq instances: ${lblue}${inst_names// /"${n_c}, ${lblue}"}${n_c}"
 	else
 		indexes=all
 		inst_init_pr="dnsmasq initialization"
@@ -1730,11 +1728,11 @@ init_act()
 		status) local SBE_STATUS=1; cfg_req=1 find_set_configs_req=1 set_ids_req=1 work_dir_req=1 ;;
 		upd_cron_job) cfg_req=1 ;;
 		setup|gen_global_config) find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
-		gen_blockset_config) global_cfg_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
-		rm_blockset_config) find_set_configs_req=1 set_ids_req=1 libs_req=1 LOCK_REQ=1 ;;
-		boot|gen_persist_blockset|create_addnmounts) cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
+		gen_blockset_config) work_dir_req=1 global_cfg_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
+		rm_blockset_config) libs_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
+		boot|create_addnmounts) cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
 		pause) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		start|resume) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
+		start|resume|gen_persist_blockset) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		stop)
 			check_lock
 			case ${?} in
@@ -2211,7 +2209,7 @@ do_rm_blockset_config()
 	persist_meta_file="${persist_dir}/${META_FNAME_PERSIST:?}" &&
 	read_blockset_metadata -persist "${persist_meta_file}" "${set_id}"
 
-	reg_action -purple "Removing blockset ${blue}${set_id}${n_c}."
+	reg_action -purple "Removing blockset ${lblue}${set_id}${n_c}."
 
 	FORCE_PERSIST_WRITE=1 do_stop "${set_id}" &&
 	rm -f "${cfg_path}" ||
@@ -2239,7 +2237,7 @@ gen_global_config()
 	then
 		print_msg "" "${purple}Cron job configuration:${n_c}" \
 			"A cron job can be created to enable automatic list updates." \
-			"The default schedule is '${blue}${def_upd_schedule}${n_c}': ${def_upd_schedule_desc}" \
+			"The default schedule is '${lblue}${def_upd_schedule}${n_c}': ${def_upd_schedule_desc}" \
 			"The cron job will run with an added random number of minutes." \
 			"" "Create cron job with default schedule for automatic list updates? (y|n)" \
 			"'n' will set the 'upd_schedule' setting to 'disable'. You can later create a cron job with a custom schedule as described in:" \
@@ -2308,7 +2306,7 @@ upd_cron_job()
 	cron_line="${upd_schedule} RANDOM_DELAY=1 ${ABL_CRON_CMD} 1>/dev/null"
 
 	#### Create new cron job
-	print_msg "Creating cron job with schedule '${blue}${upd_schedule}${n_c}'."
+	print_msg "Creating cron job with schedule '${lblue}${upd_schedule}${n_c}'."
 	printf '%s\n' "${curr_cron}${_NL_}${cron_line}" | $SED_CMD '/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	:
@@ -2422,6 +2420,7 @@ do_start()
 		install_path \
 		final_compr_to_file \
 		bk_file \
+		bk_cnt \
 		set_id set_ids \
 		set_ids_arg="${*:-"${SET_IDS}"}"
 
@@ -2467,19 +2466,16 @@ do_start()
 		BLOCKSETS_TO_INSTALL=
 		for set_id in ${fail_ids}
 		do
-			get_params "${set_id}" bk_file curr_cnt final_compr_to_file install_path
+			get_params "${set_id}" bk_file bk_cnt final_compr_to_file install_path
 			if [ -f "${bk_file}" ]
 			then
 				local bl_pr="blockset ${set_id} from backup"
 				log_msg -blue "" "Preparing to restore ${bl_pr}."
 
-				set_params "${set_id}" "install_cnt=${curr_cnt}" &&
-				if \
-					mv_blockset "${bk_file}" "${install_path}" "${final_compr_to_file}" "${set_id}" &&
-					add2list BLOCKSETS_TO_INSTALL "${set_id}" &&
-					subtract_a_from_b "${set_id}" "${fail_ids}" fail_ids
+				set_params "${set_id}" "install_cnt=${bk_cnt}" &&
+				if mv_blockset "${bk_file}" "${install_path}" "${final_compr_to_file}" "${set_id}"
 				then
-					:
+					add2list BLOCKSETS_TO_INSTALL "${set_id}"
 				else
 					reg_failure "Failed to restore ${bl_pr} file '${bk_file}'."
 					rm_bk "${set_id}"
@@ -2493,7 +2489,7 @@ do_start()
 			install_blocksets restored_ids _ "${BLOCKSETS_TO_INSTALL}"
 		subtract_a_from_b "${restored_ids}" "${fail_ids}" fail_ids
 
-		[ -n "${restored_ids}" ] && log_msg "${green}Successfully restored blocksets from backup${n_c}: ${blue}${restored_ids}${n_c}."
+		[ -n "${restored_ids}" ] && log_msg "${green}Successfully restored blocksets from backup${n_c}: ${lblue}${restored_ids// /"${n_c}, ${lblue}"}${n_c}."
 
 		[ -n "${fail_ids}" ] &&
 		{
@@ -2509,7 +2505,7 @@ do_start()
 	{
 		set_params "${installed_ids}" run_state=0
 		do_start_rv=0
-		reg_success "" "${green}Successfully installed blocksets${n_c}: ${blue}${installed_ids// /"${n_c}, ${blue}"}${n_c}."
+		reg_success "" "${green}Successfully installed blocksets${n_c}: ${lblue}${installed_ids// /"${n_c}, ${lblue}"}${n_c}."
 	}
 
 	commit_metadata || { do_stop; do_start_rv=1; }
@@ -2524,7 +2520,7 @@ do_start()
 	[ "${do_start_rv}" = 0 ] &&
 	{
 		get_elapsed_time_human elapsed_time "${initial_uptime_cs}"
-		reg_msg "" "Processing time for blockset generation and import: ${blue}${elapsed_time:-"${yellow}unknown"}${n_c}"
+		reg_msg "" "Processing time for blockset generation and import: ${lblue}${elapsed_time:-"${yellow}unknown"}${n_c}"
 	}
 
 	:
@@ -2559,10 +2555,7 @@ gen_persist_blockset()
 	done
 
 	[ -n "${ok_set_ids}" ] &&
-	{
-		printf '\n' > "${MSGS_DEST}"
 		FORCE_PERSIST_INSTALL=1 do_start "${ok_set_ids}"
-	}
 }
 
 
@@ -2668,7 +2661,7 @@ stop_blocksets()
 		get_params "${set_id}" run_state || return 1
 		[ "${run_state}" = 4 ] && [ -z "${FORCE_STOP}" ] &&
 		{
-			[ "${CUR_ACT}" = stop ] && reg_msg "Blockset ${blue}${set_id}${n_c} is already stopped."
+			[ "${CUR_ACT}" = stop ] && reg_msg "Blockset ${lblue}${set_id}${n_c} is already stopped."
 			continue
 		}
 		add2list stop_ids "${set_id}" || return 1
@@ -2676,7 +2669,7 @@ stop_blocksets()
 
 	[ -n "${stop_ids}" ] || return 0
 
-	reg_action -1 -purple "" "Stopping adblocking for blocksets: ${blue}${stop_ids// /"${n_c}, ${blue}"}${n_c}."
+	reg_action -1 -purple "" "Stopping adblocking for blocksets: ${lblue}${stop_ids// /"${n_c}, ${lblue}"}${n_c}."
 
 	rm_conf_scripts "${stop_ids}"
 	rm_blocksets "${stop_ids}"
@@ -2691,7 +2684,7 @@ stop_blocksets()
 	subtract_a_from_b "${stop_ok_ids}" "${stop_ids}" stop_fail_ids
 
 	[ -n "${stop_ok_ids}" ] &&
-		log_msg "Successfully stopped adblocking for blocksets: ${blue}${stop_ok_ids// /"${n_c}, ${blue}"}${n_c}."
+		log_msg "Successfully stopped adblocking for blocksets: ${lblue}${stop_ok_ids// /"${n_c}, ${lblue}"}${n_c}."
 
 	[ -n "${stop_fail_ids}" ] && reg_failure "Failed to stop adblocking for blocksets: ${stop_fail_ids// /, }."
 	return ${stop_rv}
@@ -2763,7 +2756,7 @@ status()
 		for set_id in ${set_ids}
 		do
 			run_state=1
-			set_id_pr="blockset ${blue}${set_id}${n_c}"
+			set_id_pr="blockset ${lblue}${set_id}${n_c}"
 			print_msg "" "Status of ${set_id_pr}:"
 			get_params "${set_id}" run_state curr_path curr_cnt persist_dir persist_mode &&
 			{
@@ -2879,7 +2872,7 @@ pause_resume()
 	do
 		get_params -f "${cmd}" "${set_id}" run_state || return 1
 
-		set_id_pr="blockset ${blue}${set_id}${n_c}"
+		set_id_pr="blockset ${lblue}${set_id}${n_c}"
 
 		case "${run_state}" in
 			0|3|4) ;;
@@ -2934,7 +2927,7 @@ pause_resume()
 
 	[ -n "${prep_ok_ids}" ] &&
 	{
-		reg_action -purple "" "${state_progr_pr} blocksets: ${blue}${prep_ok_ids// /"${n_c}, ${blue}"}${n_c}."
+		reg_action -purple "" "${state_progr_pr} blocksets: ${lblue}${prep_ok_ids// /"${n_c}, ${lblue}"}${n_c}."
 
 		case "${cmd}" in
 			pause) restart_dnsmasq 3 act_ok_ids "${prep_ok_ids}" ;;
@@ -2942,7 +2935,7 @@ pause_resume()
 		esac
 
 		[ -n "${act_ok_ids}" ] &&
-			log_msg -purple "" "Adblocking is now ${state_changed_pr} for blocksets: ${blue}${act_ok_ids// /"${n_c}, ${blue}"}${n_c}."
+			log_msg -purple "" "Successfully ${state_changed_pr} blocksets: ${lblue}${act_ok_ids// /"${n_c}, ${lblue}"}${n_c}."
 
 		add2list ok_ids "${act_ok_ids}"
 
