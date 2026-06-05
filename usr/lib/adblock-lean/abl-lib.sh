@@ -3,7 +3,7 @@
 # shellcheck source=/dev/null
 
 # silence shellcheck warnings
-: "${blue:=}" "${purple:=}" "${green:=}" "${red:=}" "${yellow:=}" "${n_c:=}"
+: "${blue:=}" "${lblue:=}" "${purple:=}" "${green:=}" "${red:=}" "${yellow:=}" "${orange:=}" "${n_c:=}"
 : "${luci_cron_job_creation_failed}" "${luci_pkgs_install_failed}" "${luci_tarball_url}"
 
 ### GLOBAL VARIABLES
@@ -273,7 +273,7 @@ do_create_addnmounts()
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
 		[ -n "${missing_addnm}" ] || return 0
-		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${blue}${missing_addnm}${n_c} (required for ${3})"
+		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${orange}${missing_addnm}${n_c} (required for ${3})"
 	}
 
 	local me=create_addnmounts \
@@ -483,8 +483,8 @@ do_setup()
 				*)
 					get_pkg_name pkg_name "${util}" || return 1
 					add2list missing_utils "${util}"
-					add2list missing_packages "${blue}${pkg_name}${n_c}" ", "
-					missing_utils_print="${missing_utils_print}${missing_utils_print:+, }${blue}GNU ${util}${n_c}"
+					add2list missing_packages "${orange}${pkg_name}${n_c}" ", "
+					missing_utils_print="${missing_utils_print}${missing_utils_print:+, }${lblue}GNU ${util}${n_c}"
 			esac
 		done
 
@@ -516,7 +516,7 @@ do_setup()
 				then
 					eval "util_size_B=\"\${${util}_size_B}\""
 					bytes2human util_size_human "${util_size_B}" || return 1
-					print_msg "Would you like to install ${blue}GNU ${util}${n_c} automatically? Installed size: ${yellow}${util_size_human}${n_c}. (y|n)"
+					print_msg "Would you like to install ${lblue}GNU ${util}${n_c} automatically? Installed size: ${yellow}${util_size_human}${n_c}. (y|n)"
 					pick_opt "y|n" || return 1
 				elif [ -n "${luci_install_packages}" ]
 				then
@@ -539,7 +539,7 @@ do_setup()
 			if [ "${DO_DIALOGS}" = 1 ]
 			then
 				bytes2human utils_size_human "${utils_size_B}" || return 1
-				print_msg "" "Selected packages: ${blue}${pkgs2install% }${n_c}" \
+				print_msg "" "Selected packages: ${lblue}${pkgs2install% }${n_c}" \
 					"Total installed size: ${yellow}${utils_size_human}${n_c}." \
 					"Proceed with packages installation? (y|n)"
 				pick_opt "y|n"
@@ -588,7 +588,7 @@ do_setup()
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg "" "Existing global config file found." "Generate [${blue}n${n_c}]ew config or use [${blue}e${n_c}]xisting config? (n|e)"
+			print_msg "" "Existing global config file found." "Generate [${lblue}n${n_c}]ew config or use [${lblue}e${n_c}]xisting config? (n|e)"
 			pick_opt 'n|e' || return 1
 		elif [ -n "${luci_use_old_config}" ]
 		then
@@ -688,7 +688,7 @@ do_setup()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		print_msg "" "${purple}Setup is complete.${n_c}" "" "${blue}Start adblock-lean now?${n_c} (y|n)"
+		print_msg "" "${purple}Setup is complete.${n_c}" "" "${lblue}Start adblock-lean now?${n_c} (y|n)"
 		pick_opt "y|n" || return 1
 		[ "${REPLY}" != y ] && return 0
 		echo > "${MSGS_DEST}"
@@ -1127,7 +1127,7 @@ do_gen_blockset_config()
 			bytes2human totalmem_human $((totalmem*1024)) || return 1
 			print_msg "" "Based on the total usable memory of this device (${totalmem_human}), the recommended preset is '${purple}${preset}${n_c}':"
 			GP_PRINT_DESC=1 GP_PRINT_VALS=1 get_preset "${preset}" || return 1
-			print_msg "" "[${blue}C${n_c}]onfirm this preset or [${blue}p${n_c}]ick another preset?"
+			print_msg "" "[${lblue}C${n_c}]onfirm this preset or [${lblue}p${n_c}]ick another preset?"
 			pick_opt "c|p"
 		else
 			REPLY=p
@@ -1161,7 +1161,7 @@ do_gen_blockset_config()
 	do_select_dnsmasq_instances "${set_id}" || return 1
 
 	get_params -f gen_blockset_config "${set_id}" dnsmasq_indexes conf_dirs &&
-	reg_action -purple "" "Generating new blockset config ${blue}${set_id}${n_c} from preset '${preset}'." &&
+	reg_action -purple "" "Generating new blockset config ${lblue}${set_id}${n_c} from preset '${preset}'." &&
 	new_cfg="$(print_def_cfg bl -i "${set_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
 	confirm_cfg_write "${set_id}" &&
 	write_config bl "${set_id}" "${new_cfg}" || return 1
