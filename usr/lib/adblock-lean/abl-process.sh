@@ -4,7 +4,7 @@
 # silence shellcheck warnings
 : "${list_part_failed_action:=}" \
 	"${max_download_retries:=}" "${deduplication:=}" \
-	"${blue:=}" "${green:=}" "${red:=}" "${n_c:=}"
+	"${blue:=}" "${lblue:=}" "${green:=}" "${red:=}" "${yellow:=}" "${orange:=}" "${n_c:=}"
 
 PROCESSED_PARTS_DIR="${ABL_TMP_DIR}/list_parts"
 
@@ -68,12 +68,12 @@ get_uptime_cs() {
 	is_uint "${gu_s}" "${gu_cs}" ||
 	{
 		reg_failure "Failed to get uptime from /proc/uptime."
-		eval "${1}"=0
+		export -n "${1}"=0
 		return 1
 	}
 	gu_cs="${gu_s:-0}${gu_cs:-00}"
 	gu_cs="${gu_cs#"${gu_cs%%[!0]*}"}"
-	eval "${1}"='${gu_cs:-0}'
+	export -n "${1}=${gu_cs:-0}"
 }
 
 # To use, first get initial uptime: 'get_uptime_cs INITIAL_UPTIME'
@@ -83,10 +83,9 @@ get_uptime_cs() {
 # 2 - initial uptime in centiseconds
 get_elapsed_time_cs() {
 	local ge_uptime_cs
-	: "${ge_uptime_cs}"
 	unset_vars "${1}" &&
 	get_uptime_cs ge_uptime_cs &&
-	eval "${1}"='$(( ge_uptime_cs - ${2:-ge_uptime_cs} ))'
+	export -n "${1}=$(( ge_uptime_cs - ${2:-ge_uptime_cs} ))"
 }
 
 # 1: var name for output
@@ -107,7 +106,7 @@ get_elapsed_time_human() {
 	esac
 	is_uint "${_e_m:-0}" "${_e_s}" "${_e_cs}" &&
 		_elapsed_human="${_e_m:+"${_e_m}m:"}${_e_s}.${_e_cs}s"
-	eval "${1}"='${_elapsed_human}'
+	export -n "${1}=${_elapsed_human}"
 }
 
 
@@ -183,7 +182,7 @@ get_list_url()
 
 	tolower list_id_lc "${list_id}"
 	case "${list_id_lc}" in hagezi:*|oisd:*|stevenblack:*) ;; *)
-		eval "${out_var}"='${list_id}'
+		export -n "${out_var}=${list_id}"
 		return 0
 	esac
 	list_id="${list_id_lc}"
@@ -234,7 +233,7 @@ get_list_url()
 	[ -n "${res_url}" ] || { reg_failure "Failed to construct URL for list identifier '${list_id}'."; return 1; }
 
 	: "${raw_suffix}" "${dnsmasq_suffix}" "${hosts_suffix}"
-	eval "${out_var}"='${res_url}'
+	export -n "${out_var}=${res_url}"
 }
 
 
@@ -245,11 +244,11 @@ get_list_url()
 get_curr_job_pid()
 {
 	local __pid='' pid_line=''
-	unset "${1}"
+	unset_vars "${1}" || return 1
 	IFS="${_NL_}" read -r -n512 -d '' _ _ _ _ _ pid_line _ < /proc/self/status
 	__pid="${pid_line##*[^0-9]}"
 	is_uint "${__pid}" || { reg_failure "Failed to get current job PID."; return 1; }
-	eval "${1}"='${__pid}'
+	export -n "${1}=${__pid}"
 }
 
 # sets var named $1 to remaining time based on $PROCESSING_TIMEOUT_S or to $IDLE_TIMEOUT_S, whichever is lower
@@ -258,7 +257,7 @@ get_curr_job_pid()
 get_remaining_time()
 {
 	local ct_curr_time_cs ct_curr_time_s ct_total_time_s ct_remaining_time_s
-	eval "${1}"=0
+	export -n "${1}"=0
 
 	get_uptime_cs ct_curr_time_cs || return 1
 	ct_curr_time_s=$((ct_curr_time_cs/100))
@@ -282,14 +281,16 @@ get_remaining_time()
 	esac
 
 	CT_PREV_TIME_S=${ct_curr_time_s}
-	eval "${1}"='${ct_remaining_time_s}'
+	export -n "${1}=${ct_remaining_time_s}"
 }
 
 # 1 - job PID
 # 2 - job return code
 handle_done_job()
 {
-	local done_pid="${1}" done_job_rv="${2}" done_id me=handle_done_job
+	local me=handle_done_job \
+		done_id fail_act_msg \
+		done_pid="${1}" done_job_rv="${2}"
 	[ -n "${done_pid}" ] || { reg_failure "${me}: received empty string for PID."; return 1; }
 	[ -n "${done_job_rv}" ] || { reg_failure "${me}: received empty string instead of return code for job ${done_pid}."; return 1; }
 
@@ -299,10 +300,11 @@ handle_done_job()
 	if [ "${done_job_rv}" != 0 ]
 	then
 		eval "done_id=\"\${JOB_PRINT_ID_${done_pid}}\""
+		fail_act_msg="Skipping file and continuing."
+		[ "${list_part_failed_action}" = "STOP" ] && fail_act_msg="list_part_failed_action is set to 'STOP', exiting."
 
-		reg_failure "Processing job (PID ${done_pid}) for list '${done_id}' returned error code '${done_job_rv}'."
-		[ "${list_part_failed_action}" = "STOP" ] && { log_msg "list_part_failed_action is set to 'STOP', exiting."; return 1; }
-		log_msg -yellow "Skipping file and continuing."
+		reg_failure "" "Processing job (PID ${done_pid:-unknown}) for list '${done_id:-unknown}' returned error code '${done_job_rv}'." "${yellow}${fail_act_msg}${n_c}"
+		[ "${list_part_failed_action}" = STOP ] && return 1
 	fi
 	:
 }
@@ -370,7 +372,7 @@ schedule_jobs()
 			process_list_part "${index}" "${list_type}" "${format}" "${origin}" "${print_id}" "${scheduler_pid}" &
 
 			RUNNING_PIDS="${RUNNING_PIDS} ${!}"
-			export "JOB_PRINT_ID_${!}"="${print_id}"
+			export -n "JOB_PRINT_ID_${!}"="${print_id}"
 		done
 	done
 
@@ -413,7 +415,7 @@ process_list_part()
 				bytes2human list_size_human "${part_size_B}" -p
 				get_pad stats_pad "${print_id}" 38
 				get_pad suffix_pad "${cnt_human}" 9
-				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${blue}${list_size_human}${n_c}  - ${suffix_pad}${blue}${cnt_human} entries${n_c} ]" ;;
+				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${orange}${list_size_human}${n_c}  - ${suffix_pad}${orange}${cnt_human} entries${n_c} ]" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] &&
@@ -469,7 +471,8 @@ process_list_part()
 	case_conv() { tr 'A-Z' 'a-z'; }
 
 	local me=process_list_part \
-		curr_job_pid msg msg_mirr pad \
+		curr_job_pid msg msg_mirr \
+		pad print_id_pad mirror_pad \
 		print_id origin \
 		list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
 		min_entries \
@@ -509,7 +512,7 @@ process_list_part()
 		part_compr_or_cat="cat" fetch_cmd \
 		format_conv_or_cat="cat" \
 		case_conv_or_cat="cat" \
-		pipeline_rv
+		pipeline_msg ucl_err pipeline_rv
 
 	case "${origin}" in
 		DL) fetch_cmd=dl_list ;;
@@ -545,15 +548,17 @@ process_list_part()
 			get_list_url list_path "${print_id}" "${format}" "${curr_mirror}" || finalize_job 1
 		fi
 
+		get_pad mirror_pad "${curr_mirror}" 8
 		msg_mirr=
-		[ -n "${curr_mirror}" ] && msg_mirr=" (mirror: ${curr_mirror})"
+		[ -n "${curr_mirror}" ] && msg_mirr=" [   mirror: ${orange}${curr_mirror}${n_c}${mirror_pad} ]"
 
 		rm -f "${rogue_el_file}" "${list_stats_file}" "${ucl_err_file}"
 
 		msg="Processing ${format} ${list_type}list"
 		get_pad pad "${msg}" 28
+		get_pad print_id_pad "${print_id}" 38
 
-		reg_msg "${msg}: ${pad}${blue}${print_id}${n_c}${msg_mirr}"
+		reg_msg "${msg}: ${pad}${lblue}${print_id}${n_c}${msg_mirr:+"${print_id_pad}"}${msg_mirr}"
 
 		# Download or cat the list
 		${fetch_cmd} "${list_path}" |
@@ -593,62 +598,59 @@ process_list_part()
 		# size-exceeded check
 		if ! [ $(( 1 + part_size_B / 1024)) -lt "${max_part_size_KB}" ]
 		then
-			reg_failure "Size of blockset part '${print_id}' reached the maximum value set in config (${max_part_size_KB} KB)."
+			reg_failure "" "Size of blockset part '${print_id}' reached the maximum value set in config (${max_part_size_KB} KB)."
 			log_msg "Consider either increasing this value in the config or removing the corresponding blockset part identifier or URL from config."
 			finalize_job 2
 		fi
 
-		[ "${pipeline_rv}" = 0 ] ||
-		{
-			reg_failure "Processing pipeline for list part '${print_id}' returned error code ${pipeline_rv}."
-			print_ucl_err
-			finalize_job 2
-		}
-
-		local dl_completed=
-		grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
-
-		# rogue elements check
-		if [ -s "${rogue_el_file}" ]
+		if [ "${pipeline_rv}" = 0 ]
 		then
-			read_str_from_file -d -n 512 -v "rogue_element" -f "${rogue_el_file}" -a 2 -D "rogue element"
-			local rogue_el_print
-			if [ -n "${rogue_element}" ]
+			local dl_completed=
+			grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
+
+			# rogue elements check
+			if [ -s "${rogue_el_file}" ]
 			then
-				rogue_el_print="Rogue element '${rogue_element}'"
-			else
-				rogue_el_print="Unknown rogue element"
+				read_str_from_file -d -n 512 -v "rogue_element" -f "${rogue_el_file}" -a 2 -D "rogue element"
+				local rogue_el_print
+				if [ -n "${rogue_element}" ]
+				then
+					rogue_el_print="Rogue element '${rogue_element}'"
+				else
+					rogue_el_print="Unknown rogue element"
+				fi
+
+				case "${rogue_element}" in *"${CR_LF}"*)
+					log_msg -warn "blockset part '${print_id}' contains Windows-format (CR LF) newlines." \
+						"This file needs to be converted to Unix newline format (LF)."
+						finalize_job 3 ;;
+				esac
+
+				log_msg -warn "${rogue_el_print} identified in blockset part '${print_id}'."
+				[ -n "${rogue_element}" ] || finalize_job 3
 			fi
 
-			case "${rogue_element}" in *"${CR_LF}"*)
-				log_msg -warn "blockset part '${print_id}' contains Windows-format (CR LF) newlines." \
-					"This file needs to be converted to Unix newline format (LF)."
-					finalize_job 3 ;;
-			esac
+			# min_entries check
+			int2human cnt_human "${part_cnt}" || finalize_job 1    # ${cnt_human} also used in finalize_job()
 
-			log_msg -warn "${rogue_el_print} identified in blockset part '${print_id}'."
-			[ -n "${rogue_element}" ] || finalize_job 3
+			local lines_cnt_low=''
+			if [ "${origin}" = DL ] && [ "${part_cnt}" -lt "${min_entries}" ]
+			then
+				lines_cnt_low=1
+				int2human min_entries_human "${min_entries}" || finalize_job 1
+				reg_failure "Entries count in downloaded blockset part '${print_id}' is ${cnt_human}, which is less than configured minimum: ${min_entries_human}."
+			fi
 		fi
 
-		# min_entries check
-		int2human cnt_human "${part_cnt}" || finalize_job 1    # ${cnt_human} also used in finalize_job()
-
-		local lines_cnt_low=''
-		if [ "${origin}" = DL ] && [ "${part_cnt}" -lt "${min_entries}" ]
-		then
-			lines_cnt_low=1
-			int2human min_entries_human "${min_entries}" || finalize_job 1
-			reg_failure "Entries count in downloaded blockset part '${print_id}' is ${cnt_human}, which is less than configured minimum: ${min_entries_human}."
-		fi
-
+		[ "${pipeline_rv}" = 0 ] || pipeline_msg="Processing pipeline returned code ${pipeline_rv}."
 		if [ "${origin}" = DL ] && { [ "${pipeline_rv}" != 0 ] || [ -n "${lines_cnt_low}" ] || [ -z "${dl_completed}" ] || [ -n "${rogue_element}" ] ; }
 		then
-			reg_failure "Failed download attempt for list '${print_id}'."
-			print_ucl_err
-			[ -s "${ucl_err_file}" ] && log_msg "uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
+			[ -s "${ucl_err_file}" ] && ucl_err=" uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
 			rm -f "${ucl_err_file}"
+			reg_failure "" "Failed download attempt for list '${print_id}'.${pipeline_msg:+ }${pipeline_msg}${ucl_err}"
 		elif [ "${pipeline_rv}" != 0 ]
 		then
+			reg_failure "" "${pipeline_msg}"
 			finalize_job 1
 		else
 			rm -f "${ucl_err_file}"
@@ -693,18 +695,18 @@ gen_set_parts()
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" || return 1
 
-	reg_action -1 -blue "" "Downloading and processing blockset parts (max parallel jobs: ${PARALLEL_JOBS})."
+	reg_action -1 -purple "" "Downloading and processing blockset parts (max parallel jobs: ${PARALLEL_JOBS})."
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	schedule_jobs "${list_types}" &
 	SCHEDULER_PID=${!}
 
 	wait "${SCHEDULER_PID}"
-	local sched_rv=${?}			
+	local sched_rv=${?}
 	SCHEDULER_PID=
 	[ ${sched_rv} = 0 ] || return ${sched_rv}
 
-	reg_msg "${green}Successfully generated preprocessed blockset files${n_c}."
+	reg_msg -green "" "Successfully generated preprocessed blockset files."
 	:
 }
 
@@ -716,7 +718,9 @@ gen_blocksets()
 		set_id \
 		run_state \
 		curr_path \
+		curr_cnt \
 		curr_persist_path \
+		curr_persist_cnt \
 		conn_check_req \
 		skip_load_stop \
 		file_to_bk \
@@ -740,7 +744,7 @@ gen_blocksets()
 		proc_set_ids='' \
 		blocksets_out_var="${1:?}" set_ids="${2:?}" initial_uptime_cs="${3:?}"
 
-	: "${skip_load_stop}"
+	: "${skip_load_stop}" "${bk_cnt}"
 
 	if [ "${force_unload}" = auto ]
 	then
@@ -769,7 +773,7 @@ gen_blocksets()
 			eval "local_list_path=\"\${local_${list_type}list_path_${set_id}}\""
 			[ "${list_type}" = ipv4_block ] ||
 			{ [ -n "${local_list_path}" ] && [ -f "${local_list_path}" ]; } ||
-				reg_msg "No local ${list_type}list identified for blockset ${blue}${set_id}${n_c}."
+				reg_msg "No local ${list_type}list identified for blockset ${lblue}${set_id}${n_c}."
 
 			for format in ${ALL_LIST_FORMATS:?}
 			do
@@ -843,12 +847,14 @@ gen_blocksets()
 
 	for set_id in ${set_ids}
 	do
-		reg_msg "Preparing to process blockset ${blue}${set_id}${n_c}."
+		reg_msg "Preparing to process blockset ${lblue}${set_id}${n_c}."
 
 		get_params -f "${me}" "${set_id}" run_state &&
 		get_params "${set_id}" \
 			curr_path \
+			curr_cnt \
 			curr_persist_path \
+			curr_persist_cnt \
 			bk_ext \
 			raw_block_lists \
 			dnsmasq_block_lists\
@@ -882,31 +888,36 @@ gen_blocksets()
 		if [ -n "${curr_path}" ]
 		then
 			file_to_bk=${curr_path}
+			bk_cnt=${curr_cnt}
 		elif [ -n "${curr_persist_path}" ]
 		then
 			file_to_bk=${curr_persist_path}
+			bk_cnt=${curr_persist_cnt}
 		fi
 
-		[ -f "${file_to_bk}" ] || file_to_bk=
-
-		if [ -n "${file_to_bk}" ] && is_dir_writable "${set_id}" "${file_to_bk%/*}"
+		if [ -n "${file_to_bk}" ] &&
+		{
+			[ -f "${file_to_bk}" ] || { file_to_bk=''; false; }
+		} &&
+		is_dir_writable "${set_id}" "${file_to_bk%/*}"
 		then
 			bk_file="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
-			reg_action "Creating backup of current blockset ${blue}${set_id}${n_c}." &&
+			reg_action "Creating backup of current blockset ${lblue}${set_id}${n_c}." &&
 			mv_blockset "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${set_id}" ||
 			{
 				reg_failure "Failed to create backup of current blockset file '${file_to_bk}'."
 				rm_if_writable "${set_id}" "${file_to_bk}"
 				bk_file=
+				bk_cnt=
 			}
 		elif [ -n "${file_to_bk}" ]
 		then
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 "No existing file found for blockset ${blue}${set_id}${n_c}."
+			reg_msg -2 "No existing file found for blockset ${lblue}${set_id}${n_c}."
 		fi
-		set_params "${set_id}" bk_file
+		set_params "${set_id}" bk_file bk_cnt
 	done
 
 	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${set_ids}"
@@ -1015,7 +1026,7 @@ gen_blockset()
 	# 2 - path to file
 	read_list_stats()
 	{
-		eval "${1:?}=0"
+		export -n "${1:?}=0"
 		read -r "${1?}" 2>/dev/null < "${2}"
 	}
 
@@ -1035,7 +1046,7 @@ gen_blockset()
 		out_f="${2:?}" \
 		set_indexes="${3:?}"
 
-	reg_action -purple "" "Generating blockset ${blue}${set_id}${n_c}."
+	reg_action -purple "" "Generating blockset ${lblue}${set_id}${n_c}."
 
 	get_params -f "${me}" "${set_id}" \
 		install_path \
@@ -1246,7 +1257,7 @@ gen_blockset()
 	fi
 
 	# check the final blockset with dnsmasq --test
-	reg_action -blue "Checking the processed blockset file with 'dnsmasq --test'." || return 1
+	reg_action "Checking the processed blockset file with 'dnsmasq --test'." || return 1
 
 	rm -f "${ERR_F}"
 
