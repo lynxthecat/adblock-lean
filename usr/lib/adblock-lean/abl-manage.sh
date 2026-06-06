@@ -95,7 +95,7 @@ get_cfg_opt()
 
 
 # silence shellcheck warnings
-: "${blue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
+: "${blue:=}" "${lblue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
 
 
 # UTILITY FUNCTIONS

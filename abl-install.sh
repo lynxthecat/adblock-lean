@@ -843,6 +843,7 @@ install_abl_files()
 		(
 			# Newline-separated list of options to migrate in the format <old_key=new_key>
 			migrate_opts_global='
+				list_part_failed_action=blockset_part_failed_action
 				cron_schedule=upd_schedule
 				unload_blocklist_before_update=unload_blockset_before_update
 				min_blocklist_part_line_count=min_block_part_entries

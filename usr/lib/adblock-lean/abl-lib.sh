@@ -1004,11 +1004,11 @@ print_def_cfg_global()
 	#   adblock-lean will be automatically restarted and will create a new blockset on the ramdisk.
 	PERSIST_HOTPLUG_SCRIPT="0" @ 0|1
 
-	# List part failed action:
+	# Blockset part failed action:
 	# This option applies to blockset parts which failed to download or couldn't pass validation checks
 	# SKIP - skip failed blockset file part and continue blockset generation
 	# STOP - stop blockset generation (and fall back to previous blockset if available)
-	list_part_failed_action="SKIP" @ SKIP|STOP
+	blockset_part_failed_action="SKIP" @ SKIP|STOP
 
 	# Mininum number of entries in any individual downloaded part
 	min_block_part_entries="1" @ uint

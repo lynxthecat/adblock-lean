@@ -2,11 +2,11 @@
 # shellcheck disable=SC3043,SC3001,SC2016,SC2015,SC3020,SC2181,SC2019,SC2018,SC3045,SC3003,SC3060,SC3057,SC3040
 
 # silence shellcheck warnings
-: "${list_part_failed_action:=}" \
+: "${blockset_part_failed_action:=}" \
 	"${max_download_retries:=}" "${deduplication:=}" \
 	"${blue:=}" "${lblue:=}" "${green:=}" "${red:=}" "${yellow:=}" "${orange:=}" "${n_c:=}"
 
-PROCESSED_PARTS_DIR="${ABL_TMP_DIR}/list_parts"
+PROCESSED_PARTS_DIR="${ABL_TMP_DIR}/blockset_parts"
 
 ERR_F="${ABL_TMP_DIR}/process-errors"
 
@@ -301,10 +301,10 @@ handle_done_job()
 	then
 		eval "done_id=\"\${JOB_PRINT_ID_${done_pid}}\""
 		fail_act_msg="Skipping file and continuing."
-		[ "${list_part_failed_action}" = "STOP" ] && fail_act_msg="list_part_failed_action is set to 'STOP', exiting."
+		[ "${blockset_part_failed_action}" = "STOP" ] && fail_act_msg="blockset_part_failed_action is set to 'STOP', exiting."
 
 		reg_failure "" "Processing job (PID ${done_pid:-unknown}) for list '${done_id:-unknown}' returned error code '${done_job_rv}'." "${yellow}${fail_act_msg}${n_c}"
-		[ "${list_part_failed_action}" = STOP ] && return 1
+		[ "${blockset_part_failed_action}" = STOP ] && return 1
 	fi
 	:
 }
@@ -369,7 +369,7 @@ schedule_jobs()
 			assert_set "F_schedule_jobs" format origin print_id || finalize_scheduler 1
 
 			RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
-			process_list_part "${index}" "${list_type}" "${format}" "${origin}" "${print_id}" "${scheduler_pid}" &
+			process_set_part "${index}" "${list_type}" "${format}" "${origin}" "${print_id}" "${scheduler_pid}" &
 
 			RUNNING_PIDS="${RUNNING_PIDS} ${!}"
 			export -n "JOB_PRINT_ID_${!}"="${print_id}"
@@ -404,7 +404,7 @@ schedule_jobs()
 # 2 - Download failure
 # 3 - Processing failure
 # shellcheck disable=SC2317,SC2329
-process_list_part()
+process_set_part()
 {
 	finalize_job()
 	{
@@ -470,7 +470,7 @@ process_list_part()
 
 	case_conv() { tr 'A-Z' 'a-z'; }
 
-	local me=process_list_part \
+	local me=process_set_part \
 		curr_job_pid msg msg_mirr \
 		pad print_id_pad mirror_pad \
 		print_id origin \
@@ -1001,7 +1001,7 @@ gen_blockset()
 	# 2 - extension incl '.'
 	# 2 - list type (block|ipv4_block)
 	# 3 - decompression command or 'cat'
-	print_list_parts()
+	print_set_parts()
 	{
 		local index \
 			set_id="${1}" ext="${2}" list_type="${3}" print_cmd="${4}" set_indexes="${5}"
@@ -1123,7 +1123,7 @@ gen_blockset()
 			set_params "${set_id}" use_ipv4_blocklist=1
 		elif [ "${list_type}" = allow ]
 		then
-			print_list_parts "${set_id}" "${INTERM_COMPR_EXT}" allow "${part_extr_or_cat_stdout}" "${set_indexes}" |
+			print_set_parts "${set_id}" "${INTERM_COMPR_EXT}" allow "${part_extr_or_cat_stdout}" "${set_indexes}" |
 			# optional deduplication
 			${dedup_cmd_or_cat} >> "${PROCESSED_PARTS_DIR}/allow" || return 1
 			reg_msg "Will remove any (sub)domain matches present in the allowlist from the blockset and append corresponding server entries to the blockset."
@@ -1146,7 +1146,7 @@ gen_blockset()
 	{
 		{
 			# print blockset parts
-			print_list_parts "${set_id}" "${INTERM_COMPR_EXT}" block "${part_extr_or_cat_stdout}" "${set_indexes}" |
+			print_set_parts "${set_id}" "${INTERM_COMPR_EXT}" block "${part_extr_or_cat_stdout}" "${set_indexes}" |
 			# optional deduplication
 			${dedup_cmd_or_cat} |
 
@@ -1176,7 +1176,7 @@ gen_blockset()
 			# print ipv4 blockset parts
 			if [ -n "${use_ipv4_blocklist}" ]
 			then
-				print_list_parts "${set_id}" "${INTERM_COMPR_EXT}" ipv4_block "${part_extr_or_cat_stdout}" "${set_indexes}" |
+				print_set_parts "${set_id}" "${INTERM_COMPR_EXT}" ipv4_block "${part_extr_or_cat_stdout}" "${set_indexes}" |
 				# optional deduplication
 				${dedup_cmd_or_cat} |
 				tee >(wc -w > "${ABL_TMP_DIR}/ipv4_block_stats") |
