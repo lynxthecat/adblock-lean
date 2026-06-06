@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC2016,SC3060,SC3040,SC3003,SC3020
+# shellcheck disable=SC3043,SC2016,SC3060,SC3040,SC3003,SC3020,SC3045
 # shellcheck source=/dev/null
 
 META_FNAME="blockset-metadata"
@@ -41,8 +41,9 @@ BL_PARAMS_MAP="
 	${VAR2CFG_MAP}
 	run_state=RUN_STATE
 	skip_load_stop=SKIP_LOAD_STOP
-	bk_ext=BK_EXT
 	bk_file=BK_FILE
+	bk_cnt=BK_CNT
+	bk_ext=BK_EXT
 	curr_persist_path=PERSIST_PATH
 	curr_persist_cnt=PERSIST_CNT
 	curr_persist_md5=PERSIST_MD5
@@ -82,7 +83,6 @@ VAR2CFG_CLAUSES="$(
 get_cfg_opt()
 {
 	local _cfg_opt
-	: "${_cfg_opt}"
 	eval "
 		case \"${2:?}\" in
 			${VAR2CFG_CLAUSES}
@@ -90,7 +90,7 @@ get_cfg_opt()
 		esac
 	"
 
-	eval "${1:?}"='${_cfg_opt}'
+	export -n "${1:?}=${_cfg_opt}"
 }
 
 
@@ -117,8 +117,7 @@ get_compr_spec()
 		*.zst) gcs_ext=.zst gcs_util=zstd ;;
 		*.*) reg_failure "Unexpected extension '${gcs_file##*.}' in file '${gcs_path}'."; return 1
 	esac
-	: "${gcs_ext}" "${gcs_util}"
-	eval "${extn_out_var}"='${gcs_ext}' "${util_out_var}"='${gcs_util}'
+	export -n "${extn_out_var}=${gcs_ext}" "${util_out_var}=${gcs_util}"
 }
 
 get_compr_util_spec()
@@ -155,8 +154,7 @@ get_compr_util_spec()
 		fi
 	}
 
-	eval "${util_path_out_var}"='${gcu_util_path}' "${ext_out_var}"='${gcu_ext}'
-	: "${gcu_util_path}" "${gcu_ext}"
+	export -n "${util_path_out_var}=${gcu_util_path}" "${ext_out_var}=${gcu_ext}"
 
 	:
 }
@@ -191,9 +189,8 @@ try_compress()
 			return 1
 		}
 
-	[ -n "${out_file_var}" ] && eval "${out_file_var}"='${tc_in_file}${tc_ext}'
+	[ -n "${out_file_var}" ] && export -n "${out_file_var}=${tc_in_file}${tc_ext}"
 
-	: "${tc_ext}"
 	:
 }
 
@@ -288,7 +285,7 @@ get_dnsmasq_instances() {
 
 	index=0
 	config_foreach add_conf_dir_and_addnmounts dnsmasq
-	export ADDNMOUNTS_SET=1
+	export -n ADDNMOUNTS_SET=1
 
 	# gather conf dirs from /tmp/
 	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
@@ -363,9 +360,9 @@ get_dnsmasq_instances() {
 			add2list ALL_CONF_DIRS "${dir}" "${_NL_}"
 		done
 
-		eval "DNSMASQ_INST_NAME_${index}"='${instance}' \
-			"CONF_DIRS_${index}"='${conf_dirs}' \
-			"IFACES_${index}"='${ifaces}'
+		export -n "DNSMASQ_INST_NAME_${index}=${instance}" \
+			"CONF_DIRS_${index}=${conf_dirs}" \
+			"IFACES_${index}=${ifaces}"
 		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
 		index=$((index+1))
 	done
@@ -373,7 +370,7 @@ get_dnsmasq_instances() {
 	cnt_lines DNSMASQ_INSTANCES_CNT "${running_instances}"
 	dbg_on
 
-	export DNSMASQ_INST_SET=1
+	export -n DNSMASQ_INST_SET=1
 
 	:
 }
@@ -517,6 +514,8 @@ do_select_dnsmasq_instances() {
 		set_id set_ids \
 		set_ids_arg="${1:-"${SET_IDS}"}"
 
+	local CUR_CMD="${me}"
+
 	assert_set "F_${me}" SET_IDS || return 1
 
 	get_valid_set_ids set_ids "${set_ids_arg}" || return 1
@@ -577,7 +576,7 @@ do_select_dnsmasq_instances() {
 					reg_msg "${index}. Instance '${instance}': network interfaces '${ifaces}'"
 					indexes_regex="${indexes_regex}${indexes_regex:+|}${index}"
 				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking for blockset ${blue}${set_id}${n_c}, or 'a' to abort." \
+				print_msg "" "Please select which dnsmasq instance should have active adblocking for blockset ${lblue}${set_id}${n_c}, or 'a' to abort." \
 					"To adblock on multiple instances, enter their indexes separated by whitespaces."
 				while :
 				do
@@ -607,7 +606,7 @@ do_select_dnsmasq_instances() {
 			add2list select_ifaces "${ifaces}"
 		done
 
-		log_msg "Selected dnsmasq indexes for blockset ${blue}${set_id}${n_c}: '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
+		log_msg "Selected dnsmasq indexes for blockset ${lblue}${set_id}${n_c}: '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
 
 		for index in ${select_indexes}
 		do
@@ -803,8 +802,9 @@ get_dnsmasq_ips()
 
 		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: no IP addresses detected for dnsmasq instance with index ${index}."; return 1; }
 
-		eval "NS4_${index}"='${inst_ip_4}'
-		eval "NS6_${index}"='${inst_ip_6}'
+		export -n \
+			"NS4_${index}=${inst_ip_4}" \
+			"NS6_${index}=${inst_ip_6}"
 	done
 
 	:
@@ -813,7 +813,33 @@ get_dnsmasq_ips()
 
 ### GENERAL HELPER FUNCTIONS
 
-# Looks for blockset-*.conf files and populates SET_IDS global var
+# shellcheck disable=SC2046,SC2086
+unset_param_vars()
+{
+	[ -n "${BL_PARAMS_MAP}" ] && [ -n "${1}" ] || return 0
+	local vars
+	vars=$(
+		${AWK_CMD:?} -v MAP="${BL_PARAMS_MAP}" -v IDS="${1}" \
+		'
+			BEGIN{
+				split(MAP,map_in,"\n")
+				split(IDS,ids_in," ")
+				for (ind in ids_in) {if (ids_in[ind]) ids_arr[ids_in[ind]]}
+				for (ind in map_in) {
+					param_var=map_in[ind]
+					sub(/^.*=/,"",param_var)
+					sub(/[ \t]+$/,"",param_var)
+					if (!param_var) continue
+					for (id in ids_arr) {if (id) printf "%s ", param_var "_" id}
+				}
+			}
+		'
+	)
+	debug_msg "unset ${vars}"
+	unset ${vars}
+}
+
+# Looks for blockset-*.conf files and populates SET_IDS, SET_PARAM_VARS global vars
 find_set_configs()
 {
 	# shellcheck disable=SC2329
@@ -830,7 +856,7 @@ find_set_configs()
 		add2list SET_IDS "${cfg_id}"
 	}
 
-	export SET_IDS=
+	export -n SET_IDS=
 
 	FF_EXEC="append_set_id {}" \
 		find_files _ "${ABL_CFG_DIR:?}" "blockset-" "*" ".conf"
@@ -853,7 +879,7 @@ mv_blockset()
 	assert_set "F_${me}" mv_src_f mv_dst_f &&
 	try_mv_blockset "${@}"
 	mv_rv=${?}
-	
+
 	debug_msg "${me} end"
 	[ "${mv_rv}" = 0 ] &&
 		{ set_params "${mv_set_id}" curr_path="${mv_dst_f}"; return 0; }
@@ -1003,13 +1029,10 @@ check_persist_blockset()
 	} &&
 
 	{
-		int2human curr_persist_cnt_human "${curr_persist_cnt}" &&
-		int2human min_good_entries_human "${min_good_entries}" || return 1
-	} &&
-
-	{
 		[ "${curr_persist_cnt}" -ge "${min_good_entries}" ] ||
 			{
+				int2human curr_persist_cnt_human "${curr_persist_cnt}"
+				int2human min_good_entries_human "${min_good_entries}" || return 1
 				reg_failure "Entries count (${curr_persist_cnt_human}) in the persistent blockset '${curr_persist_path}' is below the minimum value set in config (${min_good_entries_human})."
 				false
 			}
@@ -1038,7 +1061,7 @@ check_active_blockset()
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
 		set_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
 
-	reg_action -purple "Checking if blockset ${blue}${set_id}${n_c} is active." || return 1
+	reg_action -purple "Checking if blockset ${lblue}${set_id}${n_c} is active." || return 1
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
@@ -1168,15 +1191,18 @@ set_global_env()
 		compr_ext \
 		cpu_cnt
 
-	export \
+	export -n \
 		PARALLEL_JOBS='' \
 		INTERM_COMPR_OR_CAT_STDOUT="${CAT_CMD}" \
 		INTERM_COMPR_EXT='' \
 		INTERM_COMPR_TO_FILE=''
 
-	debug_msg "Preparing environment." 
+	debug_msg "Preparing environment."
 
 	set -o pipefail
+
+	[ -n "${ABL_HOSTNAME_SET}" ] || ABL_HOSTNAME="$(uci get system.@system[0].hostname)"
+	export -n ABL_HOSTNAME ABL_HOSTNAME_SET=1
 
 	# Parallel processing
 	case "${MAX_PARALLEL_JOBS}" in
@@ -1204,7 +1230,7 @@ set_global_env()
 	# check for missing addnmounts during version update
 	if [ -n "${ABL_IN_INSTALL:-"${upd_channel}"}" ] && [ -n "${SET_IDS}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
 	then
-		export ADDNMOUNTS_CHECKED=1
+		export -n ADDNMOUNTS_CHECKED=1
 		do_create_addnmounts
 	fi
 
@@ -1218,8 +1244,8 @@ set_global_env()
 
 	debug_msg "compr_util_path: '${compr_util_path}', compr_ext: '${compr_ext}'"
 
-	export GLOBAL_ENV_SET=1
-	[ "${ABL_CMD}" = start ] && export SKIP_SET_ENV=1
+	export -n GLOBAL_ENV_SET=1
+	[ "${CUR_ACT}" = start ] && export -n SKIP_SET_ENV=1
 
 	debug_msg "End set_global_env()"
 
@@ -1236,13 +1262,9 @@ set_blocksets_env()
 		compr_util_path='' compr_ext='' compr_cmd_to_file='' compr_cmd_stdout='' extr_cmd_stdout='' \
 		set_ids="${*:-"${SET_IDS}"}"
 
-	debug_msg "" "${me} start, blocksets '${set_ids}'"
+	debug_msg "" "${me} start, set_ids '${set_ids}'"
 
-	for set_id in ${set_ids}
-	do
-		assert_known_set_id "${set_id}" "${me}" || continue
-		add2list valid_ids "${set_id}"
-	done
+	get_valid_set_ids valid_ids "${set_ids}"
 
 	[ -n "${valid_ids}" ] || {
 		[ -z "${set_ids}" ] && return 0
@@ -1308,7 +1330,7 @@ set_bl_env()
 			conf_dir conf_dirs \
 			set_id="${1:?}" state_out_var="${2:-_}" path_out_var="${3:-_}" single_inst_out_var="${4:-_}"
 
-		debug_msg "Checking state of blockset ${blue}${set_id}${n_c}."
+		debug_msg "Checking state of blockset ${lblue}${set_id}${n_c}."
 
 		unset_vars "${state_out_var}" "${path_out_var}" "${single_inst_out_var}" &&
 		assert_set "F_${me}" GLOBAL_ENV_SET || return 1
@@ -1385,7 +1407,7 @@ set_bl_env()
 			reg_failure "Unexpected state for blockset '${set_id}' (path '${grs_curr_path}')." \
 				"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${grs_single_inst};"
 
-		eval "${state_out_var}"='${grs_state}' "${path_out_var}"='${grs_curr_path}' "${single_inst_out_var}"='${grs_single_inst}'
+		export -n "${state_out_var}=${grs_state}" "${path_out_var}=${grs_curr_path}" "${single_inst_out_var}=${grs_single_inst}"
 
 		debug_msg "${me}: set_id:${set_id}; run_state:${grs_state}; check res:${bl_check_res};"
 		set_params "${set_id}" run_state="${grs_state}" || return 1
@@ -1398,7 +1420,7 @@ set_bl_env()
 	local me=set_bl_env \
 		IFS="${DEFAULT_IFS}" \
 		\
-		set_id_pr="${blue}${set_id}${n_c}" \
+		set_id_pr="${lblue}${set_id}${n_c}" \
 		\
 		dnsmasq_indexes \
 		conf_dirs \
@@ -1444,13 +1466,13 @@ set_bl_env()
 		\
 		start_action=gen
 
-	eval "BL_ENV_SET_${set_id}="
+	export -n "BL_ENV_SET_${set_id}="
 
 	# Check addnmounts, possibility of final compression, multiple dnsmasq instances and persistent blockset creation,
 	#   get final blockset paths,
 	#   compression util path and extension
 
-	debug_msg "Preparing environment for blockset ${set_id}." "ABL_CMD: ${ABL_CMD}"
+	debug_msg "Preparing environment for blockset ${set_id}." "CUR_ACT: ${CUR_ACT}" "CUR_CMD: ${CUR_CMD}"
 
 	get_params -f "${me}" "${set_id}" \
 		dnsmasq_indexes \
@@ -1529,7 +1551,7 @@ set_bl_env()
 	case "${run_state}" in
 		0|3|4) ;;
 		*)
-			case "${ABL_CMD}" in start|pause|resume)
+			case "${CUR_CMD}" in start|pause|resume)
 				KEEP_PERSIST=1 stop_blocksets "${set_id}"
 				CA_NOERR=1 get_run_state "${set_id}" run_state curr_path curr_single_instance || return 1
 			esac
@@ -1538,7 +1560,7 @@ set_bl_env()
 
 	# Persistent blockset
 	case "${persist_mode}" in manual|managed)
-		case "${ABL_CMD}" in start|pause|resume|status)
+		case "${CUR_ACT}" in start|pause|resume|status|gen_persist_blockset)
 			if check_persist_dir "${set_id}"
 			then
 				local cat_addnm=''
@@ -1562,8 +1584,9 @@ set_bl_env()
 		esac
 	esac
 
+	local cpb_rv=1
 	[ "${persist_avail}" = 1 ] ||
-	case "${ABL_CMD}" in
+	case "${CUR_ACT}" in
 		stop|pause) : ;;
 		*) false
 	esac &&
@@ -1571,23 +1594,24 @@ set_bl_env()
 			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}." "*" ||
 			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}"
 			set_params "${set_id}" curr_persist_path
+			[ -n "${curr_persist_path}" ] &&
+			check_persist_blockset "${set_id}" "${final_compr_ext}"
+			cpb_rv=${?}
 		}
 
 	if [ "${persist_avail}" = 1 ]
 	then
 		if \
-			case "${ABL_CMD}" in
+			[ "${ABL_INIT_ACT}" = boot ] ||
+			case "${CUR_ACT}" in
 				status|pause) : ;;
 				resume) [ "${run_state}" = 3 ] && is_persist "${curr_path}" "${set_id}" ;;
 				*) false
-			esac ||
-			[ "${ABL_INIT_ACTION}" = boot ]
+			esac
 		then
-			check_persist_blockset "${set_id}" "${final_compr_ext}"
-			local cpb_rv=${?}
-			if [ ${cpb_rv} = 0 ]
+			if [ "${cpb_rv}" = 0 ]
 			then
-				[ "${ABL_CMD}" = resume ] || [ "${ABL_INIT_ACTION}" = boot ] &&
+				[ "${CUR_ACT}" = resume ] || [ "${ABL_INIT_ACT}" = boot ] &&
 				{
 					start_action=load
 					install_path=${curr_persist_path}
@@ -1599,14 +1623,14 @@ set_bl_env()
 				debug_msg "check_persist_blockset rv: ${cpb_rv}"
 				[ "${persist_mode}" = manual ] && rebuild_req_notice "gen_persist_blockset" "persistent"
 
-				[ "${ABL_CMD}" = status ] ||
+				[ "${CUR_ACT}" = status ] ||
 				{
 					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${curr_persist_path}" "${curr_persist_path%/*}/${META_FNAME_PERSIST}"
 					[ "${curr_path}" = "${curr_persist_path}" ] && unset_metadata "${set_id}"
 					set_params "${set_id}" curr_persist_path= curr_persist_cnt=
 				}
 
-				[ "${ABL_CMD}" = start ] &&
+				[ "${CUR_CMD}" = start ] &&
 				{
 					local start_act_msg="Will create a new blockset file on the ramdisk for blockset ${set_id_pr}."
 					[ "${persist_mode}" = managed ] &&
@@ -1614,7 +1638,7 @@ set_bl_env()
 					log_msg "${start_act_msg}"
 				}
 			fi
-		elif [ "${persist_mode}" = managed ] && [ "${ABL_CMD}" = start ]
+		elif [ "${persist_mode}" = managed ] && [ "${CUR_CMD}" = start ]
 		then
 			reg_msg "Will update the persistent file for blockset ${set_id_pr}."
 		fi
@@ -1623,7 +1647,7 @@ set_bl_env()
 	: "${install_path:="${install_path_ram}"}"
 	: "${install_1_instance:="${install_1_instance_ram}"}"
 
-	case "${ABL_CMD}" in start|resume)
+	case "${CUR_CMD}" in start|resume)
 		[ -z "${FORCE_PERSIST_INSTALL}" ] || is_persist "${install_path}" "${set_id}" ||
 			{ reg_failure "Can not generate persistent file for blockset '${set_id}'."; return 1; }
 	esac
@@ -1638,6 +1662,8 @@ set_bl_env()
 	esac
 
 	pause_path="${install_path}"
+	[ "${persist_mode}" = manual ] && [ -n "${curr_path}" ] && [ "${curr_path}" = "${curr_persist_path}" ] &&
+		pause_path="${curr_persist_path}"
 	[ "${install_path}" = "${install_path_ram}" ] && [ "${install_1_instance}" = 1 ] &&
 		pause_path="${ABL_RUN_DIR}/${bl_full_fname}"
 
@@ -1655,7 +1681,7 @@ set_bl_env()
 		final_compr_to_file \
 		conf_script_log_avail || return 1
 
-	eval "BL_ENV_SET_${set_id}=1"
+	export -n "BL_ENV_SET_${set_id}=1"
 
 	: \
 		"${pause_path}" \
@@ -1675,14 +1701,14 @@ get_valid_set_ids()
 
 	for gvi_id in ${gvi_ids}
 	do
-		assert_known_set_id "${gvi_id}" || continue
+		is_known_set_id "${gvi_id}" || continue
 		add2list "${gvi_out_var}" "${gvi_id}"
 	done
 	:
 }
 
 # Env vars: ACCEPT_UNKNOWN_SET_IDS
-assert_known_set_id()
+is_known_set_id()
 {
 	local akb_err
 	{
@@ -1703,7 +1729,6 @@ get_bl_param_gl_var()
 {
 	dbg_off
 	local _gl_var
-	: "${_gl_var}"
 	eval "
 		case \"${2:?}\" in
 			${BL_PARAMS_CLAUSES:?}
@@ -1711,7 +1736,7 @@ get_bl_param_gl_var()
 		esac
 	"
 
-	eval "${1:?}"='${GBP_PREFIX}${_gl_var}'
+	export -n "${1:?}=${GBP_PREFIX}${_gl_var}"
 	dbg_on
 }
 
@@ -1733,7 +1758,7 @@ get_params()
 		unset_vars "${var_exp%=*}" || exit 1
 	done
 
-	assert_known_set_id "${set_id}" "${me}${err_func:+": ${err_func}():"}" || return 1
+	is_known_set_id "${set_id}" "${me}${err_func:+": ${err_func}():"}" || return 1
 
 	for var_exp in "${@}"
 	do
@@ -1748,7 +1773,7 @@ get_params()
 
 		eval "val=\"\${${gl_var}_${set_id}}\""
 		[ -n "${val}" ] || [ -z "${force_err}" ] &&
-			{ eval "${var_name}"='${val}'; continue; }
+			{ export -n "${var_name}=${val}"; continue; }
 
 		reg_failure "${err_func}: Value not set for \${${gl_var}_${set_id}}."
 		return 1
@@ -1769,7 +1794,7 @@ set_params()
 
 	for set_id in ${set_ids}
 	do
-		assert_known_set_id "${set_id}" "${me}" || continue
+		is_known_set_id "${set_id}" "${me}" || continue
 
 		for pair in "${@}"
 		do
@@ -1786,7 +1811,7 @@ set_params()
 			esac &&
 			get_bl_param_gl_var gl_var "${param}" || { bad_args "${me}" "${set_id} ${*}"; exit 1; }
 			debug_msg "${blue}set_params${n_c}: ${gl_var}_${set_id}=${val}"
-			export "${gl_var}_${set_id}=${val}"
+			export -n "${gl_var}_${set_id}=${val}"
 		done
 	done
 	:
@@ -1811,26 +1836,24 @@ install_blocksets()
 {
 	local inst_ok_ids='' inst_fail_ids='' INST_PERM_FAIL_IDS='' inst_rv \
 		inst_fail_reported_ids='' \
-		abl_cmd="${ABL_CMD}" \
 		ok_ids_out_var="${1:-_}" perm_fail_ids_out_var="${2:-_}" set_ids="${3:?}"
-	: "${INST_PERM_FAIL_IDS}"
 
 	unset_vars "${ok_ids_out_var}" "${perm_fail_ids_out_var}" || return 1
 
 	try_install_blocksets inst_ok_ids "${set_ids}"
 	inst_rv=${?}
 
-	eval "${ok_ids_out_var}=\"\${inst_ok_ids}\""
+	export -n "${ok_ids_out_var}=${inst_ok_ids}"
 	subtract_a_from_b "${inst_ok_ids}" "${set_ids}" inst_fail_ids
 	[ -n "${inst_fail_ids}" ] && inst_failed "${inst_fail_ids}"
 	[ "${inst_rv}" = 1 ] && add2list INST_PERM_FAIL_IDS "${inst_fail_ids}"
-	eval "${perm_fail_ids_out_var}=\"\${INST_PERM_FAIL_IDS}\""
+	export -n "${perm_fail_ids_out_var}=${INST_PERM_FAIL_IDS}"
 
 	for set_id in ${inst_fail_ids}
 	do
 		get_params "${set_id}" install_path install_path_ram install_1_instance_ram persist_mode
 
-		[ "${abl_cmd}" = start ] &&
+		[ "${CUR_CMD}" = start ] &&
 		[ "${persist_mode}" = manual ] && is_persist "${install_path}" "${set_id}" || continue
 
 		# fall back to RAM
@@ -1893,7 +1916,7 @@ try_install_blocksets()
 		get_params -f "${me}" "${set_id}" dnsmasq_indexes conf_dirs final_extr_or_cat_stdout install_path &&
 		get_params "${set_id}" install_1_instance conf_script_log_avail || { inst_failed "${set_id}"; continue; }
 
-		log_msg -purple "Installing blockset ${blue}${set_id}${n_c} to ${blue}${install_path}${n_c}"
+		log_msg "Installing blockset ${lblue}${set_id}${n_c} to ${blue}${install_path}${n_c}"
 
 		get_md5 install_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
 
@@ -2145,7 +2168,7 @@ try_read_blockset_metadata()
 		for pv_param in ${meta_params}
 		do
 			config_get meta_val "${set_id}" "${pv_param}" # accept empty values
-			eval "${rbm_prefix}${pv_param}_${set_id}"='${meta_val}'
+			export -n "${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
 			debug_msg "${blue}set metadata${n_c}: ${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
 		done
 
@@ -2165,7 +2188,7 @@ try_read_blockset_metadata()
 
 		[ "${curr_md5}" = "${bl_md5}" ] ||
 			append_err "MD5 sum not matching in ${sp_f_pr} for ${set_id_pr}, path '${curr_path}'. Metadata file has: '${curr_md5}', blockset file has: '${bl_md5}'."
-		
+
 		# set persist params
 		[ "${rbm_type}" = PERSIST ] &&
 		{
@@ -2197,7 +2220,7 @@ try_read_blockset_metadata()
 	local sp_f_pr="metadata file '${meta_file}'" \
 		ACCEPT_UNKNOWN_SET_IDS=1
 
-	eval "${meta_ids_out_var}"='${meta_ids}' "${meta_type_out_var}"='${rbm_type}'
+	export -n "${meta_ids_out_var}=${meta_ids}" "${meta_type_out_var}=${rbm_type}"
 
 	debug_msg "${me} start (${rbm_type}): ${meta_ids}"
 
