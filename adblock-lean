@@ -1546,9 +1546,9 @@ source_libs()
 		read_str_from_file -f "${ABL_CFG_DIR}/ver_migration" -d -v "curr_upd_ch curr_ver" &&
 		[ -n "${curr_upd_ch}" ] && [ -n "${curr_ver}" ] &&
 		ver_upd_fixup "${curr_ver}" "${curr_upd_ch}" &&
-		local abl_cmd="${CUR_CMD}" &&
+		local cur_cmd="${CUR_CMD}" &&
 		. "${ABL_SOURCE_PATH_PREFIX}${ABL_SERVICE_PATH}" || return 1
-		CUR_CMD="${abl_cmd}"
+		CUR_CMD="${cur_cmd}"
 	fi
 
 	local file libs_missing='' libs_source_failed=''
@@ -2200,7 +2200,7 @@ do_rm_blockset_config()
 	local cfg_path \
 		set_id="${1}"
 
-	assert_known_set_id "${set_id}" rm_blockset_config &&
+	is_known_set_id "${set_id}" rm_blockset_config &&
 	get_cfg_path cfg_path "${set_id}" &&
 	read_blockset_metadata "${META_FILE:?}" "${set_id}" || return 1
 
