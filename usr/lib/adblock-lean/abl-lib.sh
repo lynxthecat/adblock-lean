@@ -1021,7 +1021,7 @@ print_def_cfg_global()
 	# Maximum number of download retries
 	max_download_retries="3" @ uint
 
-	# Default download mirrors.
+	# Default download mirrors
 	# Hagezi mirror: 'github' or 'gitlab'
 	hagezi_default_mirror="github" @ github|gitlab
 	# oisd mirror: 'oisd' or 'github'
@@ -1544,7 +1544,7 @@ parse_config()
 				entries_pr="${entries_pr%$'\n'}"
 				export -n "luci_corrected_entries_${cfg_id}"="${entries_pr}"
 				;;
-			*) log_msg -yellow "" "${i%%|*} keys in ${cfg_pr}:${_NL_}'${keys// /\', \'}'"
+			*) log_msg -yellow "" "${i%%|*} keys in ${cfg_pr}:${_NL_}${n_c}${lblue}${keys// /"${_NL_}"}${n_c}"
 		esac
 
 		entries_type_pr=
@@ -1552,7 +1552,7 @@ parse_config()
 			missing|bad_val) entries_type_pr=" default"
 		esac
 
-		print_msg "" "${yellow}Corresponding${entries_type_pr} config entries:${n_c}" "${entries_pr}"
+		print_msg "Corresponding${entries_type_pr} config entries:${n_c}" "${lblue}${entries_pr}${n_c}"
 		add_cfg_fix "${i##*|}"
 		export -n "luci_${entry_type}_keys_${cfg_id}"="${keys}" "luci_${entry_type}_entries_${cfg_id}"="${entries}"
 	done
@@ -1719,6 +1719,7 @@ fix_config()
 	local var_suffix \
 		dnsmasq_indexes conf_dirs \
 		fixed_cfg \
+		bk_prefix \
 		cfg_type \
 			cfg_id="${1:?}" replace_keys="${2}"
 
@@ -1733,9 +1734,12 @@ fix_config()
 	fi
 
 	[ "${cfg_type}" = bl ] &&
+	{
 		get_params "${cfg_id}" dnsmasq_indexes conf_dirs
+		bk_prefix="blockset-"
+	}
 
-	local old_cfg_f="/tmp/adblock-lean_config_${cfg_id}.old"
+	local old_cfg_f="/tmp/adblock-lean_config_${bk_prefix}${cfg_id}.old"
 	if ! cp "${cfg_path}" "${old_cfg_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_cfg_f}."
@@ -1811,6 +1815,56 @@ write_config()
 
 
 ### HELPER FUNCTIONS
+
+# Get version and update channel of adblock-lean file
+# Assigns vars $2 = version, $3 = update channel
+# 1 - path to adblock-lean service file
+# Return codes:
+# 0 - supported version format
+# 1 - error
+# 2 - no version found
+get_abl_version()
+{
+	get_ver_str()
+	{
+		[ -n "${3}" ] && unset_vars "${1}" "${2}" || return 1
+		local _par res_version='' res_upd_channel=''
+		for _par in version upd_channel
+		do
+			local key_ptrn='' res=''
+			case "${_par}" in
+				version) key_ptrn="\\s*ABL_VERSION" ;;
+				upd_channel) key_ptrn="\\s*ABL_UPD_CHANNEL" ;;
+			esac
+
+			res="$(${SED_CMD} -n "/^${key_ptrn}=/{s/^${key_ptrn}=//;s/#.*$//;s/\"//g;p;:1 n;b1;}" "${3}")" &&
+				[ -n "${res}" ] || return 1
+			export -n "res_${_par}=${res}"
+		done
+		export -n "${1}=${res_upd_channel}" "${2}=${res_version}"
+	}
+
+	local gv_ver='' gv_upd_ch='' gv_rv='' cfg_format=''
+	unset_vars "${2}" "${3}" || return 1
+
+	[ -s "${1}" ] || { reg_failure "Can not find '${1}'."; return 1; }
+
+	# Requires adblock-lean v0.7.3 and later (config format 9 or higher)
+	if \
+		cfg_format="$(get_config_format "${1}")" &&
+		is_uint "${cfg_format}" &&
+		[ "${cfg_format}" -ge 9 ] &&
+		grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
+		get_ver_str gv_upd_ch gv_ver "${1}"
+	then
+		gv_rv=0
+	else
+		gv_rv=2
+	fi
+	export -n "${2:-_}=${gv_ver}"
+	export -n "${3:-_}=${gv_upd_ch}"
+	return ${gv_rv:-1}
+}
 
 # return values:
 # 0 - up-to-date
