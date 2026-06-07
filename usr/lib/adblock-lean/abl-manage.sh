@@ -839,7 +839,7 @@ unset_param_vars()
 	unset ${vars}
 }
 
-# Looks for blockset-*.conf files and populates SET_IDS, SET_PARAM_VARS global vars
+# Looks for blockset-*.conf files and populates ${SET_IDS}
 find_set_configs()
 {
 	# shellcheck disable=SC2329
@@ -856,7 +856,7 @@ find_set_configs()
 		add2list SET_IDS "${cfg_id}"
 	}
 
-	export -n SET_IDS=
+	SET_IDS=
 
 	FF_EXEC="append_set_id {}" \
 		find_files _ "${ABL_CFG_DIR:?}" "blockset-" "*" ".conf"
@@ -1224,7 +1224,14 @@ set_global_env()
 	get_compr_util_spec compr_util_path compr_ext "${compression_util:?}" || return 1
 
 	# dnsmasq instances
-	get_dnsmasq_instances &&
+	get_dnsmasq_instances ||
+	{
+		[ -n "${DNSMASQ_RESTART_TRIED}" ] && return 1
+		restart_dnsmasq &&
+		get_dnsmasq_instances ||
+			return 1
+	}
+
 	check_dnsmasq_instances || return 1
 
 	# check for missing addnmounts during version update
