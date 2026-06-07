@@ -290,7 +290,10 @@ find_files()
 	# shellcheck disable=SC2027
 	for ff_file in "${ff_dir}/${ff_prefix}"${ff_mid}"${ff_suffix}"
 	do
-		case "${ff_file}" in ''|*"*") continue; esac
+		case "${ff_file}" in
+			''|*"*"*) continue ;;
+			[\$\(\)\{\}\"\`\'] ) reg_msg -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
+		esac
 		[ -f "${ff_file}" ] || continue # ignore dirs and symlinks
 		[ -n "${ff_found}" ] && [ -n "${FF_RM_EXTRA}" ] &&
 			{ [ -n "${set_id}" ] && rm_if_writable "${set_id}" "${ff_file}"; continue; }
@@ -327,7 +330,7 @@ set_ansi()
 {
 	local IFS=" "
 	# shellcheck disable=SC2046
-	set -- $(printf '\033[0;31m \033[0;32m \033[0;34m \033[38;5;39m \033[1;33m \033[0;35m \033[38;5;214m \033[0m \35 \t \r')
+	set -- $(printf '\033[0;31m \033[0;32m \033[0;34m \033[1;34m \033[1;33m \033[0;35m \033[38;5;214m \033[0m \35 \t \r')
 	export red="${1}" green="${2}" blue="${3}" lblue="${4}" yellow="${5}" purple="${6}" orange="${7}" n_c="${8}" _DELIM_="${9}" TAB="${10}" CR="${11}" CR_LF="${11}${_NL_}"
 }
 
@@ -622,70 +625,6 @@ rm_conf_scripts()
 	done
 
 	return ${rv}
-}
-
-# Get version and update channel of adblock-lean file
-# Assigns vars $2 = version, $3 = update channel
-# 1 - path to adblock-lean service file
-# Return codes:
-# 1 - error
-# 2 - no version found
-# 3 - 1-string version format
-# 4 - 2-strings version format
-# 5 - 2-strings version format, config v9 or higher
-get_abl_version()
-{
-	get_ver_str()
-	{
-		[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] && are_var_names_safe "${1}" "${2}" || return 1
-		local _par res_version='' res_upd_channel=''
-		for _par in version upd_channel
-		do
-			local key_ptrn='' migr_ptrn='' res=''
-			case "${_par}" in
-				version)
-					key_ptrn="\\s*ABL_VERSION"
-					[ "${4}" = '-o' ] && migr_ptrn='s/^[^_]*_//;' ;;
-				upd_channel)
-					key_ptrn="\\s*ABL_UPD_CHANNEL"
-					[ "${4}" = '-o' ] && { key_ptrn="\\s*ABL_VERSION" migr_ptrn='s/_.*//;'; }
-			esac
-			[ "${4}" = '-o' ] && key_ptrn="\\s*#${key_ptrn}"
-
-			res="$(${SED_CMD} -n "/^${key_ptrn}=/{s/^${key_ptrn}=//;s/#.*$//;s/\"//g;${migr_ptrn}p;:1 n;b1;}" "${3}")" &&
-				[ -n "${res}" ] || return 1
-			export -n "res_${_par}=${res}"
-		done
-		export -n "${1}=${res_upd_channel}" "${2}=${res_version}"
-	}
-
-	local gv_ver='' gv_upd_ch='' gv_rv=''
-	unset_vars "${2}" "${3}" || return 1
-
-	[ -s "${1}" ] || { reg_failure "Can not find '${1}'."; return 1; }
-
-	# v0.7.3 and later
-	if old_cfg_format="$(get_config_format "${1}")" && [ -n "${old_cfg_format}" ] && [ "${old_cfg_format}" -ge 9 ] &&
-		grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
-		get_ver_str gv_upd_ch gv_ver "${1}"
-	then
-		gv_rv=5
-	# version format in v0.7.2 and later
-	elif grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
-		get_ver_str gv_upd_ch gv_ver "${1}"
-	then
-		gv_rv=4
-	# version format in v0.6.0 - v0.7.1
-	elif grep -q '^\s*#\s*ABL_VERSION=' "${1}" &&
-		get_ver_str gv_upd_ch gv_ver "${1}" -o
-	then
-		gv_rv=3
-	else
-		gv_rv=2
-	fi
-	export -n "${2:-_}=${gv_ver}"
-	export -n "${3:-_}=${gv_upd_ch}"
-	return ${gv_rv}
 }
 
 rc_disable()
@@ -1156,7 +1095,7 @@ restart_dnsmasq()
 		ns ns4 ns6 \
 		host \
 		inst_init_pr \
-		new_run_state="${1:?}" restart_ok_ids_out_var="${2:-_}" set_ids="${3}"
+		new_run_state="${1}" restart_ok_ids_out_var="${2:-_}" set_ids="${3}"
 
 	unset_vars "${restart_ok_ids_out_var}" || return 1
 	dnsmasq_stop_restart_shared restart "${set_ids}" p1_ok_ids indexes inst_names || rv=1
@@ -1217,7 +1156,8 @@ restart_dnsmasq()
 	done
 
 	subtract_a_from_b "${restart_fail_ids}" "${set_ids}" restart_ok_ids
-	[ -n "${restart_ok_ids}" ] && set_params "${restart_ok_ids}" run_state="${new_run_state}"
+	[ -n "${new_run_state}" ] && [ -n "${restart_ok_ids}" ] &&
+		set_params "${restart_ok_ids}" run_state="${new_run_state}"
 	export -n "${restart_ok_ids_out_var}=${restart_ok_ids}"
 	return "${rv:-0}"
 }
@@ -1538,18 +1478,6 @@ check_libs()
 source_libs()
 {
 	[ -n "${LIBS_SOURCED}" ] && return 0
-
-	# fixup for upgrading from earlier versions
-	if [ ! -f "${ABL_REG_FILE}" ] && [ -f "${ABL_CFG_DIR}/ver_migration" ]
-	then
-		local curr_ver='' curr_upd_ch=''
-		read_str_from_file -f "${ABL_CFG_DIR}/ver_migration" -d -v "curr_upd_ch curr_ver" &&
-		[ -n "${curr_upd_ch}" ] && [ -n "${curr_ver}" ] &&
-		ver_upd_fixup "${curr_ver}" "${curr_upd_ch}" &&
-		local cur_cmd="${CUR_CMD}" &&
-		. "${ABL_SOURCE_PATH_PREFIX}${ABL_SERVICE_PATH}" || return 1
-		CUR_CMD="${cur_cmd}"
-	fi
 
 	local file libs_missing='' libs_source_failed=''
 	if [ -z "${UPD_SOURCED}" ]
@@ -2073,22 +2001,6 @@ abl_post_update_1()
 
 abl_post_update_2()
 {
-	# fixups for upgrading from earlier versions
-	get_abl_version "${ABL_SERVICE_PATH}"
-	case "${?}" in
-		1) exit 1 ;;
-		2)
-			# no version string found
-			update -f -v release || exit 1 ;;
-		3)
-			# old version format
-			[ -n "${dist_dir}" ] && [ -n "${upd_channel}" ] && [ -n "${ref}" ] &&
-			mkdir -p "${ABL_CFG_DIR}" &&
-			printf '%s\n' " $(print_file_list ALL | tr '\n' ' ' | busybox sed 's/\s\s*/ /g') " > "${dist_dir}/inst_files" &&
-			printf '%s\n' "${upd_channel} ${ref}" > "${ABL_CFG_DIR}/ver_migration" ;;
-		4|5) ;; # new version format
-	esac
-
 	:
 }
 
@@ -2558,14 +2470,19 @@ gen_persist_blockset()
 		FORCE_PERSIST_INSTALL=1 do_start "${ok_set_ids}"
 }
 
-
+# Env vars: STOP_NOEXIT
+# shellcheck disable=SC2120
 stop()
 {
-	local CUR_ACT=stop
+	local stop_rv ASSERT_NOEXIT=1 \
+		CUR_ACT=stop
 	local CUR_CMD=${CUR_ACT}
 	init_act "${CUR_ACT}" &&
 	do_stop "${@}"
-	exit ${?}
+	stop_rv=${?}
+	[ "${stop_rv}" = 0 ] || reg_failure "Failed to stop adblock-lean."
+	[ -n "${STOP_NOEXIT}" ] || exit ${stop_rv}
+	return ${stop_rv}
 }
 
 # Env vars: FORCE_STOP_ALL
@@ -2963,8 +2880,6 @@ resume() { pause_resume resume "${@}"; exit ${?}; }
 # optional: '-f' to skip calling do_stop()
 update()
 {
-	downg_not_supported() { reg_failure "Downgrade to versions earlier than v0.7.3 is not supported."; return 1; }
-
 	# unset vars and functions from current version to have a clean slate with the new version
 	clean_abl_env()
 	{
@@ -2990,7 +2905,7 @@ update()
 	unexp_arg() { upd_failed "update: unexpected argument '${1}'."; }
 
 	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
-		upd_channel='' req_upd_channel='' force_upd_channel='' upd_nostop=''
+		upd_channel='' req_upd_channel='' force_upd_channel='' upd_nostop='' new_cfg_format
 	local CUR_ACT=update
 	local CUR_CMD=${CUR_ACT}
 
@@ -3002,7 +2917,7 @@ update()
 			v) ver_str_arg=$OPTARG ;;
 			U) force_upd_channel=$OPTARG ;;
 			W) req_ver=$OPTARG ;;
-			f) upd_nostop=1 libs_req='' ;;
+			f) upd_nostop=1 ;;
 			y) export APPROVE_UPD_CHANGES=1 DO_DIALOGS=0 ;;
 			i) IGNORE_CACHE=1 ;; # global var
 			*) unexp_arg "$OPTARG"; return 1
@@ -3013,7 +2928,8 @@ update()
 
 	init_act "${CUR_ACT}" || { upd_failed; return 1; }
 
-	[ -n "${upd_nostop}" ] || do_stop
+	[ -n "${upd_nostop}" ] || STOP_NOEXIT=1 stop ||
+		{ log_msg "To force the update without calling the 'stop' command, use 'service adblock-lean stop -f'."; return 1; }
 
 	# parse version string from arguments into $req_upd_channel, $req_ver
 	case "${ver_str_arg}" in
@@ -3067,21 +2983,26 @@ update()
 		fetch_abl_dist "${tarball_url}" "${dist_dir}" || { upd_failed; return 1; }
 	fi
 
-	get_abl_version "${dist_dir}/adblock-lean"
-	case "${?}" in
-		2) downg_not_supported ;; # no version string found
-		3) downg_not_supported ;; # old version format
-		4) downg_not_supported ;; # v0.7.2
-		5)
-			# v0.7.3 or higher - call install_abl_files() from fetched installer
-			(
-				clean_abl_env
-				INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
-					{ reg_failure "Failed to source fetched install script."; exit 1; }
-				install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}"
-			) ;;
-		*) reg_failure "Failed to get version from fetched adblock-lean distribution."; false ;;
-	esac || exit 1
+	new_cfg_format="$(get_config_format "${dist_dir}/adblock-lean")" &&
+	is_uint "${new_cfg_format}" ||
+		{ reg_failure "Failed to get config version from fetched adblock-lean distribution."; return 1; }
+
+	[ "${new_cfg_format}" -ge 9 ] ||
+		{
+			reg_failure "Downgrade to versions earlier than v0.7.3 is not supported." \
+				"If you really want to downgrade, use the abl-install.sh script and specify which version to install in the arguments."
+			return 1
+		}
+
+	# Call install_abl_files() from fetched installer
+	(
+		clean_abl_env
+		INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
+			{ reg_failure "Failed to source fetched install script."; exit 1; }
+		check_func install_abl_files &&
+		install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}"
+	) ||
+		{ reg_failure "Failed to update adblock-lean."; exit 1; }
 
 	log_msg -green "" "adblock-lean has been updated to version '${upd_ver}'."
 
@@ -3093,14 +3014,11 @@ update()
 		REPLY=y
 	fi
 
-	if [ "${REPLY}" = y ]
-	then
-		clean_abl_env
-		. "${ABL_SERVICE_PATH}" || return 1
-		start
-	else
-		exit 0
-	fi
+	[ "${REPLY}" = y ] || exit 0
+
+	clean_abl_env
+	. "${ABL_SERVICE_PATH}" || return 1
+	start
 }
 
 uninstall()
