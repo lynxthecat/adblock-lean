@@ -273,7 +273,7 @@ do_create_addnmounts()
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
 		[ -n "${missing_addnm}" ] || return 0
-		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${orange}${missing_addnm}${n_c} (required for ${3})"
+		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}{missing_addnm} (required for ${3})"
 	}
 
 	local me=create_addnmounts \
@@ -576,7 +576,7 @@ do_setup()
 	# make the script executable
 	if [ ! -x "${ABL_SERVICE_PATH}" ]
 	then
-		reg_msg -purple "" "Making ${ABL_SERVICE_PATH} executable."
+		reg_msg "" "Making ${ABL_SERVICE_PATH} executable."
 		chmod +x "${ABL_SERVICE_PATH}" || { reg_failure "Failed to make '${ABL_SERVICE_PATH}' executable."; return 1; }
 	else
 		reg_msg -green "" "${ABL_SERVICE_PATH} is already executable."
