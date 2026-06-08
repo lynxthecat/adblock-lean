@@ -271,7 +271,7 @@ get_dnsmasq_instances() {
 
 	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
 	DNSMASQ_INSTANCES_CNT=0
-	reg_action -purple "" "Checking dnsmasq instances."
+	reg_action "" "Checking dnsmasq instances."
 
 	dbg_off
 	[ -n "${DHCP_LOADED}" ] ||
@@ -388,7 +388,7 @@ check_dnsmasq_instances()
 	check_failed()
 	{
 		[ -n "${quiet}" ] && return 0
-		reg_failure "${@}"
+		reg_failure -fb "${2}" "${1}"
 	}
 
 	get_failed()
@@ -399,7 +399,7 @@ check_dnsmasq_instances()
 		do
 			get_params "${set_id}" dnsmasq_indexes || return 1
 			[ -n "${dnsmasq_indexes}" ] ||
-				{ get_cfg_opt cfg_opt "dnsmasq_indexes"; check_failed "'${cfg_opt}' config option is not set for blockset '${set_id}'."; please_run "${set_id}"; return 1; }
+				{ get_cfg_opt cfg_opt "dnsmasq_indexes"; check_failed "'${cfg_opt}' config option is not set{}." "${set_id}"; please_run "${set_id}"; return 1; }
 
 			for index in ${dnsmasq_indexes}
 			do
@@ -409,7 +409,7 @@ check_dnsmasq_instances()
 			done
 		done
 		[ -n "${_fail_ind}" ] &&
-		check_failed "dnsmasq instances with indexes '${_fail_ind//" "/"', '"}' (used by blocksets '${_fail_sets//" "/"', '"}') are not running."
+		check_failed "dnsmasq instances with indexes '${_fail_ind//" "/"', '"}' are not running."
 		:
 	}
 
@@ -418,6 +418,7 @@ check_dnsmasq_instances()
 		set_id \
 		instance_conf_dirs conf_dir_reg \
 		conf_dirs \
+		all_bl_conf_dirs \
 		failed_indexes failed_set_ids \
 		inst_ind="dnsmasq instance with index"
 
@@ -441,9 +442,7 @@ check_dnsmasq_instances()
 
 	for set_id in ${SET_IDS}
 	do
-		local \
-			all_bl_conf_dirs='' \
-			set_id_pr="for blockset '${set_id}'"
+		all_bl_conf_dirs=
 
 		for index in ${dnsmasq_indexes}
 		do
@@ -486,7 +485,7 @@ check_dnsmasq_instances()
 		do
 			is_included "${dir}" "${all_bl_conf_dirs}" "${_NL_}" ||
 			{
-				check_failed "conf-dir directory '${dir}' is set in config ${set_id_pr} but not used by configured dnsmasq instances '${dnsmasq_indexes}'."
+				check_failed "conf-dir directory '${dir}' is set in config{} but not used by configured dnsmasq instances '${dnsmasq_indexes}'." "${set_id}"
 				return 1
 			}
 		done
@@ -576,7 +575,7 @@ do_select_dnsmasq_instances() {
 					reg_msg "${index}. Instance '${instance}': network interfaces '${ifaces}'"
 					indexes_regex="${indexes_regex}${indexes_regex:+|}${index}"
 				done
-				print_msg "" "Please select which dnsmasq instance should have active adblocking for blockset ${lblue}${set_id}${n_c}, or 'a' to abort." \
+				print_msg -fb "${set_id}" "" "Please select which dnsmasq instance should have active adblocking{}, or 'a' to abort." \
 					"To adblock on multiple instances, enter their indexes separated by whitespaces."
 				while :
 				do
@@ -592,7 +591,7 @@ do_select_dnsmasq_instances() {
 				validate_indexes "${REPLY}" ||
 					{ reg_failure "Invalid dnsmasq instance indexes '${REPLY}'."; return 1; }
 			else
-				reg_failure "dnsmasq indexes not specified for blocksets '${set_ids}'."
+				reg_failure -fb "${set_id}" "dnsmasq indexes not specified{}."
 				return 1
 			fi
 
@@ -606,7 +605,7 @@ do_select_dnsmasq_instances() {
 			add2list select_ifaces "${ifaces}"
 		done
 
-		log_msg "Selected dnsmasq indexes for blockset ${lblue}${set_id}${n_c}: '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
+		log_msg -fb "${set_id}" "Selected dnsmasq indexes{}: '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
 
 		for index in ${select_indexes}
 		do
@@ -1033,7 +1032,7 @@ check_persist_blockset()
 			{
 				int2human curr_persist_cnt_human "${curr_persist_cnt}"
 				int2human min_good_entries_human "${min_good_entries}" || return 1
-				reg_failure "Entries count (${curr_persist_cnt_human}) in the persistent blockset '${curr_persist_path}' is below the minimum value set in config (${min_good_entries_human})."
+				reg_failure "Entries count (${curr_persist_cnt_human}) in the persistent blockset file '${curr_persist_path}' is below the minimum value set in config (${min_good_entries_human})."
 				false
 			}
 	} &&
@@ -1061,7 +1060,7 @@ check_active_blockset()
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
 		set_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
 
-	reg_action -purple "Checking if blockset ${lblue}${set_id}${n_c} is active." || return 1
+	reg_action -fb "${set_id}" "Checking if adblocking is active{}." || return 1
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
@@ -1311,7 +1310,7 @@ set_bl_env()
 {
 	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${1}' to rebuild the ${2}${2:+ }blockset."; }
 	wont_work() {
-		reg_failure "" "${1} can not be used with blockset '${set_id}' because of missing addnmounts in /etc/config/dhcp: ${2}" \
+		reg_failure -wb "${set_id}" "" "${1} can not be used{} because of missing addnmounts in /etc/config/dhcp: ${2}" \
 			"Please run 'service adblock-lean create_addnmounts' to create required addnmount entries."
 	}
 
@@ -1427,8 +1426,6 @@ set_bl_env()
 	local me=set_bl_env \
 		IFS="${DEFAULT_IFS}" \
 		\
-		set_id_pr="${lblue}${set_id}${n_c}" \
-		\
 		dnsmasq_indexes \
 		conf_dirs \
 		\
@@ -1479,7 +1476,7 @@ set_bl_env()
 	#   get final blockset paths,
 	#   compression util path and extension
 
-	debug_msg "Preparing environment for blockset ${set_id}." "CUR_ACT: ${CUR_ACT}" "CUR_CMD: ${CUR_CMD}"
+	debug_msg -fb "${set_id}" "Preparing blockset environment{}." "CUR_ACT: ${CUR_ACT}" "CUR_CMD: ${CUR_CMD}"
 
 	get_params -f "${me}" "${set_id}" \
 		dnsmasq_indexes \
@@ -1586,7 +1583,7 @@ set_bl_env()
 					wont_work "Persistent blockset" "${sbe_missing_addnm}"
 				fi
 			else
-				log_msg -warn "" "Persistent file can not be used or updated for blockset '${set_id}'."
+				log_msg -warn -fb "${set_id}" "" "Persistent blockset file can not be used or updated{}."
 			fi
 		esac
 	esac
@@ -1639,15 +1636,15 @@ set_bl_env()
 
 				[ "${CUR_CMD}" = start ] &&
 				{
-					local start_act_msg="Will create a new blockset file on the ramdisk for blockset ${set_id_pr}."
+					local start_act_msg="Will create a new blockset file on the ramdisk."
 					[ "${persist_mode}" = managed ] &&
-						start_act_msg="Will rebuild the persistent file for blockset ${set_id_pr}."
-					log_msg "${start_act_msg}"
+						start_act_msg="Will rebuild the persistent blockset file."
+					log_msg -fb "${set_id}" "${start_act_msg}{}"
 				}
 			fi
 		elif [ "${persist_mode}" = managed ] && [ "${CUR_CMD}" = start ]
 		then
-			reg_msg "Will update the persistent file for blockset ${set_id_pr}."
+			reg_msg -fb "${set_id}" "Will update the persistent blockset file{}."
 		fi
 	fi
 
@@ -1656,7 +1653,7 @@ set_bl_env()
 
 	case "${CUR_CMD}" in start|resume)
 		[ -z "${FORCE_PERSIST_INSTALL}" ] || is_persist "${install_path}" "${set_id}" ||
-			{ reg_failure "Can not generate persistent file for blockset '${set_id}'."; return 1; }
+			{ reg_failure -b "${set_id}" "Can not generate persistent blockset file{}."; return 1; }
 	esac
 
 	[ -n "${install_path}" ] ||
@@ -1962,7 +1959,7 @@ try_install_blocksets()
 
 		CA_CHECK_DNS=1 check_active_blockset "${set_id}" "${install_md5}" "${install_1_instance}" ||
 			{
-				reg_failure "Active blockset check for blockset '${set_id}' failed."
+				reg_failure -fb "${set_id}" "Active blockset check failed{}."
 				inst_failed "${set_id}"
 				continue
 			}
@@ -2103,7 +2100,7 @@ try_commit_metadata()
 		get_params "${set_id}" persist_dir curr_path
 		is_persist "${curr_path}" "${set_id}" || continue
 
-		[ -d "${persist_dir}" ] || { reg_failure "Can not update metadata file for blockset '${set_id}' because directory '${persist_dir}' is not found."; continue; }
+		[ -d "${persist_dir}" ] || { reg_failure -fb "${set_id}" "Can not update persistent metadata file{} because directory '${persist_dir}' is not found."; continue; }
 
 		uci_fail=
 		meta_file="${persist_dir%/}/${meta_fname:?}"
@@ -2121,7 +2118,7 @@ try_commit_metadata()
 		[ -z "${uci_fail}" ] &&
 		uci_tmp commit "${meta_fname}" && [ -s "${meta_file}" ] ||
 			{
-				reg_failure "Failed to create/update persistent metadata file '${meta_file}' for blockset '${set_id}'."
+				reg_failure -fb "${set_id}" "Failed to create/update persistent metadata file '${meta_file}'{}."
 				uci_tmp revert "${meta_fname}"
 				rm -f "${meta_file}"
 			}
