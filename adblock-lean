@@ -596,7 +596,7 @@ rm_blocksets()
 			[ "${curr_persist_path}" = "${bk_file}" ] && curr_persist_path=
 		}
 		[ -n "${install_path}${curr_path}${curr_persist_path}" ] || continue
-		[ -n "${curr_path}${curr_persist_path}" ] && reg_msg "Removing any existing files for blockset ${lblue}${set_id}${n_c}."
+		[ -n "${curr_path}${curr_persist_path}" ] && reg_msg -fb "${set_id}" "Removing any existing blockset files{}."
 		for rm_enum in curr install curr_persist
 		do
 			eval "rm_path=\"\${${rm_enum}_path}\""
@@ -833,6 +833,8 @@ debug_msg()
 # Optional args:
 # -[0|1|2|3|4|5] : message level (default: 3)
 # -[action|report|noprint|err|warn|[color]
+# -b: append 'blockset[s] <OPTARG>' to the message
+# -fb|-wb: same as above, plus [for ]|[with ] prefix
 reg_msg()
 {
 	append_msg()
@@ -845,6 +847,7 @@ reg_msg()
 
 	local m msgs='' msgs_nc='' msgs_prefix='' _arg err_l=info color='' _n_c='' \
 		print_req='' sys_log_req='' log_file_req='' action_req='' report_req='' noprint='' \
+		set_ids='' ids_pr_prefix='' fetch_ids='' set_ids_pr='' \
 		msg_level='' msgs_dest="${MSGS_DEST}" \
 		\
 		reg_req='' \
@@ -853,6 +856,12 @@ reg_msg()
 	local IFS="${DEFAULT_IFS}"
 	for _arg in "${@}"
 	do
+		[ -n "${fetch_ids}" ] &&
+		{
+			fetch_ids=
+			set_ids=${_arg}
+			continue
+		}
 		case "${_arg}" in
 			-[0-9])
 				if [ -z "${msg_level}" ]
@@ -866,6 +875,9 @@ reg_msg()
 				else
 					append_msg "${_arg}"
 				fi ;;
+			-b) fetch_ids=1 ;;
+			-fb) ids_pr_prefix="for " fetch_ids=1 ;;
+			-wb) ids_pr_prefix="with " fetch_ids=1 ;;
 			-noprint) noprint=1 ;;
 			-report) report_req=1 ;;
 			-action) [ -n "${LOCK_REQ}" ] && action_req=1 ;;
@@ -877,6 +889,15 @@ reg_msg()
 		esac
 	done
 	msgs="${msgs%"${_DELIM_}"}"
+
+	[ -n "${set_ids}" ] && { [ -z "${SET_IDS}" ] || ! subtract_a_from_b "${set_ids}" "${SET_IDS}"; } &&
+	{
+		case "${set_ids}" in
+			*" "*) set_ids_pr=" ${ids_pr_prefix}blocksets: ${lblue}${set_ids// /"${n_c}, ${lblue}"}${n_c}" ;;
+			*) set_ids_pr=" ${ids_pr_prefix}blockset ${lblue}${set_ids}${n_c}" ;;
+		esac
+	}
+	msgs="${msgs//"{}"/"${set_ids_pr}"}"
 
 	: "${msg_level:=3}"
 
@@ -1025,7 +1046,7 @@ dnsmasq_stop_restart_shared()
 		:
 	else
 		# fall back to all instances
-		reg_action -purple "" "${cmd_pr} all dnsmasq instances." || return 1
+		reg_action "" "${cmd_pr} all dnsmasq instances." || return 1
 		[ -n "${set_ids}" ] && rv=1
 		/etc/init.d/dnsmasq "${cmd}" &> /dev/null ||
 		{
@@ -1049,7 +1070,7 @@ dnsmasq_stop_restart_shared()
 			inst_pr="all dnsmasq instances"
 			inst_name=
 		fi
-		reg_action -purple "" "${cmd_pr} ${inst_pr}." || return 1
+		reg_action "" "${cmd_pr} ${inst_pr}." || return 1
 
 		if /etc/init.d/dnsmasq "${cmd}" "${inst_name}" &> /dev/null
 		then
@@ -1541,7 +1562,7 @@ rm_cron_job()
 		3) return 0
 	esac
 
-	log_msg -purple "" "Removing cron job for adblock-lean."
+	log_msg "" "Removing cron job for adblock-lean."
 	printf '%s\n' "${curr_cron}" | ${SED_CMD} '/adblock-lean start/d;/^$/d' | crontab -u root - ||
 		{ reg_failure "Failed to update crontab."; return 1; }
 	:
@@ -2365,7 +2386,7 @@ do_start()
 	[ -n "${retry_ids}" ] &&
 	{
 		BLOCKSETS_TO_INSTALL=
-		log_msg -blue "" "Trying again to generate and install blocksets: ${retry_ids}."
+		log_msg -fb "${retry_ids}" "" "Trying again to generate and install blockset files{}."
 		gen_blocksets BLOCKSETS_TO_INSTALL "${retry_ids}" "${initial_uptime_cs}"
 
 		[ -n "${BLOCKSETS_TO_INSTALL}" ] &&
@@ -2378,22 +2399,22 @@ do_start()
 		BLOCKSETS_TO_INSTALL=
 		for set_id in ${fail_ids}
 		do
+			local bl_pr="blockset file from backup{}"
 			get_params "${set_id}" bk_file bk_cnt final_compr_to_file install_path
 			if [ -f "${bk_file}" ]
 			then
-				local bl_pr="blockset ${set_id} from backup"
-				log_msg -blue "" "Preparing to restore ${bl_pr}."
+				log_msg -b "${set_id}" "" "Preparing to restore ${bl_pr}."
 
 				set_params "${set_id}" "install_cnt=${bk_cnt}" &&
 				if mv_blockset "${bk_file}" "${install_path}" "${final_compr_to_file}" "${set_id}"
 				then
 					add2list BLOCKSETS_TO_INSTALL "${set_id}"
 				else
-					reg_failure "Failed to restore ${bl_pr} file '${bk_file}'."
+					reg_failure "Failed to restore ${bl_pr}."
 					rm_bk "${set_id}"
 				fi
 			else
-				log_msg -yellow "" "Can not restore blockset '${set_id}' from backup because previous blockset file does not exist."
+				log_msg -yellow -b "${set_id}" "" "Can not restore ${bl_pr} because backup file does not exist."
 			fi
 		done
 
@@ -2401,13 +2422,13 @@ do_start()
 			install_blocksets restored_ids _ "${BLOCKSETS_TO_INSTALL}"
 		subtract_a_from_b "${restored_ids}" "${fail_ids}" fail_ids
 
-		[ -n "${restored_ids}" ] && log_msg "${green}Successfully restored blocksets from backup${n_c}: ${lblue}${restored_ids// /"${n_c}, ${lblue}"}${n_c}."
+		[ -n "${restored_ids}" ] && log_msg -fb "${restored_ids}" "${green}Successfully restored blockset files from backup${n_c}{}."
 
 		[ -n "${fail_ids}" ] &&
 		{
 			rm_bk "${fail_ids}"
 			do_stop "${fail_ids}"
-			reg_failure "Following blocksets failed to install and can not be restored from backup: ${fail_ids// /, }."
+			reg_failure -fb "${fail_ids}" "Failed to install new blockset files and can not be restore previous files from backup{}."
 		}
 	}
 
@@ -2417,7 +2438,7 @@ do_start()
 	{
 		set_params "${installed_ids}" run_state=0
 		do_start_rv=0
-		reg_success "" "${green}Successfully installed blocksets${n_c}: ${lblue}${installed_ids// /"${n_c}, ${lblue}"}${n_c}."
+		reg_success -fb "${installed_ids}" "" "${green}Successfully installed blockset files${n_c}{}."
 	}
 
 	commit_metadata || { do_stop; do_start_rv=1; }
@@ -2455,13 +2476,13 @@ gen_persist_blockset()
 		get_params "${set_id}" persist_mode persist_dir || return 1
 		case "${persist_mode}" in
 			manual|managed) : ;;
-			*) err_msg="'persist_blockset_mode' config option is '${persist_mode}' for blockset '${set_id}'"; false
+			*) err_msg="'persist_blockset_mode' config option is '${persist_mode}'{}"; false
 		esac &&
 		{
-			[ -n "${persist_dir}" ] || { err_msg="'persist_blockset_dir' config option is not set for blockset '${set_id}'"; false; }
+			[ -n "${persist_dir}" ] || { err_msg="'persist_blockset_dir' config option is not set{}"; false; }
 		} &&
 		set_params "${set_id}" "persist_mode=managed" || # temporarily overrides the config value to enable updating the file
-			{ reg_failure "${err_msg}${err_msg:+". "}Can not generate persitent file for blockset '${set_id}'."; continue; }
+			{ reg_failure -fb "${set_id}" "${err_msg}${err_msg:+". "}Can not generate persitent blockset file{}."; continue; }
 
 		add2list ok_set_ids "${set_id}"
 	done
@@ -2578,7 +2599,7 @@ stop_blocksets()
 		get_params "${set_id}" run_state || return 1
 		[ "${run_state}" = 4 ] && [ -z "${FORCE_STOP}" ] &&
 		{
-			[ "${CUR_ACT}" = stop ] && reg_msg "Blockset ${lblue}${set_id}${n_c} is already stopped."
+			[ "${CUR_ACT}" = stop ] && reg_msg -fb "${set_id}" "Adblocking is already stopped{}."
 			continue
 		}
 		add2list stop_ids "${set_id}" || return 1
@@ -2586,7 +2607,7 @@ stop_blocksets()
 
 	[ -n "${stop_ids}" ] || return 0
 
-	reg_action -1 -purple "" "Stopping adblocking for blocksets: ${lblue}${stop_ids// /"${n_c}, ${lblue}"}${n_c}."
+	reg_action -1 -purple -fb "${stop_ids}" "" "Stopping adblocking{}."
 
 	rm_conf_scripts "${stop_ids}"
 	rm_blocksets "${stop_ids}"
@@ -2601,9 +2622,9 @@ stop_blocksets()
 	subtract_a_from_b "${stop_ok_ids}" "${stop_ids}" stop_fail_ids
 
 	[ -n "${stop_ok_ids}" ] &&
-		log_msg "Successfully stopped adblocking for blocksets: ${lblue}${stop_ok_ids// /"${n_c}, ${lblue}"}${n_c}."
+		log_msg -fb "${stop_ok_ids}" "Successfully stopped adblocking{}."
 
-	[ -n "${stop_fail_ids}" ] && reg_failure "Failed to stop adblocking for blocksets: ${stop_fail_ids// /, }."
+	[ -n "${stop_fail_ids}" ] && reg_failure -fb "${stop_fail_ids}" "Failed to stop adblocking{}."
 	return ${stop_rv}
 }
 
@@ -2667,7 +2688,7 @@ status()
 		status_rv=1
 	elif ! set_blocksets_env "${set_ids}"
 	then
-		reg_failure "Failed to load environment for blocksets '${set_ids}'."
+		reg_failure -fb "${set_ids}" "Failed to load environment{}."
 		status_rv=1
 	else
 		for set_id in ${set_ids}
@@ -2800,17 +2821,17 @@ pause_resume()
 		esac
 
 		case "${cmd},${run_state}" in
-			"pause,3"|"resume,0") state_ok_msg="Adblocking is ${state_ok_pr} for ${set_id_pr}."  ;;
-			"pause,4"|"resume,4") state_ok_msg="${yellow}Adblocking is stopped for ${set_id_pr}. Can not ${cmd}.${n_c}" ;;
+			"pause,3"|"resume,0") state_ok_msg="Adblocking is ${state_ok_pr}{}."  ;;
+			"pause,4"|"resume,4") state_ok_msg="${yellow}Adblocking is stopped{}. Can not ${cmd}.${n_c}" ;;
 			*) false
 		esac &&
 		{
-			reg_msg "${state_ok_msg}"
+			reg_msg -fb "${set_id}" "${state_ok_msg}"
 			add2list ok_ids "${set_id}"
 			continue
 		}
 
-		reg_msg "Preparing to ${cmd} ${set_id_pr}."
+		reg_msg -fb "${set_id}" "Preparing to ${cmd} adblocking{}."
 
 		get_params -f "${cmd}" "${set_id}" \
 			curr_path \
@@ -2838,13 +2859,13 @@ pause_resume()
 
 	[ -n "${prep_fail_ids}" ] &&
 	{
-		reg_failure "Failed to ${cmd} blocksets: ${prep_fail_ids}"
+		reg_failure -fb "${prep_fail_ids}" "Failed to ${cmd} adblocking{}."
 		ASSERT_NOEXIT=1 KEEP_BK=0 KEEP_PERSIST=0 stop_blocksets "${prep_fail_ids}"
 	}
 
 	[ -n "${prep_ok_ids}" ] &&
 	{
-		reg_action -purple "" "${state_progr_pr} blocksets: ${lblue}${prep_ok_ids// /"${n_c}, ${lblue}"}${n_c}."
+		reg_action -purple -fb "${prep_ok_ids}" "" "${state_progr_pr} adblocking{}."
 
 		case "${cmd}" in
 			pause) restart_dnsmasq 3 act_ok_ids "${prep_ok_ids}" ;;
@@ -2852,14 +2873,14 @@ pause_resume()
 		esac
 
 		[ -n "${act_ok_ids}" ] &&
-			log_msg -purple "" "Successfully ${state_changed_pr} blocksets: ${lblue}${act_ok_ids// /"${n_c}, ${lblue}"}${n_c}."
+			log_msg -green -fb "${act_ok_ids}" "" "Successfully ${state_changed_pr} adblocking{}."
 
 		add2list ok_ids "${act_ok_ids}"
 
 		subtract_a_from_b "${act_ok_ids}" "${prep_ok_ids}" act_fail_ids
 		[ -n "${act_fail_ids}" ] &&
 		{
-			reg_failure "Failed to ${cmd} blocksets: ${act_fail_ids}"
+			reg_failure -fb "${act_fail_ids}" "Failed to ${cmd} adblocking{}."
 			ASSERT_NOEXIT=1 KEEP_BK=0 KEEP_PERSIST=0 do_bail "${cmd}" "${act_fail_ids}"
 		}
 	}
@@ -2884,7 +2905,7 @@ update()
 	clean_abl_env()
 	{
 		local set_id
-		unset_param_vars "${SET_IDS}"
+		check_func unset_param_vars && unset_param_vars "${SET_IDS}"
 		for set_id in ${SET_IDS}
 		do
 			unset "BL_ENV_SET_${set_id}"
@@ -3030,7 +3051,7 @@ uninstall()
 	KEEP_PERSIST=0 do_stop
 	if rc_enabled
 		then
-		log_msg -purple "Disabling adblock-lean."
+		log_msg "Disabling adblock-lean."
 		rc_disable && ! rc_enabled ||
 			{ reg_failure "Failed to disable adblock-lean. Disable manually and then run this command again."; exit 1; }
 	fi
@@ -3047,7 +3068,7 @@ uninstall()
 
 	if [ "${REPLY}" = y ]
 	then
-		print_msg -purple "Deleting the config directory."
+		print_msg "Deleting the config directory."
 		rm -rf "${ABL_CFG_DIR:-???}"
 	fi
 
@@ -3082,11 +3103,11 @@ uninstall()
 	print_msg "Deleting the adblock-lean hotplug script."
 	rm -f "${ABL_HOTPLUG_PATH_ENABLED}" "${ABL_HOTPLUG_PATH_DISABLED}"
 
-	print_msg -purple "Deleting adblock-lean scripts."
+	print_msg "Deleting adblock-lean scripts."
 	rm -f "${ABL_SERVICE_PATH}"
 	rm -rf "${ABL_LIB_DIR:-???}" "${ABL_RUN_DIR:-???}" "${ABL_TMP_DIR:-???}"
 
-	print_msg -purple "" "Uninstall complete."
+	print_msg "" "Uninstall complete."
 	exit 0
 }
 
