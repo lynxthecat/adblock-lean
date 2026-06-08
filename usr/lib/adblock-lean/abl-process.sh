@@ -550,7 +550,7 @@ process_set_part()
 
 		get_pad mirror_pad "${curr_mirror}" 8
 		msg_mirr=
-		[ -n "${curr_mirror}" ] && msg_mirr=" [   mirror: ${orange}${curr_mirror}${n_c}${mirror_pad} ]"
+		[ -n "${curr_mirror}" ] && msg_mirr=" [   mirror: ${curr_mirror}${mirror_pad} ]"
 
 		rm -f "${rogue_el_file}" "${list_stats_file}" "${ucl_err_file}"
 
@@ -695,7 +695,7 @@ gen_set_parts()
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" || return 1
 
-	reg_action -1 -purple "" "Downloading and processing blockset parts (max parallel jobs: ${PARALLEL_JOBS})."
+	reg_action -1 "" "Downloading and processing blockset parts (max parallel jobs: ${PARALLEL_JOBS})."
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	schedule_jobs "${list_types}" &
@@ -773,7 +773,7 @@ gen_blocksets()
 			eval "local_list_path=\"\${local_${list_type}list_path_${set_id}}\""
 			[ "${list_type}" = ipv4_block ] ||
 			{ [ -n "${local_list_path}" ] && [ -f "${local_list_path}" ]; } ||
-				reg_msg "No local ${list_type}list identified for blockset ${lblue}${set_id}${n_c}."
+				reg_msg -fb "${set_id}" "No local ${list_type}list identified{}."
 
 			for format in ${ALL_LIST_FORMATS:?}
 			do
@@ -847,7 +847,7 @@ gen_blocksets()
 
 	for set_id in ${set_ids}
 	do
-		reg_msg "Preparing to process blockset ${lblue}${set_id}${n_c}."
+		reg_msg -fb "${set_id}" "Preparing to generate blockset file{}."
 
 		get_params -f "${me}" "${set_id}" run_state &&
 		get_params "${set_id}" \
@@ -870,7 +870,7 @@ gen_blocksets()
 		case "${run_state}" in
 			0) ;;
 			3|4) force_unload_bl=0 conn_check_req='' skip_load_stop=1 ;;
-			*) reg_failure "${me}: unexpected run state '${run_state}' for blockset '${set_id}'."; exit 1
+			*) reg_failure -fb "${set_id}" "${me}: unexpected run state '${run_state}'{}."; exit 1
 		esac
 
 		[ "${force_unload_bl}" = 1 ] ||
@@ -902,7 +902,7 @@ gen_blocksets()
 		is_dir_writable "${set_id}" "${file_to_bk%/*}"
 		then
 			bk_file="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
-			reg_action "Creating backup of current blockset ${lblue}${set_id}${n_c}." &&
+			reg_action -fb "${set_id}" "Creating backup of current blockset file{}." &&
 			mv_blockset "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${set_id}" ||
 			{
 				reg_failure "Failed to create backup of current blockset file '${file_to_bk}'."
@@ -915,7 +915,7 @@ gen_blocksets()
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 "No existing file found for blockset ${lblue}${set_id}${n_c}."
+			reg_msg -2 -fb "${set_id}" "No existing blockset file found{}."
 		fi
 		set_params "${set_id}" bk_file bk_cnt
 	done
@@ -945,7 +945,7 @@ gen_blocksets()
 			debug_msg "install_path: ${install_path};"
 		else
 			rm -f "${processed_bl_file}"
-			reg_failure "Failed to generate new blockset file for blockset '${set_id}'."
+			reg_failure -fb "${set_id}" "Failed to generate new blockset file{}."
 		fi
 	done
 }
@@ -1046,7 +1046,7 @@ gen_blockset()
 		out_f="${2:?}" \
 		set_indexes="${3:?}"
 
-	reg_action -purple "" "Generating blockset ${lblue}${set_id}${n_c}."
+	reg_action -fb "${set_id}" "" "Generating blockset file{}."
 
 	get_params -f "${me}" "${set_id}" \
 		install_path \
@@ -1101,7 +1101,7 @@ gen_blockset()
 	done
 
 	[ "${set_cnt_raw}" -gt 0 ] ||
-		{ reg_failure "Failed to generate preprocessed files with at least one entry for blockset ${set_id}."; return 1; }
+		{ reg_failure -fb "${set_id}" "Failed to generate preprocessed files with at least one entry{}."; return 1; }
 
 	for list_type in ${ALL_LIST_TYPES}
 	do
@@ -1229,7 +1229,7 @@ gen_blockset()
 	if [ -f "${ABL_TMP_DIR}/abl-too-big.tmp" ]
 	then
 		rm -f "${out_f}"
-		reg_failure "Final uncompressed size for blockset ${set_id} exceeded ${max_blockset_file_size_KB} kiB set in max_blockset_file_size_KB config option!"
+		reg_failure -fb "${set_id}" "Final uncompressed blockset file size{} exceeded ${max_blockset_file_size_KB} kiB set in max_blockset_file_size_KB config option!"
 		log_msg "Consider either increasing this value in the config or changing the blockset URLs."
 		return 1
 	fi
