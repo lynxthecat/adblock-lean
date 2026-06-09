@@ -669,7 +669,7 @@ get_dnsmasq_ips()
 	)" &&
 
 	dnp_res="$(
-		${NETSTAT_CMD} -plnt |
+		${NETSTAT_CMD} -plnt 2>/dev/null |
 		${AWK_CMD} -v regex_4="${IP_REGEX_4//\\./.}" -v regex_6="${IP_REGEX_6}" -v l_ifaces="${linux_ifaces}" -v odevs_str="${odevs}" '
 			function print_id(id)
 			{
@@ -756,7 +756,7 @@ get_dnsmasq_ips()
 		inst_iface='' inst_ip_4='' inst_ip_6='' ip4_present='' ip6_present=''
 
 		eval "inst_name=\"\${DNSMASQ_INST_NAME_${index}}\""
-		inst_pid="$(pgrep -f '^/usr/sbin/dnsmasq.*'"${inst_name:-???}"'.pid$')" ||
+		inst_pid="$(${PGREP_CMD:?} -f '^/usr/sbin/dnsmasq.*'"${inst_name:-???}"'.pid$')" ||
 			{ reg_failure "No PID found for dnsmasq instance with index '${index}' (name: '${inst_name}')."; return 1; }
 
 		IFS="${_NL_}"
