@@ -695,7 +695,7 @@ gen_set_parts()
 	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" || return 1
 
-	reg_action -1 "" "Downloading and processing blockset parts (max parallel jobs: ${PARALLEL_JOBS})."
+	reg_action -1 -purple "" "Downloading and processing blockset parts (max parallel jobs: ${PARALLEL_JOBS})."
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
 	schedule_jobs "${list_types}" &
@@ -1046,7 +1046,7 @@ gen_blockset()
 		out_f="${2:?}" \
 		set_indexes="${3:?}"
 
-	reg_action -fb "${set_id}" "" "Generating blockset file{}."
+	reg_action -purple -fb "${set_id}" "" "Generating blockset file{}."
 
 	get_params -f "${me}" "${set_id}" \
 		install_path \
