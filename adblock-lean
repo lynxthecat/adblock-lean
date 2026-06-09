@@ -1024,7 +1024,7 @@ cleanup_and_exit()
 
 dnsmasq_stop_restart_shared()
 {
-	local rv index indexes dnsmasq_indexes cmd_pr inst_pr inst_name cmd_fail='' d_fail_ids='' \
+	local rv index d_indexes dnsmasq_indexes cmd_pr inst_pr inst_name cmd_fail='' d_fail_ids='' \
 		cmd="${1}" set_ids="${2}" d_ok_ids_out_var="${3:-_}" indexes_out_var="${4:-_}" inst_names_out_var="${5:-_}"
 
 	unset_vars "${indexes_out_var}" "${inst_names_out_var}" "${d_ok_ids_out_var}" || return 1
@@ -1038,10 +1038,10 @@ dnsmasq_stop_restart_shared()
 		for set_id in ${set_ids}
 		do
 			ASSERT_NOEXIT=1 get_params -f "${cmd}" "${set_id}" dnsmasq_indexes || { cmd_fail=1; break; }
-			add2list indexes "${dnsmasq_indexes}"
+			add2list d_indexes "${dnsmasq_indexes}"
 		done &&
 		[ -z "${cmd_fail}" ] &&
-		[ -n "${indexes}" ]
+		[ -n "${d_indexes}" ]
 	then
 		:
 	else
@@ -1057,7 +1057,7 @@ dnsmasq_stop_restart_shared()
 		return 0
 	fi
 
-	for index in ${indexes}
+	for index in ${d_indexes}
 	do
 		if
 			eval "inst_name=\"\${DNSMASQ_INST_NAME_${index}}\"" &&
@@ -1114,8 +1114,8 @@ restart_dnsmasq()
 		restart_ok_ids \
 		restart_fail_ids='' \
 		ns ns4 ns6 \
-		host \
 		inst_init_pr \
+		res_attempts \
 		new_run_state="${1}" restart_ok_ids_out_var="${2:-_}" set_ids="${3}"
 
 	unset_vars "${restart_ok_ids_out_var}" || return 1
@@ -1130,6 +1130,8 @@ restart_dnsmasq()
 		inst_init_pr="dnsmasq initialization"
 	fi
 
+	res_attempts=$(seq 1 60)
+
 	# TODO: async
 	reg_msg "Waiting for ${inst_init_pr}." || return 1
 	for index in ${indexes}
@@ -1139,21 +1141,15 @@ restart_dnsmasq()
 			"ns4=\"\${NS4_${index}}\"" \
 			"ns6=\"\${NS6_${index}}\""
 
-		for ns in "${ns4}" "${ns6}"
-		do
-			[ -n "${ns}" ] && break
-		done
+		ns="${ns4:="${ns6}"}"
 
 		: "${ns:="127.0.0.1"}"
 
-		for i in $(seq 1 60)
+		debug_msg "Check cmd: ${NETSTAT_CMD} -plnt | ${SED_CMD} -E 's/^\s+//;s/[^ ]+\s+[^ ]+\s+[^ ]+\s+//' | grep -q \"^${ns}:.*/dnsmasq\s*$\""
+		for i in ${res_attempts:-1 2 3 4 5}
 		do
-			for host in "localhost" "${ns}" "${ABL_HOSTNAME}"
-			do
-				[ -n "${host}" ] || continue
-				debug_msg "Lookup cmd: '${NSLOOKUP_CMD} \"${host}\" \"${ns}\"'"
-				${NSLOOKUP_CMD:?} "${host}" "${ns}" &> /dev/null && continue 3
-			done
+			${NETSTAT_CMD:?} -plnt 2>/dev/null | ${SED_CMD:?} -E 's/^\s+//;s/[^ ]+\s+[^ ]+\s+[^ ]+\s+//' | grep -q "^${ns}:.*/dnsmasq\s*$" &&
+				continue 2
 			sleep 1
 		done
 
