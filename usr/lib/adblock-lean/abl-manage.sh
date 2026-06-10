@@ -252,6 +252,7 @@ try_extract()
 #   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
 #   DNSMASQ_INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}
 #   ADDNMOUNTS_SET, DNSMASQ_INST_SET
+#   DHCP_LOADED
 get_dnsmasq_instances() {
 	# shellcheck disable=SC2317,SC2329
 	add_conf_dir_and_addnmounts()
@@ -836,36 +837,6 @@ unset_param_vars()
 	)
 	debug_msg "unset ${vars}"
 	unset ${vars}
-}
-
-# Looks for blockset-*.conf files and populates ${SET_IDS}
-find_set_configs()
-{
-	# shellcheck disable=SC2329
-	append_set_id()
-	{
-		local cfg_id
-		split_path _ cfg_id _  "${1}"
-		cfg_id="${cfg_id#"blockset-"}"
-		is_alphanum "${cfg_id}" ||
-		{
-			reg_failure "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
-			return 0
-		}
-		add2list SET_IDS "${cfg_id}"
-	}
-
-	SET_IDS=
-
-	FF_EXEC="append_set_id {}" \
-		find_files _ "${ABL_CFG_DIR:?}" "blockset-" "*" ".conf"
-
-	case ${?} in
-		0|2) ;;
-		*) return 1
-	esac
-
-	:
 }
 
 mv_blockset()
