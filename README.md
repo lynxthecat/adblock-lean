@@ -14,7 +14,7 @@ If you like adblock-lean and can benefit from it, then please leave a ⭐ (top r
 - [Adding new lists](#adding-new-lists)
 - [Advanced configuration](#advanced-configuration)
 - [Whitelist mode](#whitelist-mode)
-- [User-configurable calls on success or failure](#user-configurable-calls-on-success-or-failure)
+- [User-configurable calls on success or failure](#user-configurable-calls-on-success-or-failure-and-on-version-updates)
 - [Checking status of adblock-lean](#checking-status-of-adblock-lean)
 - [Testing advert blocking](#testing-advert-blocking)
 - [Preserve adblock-lean files and config across OpenWrt upgrades](#preserve-adblock-lean-files-and-config-across-openwrt-upgrades)
