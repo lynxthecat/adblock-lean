@@ -1,6 +1,6 @@
 #!/bin/sh /etc/rc.common
 # shellcheck source=/dev/null
-# shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003,SC3060
+# shellcheck disable=SC3043,SC2018,SC3020,SC1090,SC3045,SC2155,SC2015,SC3057,SC3044,SC2016,SC3003,SC3060,SC3040
 
 ABL_VERSION=dev
 ABL_UPD_CHANNEL=release
@@ -119,6 +119,8 @@ export -n ABL_HOTPLUG_PATH_SRC="${ABL_CFG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_PATH_ENABLED="${ABL_HOTPLUG_DIR}/${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_PATH_DISABLED="${ABL_HOTPLUG_DIR}/.${HOTPLUG_SCRIPT_FNAME}" \
 	ABL_HOTPLUG_REG_FILE="${ABL_RUN_DIR}/hotplug-device"
+
+export -n LEGACY_CFG_FILE=/etc/adblock-lean/config # unified config was used in adblock-lean v0.8.1 and earlier
 
 export ABL_GEN_FILES="${ABL_SERVICE_PATH}
 		${ABL_HOTPLUG_PATH_SRC}" \
@@ -493,6 +495,42 @@ dbg_off() { [ -n "${DBG_INITIALIZED}" ] && set +x; :; }
 
 ### HELPER FUNCTIONS
 
+# Looks for blockset-*.conf files and populates ${SET_IDS}
+# 1 (optional): var name to output found paths (newline-separated)
+find_set_configs()
+{
+	# shellcheck disable=SC2329
+	append_set_id()
+	{
+		local cfg_id
+		split_path _ cfg_id _  "${1}"
+		cfg_id="${cfg_id#"blockset-"}"
+		is_alphanum "${cfg_id}" ||
+		{
+			reg_failure "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			return 0
+		}
+		add2list SET_IDS "${cfg_id}"
+
+		[ -n "${2}" ] && add2list "${2}" "${1}" "${_NL_}"
+		:
+	}
+
+	unset_vars "${1:-_}" || return 1
+
+	SET_IDS=
+
+	FF_EXEC="append_set_id {} ${1}" \
+		find_files _ "${ABL_CFG_DIR:?}" "blockset-" "*" ".conf"
+
+	case ${?} in
+		0|2) ;;
+		*) return 1
+	esac
+
+	:
+}
+
 # Splits path to file into dir, filename, ext
 split_path()
 {
@@ -791,7 +829,7 @@ detect_main_utils()
 	done
 
 	[ -z "${failed_utils}" ] || { reg_failure "Can not find essential utilities: ${failed_utils}.";  return 1; }
-	export -n MAIN_UTILS_DETECTED=1
+	MAIN_UTILS_DETECTED=1
 	:
 }
 
@@ -1835,8 +1873,8 @@ get_gh_ref()
 			*) gr_version="${gr_ref}"
 		esac
 
-		export -n "${3}=${gr_version}" "${4}=${ABL_GH_URL_API}/tarball/${gr_ref}" "${5}=${gr_ver_type}" \
-			"PREV_REF=${gr_ref}" "PREV_VER_TYPE=${gr_ver_type}" \
+		export -n "${3}=${gr_version}" "${4}=${ABL_GH_URL_API}/tarball/${gr_ref}" "${5}=${gr_ver_type}"
+		export "PREV_REF=${gr_ref}" "PREV_VER_TYPE=${gr_ver_type}" \
 			"PREV_UPD_CHANNEL=${gr_channel}" "PREV_VERSION=${gr_version}"
 	}
 
@@ -1873,6 +1911,7 @@ get_gh_ref()
 
 	local gr_branches='' gr_grep_ptrn='' gr_ref='' gr_ver_type='' gr_fetch_rv=0 \
 		gr_fetch_tmp_dir="${ABL_UPD_DIR}/ref_fetch" \
+		cached_ref cached_ver_type \
 		gr_channel="${1}" gr_version="${2}"
 
 	[ "$gr_channel" = release ] && gr_version="${gr_version#v}"
@@ -1890,7 +1929,7 @@ get_gh_ref()
 	if [ -z "${gr_ref}" ] && [ -n "${PREV_REF}" ] && [ -n "${PREV_VER_TYPE}" ] && \
 		[ "${PREV_UPD_CHANNEL}" = "${gr_channel}" ] && [ "${gr_version}" = "${PREV_VERSION}" ]
 	then
-			gr_ref="${PREV_REF}" gr_ver_type="${PREV_VER_TYPE}"
+		gr_ref="${PREV_REF}" gr_ver_type="${PREV_VER_TYPE}"
 	elif [ -z "${gr_ref}" ]
 	then
 		# ref cache
@@ -1919,10 +1958,10 @@ get_gh_ref()
 			*)
 				# found cached query
 				if [ -z "${IGNORE_CACHE}" ] && [ -f "${cache_file}" ] &&
-					read -r PREV_REF PREV_VER_TYPE < "${cache_file}" &&
-					[ -n "${PREV_REF}" ] && [ -n "${PREV_VER_TYPE}" ]
+					read -r cached_ref cached_ver_type < "${cache_file}" &&
+					[ -n "${cached_ref}" ] && [ -n "${cached_ver_type}" ]
 				then
-					gr_ref="${PREV_REF}" gr_ver_type="${PREV_VER_TYPE}"
+					gr_ref="${cached_ref}" gr_ver_type="${cached_ver_type}"
 				else
 					rm -f "${cache_file:-???}"
 				fi
@@ -2922,7 +2961,7 @@ update()
 	unexp_arg() { upd_failed "update: unexpected argument '${1}'."; }
 
 	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
-		upd_channel='' req_upd_channel='' force_upd_channel='' upd_nostop='' new_cfg_format
+		upd_channel='' req_upd_channel='' force_upd_channel='' upd_nostop=''
 	local CUR_ACT=update
 	local CUR_CMD=${CUR_ACT}
 
@@ -3000,18 +3039,9 @@ update()
 		fetch_abl_dist "${tarball_url}" "${dist_dir}" || { upd_failed; return 1; }
 	fi
 
-	new_cfg_format="$(get_config_format "${dist_dir}/adblock-lean")" &&
-	is_uint "${new_cfg_format}" ||
-		{ reg_failure "Failed to get config version from fetched adblock-lean distribution."; return 1; }
-
-	[ "${new_cfg_format}" -ge 9 ] ||
-		{
-			reg_failure "Downgrade to versions earlier than v0.7.3 is not supported." \
-				"If you really want to downgrade, use the abl-install.sh script and specify which version to install in the arguments."
-			return 1
-		}
-
 	# Call install_abl_files() from fetched installer
+	grep -m1 -q '[ 	]*install_abl_files()' "${dist_dir}/abl-install.sh" ||
+		inst_failed "Downloaded adblock-lean install script does not define the function 'install_abl_files' - try a newer adblock-lean version."
 	(
 		clean_abl_env
 		INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
@@ -3023,19 +3053,56 @@ update()
 
 	log_msg -green "" "adblock-lean has been updated to version '${upd_ver}'."
 
-	if [ "${DO_DIALOGS}" = 1 ]
+
+	local cur_main_cfg_path='' cur_blockset_cfg_files='' cfg_found=''
+
+	{
+		[ -s "${GLOBAL_CFG_FILE}" ] &&
+		cur_main_cfg_path="${GLOBAL_CFG_FILE}"
+	} ||
+	{
+		[ -s "${LEGACY_CFG_FILE}" ] &&
+		cur_main_cfg_path="${LEGACY_CFG_FILE}"
+	}
+
+	find_set_configs cur_blockset_cfg_files
+
+	[ "${cur_main_cfg_path}" = "${LEGACY_CFG_FILE}" ] ||
+	{ [ "${cur_main_cfg_path}" = "${GLOBAL_CFG_FILE}" ] && [ -n "${cur_blockset_cfg_files}" ]; } &&
+		cfg_found=1
+
+	if [ -n "${cfg_found}" ]
 	then
-		print_msg -blue "" "Start adblock-lean now? (y|n)"
-		pick_opt "y|n"
+		if [ "${DO_DIALOGS}" = 1 ]
+		then
+			print_msg -blue "" "Start adblock-lean now? (y|n)"
+			pick_opt "y|n"
+		else
+			REPLY=y
+		fi
+
+		[ "${REPLY}" = y ] || exit 0
+
+		clean_abl_env
+		. "${ABL_SERVICE_PATH}" || return 1
+		start
+		exit ${?}
+	elif \
+		[ -n "${DO_DIALOGS}" ] &&
+		print_msg -blue "" "Set up adblock-lean now? (y|n)" &&
+		pick_opt "y|n" &&
+		[ "$REPLY" = y ]
+	then
+		clean_abl_env
+		set +o pipefail # for compatibility with older versions
+		# shellcheck source=/dev/null
+		. "${ABL_SERVICE_PATH}"
+		setup
+		exit ${?}
 	else
-		REPLY=y
+		log_msg -yellow "adblock-lean config is not found. Please use the command 'service adblock-lean setup' to set up adblock-lean."
+		exit 0
 	fi
-
-	[ "${REPLY}" = y ] || exit 0
-
-	clean_abl_env
-	. "${ABL_SERVICE_PATH}" || return 1
-	start
 }
 
 uninstall()
@@ -3152,17 +3219,12 @@ calculate_limits()
 }
 
 
-ABL_INIT_ACT=
-CUR_ACT=
-CUR_CMD=
-LIBS_SOURCED=
-MAIN_UTILS_DETECTED=
-
-PREV_REF=
-PREV_VER_TYPE=
-PREV_UPD_CHANNEL=
-PREV_VERSION=
-
+export -n \
+	ABL_INIT_ACT='' \
+	CUR_ACT='' \
+	CUR_CMD='' \
+	LIBS_SOURCED='' \
+	MAIN_UTILS_DETECTED=''
 
 set_ansi
 
@@ -3172,7 +3234,7 @@ set_ansi
 # detect when sourced from update() in older versions
 check_func failsafe_log && UPD_SOURCED=1
 
-export -n ABL_INIT_ACT="${action}" # ${action} is set by procd
+ABL_INIT_ACT="${action}" # ${action} is set by procd
 
 # register 1st arg as ${ABL_INIT_ACT} when called by 'sh /etc/init.d/adblock-lean'
 if [ "${0}" = "${ABL_SERVICE_PATH}" ] &&
