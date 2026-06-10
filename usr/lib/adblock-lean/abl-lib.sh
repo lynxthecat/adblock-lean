@@ -273,7 +273,7 @@ do_create_addnmounts()
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
 		[ -n "${missing_addnm}" ] || return 0
-		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}{missing_addnm} (required for ${3})"
+		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${missing_addnm} (required for ${3})"
 	}
 
 	local me=create_addnmounts \
@@ -412,6 +412,7 @@ do_create_addnmounts()
 	}
 
 	unset ADDNMOUNTS_SET DHCP_LOADED
+	get_dnsmasq_instances || return 1
 
 	:
 }
@@ -1739,7 +1740,7 @@ fix_config()
 		bk_prefix="blockset-"
 	}
 
-	local old_cfg_f="/tmp/adblock-lean_config_${bk_prefix}${cfg_id}.old"
+	local old_cfg_f="/tmp/adblock-lean_config_${bk_prefix}${cfg_id}.bk"
 	if ! cp "${cfg_path}" "${old_cfg_f}"
 	then
 		reg_failure "Failed to save old config file as ${old_cfg_f}."
