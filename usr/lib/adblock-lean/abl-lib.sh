@@ -46,7 +46,7 @@ try_mv()
 {
 	local mv_q=
 	[ "${1}" = '-q' ] && { mv_q=1; shift; }
-	[ -n "${1}" ] && [ -n "${2}" ] || { bad_args "try_mv" "${@}"; return 1; }
+	[ -n "${1}" ] && [ -n "${2}" ] || bad_args "try_mv" "${@}"
 	mv -f "${1}" "${2}" && return 0
 
 	[ -n "${mv_q}" ] || reg_failure "Failed to move '${1}' to '${2}'."
@@ -84,8 +84,8 @@ get_pad()
 # 3 - (optional) '-p' to add padding
 bytes2human()
 {
-	unset_vars "${1}" || return 1
-	local i="${2:-0}" s=0 d=0 m=1024 fp='' S='' bh_res='' pad='' align=''
+	unset_vars "${1}"
+	local i="${2:-0}" s=0 d=0 m=1024 fp S bh_res pad align
 	[ "${3}" = '-p' ] && align=1
 	is_uint "${i}" || { reg_failure "bytes2human: invalid uint '${i}'."; return 1; }
 	for S in B KiB MiB GiB TiB
@@ -119,7 +119,7 @@ bytes2human()
 # 2 - uint
 int2human()
 {
-	unset_vars "${1}" || return 1
+	unset_vars "${1}"
 	is_uint "${2}" || { reg_failure "int2human: invalid uint '${2}'."; return 1; }
 
 	local in_num="${2#"${2%%[!0]*}"}" out_num=
@@ -137,7 +137,7 @@ int2human()
 
 get_md5()
 {
-	unset_vars "${1}" || return 1
+	unset_vars "${1}"
 	local IFS="${DEFAULT_IFS}" g_md5
 	g_md5="$(${MD5_CMD} "${2}")" &&
 	g_md5="${g_md5%% *}" &&
@@ -287,7 +287,7 @@ do_create_addnmounts()
 		bl_full_fname \
 		path_ram \
 		ignore_paths \
-		ram_addnm \
+		ram_addnm cat_addnm \
 		\
 		persist_mode \
 		persist_dir \
@@ -295,7 +295,7 @@ do_create_addnmounts()
 		all_missing_addnm \
 		cra_compr_util_path cra_compr_ext \
 		add_list_failed \
-		path paths_pr
+		path
 
 	# reset req_addnm_${index} vars, compile list of indexes
 	for set_id in ${SET_IDS:?}
@@ -304,7 +304,7 @@ do_create_addnmounts()
 		for index in ${dnsmasq_indexes}
 		do
 			local "req_addnm_${index}=" &&
-			add2list all_dnsmasq_indexes "${index}" || return 1
+			add2list all_dnsmasq_indexes "${index}"
 		done
 	done
 
@@ -350,7 +350,7 @@ do_create_addnmounts()
 		esac &&
 		check_persist_dir "${set_id}" &&
 		{
-			local ram_addnm='' cat_addnm=''
+			ram_addnm='' cat_addnm=''
 			is_included "${path_ram}" "${ignore_paths}" "${_NL_}" ||
 				ram_addnm="${_NL_}${path_ram}"
 			[ -n "${cra_compr_ext}" ] || cat_addnm="${_NL_}${CAT_CMD}"
@@ -369,7 +369,7 @@ do_create_addnmounts()
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ]
 	then
 		print_msg -blue "Create missing addnmount entries automatically? (y|n)"
-		pick_opt "y|n" || return 1
+		pick_opt "y|n"
 	else
 		log_msg -blue "Automatically creating missing addnmount entries."
 		REPLY=y
@@ -385,15 +385,7 @@ do_create_addnmounts()
 		eval "req_addnm_index=\"\${req_addnm_${index}}\""
 		[ -n "${req_addnm_index}" ] || continue
 
-		IFS="${_NL_}"
-		for path in ${req_addnm_index}
-		do
-			IFS="${DEFAULT_IFS}"
-			add2list paths_pr "'${path}'" ", "
-		done
-		IFS="${DEFAULT_IFS}"
-
-		log_msg -purple "Creating addnmount entries for dnsmasq instance ${index}: ${paths_pr}."
+		log_msg -purple "" "Creating addnmount entries for dnsmasq instance ${index}:${_NL_}${req_addnm_index}."
 		IFS="${_NL_}"
 		for path in ${req_addnm_index}
 		do
@@ -419,7 +411,7 @@ do_create_addnmounts()
 
 get_pkg_name()
 {
-	unset_vars "${1}" || return 1
+	unset_vars "${1}"
 	local _name
 	case "${2}" in
 		awk) _name="gawk" ;;
@@ -468,9 +460,9 @@ do_setup()
 	{
 		# determine if there are missing GNU utils
 		local recomm_pkgs_regex="${RECOMMENDED_PKGS//" "/|}"
-		local pkgs2install='' missing_packages='' missing_utils='' missing_utils_print='' util pkg_name \
-			installed_pkgs='' util_size_B='' util_size_human='' utils_size_B=0 utils_size_human='' awk_size_B sort_size_B sed_size_B \
-			free_space_human='' free_space_B='' free_space_KB mount_point
+		local pkgs2install missing_packages missing_utils missing_utils_print util pkg_name \
+			installed_pkgs util_size_B util_size_human utils_size_B=0 utils_size_human awk_size_B sort_size_B sed_size_B \
+			free_space_human free_space_B free_space_KB mount_point
 
 		: "${awk_size_B:=1048576}" "${sort_size_B:=122880}" "${sed_size_B:=153600}"
 
@@ -518,7 +510,7 @@ do_setup()
 					eval "util_size_B=\"\${${util}_size_B}\""
 					bytes2human util_size_human "${util_size_B}" || return 1
 					print_msg "Would you like to install ${lblue}GNU ${util}${n_c} automatically? Installed size: ${yellow}${util_size_human}${n_c}. (y|n)"
-					pick_opt "y|n" || return 1
+					pick_opt "y|n"
 				elif [ -n "${luci_install_packages}" ]
 				then
 					REPLY=y
@@ -590,7 +582,7 @@ do_setup()
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
 			print_msg "" "Existing global config file found." "Generate [${lblue}n${n_c}]ew config or use [${lblue}e${n_c}]xisting config? (n|e)"
-			pick_opt 'n|e' || return 1
+			pick_opt 'n|e'
 		elif [ -n "${luci_use_old_config}" ]
 		then
 			REPLY=e
@@ -629,7 +621,7 @@ do_setup()
 		then
 			print_msg "" "Found existing blockset config files:${_NL_}${bl_cfgs_found}." \
 				"${_NL_}[k]eep existing blockset config files or remove them and create a [n]ew one, or [a]bort? (k|n|a)"
-			pick_opt 'k|n|a' || return 1
+			pick_opt 'k|n|a'
 			[ "${REPLY}" = a ] && return 0
 		else
 			REPLY=k
@@ -690,7 +682,7 @@ do_setup()
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
 		print_msg "" "${purple}Setup is complete.${n_c}" "" "${lblue}Start adblock-lean now?${n_c} (y|n)"
-		pick_opt "y|n" || return 1
+		pick_opt "y|n"
 		[ "${REPLY}" != y ] && return 0
 		echo > "${MSGS_DEST}"
 		start
@@ -726,7 +718,7 @@ get_preset()
 
 	assert_set F_get_preset gp_mem gp_lists_cnt gp_entr_cnt gp_lim_coeff gp_lists || return 1
 
-	unset_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}" || return 1
+	unset_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}"
 
 	do_calculate_limits "${gp_entr_cnt}" "${gp_lists_cnt}" "${gp_lim_coeff}" gp_min_lines gp_max_bl_size gp_max_part_size || return 1
 
@@ -771,7 +763,7 @@ do_calculate_limits()
 	# 1 - var for I/O
 	reasonable_round()
 	{
-		local input factor neg='' me=reasonable_round
+		local input factor neg me=reasonable_round
 		eval "input=\"\${${1}}\""
 		case "${input}" in -*) neg='-' input="${input#-}"; esac
 		input="${input#"${input%%[!0]*}"}"
@@ -787,11 +779,11 @@ do_calculate_limits()
 		:
 	}
 
-	local me=calculate_limits lists_cnt tgt_entries_cnt='' tgt_entries_cnt_human lim_coeff final_entry_size_B source_entry_size_B \
+	local me=calculate_limits lists_cnt tgt_entries_cnt tgt_entries_cnt_human lim_coeff final_entry_size_B source_entry_size_B \
 		cl_min_lines cl_max_bl_size_kb cl_max_part_size_kb \
 		tgt_entries_cnt="${1}" lists_cnt="${2}" lim_coeff="${3:-1}"
 
-	unset_vars "${4}" "${5}" "${6}" || return 1
+	unset_vars "${4}" "${5}" "${6}"
 
 	[ -z "${tgt_entries_cnt}" ] && [ -n "${CL_INTERACTIVE}" ] &&
 	while :
@@ -862,7 +854,7 @@ print_def_cfg()
 	case "${cfg_type}" in
 		global) print_def_cfg_global "${@}" ;;
 		bl) print_def_cfg_blockset "${@}" ;;
-		*) bad_args print_def_cfg "${cfg_type}" "${@}"; return 1 ;;
+		*) bad_args print_def_cfg "${cfg_type}" "${@}" ;;
 	esac
 }
 
@@ -874,7 +866,7 @@ print_def_cfg()
 print_def_cfg_blockset()
 {
 	local me=print_def_cfg_blockset \
-		preset='' print_types='' dnsmasq_indexes='' dnsmasq_conf_dirs='' \
+		preset print_types dnsmasq_indexes dnsmasq_conf_dirs \
 		pdc_lists pdc_max_part_size pdc_max_set_size pdc_min_lines \
 		opt set_id
 
@@ -885,11 +877,11 @@ print_def_cfg_blockset()
 			c) dnsmasq_conf_dirs=$OPTARG ;;
 			p) preset=$OPTARG ;;
 			d) print_types=1 ;;
-			*) bad_args "${me}" "${@}"; return 1 ;;
+			*) bad_args "${me}" "${@}" ;;
 		esac
 	done
 
-	[ -n "${set_id}" ] || { bad_args "${me}" "${@}"; return 1; }
+	[ -n "${set_id}" ] || bad_args "${me}" "${@}"
 
 	: "${preset:=small}"
 	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
@@ -976,13 +968,13 @@ print_def_cfg_blockset()
 # (optional) -d to print with allowed value types (otherwise print without)
 print_def_cfg_global()
 {
-	local me=print_def_cfg_global print_types pdc_max_part_size preset=''
+	local me=print_def_cfg_global print_types pdc_max_part_size preset
 	while getopts ":i:n:c:p:d" opt; do
 		case "${opt}" in
 			i|n|c) : ;; # ignore these options
 			p) preset=$OPTARG ;;
 			d) print_types=1 ;;
-			*) bad_args "${me}" "${@}"; return 1 ;;
+			*) bad_args "${me}" "${@}" ;;
 		esac
 	done
 
@@ -1062,7 +1054,7 @@ confirm_cfg_write()
 	get_cfg_path cfg_file "${cfg_id}" || return 1
 	[ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -z "${APPROVE_CFG_WRITE}" ] && [ -f "${cfg_file}" ] || return 0
 	print_msg -blue "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
-	pick_opt "y|n" && [ "${REPLY}" != n ] || return 1
+	pick_opt "y|n" && [ "${REPLY}" != n ]
 }
 
 # 1: new blockset ID
@@ -1071,7 +1063,7 @@ do_gen_blockset_config()
 	# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
 	get_def_preset()
 	{
-		unset_vars "${1}" "${2}" &&
+		unset_vars "${1}" "${2}"
 		assert_set F_get_def_preset ALL_PRESETS "${ALL_PRESETS%% *}_mem" || return 1
 
 		local _totalmem _mem _preset IFS="${DEFAULT_IFS}"
@@ -1173,7 +1165,7 @@ do_gen_blockset_config()
 get_cfg_path()
 {
 	local g_path
-	unset_vars "${1}" || return 1
+	unset_vars "${1}"
 	case "${2}" in
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
 		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
@@ -1219,15 +1211,15 @@ parse_config()
 	local me=parse_config \
 		IFS="${DEFAULT_IFS}" \
 		cfg_pr \
-		curr_config='' \
+		curr_config \
 		i keys entries entries_type_pr entries_pr \
-		dup_keys='' dup_entries='' \
-		unexp_keys='' unexp_entries='' \
-		missing_keys='' missing_entries='' \
-		bad_val_keys='' bad_val_entries='' corrected_entries='' \
+		dup_keys dup_entries \
+		unexp_keys unexp_entries \
+		missing_keys missing_entries \
+		bad_val_keys bad_val_entries corrected_entries \
 		def_cfg_format \
-		force_upd_cfg_format='' \
-		p_cfg_fixes='' \
+		force_upd_cfg_format \
+		p_cfg_fixes \
 			cfg_type="${1:?}" cfg_id="${2:?}" cfg_path="${3}" fixes_out_var="${4}" replace_keys_out_var="${5}"
 
 	: "${missing_entries}" "${bad_val_entries}" "${corrected_entries}"
@@ -1237,12 +1229,12 @@ parse_config()
 
 	cfg_pr="config file '${cfg_path}'"
 
-	unset_vars "${fixes_out_var}" "${replace_keys_out_var}" || return 1
+	unset_vars "${fixes_out_var}" "${replace_keys_out_var}"
 
 	unset luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_cfg_format luci_cfg_fixes preset
 
-	[ -z "${cfg_path}" ] && { bad_args "${me}" "${@}"; return 3; }
+	[ -z "${cfg_path}" ] && bad_args "${me}" "${@}"
 
 	[ ! -f "${cfg_path}" ] && { reg_failure "Config file '${cfg_path}' not found."; return 1; }
 
@@ -1516,9 +1508,9 @@ parse_config()
 	[ "${cfg_id}" = global ] ||
 	{
 		local persist_dir
-		get_params "${cfg_id}" persist_dir &&
+		get_params "${cfg_id}" persist_dir
 		set_params "${cfg_id}" persist_dir="${persist_dir%/}"
-	} || return 3
+	}
 
 	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0
 
@@ -1574,8 +1566,7 @@ parse_config()
 
 load_config()
 {
-	local \
-		err_path err_cfg='' fix_cmd=''
+	local err_path err_cfg fix_cmd
 	[ -n "${CONFIG_LOADED}" ] && return 0
 
 	detect_main_utils || return 1 # for versions < 3 of abl-install.sh
@@ -1626,8 +1617,8 @@ try_load_config()
 		done
 	}
 
-	local force_fix='' l_cfg_fixes='' l_replace_keys='' \
-		all_cfg_fixes='' \
+	local force_fix l_cfg_fixes l_replace_keys \
+		all_cfg_fixes \
 		cfg_path cfg_type cfg_id \
 		err_cfg_out_var="${1}"
 
@@ -1680,7 +1671,7 @@ try_load_config()
 		then
 			print_msg -blue "" "Perform following automatic changes? (y|n)"
 			print_cfg_fixes
-			pick_opt "y|n" &&
+			pick_opt "y|n"
 			[ "${REPLY}" = y ] || return 1
 		else
 			print_msg -blue "" "Performing following config changes:"
@@ -1748,7 +1739,7 @@ fix_config()
 		then
 			[ "${DO_DIALOGS}" = 1 ] || return 1
 			print_msg -blue "Proceed with suggested config changes? (y|n)"
-			pick_opt "y|n" || return 1
+			pick_opt "y|n"
 			[ "${REPLY}" = n ] && return 1
 		fi
 	else
@@ -1817,6 +1808,20 @@ write_config()
 
 ### HELPER FUNCTIONS
 
+# shellcheck disable=SC2120
+# get config format from config or main script file contents
+# input via STDIN or ${1}
+get_config_format()
+{
+	local cfg_form_sed_expr='/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}'
+	if [ -n "${1}" ]
+	then
+		${SED_CMD} -En "${cfg_form_sed_expr}" "${1}"
+	else
+		${SED_CMD} -En "${cfg_form_sed_expr}"
+	fi
+}
+
 # Get version and update channel of adblock-lean file
 # Assigns vars $2 = version, $3 = update channel
 # 1 - path to adblock-lean service file
@@ -1828,11 +1833,12 @@ get_abl_version()
 {
 	get_ver_str()
 	{
-		[ -n "${3}" ] && unset_vars "${1}" "${2}" || return 1
-		local _par res_version='' res_upd_channel=''
+		[ -n "${3}" ] || return 1
+		unset_vars "${1}" "${2}"
+		local _par res_version res_upd_channel key_ptrn res
 		for _par in version upd_channel
 		do
-			local key_ptrn='' res=''
+			key_ptrn='' res=''
 			case "${_par}" in
 				version) key_ptrn="\\s*ABL_VERSION" ;;
 				upd_channel) key_ptrn="\\s*ABL_UPD_CHANNEL" ;;
@@ -1845,8 +1851,8 @@ get_abl_version()
 		export -n "${1}=${res_upd_channel}" "${2}=${res_version}"
 	}
 
-	local gv_ver='' gv_upd_ch='' gv_rv='' cfg_format=''
-	unset_vars "${2}" "${3}" || return 1
+	local gv_ver gv_upd_ch gv_rv cfg_format
+	unset_vars "${2}" "${3}"
 
 	[ -s "${1}" ] || { reg_failure "Can not find '${1}'."; return 1; }
 
@@ -1874,7 +1880,7 @@ get_abl_version()
 # 3 - automatic updates check is disabled for current update channel
 check_for_updates()
 {
-	local tarball_url='' curr_ver='' upd_ver='' upd_channel='' no_upd=''
+	local tarball_url curr_ver upd_ver upd_channel no_upd
 	unset UPD_AVAIL UPD_DIRECTIONS
 	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
 	case "${upd_channel}" in

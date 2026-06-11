@@ -49,7 +49,7 @@ stevenblack_mirrors="github sbc_io" \
 # 1 - var name for centiseconds output
 get_uptime_cs() {
 	local __uptime i_cs gu_cs gu_s
-	unset_vars "${1}" || return 1
+	unset_vars "${1}"
 
 	read -r __uptime _ < /proc/uptime &&
 	case "${__uptime}" in
@@ -83,7 +83,7 @@ get_uptime_cs() {
 # 2 - initial uptime in centiseconds
 get_elapsed_time_cs() {
 	local ge_uptime_cs
-	unset_vars "${1}" &&
+	unset_vars "${1}"
 	get_uptime_cs ge_uptime_cs &&
 	export -n "${1}=$(( ge_uptime_cs - ${2:-ge_uptime_cs} ))"
 }
@@ -91,8 +91,8 @@ get_elapsed_time_cs() {
 # 1: var name for output
 # 2: reference time in centiseconds
 get_elapsed_time_human() {
-	local _e_m _e_s _e_cs _e_elapsed _elapsed_human=''
-	unset_vars "${1}" &&
+	local _e_m _e_s _e_cs _e_elapsed _elapsed_human
+	unset_vars "${1}"
 	get_elapsed_time_cs _e_elapsed "${2}" || return 1
 	_e_m=$(( _e_elapsed / 6000 ))
 	[ "$_e_m" -gt 0 ] || _e_m=
@@ -116,7 +116,7 @@ get_elapsed_time_human() {
 # TODO: Parallelize domains lookup
 test_url_domains()
 {
-	local list lists list_cat list_author url mirror all_urls='' type format dom \
+	local list lists list_cat list_author url mirror all_urls type format dom \
 		set_id="${1:?}"
 
 	for type in block ipv4_block allow
@@ -126,7 +126,7 @@ test_url_domains()
 			local list_cat="${format}_${type}_lists"
 			get_bl_param_gl_var _ "${list_cat}" || continue # ignore invalid combinations
 			local "${list_cat}="
-			get_params "${set_id}" lists="${list_cat}" || return 1
+			get_params "${set_id}" lists="${list_cat}"
 
 			[ -z "${lists}" ] && continue
 			for list in ${lists}
@@ -171,12 +171,12 @@ test_url_domains()
 # shellcheck disable=SC2329
 get_list_url()
 {
-	local base_url='' prefix='' suffix='' raw_suffix='' dnsmasq_suffix='' hosts_suffix='' \
-		res_url list_author list_name lists='' list_id_lc formats \
+	local base_url prefix suffix raw_suffix dnsmasq_suffix hosts_suffix \
+		res_url list_author list_name lists list_id_lc formats \
 		mirrors first_mirror \
 		out_var="${1}" list_id="${2}" format="${3}" mirror="${4}"
 
-	unset_vars "${out_var}" || return 1
+	unset_vars "${out_var}"
 
 	case "${format}" in raw|dnsmasq|hosts) ;; *) reg_failure "Unexpected list format '${format}'."; return 1; esac
 
@@ -243,8 +243,8 @@ get_list_url()
 # 1 - var name for output
 get_curr_job_pid()
 {
-	local __pid='' pid_line=''
-	unset_vars "${1}" || return 1
+	local __pid pid_line
+	unset_vars "${1}"
 	IFS="${_NL_}" read -r -n512 -d '' _ _ _ _ _ pid_line _ < /proc/self/status
 	__pid="${pid_line##*[^0-9]}"
 	is_uint "${__pid}" || { reg_failure "Failed to get current job PID."; return 1; }
@@ -331,7 +331,7 @@ schedule_jobs()
 		done_pid done_rv \
 		origin print_id \
 		scheduler_pid \
-		RUNNING_PIDS='' \
+		RUNNING_PIDS \
 		RUNNING_JOBS_CNT=0 \
 		list_types="${1:?}"
 
@@ -445,7 +445,7 @@ process_set_part()
 
 	conv_dnsmasq_to_raw()
 	{
-		local conv_prefix='s~^[ \t]*(local|server|address)=/~~' conv_suffix=''
+		local conv_prefix='s~^[ \t]*(local|server|address)=/~~' conv_suffix
 		case "${1}" in
 			block) conv_suffix='s~/$~~' ;;
 			ipv4_block) conv_prefix="s~^[ \t]*bogus-nxdomain=~~" ;;
@@ -474,7 +474,7 @@ process_set_part()
 		curr_job_pid msg msg_mirr \
 		pad print_id_pad mirror_pad \
 		print_id origin \
-		list_path='' list_author='' mirrors='' mirror='' curr_mirror='' first_mirror='' loop_prev_mirror='' \
+		list_path list_author mirrors mirror curr_mirror first_mirror loop_prev_mirror \
 		min_entries \
 		index="${1:?}" list_type="${2:?}" format="${3:?}" origin="${4:?}" print_id="${5:?}" scheduler_pid="${6:?}"
 
@@ -507,8 +507,8 @@ process_set_part()
 		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${index}" \
 		rogue_el_file="${ABL_TMP_DIR}/rogue_el_${index}" \
 		list_stats_file="${ABL_TMP_DIR}/${index}_stats" \
-		part_cnt='' cnt_human min_entries_human \
-		part_size_B='' retry=1 \
+		part_cnt cnt_human min_entries_human \
+		part_size_B retry=1 \
 		part_compr_or_cat="cat" fetch_cmd \
 		format_conv_or_cat="cat" \
 		case_conv_or_cat="cat" \
@@ -633,7 +633,7 @@ process_set_part()
 			# min_entries check
 			int2human cnt_human "${part_cnt}" || finalize_job 1    # ${cnt_human} also used in finalize_job()
 
-			local lines_cnt_low=''
+			local lines_cnt_low=
 			if [ "${origin}" = DL ] && [ "${part_cnt}" -lt "${min_entries}" ]
 			then
 				lines_cnt_low=1
@@ -727,7 +727,7 @@ gen_blocksets()
 		bk_file \
 		bk_ext \
 		final_compr_ext \
-		blocksets_to_stop='' \
+		blocksets_to_stop \
 		force_unload_bl \
 		force_unload="${unload_blockset_before_update:?}" \
 		install_path \
@@ -741,7 +741,7 @@ gen_blocksets()
 		lists list_type format \
 		proc_index=0 \
 		set_indexes \
-		proc_set_ids='' \
+		proc_set_ids \
 		blocksets_out_var="${1:?}" set_ids="${2:?}" initial_uptime_cs="${3:?}"
 
 	: "${skip_load_stop}" "${bk_cnt}"
@@ -849,7 +849,7 @@ gen_blocksets()
 	do
 		reg_msg -fb "${set_id}" "Preparing to generate blockset file{}."
 
-		get_params -f "${me}" "${set_id}" run_state &&
+		get_params -f "${me}" "${set_id}" run_state || return 1
 		get_params "${set_id}" \
 			curr_path \
 			curr_cnt \
@@ -858,7 +858,7 @@ gen_blocksets()
 			bk_ext \
 			raw_block_lists \
 			dnsmasq_block_lists\
-			hosts_block_lists || return 1
+			hosts_block_lists
 
 		[ -n "${raw_block_lists}${dnsmasq_block_lists}${hosts_block_lists}" ] ||
 			log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
@@ -881,7 +881,7 @@ gen_blocksets()
 		[ "${force_unload_bl}" = 1 ] &&
 			{ add2list blocksets_to_stop "${set_id}"; skip_load_stop=1; }
 
-		set_params "${set_id}" skip_load_stop || return 1
+		set_params "${set_id}" skip_load_stop
 
 		bk_file=
 		file_to_bk=
@@ -932,9 +932,8 @@ gen_blocksets()
 	for set_id in ${set_ids}
 	do
 		eval "set_indexes=\"\${set_indexes_${set_id}}\""
-		get_params -f "${me}" "${set_id}" install_path &&
-		get_params "${set_id}" \
-			final_compr_ext || return 1
+		get_params -f "${me}" "${set_id}" install_path || return 1
+		get_params "${set_id}" final_compr_ext
 
 		processed_bl_file="${ABL_TMP_DIR}/processed-${set_id}${final_compr_ext}"
 
@@ -977,7 +976,7 @@ gen_blockset()
 	# 1 - block|allow
 	pack_entries_awk()
 	{
-		local entry_type len_lim=1024 allow_char=''
+		local entry_type len_lim=1024 allow_char
 		case "$1" in
 			block) entry_type=local ;;
 			allow) entry_type=server allow_char="#" ;;
@@ -1053,21 +1052,21 @@ gen_blockset()
 		part_extr_or_cat_stdout \
 		max_blockset_file_size_KB \
 		min_good_entries\
-		final_compr_or_cat_stdout &&
+		final_compr_or_cat_stdout || return 1
 
 	get_params "${set_id}" \
 		install_1_instance \
 		test_domains \
 		use_allowlist \
 		use_ipv4_blocklist \
-		whitelist_mode &&
+		whitelist_mode
 
 	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f}; install_1_instance: ${install_1_instance};"
 
 	case "${part_extr_or_cat_stdout}" in
 		"${CAT_CMD}") ;;
-		*) assert_set "F_${me}" INTERM_COMPR_EXT || false
-	esac || return 1
+		*) assert_set "F_${me}" INTERM_COMPR_EXT || return 1
+	esac
 
 	local max_size_b=$((max_blockset_file_size_KB*1024))
 	[ "${deduplication}" = 1 ] && dedup_cmd_or_cat="${SORT_CMD} -u -"
