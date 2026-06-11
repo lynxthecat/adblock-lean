@@ -569,14 +569,12 @@ is_valid_dir()
 	:
 }
 
-# Env vars: FORCE_PERSIST_WRITE
 is_dir_writable()
 {
 	local persist_dir persist_mode
 	is_valid_dir -q "${2}" || return 1
 	get_params "${1}" persist_dir persist_mode
 
-	[ -n "${FORCE_PERSIST_WRITE}" ] ||
 	{ [ -n "${persist_dir}" ] && [ "${2}" != "${persist_dir}" ]; } ||
 	{ [ "${persist_mode}" = managed ] && [ "${KEEP_PERSIST}" != 1 ]; } ||
 	{
@@ -621,21 +619,29 @@ rm_bk()
 # KEEP_PERSIST, KEEP_BK
 rm_blocksets()
 {
-	local set_id install_path curr_path curr_persist_path rm_enum rm_path \
+	local set_id install_path curr_path curr_persist_path persist_mode rm_enum rm_path rm_pr \
 		rm_rv=0 \
 		set_ids="${*:-"${SET_IDS}"}"
 
 	for set_id in ${set_ids}
 	do
-		get_params "${set_id}" install_path curr_path curr_persist_path bk_file
-		[ -n "${KEEP_PERSIST}" ] && curr_persist_path=
+		get_params "${set_id}" install_path curr_path bk_file persist_mode curr_persist_path
+
+		[ "${KEEP_PERSIST}" = 1 ] &&
+		{
+			[ -n "${curr_persist_path}" ] || [ "${persist_mode}" != disable ] &&
+				rm_pr=" on the ramdisk"
+			curr_persist_path=
+		}
+
 		[ -n "${KEEP_BK}" ] &&
 		{
 			[ "${curr_path}" = "${bk_file}" ] && curr_path=
 			[ "${curr_persist_path}" = "${bk_file}" ] && curr_persist_path=
 		}
+
 		[ -n "${install_path}${curr_path}${curr_persist_path}" ] || continue
-		[ -n "${curr_path}${curr_persist_path}" ] && reg_msg -fb "${set_id}" "Removing any existing blockset files{}."
+		[ -n "${curr_path}${curr_persist_path}" ] && reg_msg -fb "${set_id}" "Removing any existing blockset files${rm_pr}{}."
 		for rm_enum in curr install curr_persist
 		do
 			eval "rm_path=\"\${${rm_enum}_path}\""
@@ -2151,7 +2157,7 @@ do_rm_blockset_config()
 
 	reg_action -purple "Removing blockset ${lblue}${set_id}${n_c}."
 
-	FORCE_PERSIST_WRITE=1 do_stop "${set_id}" &&
+	KEEP_PERSIST=0 do_stop "${set_id}" &&
 	rm -f "${cfg_path}" ||
 		{ reg_failure "Failed to remove blockset config '${set_id}'."; return 1; }
 
@@ -2531,7 +2537,7 @@ do_stop()
 		set_id \
 		set_ids
 
-	debug_msg "" "STOP ${*:-"${SET_IDS}"}, force all: ${force_stop_all}" ""
+	debug_msg "STOP '${*:-"${SET_IDS}"}', force all: '${force_stop_all}'" ""
 
 	[ -n "${CONFIG_LOADED}" ] || load_config
 
@@ -2617,14 +2623,14 @@ stop_blocksets()
 	reg_action -1 -purple -fb "${stop_ids}" "" "Stopping adblocking{}."
 
 	rm_conf_scripts "${stop_ids}"
-	rm_blocksets "${stop_ids}"
+	KEEP_PERSIST="${KEEP_PERSIST:-1}" rm_blocksets "${stop_ids}"
 
 	restart_dnsmasq 4 stop_ok_ids "${stop_ids}"
 	stop_rv=${?}
 
 	unset_metadata "${set_ids}"
 
-	commit_metadata
+	COMMIT_META_LOCATIONS=RAM commit_metadata
 
 	subtract_a_from_b "${stop_ok_ids}" "${stop_ids}" stop_fail_ids
 

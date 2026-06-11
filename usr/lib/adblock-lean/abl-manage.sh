@@ -1559,6 +1559,8 @@ set_bl_env()
 		esac
 	esac
 
+	debug_msg "persist_req: ${persist_req}"
+
 	local cpb_rv=1
 	[ "${persist_req}" = 1 ] ||
 	case "${CUR_ACT}" in
@@ -1569,7 +1571,7 @@ set_bl_env()
 			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}." "*" ||
 			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}"
 			set_params "${set_id}" curr_persist_path
-			[ -z "${persist_req}" ] ||
+			[ "${persist_req}" = 1 ] &&
 			{
 				check_persist_blockset "${set_id}" "${final_compr_ext}"
 				cpb_rv=${?}
