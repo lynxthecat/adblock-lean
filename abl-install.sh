@@ -773,7 +773,7 @@ install_abl_files()
 			{ [ "${cur_cfg_format}" -lt 9 ] && [ "${cur_cfg_format}" != "${upd_cfg_format}" ]; }
 		}
 	then
-		add2list cfg_files_to_rm "${cur_main_cfg_path}" "${_NL_}"
+		add2list_install cfg_files_to_rm "${cur_main_cfg_path}" "${_NL_}"
 		cur_main_cfg_path=
 		cur_cfg_format=
 	fi
@@ -1315,8 +1315,6 @@ fetch_and_install()
 	rm -rf "${ABL_INST_DIR}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
 	trap - INT TERM EXIT
 	log_msg_install "" "adblock-lean (version '${upd_ver}') has been installed."
-
-
 
 
 	local cur_blockset_cfg_files cfg_found=
