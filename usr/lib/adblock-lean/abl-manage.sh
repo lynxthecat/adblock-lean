@@ -967,7 +967,7 @@ check_persist_blockset()
 		[ -n "${curr_persist_path}" ] ||
 			{
 				[ "${run_state}" != 4 ] || [ "${persist_mode}" = manual ] &&
-					reg_failure "Persistent blockset not found in directory '${persist_dir}'."
+					reg_failure -fb "${set_id}" "Persistent blockset file{} not found in directory '${persist_dir}'."
 				false
 			}
 	} &&
@@ -1031,7 +1031,7 @@ check_active_blockset()
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
 		set_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
 
-	reg_action -fb "${set_id}" "Checking if adblocking is active{}." || return 1
+	reg_action -purple -fb "${set_id}" "Checking if adblocking is active{}." || return 1
 
 	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
 
@@ -1279,7 +1279,7 @@ set_blocksets_env()
 #   SBE_STATUS: do not exit on non-critical errors
 set_bl_env()
 {
-	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${1}' to rebuild the ${2}${2:+ }blockset."; }
+	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${2} ${1}' to rebuild the ${3}${3:+ }blockset file."; }
 	wont_work() {
 		reg_failure -wb "${set_id}" "" "${1} can not be used{} because of missing addnmounts in /etc/config/dhcp: ${2}" \
 			"Please run 'service adblock-lean create_addnmounts' to create required addnmount entries."
@@ -1421,7 +1421,7 @@ set_bl_env()
 		install_1_instance \
 		install_1_instance_ram \
 		\
-		persist_avail=0 \
+		persist_req=0 \
 		persist_dir \
 		persist_mode \
 		\
@@ -1543,7 +1543,7 @@ set_bl_env()
 				check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${persist_dir}${cat_addnm}" || return 1
 				if [ -z "${sbe_missing_addnm}" ]
 				then
-					persist_avail=1
+					persist_req=1
 					[ "${persist_mode}" = managed ] &&
 					{
 						bl_path_persist="${persist_dir}/${bl_full_fname}"
@@ -1560,7 +1560,7 @@ set_bl_env()
 	esac
 
 	local cpb_rv=1
-	[ "${persist_avail}" = 1 ] ||
+	[ "${persist_req}" = 1 ] ||
 	case "${CUR_ACT}" in
 		stop|pause) : ;;
 		*) false
@@ -1569,12 +1569,17 @@ set_bl_env()
 			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}." "*" ||
 			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}"
 			set_params "${set_id}" curr_persist_path
-			[ -n "${curr_persist_path}" ] &&
-			check_persist_blockset "${set_id}" "${final_compr_ext}"
-			cpb_rv=${?}
+			[ -z "${persist_req}" ] ||
+			{
+				check_persist_blockset "${set_id}" "${final_compr_ext}"
+				cpb_rv=${?}
+				[ "${cpb_rv}" != 0 ] && [ "${persist_mode}" = manual ] &&
+					rebuild_req_notice "${set_id}" "gen_persist_blockset" "persistent"
+			}
+			debug_msg "check_persist_blockset rv: ${cpb_rv}"
 		}
 
-	if [ "${persist_avail}" = 1 ]
+	if [ "${persist_req}" = 1 ]
 	then
 		if \
 			[ "${ABL_INIT_ACT}" = boot ] ||
@@ -1595,9 +1600,6 @@ set_bl_env()
 					set_params "${set_id}" install_cnt="${curr_persist_cnt}"
 				}
 			else
-				debug_msg "check_persist_blockset rv: ${cpb_rv}"
-				[ "${persist_mode}" = manual ] && rebuild_req_notice "gen_persist_blockset" "persistent"
-
 				[ "${CUR_ACT}" = status ] ||
 				{
 					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${curr_persist_path}" "${curr_persist_path%/*}/${META_FNAME_PERSIST}"
@@ -1628,7 +1630,7 @@ set_bl_env()
 	esac
 
 	[ -n "${install_path}" ] ||
-		{ reg_failure "No usable path to install or load the blockset."; rebuild_req_notice "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
+		{ reg_failure -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
 
 	[ -n "${install_path}" ] &&
 	case "${start_action}" in
@@ -1888,7 +1890,7 @@ try_install_blocksets()
 		get_params -f "${me}" "${set_id}" dnsmasq_indexes conf_dirs final_extr_or_cat_stdout install_path || { inst_failed "${set_id}"; continue; }
 		get_params "${set_id}" install_1_instance conf_script_log_avail
 
-		log_msg "Installing blockset ${lblue}${set_id}${n_c} to ${blue}${install_path}${n_c}"
+		log_msg "Installing blockset ${lblue}${set_id}${n_c} at ${blue}${install_path}${n_c}"
 
 		get_md5 install_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
 
