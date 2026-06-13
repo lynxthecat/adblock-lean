@@ -441,7 +441,7 @@ process_set_part()
 		exit "${1}"
 	}
 
-	dl_list() { uclient-fetch "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
+	dl_list() { ${UCL_CMD:?} "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
 
 	conv_dnsmasq_to_raw()
 	{
@@ -503,20 +503,21 @@ process_set_part()
 		: "${curr_mirror:="${first_mirror}"}"
 	fi
 
-	local dest_file="${PROCESSED_PARTS_DIR}/${list_type}_${index}" \
+	local dest_file="${PROCESSED_PARTS_DIR}/${list_type}_${index}${INTERM_COMPR_EXT}" \
 		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${index}" \
 		rogue_el_file="${ABL_TMP_DIR}/rogue_el_${index}" \
 		list_stats_file="${ABL_TMP_DIR}/${index}_stats" \
 		part_cnt cnt_human min_entries_human \
 		part_size_B retry=1 \
-		part_compr_or_cat="cat" fetch_cmd \
-		format_conv_or_cat="cat" \
-		case_conv_or_cat="cat" \
+		fetch_cmd \
+		part_compr_or_cat="${INTERM_COMPR_OR_CAT_STDOUT:?}" \
+		format_conv_or_cat="${CAT_CMD:?}" \
+		case_conv_or_cat="${CAT_CMD:?}" \
 		pipeline_msg ucl_err pipeline_rv
 
 	case "${origin}" in
 		DL) fetch_cmd=dl_list ;;
-		LOCAL) fetch_cmd="cat" ;;
+		LOCAL) fetch_cmd="${CAT_CMD:?}" ;;
 		*) finalize_job 1 "Invalid list origin '${origin}'."
 	esac
 
@@ -524,11 +525,6 @@ process_set_part()
 		allow|block) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
 		ipv4_block) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
 		*) finalize_job 1 "Invalid list type '${list_type}'"
-	esac
-
-	case ${list_type} in block|ipv4_block)
-		dest_file="${dest_file}${INTERM_COMPR_EXT}"
-		part_compr_or_cat="${INTERM_COMPR_OR_CAT_STDOUT}"
 	esac
 
 	case "${format}" in
@@ -718,6 +714,7 @@ gen_blocksets()
 {
 	local \
 		me=gen_blocksets \
+		IFS="${DEFAULT_IFS}" \
 		processed_bl_file \
 		set_id \
 		run_state \
@@ -754,6 +751,8 @@ gen_blocksets()
 
 	: "${skip_load_stop}" "${bk_cnt}"
 
+	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file{}."
+
 	if [ "${force_unload}" = auto ]
 	then
 		read -r _ totalmem _ < /proc/meminfo
@@ -765,9 +764,8 @@ gen_blocksets()
 		fi
 	fi
 
-	printf '\n' > "${MSGS_DEST}"
-
 	# Prepare processing for all blocksets
+	local no_local_found_msgs
 	for set_id in ${set_ids}
 	do
 		for list_type in ${ALL_LIST_TYPES}
@@ -780,11 +778,24 @@ gen_blocksets()
 				{ [ -n "${local_list}" ] && [ -f "${local_list}" ]; } ||
 				{
 					export -n "local_${list_type}list_path_${set_id}="
-					reg_msg -fb "${set_id}" "No local ${list_type}list identified{}."
+					no_local_found_msgs="${no_local_found_msgs}${no_local_found_msgs:+"${_NL_}"}${set_id}:No local ${list_type}list identified{}."
 				}
 			done
 		done
 	done
+
+	[ -n "${no_local_found_msgs}" ] &&
+	{
+		printf '\n' > "${MSGS_DEST}"
+		IFS="${_NL_}"
+		for msg in ${no_local_found_msgs}
+		do
+			IFS="${DEFAULT_IFS}"
+			set_id="${msg%%:*}"
+			reg_msg -fb "${set_id}" "${msg#"${set_id}:"}"
+		done
+		IFS="${DEFAULT_IFS}"
+	}
 
 	for format in ${ALL_LIST_FORMATS:?}
 	do
@@ -876,7 +887,9 @@ gen_blocksets()
 					eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
 					[ -n "${dl_lists}${local_list}" ] || continue
 
-					is_included "${list}" "${dl_lists}${_NL_}${local_list:+"local="}${local_list}" "${_NL_}" || continue
+					is_included "${list}" "${dl_lists}" ||
+					{ [ -n "${local_list}" ] && [ "${list}" = "local=${local_list}" ]; } ||
+						continue
 
 					add2list "INDEX_REFS_${proc_index}" "${set_id}"
 					add2list "proc_indexes_${list_type}" "${proc_index}"
@@ -889,18 +902,12 @@ gen_blocksets()
 		IFS="${DEFAULT_IFS}"
 	done
 
-	set_ids="${proc_set_ids}"
-
-	debug_msg "proc_set_ids: '${proc_set_ids}'"
-
-	[ -n "${set_ids}" ] || { reg_failure "Nothing to process."; return 1; }
-
-	printf '\n' > "${MSGS_DEST}"
+	[ -n "${proc_set_ids}" ] || { reg_failure "Nothing to process."; return 1; }
 
 	for set_id in ${set_ids}
 	do
-		reg_msg -fb "${set_id}" "Preparing to generate blockset file{}."
-
+		is_included "${set_id}" "${proc_set_ids}" || { reg_failure -fb "${set_id}" "Nothing to process{}."; continue; }
+		debug_msg "Processing bockset ${set_id}."
 		get_params -f "${me}" "${set_id}" run_state || return 1
 		get_params "${set_id}" \
 			curr_path \
@@ -972,7 +979,7 @@ gen_blocksets()
 		set_params "${set_id}" bk_file bk_cnt
 	done
 
-	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${set_ids}"
+	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${proc_set_ids}"
 	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_PERSIST=0 do_stop "${blocksets_to_stop}" || return 1
 
 	gen_set_parts "$(( ${initial_uptime_cs:?} / 100 ))" ||
@@ -981,7 +988,7 @@ gen_blocksets()
 		return 1
 	}
 
-	for set_id in ${set_ids}
+	for set_id in ${proc_set_ids}
 	do
 		eval "set_indexes=\"\${set_indexes_${set_id}}\""
 		get_params -f "${me}" "${set_id}" install_path || return 1
@@ -1007,6 +1014,20 @@ gen_blocksets()
 # shellcheck disable=SC2329
 gen_blockset()
 {
+	rm_allow_domains()
+	{
+		${AWK_CMD:?} 'NR==FNR { if ($0 ~ /^\*\./) { allow_wild[substr($0,3)]; next }; allow[$0]; next }
+			{ n=split($1,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- )
+			{ addr = arr[i] "." addr; if ( (i>1 && addr in allow_wild) || addr in allow ) next } } 1' "${merged_allow_f:?}" -
+	}
+
+	whitelist_filter()
+	{
+		# only print subdomains of allowlist domains
+		${AWK_CMD:?} 'NR==FNR { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
+			for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${merged_allow_f:?}" -
+	}
+
 	# convert to dnsmasq format and pack 4 input lines into 1 output line
 	# intput from STDIN, output to STDOUT
 	# 1 - block|allow
@@ -1035,7 +1056,7 @@ gen_blockset()
 		esac
 
 		len_lim=$((len_lim-${#entry_type}-${#allow_char}-2))
-		${AWK_CMD} -v ORS="" -v M="${len_lim}" -v A="${allow_char}" -v T="${entry_type}" '
+		${AWK_CMD:?} -v ORS="" -v M="${len_lim}" -v A="${allow_char}" -v T="${entry_type}" '
 			BEGIN {al=0; r=0; s=""}
 			NF {
 				r=r+1
@@ -1056,7 +1077,7 @@ gen_blockset()
 	{
 		print_file_cb()
 		{
-			${print_cmd} "${1}"
+			${PART_EXTR_OR_CAT_STDOUT:?} "${1}"
 			local index_refs rv=${?}
 
 			eval "index_refs=\"\${INDEX_REFS_${index}}\""
@@ -1065,12 +1086,12 @@ gen_blockset()
 		}
 
 		local index \
-			set_id="${1}" ext="${2}" list_type="${3}" print_cmd="${4}" set_indexes="${5}"
+			list_type="${1:?}" set_id="${2:?}" set_indexes="${3:?}"
 
 		for index in ${set_indexes}
 		do
 			FF_EXEC="print_file_cb {}" \
-				find_files _ "${PROCESSED_PARTS_DIR}" "${list_type}_${index}" "" "${ext}" "${set_id}" && printed=1
+				find_files _ "${PROCESSED_PARTS_DIR}" "${list_type}_${index}" "" "${INTERM_COMPR_EXT}" "${set_id}" && printed=1
 		done
 		[ -n "${printed}" ] || printf ''
 	}
@@ -1088,12 +1109,13 @@ gen_blockset()
 		min_good_entries min_good_entries_human \
 		max_blockset_file_size_KB \
 		errors \
-		dedup_cmd_or_cat="${CAT_CMD}" \
+		dedup_cmd_or_cat="${CAT_CMD:?}" \
+		allow_filter_or_cat="${CAT_CMD:?}" \
 		pack_cmd="pack_entries_sed" \
-		part_extr_or_cat_stdout \
 		final_compr_or_cat_stdout \
 		install_1_instance \
 		use_allowlist use_ipv4_blocklist \
+		merged_allow_f="${PROCESSED_PARTS_DIR}/allow" \
 		\
 		set_id="${1:?}" \
 		out_f="${2:?}" \
@@ -1103,7 +1125,6 @@ gen_blockset()
 
 	get_params -f "${me}" "${set_id}" \
 		install_path \
-		part_extr_or_cat_stdout \
 		max_blockset_file_size_KB \
 		min_good_entries\
 		final_compr_or_cat_stdout || return 1
@@ -1111,21 +1132,19 @@ gen_blockset()
 	get_params "${set_id}" \
 		install_1_instance \
 		test_domains \
-		use_allowlist \
-		use_ipv4_blocklist \
 		whitelist_mode
 
 	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f}; install_1_instance: ${install_1_instance};"
 
-	case "${part_extr_or_cat_stdout}" in
-		"${CAT_CMD}") ;;
+	case "${PART_EXTR_OR_CAT_STDOUT:?}" in
+		"${CAT_CMD:?}") ;;
 		*) assert_set "F_${me}" INTERM_COMPR_EXT || return 1
 	esac
 
 	local max_size_b=$((max_blockset_file_size_KB*1024))
 	[ "${deduplication}" = 1 ] && dedup_cmd_or_cat="${SORT_CMD} -u -"
 
-	case "${AWK_CMD}" in
+	case "${AWK_CMD:?}" in
 		*gawk) pack_cmd="pack_entries_awk"
 	esac
 
@@ -1134,7 +1153,7 @@ gen_blockset()
 	local part_cnt part_size_B list_cnt_raw list_size_B index list_type print_id index_refs \
 		set_cnt_raw=0 allow_cnt_raw=0 block_cnt_raw=0 ipv4_block_cnt_raw=0
 
-	rm -f "${PROCESSED_PARTS_DIR:?}/allow" "${ABL_TMP_DIR}/block_stats" "${ABL_TMP_DIR}/ipv4_block_stats" "${ABL_TMP_DIR}/allow_stats" "${ABL_TMP_DIR}/abl-too-big.tmp"
+	rm -f "${PROCESSED_PARTS_DIR:?}/allow" "${ABL_TMP_DIR:?}/block_stats" "${ABL_TMP_DIR}/ipv4_block_stats" "${ABL_TMP_DIR}/allow_stats" "${ABL_TMP_DIR}/abl-too-big.tmp"
 
 	for index in ${set_indexes}
 	do
@@ -1176,52 +1195,42 @@ gen_blockset()
 			esac
 		elif [ "${list_type}" = ipv4_block ]
 		then
-			set_params "${set_id}" use_ipv4_blocklist=1
+			use_ipv4_blocklist=1
 		elif [ "${list_type}" = allow ]
 		then
-			print_set_parts "${set_id}" "${INTERM_COMPR_EXT}" allow "${part_extr_or_cat_stdout}" "${set_indexes}" |
+			print_set_parts allow "${set_id}" "${set_indexes}" |
 			# optional deduplication
-			${dedup_cmd_or_cat} >> "${PROCESSED_PARTS_DIR}/allow" || return 1
+			${dedup_cmd_or_cat} >> "${merged_allow_f}" || return 1
 			reg_msg "Will remove any (sub)domain matches present in the allowlist from the blockset and append corresponding server entries to the blockset."
-			set_params "${set_id}" use_allowlist=1
+			use_allowlist=1
 		fi
 	done
 
 	reg_msg "Sorting and merging blockset parts into a single blockset file."
 
-	# allow test domains in whitelist mode
-	if [ "${whitelist_mode}" = 1 ] && [ -n "${test_domains}" ]
-	then
-		for d in ${test_domains}
-		do
-			printf '%s\n' "${d}" >> "${PROCESSED_PARTS_DIR}/allow"
-		done
+	case "${whitelist_mode}" in
+	1)
+		# only print subdomains of allowlist domains
 		use_allowlist=1
-	fi
+		printf '%s\n' ${test_domains} >> "${merged_allow_f}"
+		allow_filter_or_cat=whitelist_filter ;;
+	*)
+		[ "${use_allowlist}" = 1 ] &&
+		# remove allowlist domains from blockset
+		allow_filter_or_cat=rm_allow_domains
+	esac
 
+
+	# Blockset generation pipeline
 	{
 		{
 			# print blockset parts
-			print_set_parts "${set_id}" "${INTERM_COMPR_EXT}" block "${part_extr_or_cat_stdout}" "${set_indexes}" |
+			print_set_parts block "${set_id}" "${set_indexes}" |
 			# optional deduplication
 			${dedup_cmd_or_cat} |
 
-			if [ "${use_allowlist}" = 1 ]
-			then
-				case "${whitelist_mode}" in
-				1)
-					# only print subdomains of allowlist domains
-					${AWK_CMD} 'NR==FNR { if ($0 !~ /^\*/) { allow[$0] }; next } { n=split($1,arr,"."); addr = arr[n];
-						for ( i=n-1; i>1; i-- ) { addr = arr[i] "." addr; if ( addr in allow ) { print $1; next } } }' "${PROCESSED_PARTS_DIR}/allow" - ;;
-				*)
-					# remove allowlist domains from blockset
-					${AWK_CMD} 'NR==FNR { if ($0 ~ /^\*\./) { allow_wild[substr($0,3)]; next }; allow[$0]; next }
-						{ n=split($1,arr,"."); addr = arr[n]; for ( i=n-1; i>=1; i-- )
-						{ addr = arr[i] "." addr; if ( (i>1 && addr in allow_wild) || addr in allow ) next } } 1' "${PROCESSED_PARTS_DIR}/allow" - ;;
-				esac
-			else
-				cat
-			fi |
+			# Optionally remove allow domains or enforce whitelist-only mode
+			${allow_filter_or_cat} |
 
 			# count entries
 			tee >(wc -w > "${ABL_TMP_DIR}/block_stats") |
@@ -1232,7 +1241,7 @@ gen_blockset()
 			# print ipv4 blockset parts
 			if [ -n "${use_ipv4_blocklist}" ]
 			then
-				print_set_parts "${set_id}" "${INTERM_COMPR_EXT}" ipv4_block "${part_extr_or_cat_stdout}" "${set_indexes}" |
+				print_set_parts ipv4_block "${set_id}" "${set_indexes}" |
 				# optional deduplication
 				${dedup_cmd_or_cat} |
 				tee >(wc -w > "${ABL_TMP_DIR}/ipv4_block_stats") |
@@ -1244,12 +1253,12 @@ gen_blockset()
 			if [ "${use_allowlist}" = 1 ]
 			then
 				# optional deduplication
-				${dedup_cmd_or_cat} < "${PROCESSED_PARTS_DIR}/allow" |
+				${dedup_cmd_or_cat} < "${merged_allow_f}" |
 				tee >(wc -w > "${ABL_TMP_DIR}/allow_stats") |
 				# pack entries in 1024 characters long lines
 				${pack_cmd} allow || exit 1
 
-				rm -f "${PROCESSED_PARTS_DIR}/allow"
+				rm -f "${merged_allow_f}"
 			fi
 
 			# add the optional whitelist entry
@@ -1318,7 +1327,7 @@ gen_blockset()
 	rm -f "${ERR_F}"
 
 	{
-		try_extract -stdout "${set_id}" "${out_f}" |
+		try_extract -stdout "${out_f}" |
 		dnsmasq --test -C -
 	} 2> "${ERR_F}"
 

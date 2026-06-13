@@ -1188,7 +1188,7 @@ fetch_and_install()
 
 	local util
 
-	for util in tar find uclient-fetch
+	for util in tar find uclient-fetch jsonfilter
 	do
 		check_util_install "${util}" || inst_failed "Utility '${util}' not found."
 	done
