@@ -363,9 +363,9 @@ schedule_jobs()
 			get_remaining_time remaining_time_s || finalize_scheduler 1
 
 			eval \
-				"format=\"\${format_${index}}\"" \
-				"origin=\"\${origin_${index}}\"" \
-				"print_id=\"\${print_id_${index}}\""
+				"format=\"\${FORMAT_${index}}\"" \
+				"origin=\"\${ORIGIN_${index}}\"" \
+				"print_id=\"\${PRINT_ID_${index}}\""
 			assert_set "F_schedule_jobs" format origin print_id || finalize_scheduler 1
 
 			RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
@@ -413,9 +413,9 @@ process_set_part()
 			0)
 				local list_size_human stats_pad suffix_pad
 				bytes2human list_size_human "${part_size_B}" -p
-				get_pad stats_pad "${print_id}" 38
+				get_pad stats_pad "${print_id}" 42
 				get_pad suffix_pad "${cnt_human}" 8
-				log_msg "Successfully processed list:  ${green}${print_id}${n_c} ${stats_pad}[ ${orange}${list_size_human}${n_c}  - ${suffix_pad}${orange}${cnt_human} entries${n_c} ]" ;;
+				log_msg "Successfully processed list:    ${green}${print_id}${n_c} ${stats_pad}[ ${orange}${list_size_human}${n_c}  - ${suffix_pad}${orange}${cnt_human} entries${n_c} ]" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
 				[ "${1}" = 1 ] &&
@@ -555,8 +555,8 @@ process_set_part()
 		rm -f "${rogue_el_file}" "${list_stats_file}" "${ucl_err_file}"
 
 		msg="Processing ${format} ${list_type}list"
-		get_pad pad "${msg}" 28
-		get_pad print_id_pad "${print_id}" 38
+		get_pad pad "${msg}" 30
+		get_pad print_id_pad "${print_id}" 42
 
 		reg_msg "${msg}: ${pad}${lblue}${print_id}${n_c}${msg_mirr:+"${print_id_pad}"}${msg_mirr}"
 
@@ -605,9 +605,6 @@ process_set_part()
 
 		if [ "${pipeline_rv}" = 0 ]
 		then
-			local dl_completed=
-			grep -q "Download completed" "${ucl_err_file}" && dl_completed=1
-
 			# rogue elements check
 			if [ -s "${rogue_el_file}" ]
 			then
@@ -643,11 +640,18 @@ process_set_part()
 		fi
 
 		[ "${pipeline_rv}" = 0 ] || pipeline_msg="Processing pipeline returned code ${pipeline_rv}."
-		if [ "${origin}" = DL ] && { [ "${pipeline_rv}" != 0 ] || [ -n "${lines_cnt_low}" ] || [ -z "${dl_completed}" ] || [ -n "${rogue_element}" ] ; }
+		if [ "${origin}" = DL ] &&
+		{
+			[ "${pipeline_rv}" != 0 ] ||
+			[ -n "${lines_cnt_low}" ] ||
+			[ -n "${rogue_element}" ] ||
+			! grep -q "Download completed" "${ucl_err_file}"
+		}
 		then
 			[ -s "${ucl_err_file}" ] && ucl_err=" uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
 			rm -f "${ucl_err_file}"
 			reg_failure "" "Failed download attempt for list '${print_id}'.${pipeline_msg:+ }${pipeline_msg}${ucl_err}"
+			[ -n "${ucl_err}" ] && log_msg "${ucl_err}"
 		elif [ "${pipeline_rv}" != 0 ]
 		then
 			reg_failure "" "${pipeline_msg}"
@@ -737,8 +741,12 @@ gen_blocksets()
 		raw_block_lists \
 		dnsmasq_block_lists\
 		hosts_block_lists \
+		local_list \
 		\
-		lists list_type format \
+		all_process_lists \
+		dl_lists \
+		\
+		list_type format \
 		proc_index=0 \
 		set_indexes \
 		proc_set_ids \
@@ -762,84 +770,128 @@ gen_blocksets()
 	# Prepare processing for all blocksets
 	for set_id in ${set_ids}
 	do
-		unset "set_indexes_${set_id}"
-	done
-
-	for list_type in ${ALL_LIST_TYPES}
-	do
-		unset "proc_indexes_${list_type}"
-		for set_id in ${set_ids}
+		for list_type in ${ALL_LIST_TYPES}
 		do
-			eval "local_list_path=\"\${local_${list_type}list_path_${set_id}}\""
-			[ "${list_type}" = ipv4_block ] ||
-			{ [ -n "${local_list_path}" ] && [ -f "${local_list_path}" ]; } ||
-				reg_msg -fb "${set_id}" "No local ${list_type}list identified{}."
-
 			for format in ${ALL_LIST_FORMATS:?}
 			do
-				eval "lists=\"\${${format}_${list_type}_lists_${set_id}}\""
-				local_list=
-				[ "${format}" = raw ] && local_list="${local_list_path}"
-				[ -z "${local_list}" ] || [ -f "${local_list}" ] || local_list=
-				[ -n "${lists}${local_list}" ] || continue
-
-				invalid_urls="$(printf %s "${lists}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
+				[ "${format}" = raw ] &&
+				[ "${list_type}" != ipv4_block ] || continue
+				eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
+				{ [ -n "${local_list}" ] && [ -f "${local_list}" ]; } ||
 				{
-					reg_failure "Invalid URLs detected:" "${invalid_urls}"
-					return 1
+					export -n "local_${list_type}list_path_${set_id}="
+					reg_msg -fb "${set_id}" "No local ${list_type}list identified{}."
 				}
-
-				if [ "${format}" = raw ]
-				then
-					bad_hagezi_urls="$(printf %s "${lists}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
-					{
-						reg_failure "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
-							"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
-						return 1
-					}
-					case "${list_type}" in block|allow)
-						bad_hagezi_urls="$(
-							printf %s "${lists}" |
-							tr ' ' '\n' |
-							${SED_CMD} -En '/(raw.githubusercontent.com\/hagezi\/dns-blocklists\/|gitlab.com\/hagezi\/mirror\/)/{/onlydomains\./d;p;}'
-						)"
-						[ -z "${bad_hagezi_urls}" ] ||
-						{
-							reg_failure "Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" \
-								"${bad_hagezi_urls}"
-							return 1
-						}
-					esac
-				fi
-
-				for list in ${lists} "local=${local_list}"
-				do
-					[ -n "${list}" ] || continue
-					origin=DL
-					case "${list}" in
-						local=)
-							list="${list#"local="}"
-							[ -n "${list}" ] && [ -f "${list}" ] || continue
-							origin=LOCAL
-					esac
-					proc_index=$((proc_index+1))
-					add2list proc_set_ids "${set_id}"
-					add2list "set_indexes_${set_id}" "${proc_index}"
-					add2list "proc_indexes_${list_type}" "${proc_index}"
-
-					eval \
-						"format_${proc_index}=${format}" \
-						"origin_${proc_index}=${origin}" \
-						"print_id_${proc_index}=${list}" \
-						\
-						"type_${set_id}_${proc_index}=${list_type}" \
-						"print_id_${set_id}_${proc_index}=${list}"
-				done
 			done
 		done
 	done
 
+	for format in ${ALL_LIST_FORMATS:?}
+	do
+		local "all_process_lists_${format}="
+		for list_type in ${ALL_LIST_TYPES}
+		do
+			local "proc_indexes_${list_type}="
+
+			for set_id in ${set_ids}
+			do
+				local "set_indexes_${set_id}="
+
+				local_list=
+				eval "dl_lists=\"\${${format}_${list_type}_lists_${set_id}}\""
+				[ "${format}" = raw ] && eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
+				[ -n "${dl_lists}${local_list}" ] || continue
+
+				[ -n "${dl_lists}" ] &&
+				{
+					invalid_urls="$(printf %s "${dl_lists}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
+					{
+						reg_failure "Invalid URLs detected:" "${invalid_urls}"
+						return 1
+					}
+
+					[ "${format}" = raw ] &&
+					{
+						bad_hagezi_urls="$(printf %s "${dl_lists}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
+						{
+							reg_failure "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
+								"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
+							return 1
+						}
+						case "${list_type}" in block|allow)
+							bad_hagezi_urls="$(
+								printf %s "${dl_lists}" |
+								tr ' ' '\n' |
+								${SED_CMD} -En '/(raw.githubusercontent.com\/hagezi\/dns-blocklists\/|gitlab.com\/hagezi\/mirror\/)/{/onlydomains\./d;p;}'
+							)"
+							[ -z "${bad_hagezi_urls}" ] ||
+							{
+								reg_failure "Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" \
+									"${bad_hagezi_urls}"
+								return 1
+							}
+						esac
+					}
+				}
+
+				for list in ${dl_lists}
+				do
+					add2list "all_process_lists_${format}" "${list}" "${_NL_}"
+				done
+				[ -n "${local_list}" ] && add2list "all_process_lists_${format}" "local=${local_list}" "${_NL_}"
+			done
+		done
+	done
+
+
+	for format in ${ALL_LIST_FORMATS:?}
+	do
+		eval "all_process_lists=\"\${all_process_lists_${format}}\""
+		[ -n "${all_process_lists}" ] || continue
+
+		debug_msg "all_process_lists_${format}: '${all_process_lists}'"
+
+		IFS="${_NL_}"
+		for list in ${all_process_lists}
+		do
+			[ -n "${list}" ] || continue
+			IFS="${DEFAULT_IFS}"
+			proc_index=$((proc_index+1))
+			export -n "INDEX_REFS_${proc_index}="
+
+			origin=DL
+			case "${list}" in local=*)
+				origin=LOCAL
+			esac
+			export -n \
+				"FORMAT_${proc_index}=${format}" \
+				"ORIGIN_${proc_index}=${origin}" \
+				"PRINT_ID_${proc_index}=${list#"local="}"
+
+			for list_type in ${ALL_LIST_TYPES:?}
+			do
+				for set_id in ${set_ids}
+				do
+					eval "dl_lists=\"\${${format}_${list_type}_lists_${set_id}}\""
+					eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
+					[ -n "${dl_lists}${local_list}" ] || continue
+
+					is_included "${list}" "${dl_lists}${_NL_}${local_list:+"local="}${local_list}" "${_NL_}" || continue
+
+					add2list "INDEX_REFS_${proc_index}" "${set_id}"
+					add2list "proc_indexes_${list_type}" "${proc_index}"
+					add2list proc_set_ids "${set_id}"
+					add2list "set_indexes_${set_id}" "${proc_index}"
+					export -n "TYPE_${set_id}_${proc_index}=${list_type}"
+				done
+			done
+		done
+		IFS="${DEFAULT_IFS}"
+	done
+
 	set_ids="${proc_set_ids}"
+
+	debug_msg "proc_set_ids: '${proc_set_ids}'"
 
 	[ -n "${set_ids}" ] || { reg_failure "Nothing to process."; return 1; }
 
@@ -963,10 +1015,10 @@ gen_blockset()
 		case "$1" in
 			block)
 				# packs 4 domains in one 'local=/.../' line
-				${SED_CMD} "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${_NL_}};\$!{n;a /${_NL_}};\$!{n; a /${_NL_}};a @" ;;
+				${SED_CMD:?} "/^$/d;s~^.*$~local=/&/~;\$!{n;a /${_NL_}};\$!{n;a /${_NL_}};\$!{n; a /${_NL_}};a @" ;;
 			allow)
 				# packs 4 domains in one 'server=/.../#'' line
-				{ cat; printf '\n'; } | ${SED_CMD} '/^$/d;$!N;$!N;$!N;s~\n~/~g;s~^~server=/~;s~/*$~/#@~' ;;
+				{ cat; printf '\n'; } | ${SED_CMD:?} '/^$/d;$!N;$!N;$!N;s~\n~/~g;s~^~server=/~;s~/*$~/#@~' ;;
 			*) printf ''; return 1
 		esac | tr -d '\n' | tr "@" '\n'
 	}
@@ -1002,21 +1054,23 @@ gen_blockset()
 	# 3 - decompression command or 'cat'
 	print_set_parts()
 	{
-		local index \
-			set_id="${1}" ext="${2}" list_type="${3}" print_cmd="${4}" set_indexes="${5}"
-
 		print_file_cb()
 		{
 			${print_cmd} "${1}"
-			local rv=${?}
-			rm -f "${1}"
+			local index_refs rv=${?}
+
+			eval "index_refs=\"\${INDEX_REFS_${index}}\""
+			[ -z "${index_refs}" ] && rm -f "${1}"
 			return "${rv}"
 		}
 
+		local index \
+			set_id="${1}" ext="${2}" list_type="${3}" print_cmd="${4}" set_indexes="${5}"
+
 		for index in ${set_indexes}
 		do
-		FF_EXEC="print_file_cb {}" \
-			find_files _ "${PROCESSED_PARTS_DIR}" "${list_type}_${index}" "" "${ext}" "${set_id}" && printed=1
+			FF_EXEC="print_file_cb {}" \
+				find_files _ "${PROCESSED_PARTS_DIR}" "${list_type}_${index}" "" "${ext}" "${set_id}" && printed=1
 		done
 		[ -n "${printed}" ] || printf ''
 	}
@@ -1077,18 +1131,21 @@ gen_blockset()
 
 	# shellcheck disable=SC2034
 	# Process results
-	local part_cnt part_size_B list_cnt_raw list_size_B index list_type print_id \
+	local part_cnt part_size_B list_cnt_raw list_size_B index list_type print_id index_refs \
 		set_cnt_raw=0 allow_cnt_raw=0 block_cnt_raw=0 ipv4_block_cnt_raw=0
 
 	rm -f "${PROCESSED_PARTS_DIR:?}/allow" "${ABL_TMP_DIR}/block_stats" "${ABL_TMP_DIR}/ipv4_block_stats" "${ABL_TMP_DIR}/allow_stats" "${ABL_TMP_DIR}/abl-too-big.tmp"
 
 	for index in ${set_indexes}
 	do
+		eval "index_refs=\"\${INDEX_REFS_${index}}\""
+		subtract_a_from_b "${set_id}" "${index_refs}" "INDEX_REFS_${index}"
+
 		[ -s "${ABL_TMP_DIR}/${index}_stats" ] || continue
 
 		eval \
-			"list_type=\"\${type_${set_id}_${index}}\"" \
-			"print_id=\"\${print_id_${set_id}_${index}}\"" &&
+			"list_type=\"\${TYPE_${set_id}_${index}}\"" \
+			"print_id=\"\${PRINT_ID_${index}}\"" &&
 		[ -n "${list_type}" ] &&
 		read_str_from_file -v "part_cnt part_size_B" -f "${ABL_TMP_DIR}/${index}_stats" -V 0 &&
 		is_uint "${part_cnt}" "${part_size_B}" &&
