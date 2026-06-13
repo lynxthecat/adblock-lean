@@ -441,7 +441,7 @@ process_set_part()
 		exit "${1}"
 	}
 
-	dl_list() { uclient-fetch "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
+	dl_list() { ${UCL_CMD:?} "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
 
 	conv_dnsmasq_to_raw()
 	{
@@ -714,6 +714,7 @@ gen_blocksets()
 {
 	local \
 		me=gen_blocksets \
+		IFS="${DEFAULT_IFS}" \
 		processed_bl_file \
 		set_id \
 		run_state \
@@ -750,6 +751,8 @@ gen_blocksets()
 
 	: "${skip_load_stop}" "${bk_cnt}"
 
+	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file{}."
+
 	if [ "${force_unload}" = auto ]
 	then
 		read -r _ totalmem _ < /proc/meminfo
@@ -761,9 +764,8 @@ gen_blocksets()
 		fi
 	fi
 
-	printf '\n' > "${MSGS_DEST}"
-
 	# Prepare processing for all blocksets
+	local no_local_found_msgs
 	for set_id in ${set_ids}
 	do
 		for list_type in ${ALL_LIST_TYPES}
@@ -776,11 +778,24 @@ gen_blocksets()
 				{ [ -n "${local_list}" ] && [ -f "${local_list}" ]; } ||
 				{
 					export -n "local_${list_type}list_path_${set_id}="
-					reg_msg -fb "${set_id}" "No local ${list_type}list identified{}."
+					no_local_found_msgs="${no_local_found_msgs}${no_local_found_msgs:+"${_NL_}"}${set_id}:No local ${list_type}list identified{}."
 				}
 			done
 		done
 	done
+
+	[ -n "${no_local_found_msgs}" ] &&
+	{
+		printf '\n' > "${MSGS_DEST}"
+		IFS="${_NL_}"
+		for msg in ${no_local_found_msgs}
+		do
+			IFS="${DEFAULT_IFS}"
+			set_id="${msg%%:*}"
+			reg_msg -fb "${set_id}" "${msg#"${set_id}:"}"
+		done
+		IFS="${DEFAULT_IFS}"
+	}
 
 	for format in ${ALL_LIST_FORMATS:?}
 	do
@@ -872,7 +887,9 @@ gen_blocksets()
 					eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
 					[ -n "${dl_lists}${local_list}" ] || continue
 
-					is_included "${list}" "${dl_lists}${_NL_}${local_list:+"local="}${local_list}" "${_NL_}" || continue
+					is_included "${list}" "${dl_lists}" ||
+					{ [ -n "${local_list}" ] && [ "${list}" = "local=${local_list}" ]; } ||
+						continue
 
 					add2list "INDEX_REFS_${proc_index}" "${set_id}"
 					add2list "proc_indexes_${list_type}" "${proc_index}"
@@ -885,18 +902,12 @@ gen_blocksets()
 		IFS="${DEFAULT_IFS}"
 	done
 
-	set_ids="${proc_set_ids}"
-
-	debug_msg "proc_set_ids: '${proc_set_ids}'"
-
-	[ -n "${set_ids}" ] || { reg_failure "Nothing to process."; return 1; }
-
-	printf '\n' > "${MSGS_DEST}"
+	[ -n "${proc_set_ids}" ] || { reg_failure "Nothing to process."; return 1; }
 
 	for set_id in ${set_ids}
 	do
-		reg_msg -fb "${set_id}" "Preparing to generate blockset file{}."
-
+		is_included "${set_id}" "${proc_set_ids}" || { reg_failure -fb "${set_id}" "Nothing to process{}."; continue; }
+		debug_msg "Processing bockset ${set_id}."
 		get_params -f "${me}" "${set_id}" run_state || return 1
 		get_params "${set_id}" \
 			curr_path \
@@ -968,7 +979,7 @@ gen_blocksets()
 		set_params "${set_id}" bk_file bk_cnt
 	done
 
-	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${set_ids}"
+	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${proc_set_ids}"
 	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_PERSIST=0 do_stop "${blocksets_to_stop}" || return 1
 
 	gen_set_parts "$(( ${initial_uptime_cs:?} / 100 ))" ||
@@ -977,7 +988,7 @@ gen_blocksets()
 		return 1
 	}
 
-	for set_id in ${set_ids}
+	for set_id in ${proc_set_ids}
 	do
 		eval "set_indexes=\"\${set_indexes_${set_id}}\""
 		get_params -f "${me}" "${set_id}" install_path || return 1
