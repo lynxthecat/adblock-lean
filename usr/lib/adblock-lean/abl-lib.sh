@@ -71,7 +71,7 @@ get_file_size() { du -b "$1" | ${AWK_CMD} '{print $1}'; }
 
 get_pad()
 {
-	local spaces='                                      ' \
+	local spaces='                                          ' \
 		pad_len=$(( ${3} - ${#2} ))
 	[ "$pad_len" -lt 0 ] && pad_len=0
 	export -n "${1}=${spaces:1:${pad_len}}"
@@ -273,7 +273,7 @@ do_create_addnmounts()
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
 		[ -n "${missing_addnm}" ] || return 0
-		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${missing_addnm} (required for ${3})"
+		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${lblue}${missing_addnm}${n_c} (required for ${3})"
 	}
 
 	local me=create_addnmounts \
@@ -368,7 +368,7 @@ do_create_addnmounts()
 	log_msg "" "${yellow}Detected missing addnmount entries in /etc/config/dhcp for paths:${n_c}${_NL_}${all_missing_addnm}"
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ]
 	then
-		print_msg -blue "Create missing addnmount entries automatically? (y|n)"
+		print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
 		pick_opt "y|n"
 	else
 		log_msg -blue "Automatically creating missing addnmount entries."
@@ -385,7 +385,7 @@ do_create_addnmounts()
 		eval "req_addnm_index=\"\${req_addnm_${index}}\""
 		[ -n "${req_addnm_index}" ] || continue
 
-		log_msg -purple "" "Creating addnmount entries for dnsmasq instance ${index}:${_NL_}${req_addnm_index}."
+		log_msg "" "Creating addnmount entries for dnsmasq instance ${index}:${_NL_}${blue}${req_addnm_index}${n_c}"
 		IFS="${_NL_}"
 		for path in ${req_addnm_index}
 		do
@@ -404,7 +404,8 @@ do_create_addnmounts()
 	}
 
 	unset ADDNMOUNTS_SET DHCP_LOADED
-	get_dnsmasq_instances || return 1
+	DDI_FORCE=1 detect_dnsmasq_instances &&
+	check_dnsmasq_instances || return 1
 
 	:
 }
@@ -1232,7 +1233,7 @@ parse_config()
 	unset_vars "${fixes_out_var}" "${replace_keys_out_var}"
 
 	unset luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
-		luci_bad_cfg_format luci_cfg_fixes preset
+		luci_bad_cfg_format luci_cfg_fixes
 
 	[ -z "${cfg_path}" ] && bad_args "${me}" "${@}"
 

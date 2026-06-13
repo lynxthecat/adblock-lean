@@ -1329,30 +1329,30 @@ fetch_and_install()
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg -blue "" "Start adblock-lean now? (y|n)"
-			pick_opt "y|n"
+			print_msg_install -blue "" "Start adblock-lean now? (y|n)"
+			pick_opt_install "y|n"
 		fi
 
 		[ "${DO_DIALOGS}" = 1 ] && [ "${REPLY}" = y ] || exit 0
 
-		clean_abl_env
+		clean_env_install
 		. "${ABL_SERVICE_PATH}" || return 1
 		start
 		exit ${?}
 	elif \
 		[ -n "${DO_DIALOGS}" ] &&
-		print_msg -blue "" "Set up adblock-lean now? (y|n)" &&
-		pick_opt "y|n" &&
+		print_msg_install -blue "" "Set up adblock-lean now? (y|n)" &&
+		pick_opt_install "y|n" &&
 		[ "$REPLY" = y ]
 	then
-		clean_abl_env
+		clean_env_install
 		set +o pipefail # for compatibility with older versions
 		# shellcheck source=/dev/null
 		. "${ABL_SERVICE_PATH}"
 		setup
 		exit ${?}
 	else
-		log_msg -yellow "adblock-lean config is not found. Please use the command 'service adblock-lean setup' to set up adblock-lean."
+		log_msg_install -yellow "adblock-lean config is not found. Please use the command 'service adblock-lean setup' to set up adblock-lean."
 		exit 0
 	fi
 }

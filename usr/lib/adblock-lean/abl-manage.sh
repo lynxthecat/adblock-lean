@@ -246,142 +246,10 @@ try_extract()
 
 ### dnsmasq support implementation
 
-# Env vars:
-#   GDI_NOFORCE: skip re-processing instances if DNSMASQ_INST_SET is non-empty
-# populates global vars:
-#   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_INSTANCES_CNT
-#   DNSMASQ_INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}
-#   ADDNMOUNTS_SET, DNSMASQ_INST_SET
-#   DHCP_LOADED
-get_dnsmasq_instances() {
-	# shellcheck disable=SC2317,SC2329
-	add_conf_dir_and_addnmounts()
-	{
-		local confdir
-		config_get confdir "${1}" confdir
-		[ -n "${confdir}" ] && add2list ALL_CONF_DIRS "${confdir}" "${_NL_}"
-		config_get "ADDNMOUNTS_${index}" "${1}" addnmount
-		index=$((index+1))
-	}
+# Sets blockset-specific dnsmasq context
+# Verifies that configured dnsmasq instances are running and that their indexes and conf-dirs match the config
 
-	[ -n "${GDI_NOFORCE}" ] && [ -n "${DNSMASQ_INST_SET}" ] && [ -n "${ADDNMOUNTS_SET}" ] &&
-		is_uint "${DNSMASQ_INSTANCES_CNT}" && [ "${DNSMASQ_INSTANCES_CNT}" -gt 0 ] && return 0
-
-	local me=get_dnsmasq_instances \
-		nonempty instance instances running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir
-
-	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
-	DNSMASQ_INSTANCES_CNT=0
-	reg_action "" "Checking dnsmasq instances."
-
-	dbg_off
-	[ -n "${DHCP_LOADED}" ] ||
-	{
-		# gather conf dirs from /etc/config/dhcp
-		{ check_func config_load 1>/dev/null || { [ -f /lib/functions.sh ] && . /lib/functions.sh; }; } &&
-		config_load dhcp ||
-			{ reg_failure "Failed to load /etc/config/dhcp"; return 1; }
-		DHCP_LOADED=1
-	}
-
-	index=0
-	config_foreach add_conf_dir_and_addnmounts dnsmasq
-	export -n ADDNMOUNTS_SET=1
-
-	# gather conf dirs from /tmp/
-	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
-	do
-		case "${dir}" in ''|*".cfg*") continue; esac
-		add2list ALL_CONF_DIRS "${dir}" "${_NL_}"
-	done
-
-	# gather info from '/etc/init.d/dnsmasq info'
-
-	. /usr/share/libubox/jshn.sh &&
-	json_load "$(/etc/init.d/dnsmasq info)" &&
-	json_get_keys nonempty &&
-	[ -n "${nonempty}" ] &&
-	json_select dnsmasq &&
-	json_select instances &&
-	json_get_keys instances &&
-	[ -n "${instances}" ] || { reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."; return 1; }
-
-	index=0
-	for instance in ${instances}
-	do
-		unset "DNSMASQ_INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}"
-
-		case "${instance}" in
-			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
-		esac
-		json_is_a "${instance}" object || continue # skip if $instance is not object
-		json_select "${instance}" &&
-		json_get_var "RUNNING_${index}" running &&
-		json_is_a command array &&
-		json_select command || { reg_failure "Failed to process info for dnsmasq instance '${instance}'."; return 1; }
-
-		add2list running_instances "${instance}" "${_NL_}"
-		add2list DNSMASQ_RUNNING_INDEXES "${index}"
-		l1_conf_files=
-
-		# look for '-C' in values, get next value which is instance's conf file
-		i=0
-		while json_is_a $((i+1)) string
-		do
-			i=$((i+1))
-			json_get_var s ${i}
-			[ "${s}" = '-C' ] || continue
-			json_get_var l1_conf_file $((i+1)) || return 1
-			add2list l1_conf_files "${l1_conf_file}" "${_NL_}"
-		done
-		json_select ..
-		json_select ..
-
-		IFS="${_NL_}"
-		set -- ${l1_conf_files}
-		IFS="${DEFAULT_IFS}"
-
-		# get ifaces for instance
-		ifaces="$( ${SED_CMD} -n '/^\s*interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}" | sort -u )"
-		: "${ifaces:="$(fw4 zone lan)"}" # fall back to all LAN interfaces
-
-		# get conf-dirs for instance
-		conf_dirs="$(
-			for f in "${@}"
-			do
-				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
-			done | $SORT_CMD -u
-		)"
-
-		IFS="${_NL_}"
-		set -- ${conf_dirs}
-		IFS="${DEFAULT_IFS}"
-		for dir in "${@}"
-		do
-			add2list ALL_CONF_DIRS "${dir}" "${_NL_}"
-		done
-
-		export -n "DNSMASQ_INST_NAME_${index}=${instance}" \
-			"CONF_DIRS_${index}=${conf_dirs}" \
-			"IFACES_${index}=${ifaces}"
-		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
-		index=$((index+1))
-	done
-	json_cleanup
-	cnt_lines DNSMASQ_INSTANCES_CNT "${running_instances}"
-	dbg_on
-
-	export -n DNSMASQ_INST_SET=1
-
-	:
-}
-
-# Checks that configured dnsmasq instances are running and verifies that their indexes and conf-dirs match the config
 # 1 - (optional) '-q' to quiet
-# return codes:
-# 0 - configured dnsmasq instances running
-# 1 - dnsmasq instance is not running or other error
-# shellcheck disable=SC2120
 check_dnsmasq_instances()
 {
 	please_run() { log_msg "Please run 'service adblock-lean select_dnsmasq_instances ${1}'."; }
@@ -416,23 +284,35 @@ check_dnsmasq_instances()
 	}
 
 
-	local quiet instance index dir \
+	[ -n "${SET_IDS}" ] || return 0
+
+	local me=check_dnsmasq_instances \
+		quiet instance index dir \
 		set_id \
 		instance_conf_dirs conf_dir_reg \
 		conf_dirs \
 		all_bl_conf_dirs \
+		dnsmasq_indexes \
 		failed_indexes failed_set_ids \
 		inst_ind="dnsmasq instance with index"
 
-	[ "${1}" = '-q' ] && quiet=1
+	[ "${1:-??}" = '-q' ] && quiet=1
 
-	[ -n "${DNSMASQ_INST_SET}" ] || get_dnsmasq_instances || return 1
+	detect_dnsmasq_instances
+	[ ${?} = 2 ] && return 1
 
 	what_failed failed_indexes failed_set_ids || return 1
 	[ -n "${failed_indexes}" ] &&
 	{
+		[ -n "${DNSMASQ_RESTART_TRIED}" ] && return 1
+		case "${CUR_CMD}" in
+			start|pause|resume|setup) ;;
+			*) return 1
+		esac
+		DNSMASQ_RESTART_TRIED=1
+
 		do_stop "${failed_set_ids}" &&
-		get_dnsmasq_instances &&
+		detect_dnsmasq_instances &&
 		what_failed failed_indexes failed_set_ids || return 1
 		[ -z "${failed_indexes}" ] ||
 		{
@@ -444,6 +324,7 @@ check_dnsmasq_instances()
 
 	for set_id in ${SET_IDS}
 	do
+		get_params -f "${me}" "${set_id}" conf_dirs dnsmasq_indexes || return 1
 		all_bl_conf_dirs=
 
 		for index in ${dnsmasq_indexes}
@@ -494,6 +375,149 @@ check_dnsmasq_instances()
 	done
 
 	:
+
+}
+
+# Env vars: DDI_FORCE
+#
+# populates global vars:
+#   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_RUNNING_INST_CNT
+#   DNSMASQ_INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}
+#   ADDNMOUNTS_SET, DNSMASQ_INST_SET
+#   DHCP_LOADED
+#
+# return codes:
+# 0: OK
+# 1: No running instances
+# 2: Fatal error
+detect_dnsmasq_instances()
+{
+	# shellcheck disable=SC2317,SC2329
+	add_conf_dir_and_addnmounts()
+	{
+		local confdir
+		config_get confdir "${1}" confdir
+		[ -n "${confdir}" ] && add2list ALL_CONF_DIRS "${confdir}" "${_NL_}"
+		config_get "ADDNMOUNTS_${index}" "${1}" addnmount
+		index=$((index+1))
+	}
+
+	[ -z "${DDI_FORCE}" ] && [ -n "${DNSMASQ_INST_SET}" ] && [ -n "${ADDNMOUNTS_SET}" ] &&
+		is_uint "${DNSMASQ_RUNNING_INST_CNT}" && [ "${DNSMASQ_RUNNING_INST_CNT}" -gt 0 ] && return 0
+
+	local me=detect_dnsmasq_instances \
+		nonempty instance instances running running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir
+
+	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
+	DNSMASQ_RUNNING_INST_CNT=0
+	reg_action "" "Checking dnsmasq instances."
+
+	dbg_off
+	[ -n "${DHCP_LOADED}" ] ||
+	{
+		# gather conf dirs from /etc/config/dhcp
+		{ check_func config_load 1>/dev/null || { [ -f /lib/functions.sh ] && . /lib/functions.sh; }; } &&
+		config_load dhcp ||
+			{ reg_failure "Failed to load /etc/config/dhcp"; return 2; }
+		DHCP_LOADED=1
+	}
+
+	index=0
+	config_foreach add_conf_dir_and_addnmounts dnsmasq
+	export -n ADDNMOUNTS_SET=1
+
+	# gather conf dirs from /tmp/
+	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
+	do
+		case "${dir}" in ''|*".cfg*") continue; esac
+		add2list ALL_CONF_DIRS "${dir}" "${_NL_}"
+	done
+
+	# gather info from '/etc/init.d/dnsmasq info'
+
+	. /usr/share/libubox/jshn.sh &&
+	json_load "$(/etc/init.d/dnsmasq info)" &&
+	json_get_keys nonempty &&
+	[ -n "${nonempty}" ] &&
+	json_select dnsmasq &&
+	json_select instances &&
+	json_get_keys instances &&
+	[ -n "${instances}" ] || { reg_failure "No running dnsmasq instances found."; return 1; }
+
+	index=0
+	for instance in ${instances}
+	do
+		unset "DNSMASQ_INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}"
+
+		case "${instance}" in
+			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
+		esac
+		json_is_a "${instance}" object || continue # skip if $instance is not object
+		json_select "${instance}" &&
+		json_get_var running running &&
+		json_is_a command array &&
+		json_select command || { reg_failure "Failed to process info for dnsmasq instance '${instance}'."; return 2; }
+
+		export -n "RUNNING_${index}=${running}"
+		[ -n "${running}" ] &&
+		{
+			add2list running_instances "${instance}" "${_NL_}"
+			add2list DNSMASQ_RUNNING_INDEXES "${index}"
+		}
+
+		# look for '-C' in values, get next value which is instance's conf file
+		l1_conf_files=
+		i=0
+		while json_is_a $((i+1)) string
+		do
+			i=$((i+1))
+			json_get_var s ${i}
+			[ "${s}" = '-C' ] || continue
+			json_get_var l1_conf_file $((i+1)) || return 2
+			add2list l1_conf_files "${l1_conf_file}" "${_NL_}"
+		done
+		json_select ..
+		json_select ..
+
+		IFS="${_NL_}"
+		set -- ${l1_conf_files}
+		IFS="${DEFAULT_IFS}"
+
+		# get ifaces for instance
+		ifaces="$( ${SED_CMD} -n '/^\s*interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}" | sort -u )"
+		: "${ifaces:="$(fw4 zone lan)"}" # fall back to all LAN interfaces
+
+		# get conf-dirs for instance
+		conf_dirs="$(
+			for f in "${@}"
+			do
+				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
+			done | $SORT_CMD -u
+		)"
+
+		IFS="${_NL_}"
+		set -- ${conf_dirs}
+		IFS="${DEFAULT_IFS}"
+		for dir in "${@}"
+		do
+			add2list ALL_CONF_DIRS "${dir}" "${_NL_}"
+		done
+
+		export -n "DNSMASQ_INST_NAME_${index}=${instance}" \
+			"CONF_DIRS_${index}=${conf_dirs}" \
+			"IFACES_${index}=${ifaces}"
+		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
+		index=$((index+1))
+	done
+	json_cleanup
+	cnt_lines DNSMASQ_RUNNING_INST_CNT "${running_instances}"
+	dbg_on
+
+	export -n DNSMASQ_INST_SET=1
+
+	[ "${DNSMASQ_RUNNING_INST_CNT}" -gt 0 ] && return 0
+	reg_failure "No running dnsmasq instances found."
+	return 1
 }
 
 # analyze dnsmasq instances and set $dnsmasq_conf_dirs
@@ -517,26 +541,19 @@ do_select_dnsmasq_instances() {
 
 	local CUR_CMD="${me}"
 
-	assert_set "F_${me}" SET_IDS || return 1
-
-	get_valid_set_ids set_ids "${set_ids_arg}" || return 1
-
-	get_dnsmasq_instances && [ -n "${DNSMASQ_RUNNING_INDEXES}" ] ||
-	{
-		reg_failure "Failed to detect dnsmasq instances or no dnsmasq instances are running."
-		do_stop
-		get_dnsmasq_instances && [ -n "${DNSMASQ_RUNNING_INDEXES}" ] || return 1
-	}
+	assert_set "F_${me}" SET_IDS &&
+	get_valid_set_ids set_ids "${set_ids_arg}" &&
+	detect_dnsmasq_instances || return 1
 
 	for set_id in ${set_ids}
 	do
 		select_skip_msg="Detected only 1 dnsmasq instance"
-		first=1 diff='' conf_dirs_cnt='' REPLY='' select_indexes='' indexes_regex='' conf_dirs=''
+		first=1 diff='' conf_dirs_cnt='' REPLY='' select_indexes='' indexes_regex='' conf_dirs='' conf_dirs_seen=''
 			ifaces='' select_ifaces=''
 			select_conf_dirs=''
 		if \
 		{
-			[ "${DNSMASQ_INSTANCES_CNT}" = 1 ] &&
+			[ "${DNSMASQ_RUNNING_INST_CNT}" = 1 ] &&
 				select_indexes="${DNSMASQ_RUNNING_INDEXES%% *}"
 		} ||
 		{
@@ -554,13 +571,19 @@ do_select_dnsmasq_instances() {
 						diff=1
 						break
 				esac
+				[ -n "${conf_dirs}" ] && conf_dirs_seen=1
 			done
+			[ -n "${conf_dirs_seen}" ] &&
 			[ -z "${diff}" ] &&
 			select_indexes="${DNSMASQ_RUNNING_INDEXES}" &&
 			select_skip_msg="Detected multiple dnsmasq instances which are using the same conf-dirs: ${_NL_}${blue}${conf_dirs// /" ${_NL_}"}${n_c}"
 		}
 		then
 			reg_msg "" "${select_skip_msg}" "Skipping manual dnsmasq instance selection."
+		elif [ -z "${conf_dirs_seen}" ]
+		then
+			reg_failure "Failed to detect dnsmasq conf-dir paths for dnsmasq indexes '${DNSMASQ_RUNNING_INDEXES}'."
+			return 1
 		else
 			# Ask the user
 			reg_msg -blue "Multiple dnsmasq instances detected."
@@ -638,6 +661,8 @@ do_select_dnsmasq_instances() {
 		log_msg "Selected dnsmasq conf-dirs: '${select_conf_dirs//"${_NL_}"/"', '"/}'"
 		set_params "${set_id}" dnsmasq_indexes="${select_indexes}" conf_dirs="${select_conf_dirs}"
 	done
+
+	check_dnsmasq_instances "${set_ids}" || return 1
 
 	:
 }
@@ -966,7 +991,7 @@ check_persist_blockset()
 	{
 		[ -n "${curr_persist_path}" ] ||
 			{
-				[ "${run_state}" != 4 ] || [ "${persist_mode}" = manual ] &&
+				[ "${run_state}" != 4 ] || [ "${persist_mode}" = manual ] && [ "${CUR_ACT}" != gen_persist_blockset ] &&
 					reg_failure -fb "${set_id}" "Persistent blockset file{} not found in directory '${persist_dir}'."
 				false
 			}
@@ -1033,7 +1058,7 @@ check_active_blockset()
 
 	reg_action -purple -fb "${set_id}" "Checking if adblocking is active{}." || return 1
 
-	GDI_NOFORCE=1 get_dnsmasq_instances || return 1
+	check_dnsmasq_instances || return 1
 
 	get_params -f "${me}" "${set_id}" dnsmasq_indexes || return 1
 	get_params "${set_id}" test_domains
@@ -1157,6 +1182,7 @@ set_global_env()
 	[ -n "${SKIP_SET_ENV}" ] && return 0
 
 	local \
+		me=set_global_env \
 		compr_util_path \
 		compr_ext \
 		cpu_cnt
@@ -1167,7 +1193,9 @@ set_global_env()
 		INTERM_COMPR_EXT='' \
 		INTERM_COMPR_TO_FILE=''
 
-	debug_msg "Preparing environment."
+	debug_msg "" "start ${me}()"
+
+	assert_set "F_${me}" CONFIG_LOADED || return 1
 
 	set -o pipefail
 
@@ -1194,14 +1222,6 @@ set_global_env()
 	get_compr_util_spec compr_util_path compr_ext "${compression_util:?}" || return 1
 
 	# dnsmasq instances
-	get_dnsmasq_instances ||
-	{
-		[ -n "${DNSMASQ_RESTART_TRIED}" ] && return 1
-		restart_dnsmasq &&
-		get_dnsmasq_instances ||
-			return 1
-	}
-
 	check_dnsmasq_instances || return 1
 
 	# check for missing addnmounts during version update
@@ -1224,7 +1244,7 @@ set_global_env()
 	export -n GLOBAL_ENV_SET=1
 	[ "${CUR_ACT}" = start ] && export -n SKIP_SET_ENV=1
 
-	debug_msg "End set_global_env()"
+	debug_msg "" "End ${me}()"
 
 	:
 }
@@ -1235,7 +1255,7 @@ set_blocksets_env()
 		me=set_blocksets_env \
 		valid_ids \
 		set_id \
-		sbe_rv \
+		sbe_rv cur_sbe_rv \
 		compr_util_path compr_ext compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout \
 		set_ids="${*:-"${SET_IDS}"}"
 
@@ -1265,7 +1285,9 @@ set_blocksets_env()
 	for set_id in ${valid_ids}
 	do
 		set_bl_env "${set_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}"
-		sbe_rv=$(( ${sbe_rv:-0} + ${?} ))
+		cur_sbe_rv=${?}
+		[ "${cur_sbe_rv}" = 0 ] || reg_failure -fb "${set_id}" "Failed to load environment{}."
+		sbe_rv=$(( ${sbe_rv:-0} + cur_sbe_rv ))
 	done
 
 	debug_msg "${me} end" ""
@@ -2122,7 +2144,7 @@ read_blockset_metadata()
 try_read_blockset_metadata()
 {
 	append_err() {
-		rbm_errors="${rbm_errors}${rbm_errors:+"${_NL_}"}${1}"
+		[ -n "${1}" ] && rbm_errors="${rbm_errors}${rbm_errors:+"${_NL_}"}${1}"
 		is_included "${set_id}" "${req_ids}" && rbm_rv=1
 	}
 
@@ -2160,7 +2182,7 @@ try_read_blockset_metadata()
 
 		# check md5
 		get_md5 bl_md5 "${curr_path}" ||
-			{ append_err "Failed to get MD5 sum of ${set_id_pr} file at ${curr_path}."; return 1; }
+			{ append_err; return 1; }
 
 		[ "${curr_md5}" = "${bl_md5}" ] ||
 			append_err "MD5 sum not matching in ${sp_f_pr} for ${set_id_pr}, path '${curr_path}'. Metadata file has: '${curr_md5}', blockset file has: '${bl_md5}'."
