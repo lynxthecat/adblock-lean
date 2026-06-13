@@ -63,10 +63,7 @@ BL_PARAMS_MAP="
 	final_extr_or_cat_stdout=FINAL_EXTR_OR_CAT_STDOUT
 	final_compr_or_cat_stdout=FINAL_COMPR_OR_CAT_STDOUT
 	final_compr_to_file=FINAL_COMPR_TO_FILE
-	part_extr_or_cat_stdout=PART_EXTR_OR_CAT_STDOUT
 	conf_script_log_avail=CONF_SCRIPT_LOG_AVAIL
-	use_allowlist=USE_ALLOWLIST
-	use_ipv4_blocklist=USE_IPV4_BLOCKLIST
 "
 
 # 'case' clauses for translating param name to global var name
@@ -195,8 +192,8 @@ try_compress()
 }
 
 # 0 (optional): '-stdout' (does not remove source file)
-# 1: blockset ID
-# 2: path to file to extract
+# 1: path to file to extract
+# 2 (optional): blockset ID
 try_extract()
 {
 	local stdout=
@@ -207,7 +204,7 @@ try_extract()
 		stdout_opts \
 		te_dir te_fname te_ext \
 		te_err \
-		te_set_id="${1}" te_file="${2:?}"
+		te_file="${1:?}" te_set_id="${2}"
 
 	split_path te_dir te_fname te_ext "${te_file}" && [ -n "${te_fname}" ] && is_valid_dir "${te_dir}" &&
 	{
@@ -915,7 +912,7 @@ try_mv_blockset()
 
 	if [ -n "${mv_src_ext}" ] && [ "${mv_src_ext}" != "${mv_dst_ext}" ]
 	then
-		try_extract "${mv_set_id}" "${mv_src_f}" || return 1
+		try_extract "${mv_src_f}" "${mv_set_id}" || return 1
 		mv_src_f="${mv_src_f%.*}"
 		mv_src_ext=
 		md5_changed=1
@@ -1272,11 +1269,13 @@ set_blocksets_env()
 
 	get_compr_util_spec compr_util_path compr_ext "${compression_util:?}" || return 1
 
+	export -n PART_EXTR_OR_CAT_STDOUT="${CAT_CMD:?}"
 	[ -n "${compr_ext}" ] &&
 	{
 		compr_cmd_to_file="${compr_util_path} -f"
 		compr_cmd_stdout="${compr_util_path} -c"
 		extr_cmd_stdout="${compr_util_path} -cd"
+		PART_EXTR_OR_CAT_STDOUT="try_extract -stdout"
 	}
 
 	read_blockset_metadata "${META_FILE:?}" "${valid_ids}" &&
@@ -1453,8 +1452,6 @@ set_bl_env()
 		curr_persist_path \
 		curr_persist_cnt \
 		\
-		part_extr_or_cat_stdout \
-		\
 		final_compress \
 		final_compr_ext \
 		final_extr_or_cat_stdout="${CAT_CMD}" \
@@ -1485,11 +1482,9 @@ set_bl_env()
 	[ -z "${sbe_missing_addnm}" ] && conf_script_log_avail=1
 
 	# Compression
-	part_extr_or_cat_stdout="${CAT_CMD:?}"
 	if [ -n "${compr_ext}" ]
 	then
 		assert_set "F_${me}" compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout || return 1
-		part_extr_or_cat_stdout="try_extract -stdout ${set_id}"
 		bl_full_fname_check=${set_base_fname:?}${compr_ext}
 		install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
 		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${extr_cmd_stdout%% *}${_NL_}${install_path_ram_check}" || return 1
@@ -1509,7 +1504,6 @@ set_bl_env()
 			wont_work "Final blockset compression" "${sbe_missing_addnm}"
 		fi
 	fi
-	set_params "${set_id}" part_extr_or_cat_stdout
 
 	# Final blockset full filename
 	: "${bl_full_fname:="${set_base_fname:?}"}"
@@ -1686,7 +1680,6 @@ set_bl_env()
 
 	: \
 		"${pause_path}" \
-		"${part_extr_or_cat_stdout}" \
 		"${final_compr_to_file}" \
 		"${final_compr_or_cat_stdout}" \
 		"${conf_script_log_avail}"
