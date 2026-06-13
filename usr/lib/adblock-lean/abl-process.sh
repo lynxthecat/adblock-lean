@@ -1096,14 +1096,6 @@ gen_blockset()
 		[ -n "${printed}" ] || printf ''
 	}
 
-	# 1 - var name for output
-	# 2 - path to file
-	read_list_stats()
-	{
-		export -n "${1:?}=0"
-		read -r "${1?}" 2>/dev/null < "${2}"
-	}
-
 	local me=gen_blockset \
 		install_path \
 		min_good_entries min_good_entries_human \
@@ -1116,6 +1108,8 @@ gen_blockset()
 		install_1_instance \
 		use_allowlist use_ipv4_blocklist \
 		merged_allow_f="${PROCESSED_PARTS_DIR}/allow" \
+		test_domains \
+		whitelist_mode \
 		\
 		set_id="${1:?}" \
 		out_f="${2:?}" \
@@ -1151,7 +1145,8 @@ gen_blockset()
 	# shellcheck disable=SC2034
 	# Process results
 	local part_cnt part_size_B list_cnt_raw list_size_B index list_type print_id index_refs \
-		set_cnt_raw=0 allow_cnt_raw=0 block_cnt_raw=0 ipv4_block_cnt_raw=0
+		set_cnt_raw=0 set_size_B_raw=0 allow_cnt_raw=0 block_cnt_raw=0 ipv4_block_cnt_raw=0 \
+		set_cnt_raw_human set_size_B_raw_human set_size_B set_size_B_human
 
 	rm -f "${PROCESSED_PARTS_DIR:?}/allow" "${ABL_TMP_DIR:?}/block_stats" "${ABL_TMP_DIR}/ipv4_block_stats" "${ABL_TMP_DIR}/allow_stats" "${ABL_TMP_DIR}/abl-too-big.tmp"
 
@@ -1169,6 +1164,7 @@ gen_blockset()
 		read_str_from_file -v "part_cnt part_size_B" -f "${ABL_TMP_DIR}/${index}_stats" -V 0 &&
 		is_uint "${part_cnt}" "${part_size_B}" &&
 		set_cnt_raw=$((set_cnt_raw+part_cnt)) &&
+		set_size_B_raw=$((set_size_B_raw + part_size_B)) &&
 		eval \
 			"${list_type}_cnt_raw=\"\$(( ${list_type}_cnt_raw + part_cnt ))\"" \
 			"${list_type}_size_B=\"\$(( ${list_type}_size_B + part_size_B ))\"" ||
@@ -1178,6 +1174,12 @@ gen_blockset()
 	[ "${set_cnt_raw}" -gt 0 ] ||
 		{ reg_failure -fb "${set_id}" "Failed to generate preprocessed files with at least one entry{}."; return 1; }
 
+	bytes2human set_size_B_raw_human "${set_size_B_raw}" &&
+	int2human set_cnt_raw_human "${set_cnt_raw}" || return 1
+
+	reg_msg "Uncompressed blockset parts size: ${orange}${set_size_B_raw_human}${n_c}, entries count: ${orange}${set_cnt_raw_human}${n_c}."
+
+	local list_cnt_raw_human list_size_B_human
 	for list_type in ${ALL_LIST_TYPES}
 	do
 		# count entries for current list type
@@ -1186,13 +1188,16 @@ gen_blockset()
 
 		if ! [ "${list_cnt_raw}" -gt 0 ] || ! [ "${list_size_B}" -gt 0 ]
 		then
-			case "${list_type}" in
-				block)
-					[ "${whitelist_mode}" = 1 ] || return 1
-					log_msg -yellow "Whitelist mode is on - accepting empty blocklist." ;;
-				allow)
-					reg_msg "Not using any allowlist for blockset processing."
-			esac
+			[ "${list_type}" = block ] &&
+			{
+				[ "${whitelist_mode}" = 1 ] || {
+					bytes2human list_size_B_raw_human "${list_size_B_raw:-0}"
+					int2human list_cnt_raw_human "${list_cnt_raw:-0}"
+					reg_failure "Total entries count and size of block-entries: ${list_cnt_raw_human}, ${list_size_B_human}."
+					return 1
+				}
+				log_msg -yellow "Whitelist mode is on - accepting empty blocklist."
+			}
 		elif [ "${list_type}" = ipv4_block ]
 		then
 			use_ipv4_blocklist=1
@@ -1201,10 +1206,14 @@ gen_blockset()
 			print_set_parts allow "${set_id}" "${set_indexes}" |
 			# optional deduplication
 			${dedup_cmd_or_cat} >> "${merged_allow_f}" || return 1
-			reg_msg "Will remove any (sub)domain matches present in the allowlist from the blockset and append corresponding server entries to the blockset."
 			use_allowlist=1
 		fi
 	done
+
+	case "${use_allowlist}" in
+		1) reg_msg "Will remove any (sub)domain matches present in the allowlist from the blockset and append corresponding server entries to the blockset." ;;
+		*) reg_msg "Not using any allowlist for blockset processing."
+	esac
 
 	reg_msg "Sorting and merging blockset parts into a single blockset file."
 
@@ -1300,11 +1309,13 @@ gen_blockset()
 	fi
 
 	# check total entries count vs min_good_entries
-	local block_cnt ipv4_block_cnt allow_cnt \
-		gen_cnt gen_cnt_human
+	local read_cnt block_cnt ipv4_block_cnt allow_cnt \
+		gen_cnt=0 gen_cnt_human
 	for list_type in block ipv4_block allow
 	do
-		read_list_stats "${list_type}_cnt" "${ABL_TMP_DIR}/${list_type}_stats"
+		read_cnt=0
+		read -r read_cnt 2>/dev/null < "${ABL_TMP_DIR}/${list_type}_stats"
+		local "${list_type}_cnt=${read_cnt:-0}"
 	done
 
 	gen_cnt=$(( block_cnt + ipv4_block_cnt + allow_cnt ))
@@ -1313,9 +1324,10 @@ gen_blockset()
 
 	is_uint "${gen_cnt}" || gen_cnt=0
 
+	int2human gen_cnt_human "${gen_cnt}" || return 1
+
 	if [ "${gen_cnt}" -lt "${min_good_entries}" ]
 	then
-		int2human gen_cnt_human "${gen_cnt}" &&
 		int2human min_good_entries_human "${min_good_entries}" || return 1
 		reg_failure "Entries count (${gen_cnt_human}) is below the minimum value set in config (${min_good_entries_human})."
 		return 1
@@ -1342,7 +1354,15 @@ gen_blockset()
 
 	rm -f "${ERR_F}"
 
-	reg_msg -green "Blockset file check passed."
+	set_size_B=$(get_file_size "${out_f}")
+	bytes2human set_size_B_human "${set_size_B:-0}"
+
+	local comp_pr=compressed
+	case "${final_compr_or_cat_stdout}" in
+		cat|*" cat"|*/cat) comp_pr=uncompressed
+	esac
+
+	reg_msg "${green}Final blockset file check passed${n_c} (${comp_pr}, ${orange}${set_size_B_human}${n_c}, ${orange}${gen_cnt_human} entries${n_c})"
 
 	set_params "${set_id}" install_cnt="${gen_cnt}"
 
