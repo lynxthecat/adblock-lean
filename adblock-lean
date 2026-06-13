@@ -1835,6 +1835,16 @@ init_act()
 #   $3 - github ref (version/commit hash), $4 - tarball url, $5 - version type ('version' or 'commit')
 get_gh_ref()
 {
+	url_fetch_failed() { reg_failure "Failed to get GitHub download URL${gr_version:+" for ${gr_ver_type} '${gr_version}'"} (update channel: '${gr_channel}')."; }
+
+	report_fetch_err()
+	{
+		[ -s "${gr_ucl_err_file}" ] && log_msg "" "uclient-fetch output:${_NL_}$(cat "${gr_ucl_err_file}")"
+		[ -s "${gen_err_file}" ] &&
+			{ [ ! -s "${gr_ucl_err_file}" ] || ! grep -qiE 'fail|error' "${gr_ucl_err_file}"; } &&
+				log_msg "" "STDERR output of ref processing pipeline:${_NL_}$(cat "${gen_err_file}")"
+	}
+
 	set_res_vars()
 	{
 		unset_vars "${3}" "${4}" "${5}"
@@ -1845,7 +1855,7 @@ get_gh_ref()
 					"If using commit hash, please specify the complete commit hash string."
 				return 1 ;;
 			''|*[!a-zA-Z0-9._-]*)
-				reg_failure "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
+				url_fetch_failed
 				return 1
 		esac
 
@@ -1862,10 +1872,10 @@ get_gh_ref()
 	get_and_process_ref()
 	{
 		local branch url \
-			channel="${1}" ptrn="${2}" branches="${3}" err_file="${4}"
+			channel="${1}" ptrn="${2}" branches="${3}"
 		case "${channel}" in
 			release)
-				uclient-fetch "${ABL_GH_URL_API}/releases" -O- 2> "${err_file}" | {
+				uclient-fetch "${ABL_GH_URL_API}/releases" -O- 2> "${gr_ucl_err_file}" | {
 					jsonfilter -e '@[@.prerelease=false]' |
 					jsonfilter -a -e "@[@.target_commitish=\"${ABL_MAIN_BRANCH}\"].tag_name"
 					cat 1>/dev/null
@@ -1874,13 +1884,13 @@ get_gh_ref()
 				for branch in ${branches}
 				do
 					url="${ABL_GH_URL_API}/commits?sha=${branch}"
-					uclient-fetch "${url}" -O- 2> "${err_file}" | {
+					uclient-fetch "${url}" -O- 2> "${gr_ucl_err_file}" | {
 						jsonfilter -e '@[@.commit]["url"]' |
-						${SED_CMD} 's/.*\///' # only leave the commit hash
+						${SED_CMD:?} 's/.*\///' # only leave the commit hash
 						cat 1>/dev/null
 					}
 				done
-		esac |
+		esac 2> "${gen_err_file}" |
 		if [ -n "${ptrn}" ]
 		then
 			grep "${ptrn}"
@@ -1891,13 +1901,13 @@ get_gh_ref()
 	}
 
 	local gr_branches gr_grep_ptrn gr_ref gr_ver_type gr_fetch_rv=0 \
-		gr_fetch_tmp_dir="${ABL_UPD_DIR}/ref_fetch" \
+		gr_fetch_tmp_dir="${ABL_UPD_DIR:?}/ref_fetch" \
 		cached_ref cached_ver_type \
 		gr_channel="${1}" gr_version="${2}"
+	local gr_ucl_err_file="${gr_fetch_tmp_dir}/ucl_err" \
+		gen_err_file="${gr_fetch_tmp_dir}/gen_err"
 
 	[ "$gr_channel" = release ] && gr_version="${gr_version#v}"
-
-	local gr_ucl_err_file="${gr_fetch_tmp_dir}/ucl_err"
 
 	unset_vars "${3}" "${4}" "${5}"
 
@@ -1956,7 +1966,7 @@ get_gh_ref()
 	fi
 
 	try_mkdir -p "${gr_fetch_tmp_dir}" || return 1
-	rm -f "${gr_ucl_err_file}"
+	rm -f "${gr_ucl_err_file}" "${gen_err_file}"
 
 	case "${gr_channel}" in
 		release)
@@ -1982,16 +1992,15 @@ get_gh_ref()
 			else
 				gr_branches="$(
 					uclient-fetch "${ABL_GH_URL_API}/branches" -O-  2> "${gr_ucl_err_file}" |
-						{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
+						{ jsonfilter -e '@[@]["name"]' 2> "${gen_err_file}"; cat 1>/dev/null; }
 				)"
 				[ -n "${gr_branches}" ] || {
 					reg_failure "Failed to get adblock-lean branches via GH API (url: '${ABL_GH_URL_API}/branches')."
-					[ -f "${gr_ucl_err_file}" ] &&
-						log_msg "uclient-fetch log:${_NL_}$(cat "${gr_ucl_err_file}")"
-						rm -f "${gr_ucl_err_file}"
+					report_fetch_err
+					rm -f "${gr_ucl_err_file}" "${gen_err_file}"
 					return 1
 				}
-				rm -f "${gr_ucl_err_file}"
+				rm -f "${gr_ucl_err_file}" "${gen_err_file}"
 				gr_grep_ptrn="^${gr_hash}"
 			fi ;;
 		*)
@@ -2001,13 +2010,13 @@ get_gh_ref()
 
 	# Get GH ref
 	[ -z "${gr_ref}" ] &&
-		gr_ref="$(get_and_process_ref "${gr_channel}" "${gr_grep_ptrn}" "${gr_branches}" "${gr_ucl_err_file}")"
+		gr_ref="$(get_and_process_ref "${gr_channel}" "${gr_grep_ptrn}" "${gr_branches}")"
 
 	if [ -z "${gr_ref}" ]
 	then
 		gr_fetch_rv=1
-		reg_failure "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
-		[ -f "${gr_ucl_err_file}" ] && log_msg "uclient-fetch output:${_NL_}$(cat "${gr_ucl_err_file}")"
+		url_fetch_failed
+		report_fetch_err
 	fi
 	rm -rf "${gr_fetch_tmp_dir:-?}"
 	[ "$gr_fetch_rv" = 0 ] || return 1
