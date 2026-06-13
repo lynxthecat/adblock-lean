@@ -858,14 +858,7 @@ print_msg() { reg_msg -4 "${@}"; }
 
 log_msg() { reg_msg -1 "${@}"; }
 
-debug_msg()
-{
-	local prefix="${orange}debug:${n_c}"
-	case ${#} in
-		1) reg_msg -5 "${prefix} ${1}" ;;
-		*) reg_msg -5 "" "${prefix}" "${@}" ""
-	esac
-}
+debug_msg() { reg_msg -5 -d "${@}"; }
 
 # Depending on msg-specific log level, on global ${LOG_VERBOSITY} and on ${ABL_DEBUG}:
 # Prints each msg separately to console [ and to log file ] [ and sends to system log ] [ and registers action ]
@@ -879,20 +872,22 @@ debug_msg()
 # -[0|1|2|3|4|5] : message level (default: 3)
 # -[action|report|noprint|err|warn|[color]
 # -b: append 'blockset[s] <OPTARG>' to the message
+# -d: message is debug
 # -fb|-wb: same as above, plus [for ]|[with ] prefix
 reg_msg()
 {
 	append_msg()
 	{
-		msgs="${msgs}${msgs_prefix}${1}${_DELIM_}"
+		msgs="${msgs}${debug_prefix}${msgs_prefix}${1}${_DELIM_}"
 		[ -n "${msgs_prefix}" ] && msgs_prefix=
 	}
 
 	dbg_off
 
-	local m msgs msgs_nc msgs_prefix _arg err_l=info color _n_c \
+	local m msgs msgs_nc msgs_prefix debug_prefix _arg err_l=info color _n_c \
 		print_req sys_log_req log_file_req action_req report_req noprint \
 		set_ids ids_pr_prefix fetch_ids set_ids_pr \
+		set_id_hl_on set_id_hl_off \
 		msg_level msgs_dest="${MSGS_DEST}" \
 		\
 		reg_req \
@@ -916,11 +911,12 @@ reg_msg()
 					do
 						[ "${msg_level}" -le "${thresh}" ] && { reg_req=1; break; }
 					done
-					[ -n "${reg_req}" ] || { dbg_on; return 0; } # short path for debug messages when ABL_DEBUG is not set
+					[ -n "${reg_req}" ] || { dbg_on; return 0; } # short path for no action required
 				else
 					append_msg "${_arg}"
 				fi ;;
 			-b) fetch_ids=1 ;;
+			-d ) [ -n "${ABL_DEBUG}" ] || return 0; debug_prefix="${orange}debug:${n_c} " ;;
 			-fb) ids_pr_prefix="for " fetch_ids=1 ;;
 			-wb) ids_pr_prefix="with " fetch_ids=1 ;;
 			-noprint) noprint=1 ;;
@@ -937,9 +933,14 @@ reg_msg()
 
 	[ -n "${set_ids}" ] && { [ -z "${SET_IDS}" ] || ! subtract_a_from_b "${set_ids}" "${SET_IDS}"; } &&
 	{
+		case "${err_l}" in
+			err|warn) ;;
+			*) set_id_hl_on="${lblue}" set_id_hl_off="${n_c}"
+		esac
+		[ "${err_l}" ]
 		case "${set_ids}" in
-			*" "*) set_ids_pr=" ${ids_pr_prefix}blocksets: ${lblue}${set_ids// /"${n_c}, ${lblue}"}${n_c}" ;;
-			*) set_ids_pr=" ${ids_pr_prefix}blockset ${lblue}${set_ids}${n_c}" ;;
+			*" "*) set_ids_pr=" ${ids_pr_prefix}blocksets: ${set_id_hl_on}${set_ids// /"${set_id_hl_off}, ${set_id_hl_on}"}${set_id_hl_off}" ;;
+			*) set_ids_pr=" ${ids_pr_prefix}blockset ${set_id_hl_on}${set_ids}${set_id_hl_off}" ;;
 		esac
 	}
 	msgs="${msgs//"{}"/"${set_ids_pr}"}"
@@ -1032,16 +1033,11 @@ cleanup_and_exit()
 		}
 	fi
 
-	if [ -n "${METADATA_COMMIT_REQ}" ]
-	then
-		commit_metadata || exit 1
-	fi
-
 	rm -rf "${ABL_TMP_DIR}" "${ABL_CFG_STAGING_DIR}"
 
 	if [ "${1}" != 0 ] && [ -n "${FAIL_STOP_REQ}" ]
 	then
-		ABL_NOTRAPS=1 do_stop
+		do_stop
 		rm -rf "${ABL_RUN_DIR}"
 	fi
 
@@ -1641,7 +1637,7 @@ del_addnmounts()
 				is_included "${dir}" "${persist_dirs}" "${_NL_}"
 			} ||
 			continue
-			log_msg -purple "Deleting addnmount entry for dnsmasq instance ${index} (path: ${path})"
+			log_msg "Deleting addnmount entry for dnsmasq instance ${index}: ${blue}${path}${n_c}"
 			if uci -q del_list "dhcp.@dnsmasq[${index}].addnmount=${path}"
 			then
 				entry_deleted=1
@@ -1681,20 +1677,12 @@ init_act()
 	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 		DO_DIALOGS=1
 
-	debug_msg "init_act '${cur_act}'"
+	debug_msg "" "init_act '${cur_act}'${_NL_}"
 
 	detect_main_utils || graceful_exit 1
 
-	if [ -z "${ABL_NOTRAPS}" ]
-	then
-		if [ -n "${UPD_SOURCED}" ]
-		then
-			trap_and_catch 'exit 1' INT TERM
-		else
-			trap_and_catch 'cleanup_and_exit 1' INT TERM
-			trap 'cleanup_and_exit ${?}' EXIT
-		fi
-	fi
+	trap_and_catch 'cleanup_and_exit 1' INT TERM
+	trap 'cleanup_and_exit ${?}' EXIT
 
 	# set requirements
 	case ${cur_act} in
@@ -1703,7 +1691,7 @@ init_act()
 		status) local SBE_STATUS=1; cfg_req=1 find_set_configs_req=1 set_ids_req=1 work_dir_req=1 ;;
 		upd_cron_job) cfg_req=1 ;;
 		setup|gen_global_config) find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
-		gen_blockset_config) work_dir_req=1 global_cfg_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
+		gen_blockset_config) work_dir_req=1 cfg_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
 		rm_blockset_config) libs_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
 		boot|create_addnmounts) cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
 		pause) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
@@ -1725,7 +1713,7 @@ init_act()
 			}
 			libs_req=1 find_set_configs_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances)
-			libs_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1
+			libs_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1
 			[ "${action}" = select_dnsmasq_instances ] && cfg_req=1 # require config when called directly
 			;;
 		reload|restart) ;;
@@ -1836,6 +1824,7 @@ init_act()
 			fi
 	esac
 
+	debug_msg "" "end init_act '${cur_act}'${_NL_}"
 	:
 }
 
@@ -2127,9 +2116,8 @@ gen_blockset_config()
 	local CUR_ACT=gen_blockset_config
 	local CUR_CMD=${CUR_ACT}
 	init_act "${CUR_ACT}" &&
-	do_gen_blockset_config "${@}" &&
-	load_config &&
 	set_all_env &&
+	do_gen_blockset_config "${@}" &&
 	do_create_addnmounts "${@}"
 }
 
@@ -2262,8 +2250,7 @@ create_addnmounts()
 {
 	local CUR_ACT=create_addnmounts
 	init_act "${CUR_ACT}" &&
-	get_dnsmasq_instances &&
-	check_dnsmasq_instances &&
+	set_all_env &&
 	do_create_addnmounts
 }
 
@@ -2280,6 +2267,7 @@ select_dnsmasq_instances()
 		set_ids="${*:-"${SET_IDS}"}"
 
 	init_act "${CUR_ACT}" &&
+	set_all_env "${set_ids}" &&
 	do_select_dnsmasq_instances "${@}" || return 1
 	for set_id in ${set_ids}
 	do
@@ -2563,7 +2551,9 @@ do_stop()
 			return 0
 	}
 
-	[ -n "${force_stop_all}" ] || {
+	[ -n "${force_stop_all}" ] ||
+	{ [ "${CUR_CMD}" = stop ] && subtract_a_from_b "${set_ids}" "${SET_IDS}"; } ||
+	{
 		[ -n "${set_ids}" ] && rm_conf_scripts "${set_ids}"
 		commit_metadata
 		return 1
@@ -2646,7 +2636,7 @@ restart()
 	local CUR_ACT=restart
 	local CUR_CMD=${CUR_ACT}
 	init_act "${CUR_ACT}" &&
-	KEEP_PERSIST=0 do_stop "${@}" &&
+	STOP_NOEXIT=1 stop "${@}" &&
 	start "${@}"
 	exit ${?}
 }
@@ -2689,9 +2679,10 @@ status()
 
 	[ -n "${set_ids_arg}" ] && get_valid_set_ids set_ids "${set_ids_arg}" || return 1
 
-	set_global_env || status_rv=1
-
-	if [ -z "${SET_IDS}" ]
+	if ! set_global_env
+	then
+		status_rv=1
+	elif [ -z "${SET_IDS}" ]
 	then
 		reg_failure "No blockset configs found."
 		status_rv=1
@@ -2701,12 +2692,10 @@ status()
 		status_rv=1
 	elif ! set_blocksets_env "${set_ids}"
 	then
-		reg_failure -fb "${set_ids}" "Failed to load environment{}."
 		status_rv=1
 	else
 		for set_id in ${set_ids}
 		do
-			run_state=1
 			set_id_pr="blockset ${lblue}${set_id}${n_c}"
 			print_msg "" "Status of ${set_id_pr}:"
 			get_params "${set_id}" run_state curr_path curr_cnt persist_dir persist_mode
@@ -2963,7 +2952,7 @@ update()
 	init_act "${CUR_ACT}" || { upd_failed; return 1; }
 
 	[ -n "${upd_nostop}" ] || STOP_NOEXIT=1 stop ||
-		{ log_msg "To force the update without calling the 'stop' command, use 'service adblock-lean stop -f'."; return 1; }
+		{ log_msg "To force the update without calling the 'stop' command, use 'service adblock-lean update -f'."; return 1; }
 
 	# parse version string from arguments into $req_upd_channel, $req_ver
 	case "${ver_str_arg}" in
@@ -3087,6 +3076,9 @@ uninstall()
 	local CUR_ACT=uninstall
 	local CUR_CMD=${CUR_ACT}
 	init_act "${CUR_ACT}" || return 1
+	find_set_configs
+	source_libs
+	load_config
 	KEEP_PERSIST=0 do_stop
 	if rc_enabled
 		then
@@ -3178,7 +3170,7 @@ disable()
 		rm_cron_job
 		rc_disable && ! rc_enabled ||
 			{ reg_failure "Failed to disable the adblock-lean service"; local rv=1; }
-		do_stop
+		stop
 	else
 		reg_msg "The adblock-lean service is already disabled."
 	fi
