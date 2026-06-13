@@ -1902,7 +1902,7 @@ check_for_updates()
 
 	[ "${gh_ref_rv}" != 0 ] &&
 	{
-		reg_failure "Failed to check for adblock-lean updates."
+		reg_failure "" "Failed to check for adblock-lean updates."
 		return 2
 	}
 
