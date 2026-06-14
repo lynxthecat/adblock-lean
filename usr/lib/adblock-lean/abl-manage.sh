@@ -245,11 +245,14 @@ try_extract()
 
 # Sets blockset-specific dnsmasq context
 # Verifies that configured dnsmasq instances are running and that their indexes and conf-dirs match the config
-
+#
 # 1 - (optional) '-q' to quiet
 check_dnsmasq_instances()
 {
-	please_run() { log_msg "Please run 'service adblock-lean select_dnsmasq_instances ${1}'."; }
+	cdi_fatal() {
+		CDI_FATAL=1
+		log_msg "Please run 'service adblock-lean select_dnsmasq_instances ${1}'."
+	}
 
 	cdi_fail()
 	{
@@ -265,7 +268,7 @@ check_dnsmasq_instances()
 		do
 			get_params "${set_id}" dnsmasq_indexes
 			[ -n "${dnsmasq_indexes}" ] ||
-				{ get_cfg_opt cfg_opt "dnsmasq_indexes"; cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"; please_run "${set_id}"; return 1; }
+				{ get_cfg_opt cfg_opt "dnsmasq_indexes"; cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"; cdi_fatal "${set_id}"; return 1; }
 
 			for index in ${dnsmasq_indexes}
 			do
@@ -282,6 +285,7 @@ check_dnsmasq_instances()
 
 
 	[ -n "${SET_IDS}" ] || return 0
+	[ -n "${CDI_FATAL}" ] && return 1
 
 	local me=check_dnsmasq_instances \
 		quiet instance index dir \
@@ -291,6 +295,7 @@ check_dnsmasq_instances()
 		all_bl_conf_dirs \
 		dnsmasq_indexes \
 		failed_indexes failed_set_ids \
+		skip_conf_dir_check \
 		inst_ind="dnsmasq instance with index"
 
 	[ "${1:-??}" = '-q' ] && quiet=1
@@ -319,6 +324,16 @@ check_dnsmasq_instances()
 		}
 	}
 
+	case "${CUR_ACT}" in
+		start|stop|pause|resume|status|create_addnmounts|gen_persist_blockset) : ;;
+		*) false
+	esac ||
+	case "${CUR_CMD}" in
+		start|stop|pause|resume|create_addnmounts) : ;;
+		*) false
+	esac ||
+		skip_conf_dir_check=1
+
 	for set_id in ${SET_IDS}
 	do
 		get_params -f "${me}" "${set_id}" conf_dirs dnsmasq_indexes || return 1
@@ -326,6 +341,15 @@ check_dnsmasq_instances()
 
 		for index in ${dnsmasq_indexes}
 		do
+			# check if config section exists in /etc/config/dhcp
+			uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
+			{
+				cdi_fail "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
+				return 1
+			}
+
+			[ -n "${skip_conf_dir_check}" ] && continue
+
 			eval "instance_conf_dirs=\"\${CONF_DIRS_${index}}\""
 			[ -n "${instance_conf_dirs}" ] ||
 				{ cdi_fail "Config directory is not set for dnsmasq instance with index ${index}."; return 1; }
@@ -336,11 +360,13 @@ check_dnsmasq_instances()
 			for dir in ${instance_conf_dirs}
 			do
 				IFS="${DEFAULT_IFS}"
-				is_included "${dir}" "${conf_dirs}" && conf_dir_reg=1
+				dir="${dir%/}"
+				is_included "${dir}" "${conf_dirs}" ||
+				is_included "${dir}/" "${conf_dirs}" && conf_dir_reg=1
 				[ -d "${dir}" ] ||
 				{
 					cdi_fail "Conf-dir '${dir}' does not exist. ${inst_ind} ${index} is misconfigured."
-					please_run "${set_id}"
+					cdi_fatal "${set_id}"
 					return 1
 				}
 			done
@@ -349,23 +375,21 @@ check_dnsmasq_instances()
 			[ -n "${conf_dir_reg}" ] ||
 			{
 				cdi_fail "Conf-dirs for ${inst_ind} ${index} changed."
-				please_run "${set_id}"
-				return 1
-			}
-
-			# check if config section exists in /etc/config/dhcp
-			uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
-			{
-				cdi_fail "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
+				cdi_fatal "${set_id}"
 				return 1
 			}
 		done
 
+		[ -n "${skip_conf_dir_check}" ] && continue
+
 		for dir in ${conf_dirs}
 		do
+			dir="${dir%/}"
 			is_included "${dir}" "${all_bl_conf_dirs}" "${_NL_}" ||
+			is_included "${dir}/" "${all_bl_conf_dirs}" "${_NL_}" ||
 			{
 				cdi_fail "conf-dir directory '${dir}' is set in config{} but not used by configured dnsmasq instances '${dnsmasq_indexes}'." "${set_id}"
+				cdi_fatal "${set_id}"
 				return 1
 			}
 		done
