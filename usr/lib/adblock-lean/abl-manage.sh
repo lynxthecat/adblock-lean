@@ -245,11 +245,14 @@ try_extract()
 
 # Sets blockset-specific dnsmasq context
 # Verifies that configured dnsmasq instances are running and that their indexes and conf-dirs match the config
-
+#
 # 1 - (optional) '-q' to quiet
 check_dnsmasq_instances()
 {
-	please_run() { log_msg "Please run 'service adblock-lean select_dnsmasq_instances ${1}'."; }
+	cdi_fatal() {
+		CDI_FATAL=1
+		log_msg "Please run 'service adblock-lean select_dnsmasq_instances ${1}'."
+	}
 
 	cdi_fail()
 	{
@@ -265,7 +268,7 @@ check_dnsmasq_instances()
 		do
 			get_params "${set_id}" dnsmasq_indexes
 			[ -n "${dnsmasq_indexes}" ] ||
-				{ get_cfg_opt cfg_opt "dnsmasq_indexes"; cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"; please_run "${set_id}"; return 1; }
+				{ get_cfg_opt cfg_opt "dnsmasq_indexes"; cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"; cdi_fatal "${set_id}"; return 1; }
 
 			for index in ${dnsmasq_indexes}
 			do
@@ -282,6 +285,7 @@ check_dnsmasq_instances()
 
 
 	[ -n "${SET_IDS}" ] || return 0
+	[ -n "${CDI_FATAL}" ] && return 1
 
 	local me=check_dnsmasq_instances \
 		quiet instance index dir \
@@ -291,6 +295,7 @@ check_dnsmasq_instances()
 		all_bl_conf_dirs \
 		dnsmasq_indexes \
 		failed_indexes failed_set_ids \
+		skip_conf_dir_check \
 		inst_ind="dnsmasq instance with index"
 
 	[ "${1:-??}" = '-q' ] && quiet=1
@@ -319,6 +324,16 @@ check_dnsmasq_instances()
 		}
 	}
 
+	case "${CUR_ACT}" in
+		start|stop|pause|resume|status|create_addnmounts|gen_persist_blockset) : ;;
+		*) false
+	esac ||
+	case "${CUR_CMD}" in
+		start|stop|pause|resume|create_addnmounts) : ;;
+		*) false
+	esac ||
+		skip_conf_dir_check=1
+
 	for set_id in ${SET_IDS}
 	do
 		get_params -f "${me}" "${set_id}" conf_dirs dnsmasq_indexes || return 1
@@ -326,6 +341,15 @@ check_dnsmasq_instances()
 
 		for index in ${dnsmasq_indexes}
 		do
+			# check if config section exists in /etc/config/dhcp
+			uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
+			{
+				cdi_fail "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
+				return 1
+			}
+
+			[ -n "${skip_conf_dir_check}" ] && continue
+
 			eval "instance_conf_dirs=\"\${CONF_DIRS_${index}}\""
 			[ -n "${instance_conf_dirs}" ] ||
 				{ cdi_fail "Config directory is not set for dnsmasq instance with index ${index}."; return 1; }
@@ -336,11 +360,13 @@ check_dnsmasq_instances()
 			for dir in ${instance_conf_dirs}
 			do
 				IFS="${DEFAULT_IFS}"
-				is_included "${dir}" "${conf_dirs}" && conf_dir_reg=1
+				dir="${dir%/}"
+				is_included "${dir}" "${conf_dirs}" ||
+				is_included "${dir}/" "${conf_dirs}" && conf_dir_reg=1
 				[ -d "${dir}" ] ||
 				{
 					cdi_fail "Conf-dir '${dir}' does not exist. ${inst_ind} ${index} is misconfigured."
-					please_run "${set_id}"
+					cdi_fatal "${set_id}"
 					return 1
 				}
 			done
@@ -349,23 +375,21 @@ check_dnsmasq_instances()
 			[ -n "${conf_dir_reg}" ] ||
 			{
 				cdi_fail "Conf-dirs for ${inst_ind} ${index} changed."
-				please_run "${set_id}"
-				return 1
-			}
-
-			# check if config section exists in /etc/config/dhcp
-			uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
-			{
-				cdi_fail "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
+				cdi_fatal "${set_id}"
 				return 1
 			}
 		done
 
+		[ -n "${skip_conf_dir_check}" ] && continue
+
 		for dir in ${conf_dirs}
 		do
+			dir="${dir%/}"
 			is_included "${dir}" "${all_bl_conf_dirs}" "${_NL_}" ||
+			is_included "${dir}/" "${all_bl_conf_dirs}" "${_NL_}" ||
 			{
 				cdi_fail "conf-dir directory '${dir}' is set in config{} but not used by configured dnsmasq instances '${dnsmasq_indexes}'." "${set_id}"
+				cdi_fatal "${set_id}"
 				return 1
 			}
 		done
@@ -670,7 +694,7 @@ get_dnsmasq_ips()
 {
 	local me=get_dnsmasq_ips \
 		IFS="${DEFAULT_IFS}" \
-		odevs linux_ifaces dnp_res \
+		wan_devs odevs linux_ifaces dnp_res \
 		set_ids="${*:-"${SET_IDS}"}"
 
 	# get list of OpenWrt device names, store in $odevs
@@ -681,6 +705,18 @@ get_dnsmasq_ips()
 		config_get dev "${section_id}" name
 		odevs="${odevs}${odevs:+$'\n'}${dev}"
 	}
+
+	wan_devs="$(
+		{
+			${IP_CMD:?} -4 route show table all to match 0.0.0.0
+			${IP_CMD:?} -6 route show table all to match ::
+		} |
+		grep -vE '^(127.0.0.1|::1)$' |
+		${SED_CMD:?} -nE '/.*\s+dev\s+/{s/.*\s+dev\s+//;s/\s+.*//;p}' |
+		${SORT_CMD:?} -u
+	)"
+
+	debug_msg "wan_devs: '${wan_devs}'"
 
 	dbg_off
 	config_load network &&
@@ -694,7 +730,7 @@ get_dnsmasq_ips()
 
 	dnp_res="$(
 		${NETSTAT_CMD} -plnt 2>/dev/null |
-		${AWK_CMD} -v regex_4="${IP_REGEX_4//\\./.}" -v regex_6="${IP_REGEX_6}" -v l_ifaces="${linux_ifaces}" -v odevs_str="${odevs}" '
+		${AWK_CMD} -v regex_4="${IP_REGEX_4//\\./.}" -v regex_6="${IP_REGEX_6}" -v l_ifaces="${linux_ifaces}" -v odevs_str="${odevs}" -v wan_devs_str="${wan_devs}" '
 			function print_id(id)
 			{
 				if (out_4[id]) {rv = 0; out_val_4 = out_4[id]} else out_val_4 = "NIL"
@@ -704,11 +740,16 @@ get_dnsmasq_ips()
 
 			BEGIN {
 				rv = 1
-				# array with OpenWrt device names as keys
+
+				# array with WAN device names as keys
 				split(odevs_str,o,"\n")
 				for (d in o) { odevs[o[d]] }
 
-				# parse linux ifaces w/ ips into array keyed by ips, prioritize OpenWrt devices
+				# array with OpenWrt device names as keys
+				split(wan_devs_str,w,"\n")
+				for (d in w) { wan_devs[w[d]] }
+
+				# parse linux ifaces w/ ips into array keyed by ips, ignore WAN devices, prioritize OpenWrt devices
 				split(l_ifaces,a,"\n")
 				for (e in a) {
 					i=a[e]
@@ -716,6 +757,7 @@ get_dnsmasq_ips()
 					if(n != 0) {
 						ip = substr(i, n + 1)
 						if_name=substr(i, 1, n - 1)
+						if (if_name in wan_devs) continue
 						if ( ips[ip] == "" || if_name in odevs ) {ips[ip] = if_name}
 					}
 				}
@@ -761,12 +803,14 @@ get_dnsmasq_ips()
 		{ reg_failure "Failed to get network params for dnsmasq instances. Found Linux ifaces: '${linux_ifaces//"${_NL_}"/ }', OpenWrt devices: '${odevs}', "; return 1; }
 	dbg_on
 
+	debug_msg "get_dnsmasq_ips: all found entries:${_NL_}${dnp_res}" ""
+
 	# dnsmasq nameserver IP's
 	local line index dnsmasq_indexes \
 		all_dnsmasq_indexes \
 		set_id \
 		inst_name inst_pid inst_iface \
-		inst_ip_4 inst_ip_6 ip4_present ip6_present
+		inst_ip_4 inst_ip_6
 
 	for set_id in ${set_ids}
 	do
@@ -777,7 +821,7 @@ get_dnsmasq_ips()
 	for index in ${all_dnsmasq_indexes}
 	do
 		# iface and nameservers
-		inst_iface='' inst_ip_4='' inst_ip_6='' ip4_present='' ip6_present=''
+		inst_ip_4='' inst_ip_6=''
 
 		eval "inst_name=\"\${DNSMASQ_INST_NAME_${index}}\""
 		inst_pid="$(${PGREP_CMD:?} -f '^/usr/sbin/dnsmasq.*'"${inst_name:-???}"'.pid$')" ||
@@ -788,42 +832,30 @@ get_dnsmasq_ips()
 		do
 			IFS="${DEFAULT_IFS}"
 			set -- ${line}
-			[ "${1}" = "${inst_pid}" ] && [ -n "${2}" ] || continue
-
-			[ -n "${3%"NIL"}" ] && ip4_present=1
-			[ -n "${4%"NIL"}" ] && ip6_present=1
-		done
-
-		IFS="${_NL_}"
-		for line in ${dnp_res}
-		do
-			IFS="${DEFAULT_IFS}"
-			set -- ${line}
 			[ "${1}" = "${inst_pid}" ] || continue
 
-			iface_tmp="${2}"
+			inst_iface="${2}"
 			ip4_tmp="${3%"NIL"}"
 			ip6_tmp="${4%"NIL"}"
 
-			[ -n "${iface_tmp}" ] &&
+			[ -n "${inst_iface}" ] &&
 				{ [ -n "${ip4_tmp}" ] || [ -n "${ip6_tmp}" ]; } ||
 					continue
 
-			[ -z "${inst_iface}" ] ||
+			# Prioritize loopback adresses
+			[ "${inst_iface}" = lo ] &&
 			{
-				[ "${inst_iface}" = lo ] &&
-				{ [ -z "${ip4_present}" ] || [ -n "${ip4_tmp}" ]; } &&
-				{ [ -z "${ip6_present}" ] || [ -n "${ip6_tmp}" ]; }
-			} &&
-			{
-				inst_iface="${iface_tmp}"
-				inst_ip_4="${ip4_tmp}"
-				inst_ip_6="${ip6_tmp}"
+				inst_ip_4="${ip4_tmp:-"${inst_ip_4}"}"
+				inst_ip_6="${ip6_tmp:-"${inst_ip_6}"}"
+				continue
 			}
+
+			inst_ip_4="${inst_ip_4:-"${ip4_tmp}"}"
+			inst_ip_6="${inst_ip_6:-"${ip6_tmp}"}"
 		done
 		IFS="${DEFAULT_IFS}"
 
-		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: no IP addresses detected for dnsmasq instance with index ${index}."; return 1; }
+		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: Failed to detect IP addresses which dnsmasq instance ${index} ('${inst_name}') is not listening on."; return 1; }
 
 		export -n \
 			"NS4_${index}=${inst_ip_4}" \
