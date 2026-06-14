@@ -1053,7 +1053,7 @@ check_active_blockset()
 		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
 		set_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
 
-	reg_action -purple -fb "${set_id}" "Checking if adblocking is active{}." || return 1
+	reg_action -purple -fb "${set_id}" "" "Checking if adblocking is active{}." || return 1
 
 	check_dnsmasq_instances || return 1
 
@@ -1092,7 +1092,7 @@ check_active_blockset()
 			"Using following nameservers for DNS resolution verification: ${ns_ips_sp}" \
 			"Testing adblocking."
 
-		try_lookup_domain "${ca_test_dom}" "${ns_ips}" 1 -n ||
+		try_lookup_domain "${ca_test_dom}" "${ns_ips}" 10 -n ||
 			{
 				[ -n "${CA_NOERR}" ] || lookup_failed "${ca_test_dom}" "${index}" "${ns_ips_sp}"
 				return 2
@@ -1918,12 +1918,12 @@ try_install_blocksets()
 			is_valid_dir "${conf_dir}" || { inst_failed "${set_id}"; continue 2; }
 
 			cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${set_id}" || { reg_failure "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
-				conf-script=\
-				${final_extr_or_cat_stdout} "${install_path}" && \
-				printf '%s\n' "address=/${install_md5}-${ABL_TEST_DOM_BASE}/#" && \
+				conf-script="\
+				${final_extr_or_cat_stdout} \"${install_path}\" && \
+				printf '%s\\n' \"address=/${install_md5}-${ABL_TEST_DOM_BASE}/#\" && \
 				exit 0; \
-				${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err 'conf-script at '${conf_dir}/${CS_BASE_FNAME}-${set_id}' failed.';"} \
-				exit 0
+				${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err \\\"conf-script at '${conf_dir}/${CS_BASE_FNAME}-${set_id}' failed.\\\";"} \
+				exit 0"
 			EOF
 		done
 
@@ -1936,8 +1936,6 @@ try_install_blocksets()
 	subtract_a_from_b "${dnsmasq_ok_ids}" "${installed_ids}" dnsmasq_fail_ids
 	[ -n "${dnsmasq_fail_ids}" ] && inst_failed "${dnsmasq_fail_ids}"
 	[ -n "${dnsmasq_ok_ids}" ] || return 1
-
-	printf '\n' > "${MSGS_DEST}"
 
 	for set_id in ${dnsmasq_ok_ids}
 	do
