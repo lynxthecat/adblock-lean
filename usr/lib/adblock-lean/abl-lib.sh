@@ -272,8 +272,9 @@ do_create_addnmounts()
 		do
 			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
 		done
-		[ -n "${missing_addnm}" ] || return 0
-		all_missing_addnm="${all_missing_addnm}${all_missing_addnm:+"${_NL_}"}${lblue}${missing_addnm}${n_c} (required for ${3})"
+		[ -z "${missing_addnm}" ] || is_included "${missing_addnm}" "${all_missing_addnm}" "${_NL_}" && return 0
+		add2list all_missing_addnm "${missing_addnm}" "${_NL_}"
+		all_missing_addnm_pr="${all_missing_addnm_pr}${all_missing_addnm_pr:+"${_NL_}"}${lblue}${missing_addnm}${n_c} (required for ${3})"
 	}
 
 	local me=create_addnmounts \
@@ -292,7 +293,7 @@ do_create_addnmounts()
 		persist_mode \
 		persist_dir \
 		\
-		all_missing_addnm \
+		all_missing_addnm  all_missing_addnm_pr \
 		cra_compr_util_path cra_compr_ext \
 		add_list_failed \
 		path
@@ -358,14 +359,14 @@ do_create_addnmounts()
 		}
 	done
 
-	[ -n "${all_missing_addnm}" ] ||
+	[ -z "${all_missing_addnm}" ] &&
 	{
 		reg_msg -green "All required dnsmasq addnmount entries already exist."
 		return 0
 	}
 
 	## Dialog
-	log_msg "" "${yellow}Detected missing addnmount entries in /etc/config/dhcp for paths:${n_c}${_NL_}${all_missing_addnm}"
+	log_msg "" "${yellow}Detected missing addnmount entries in /etc/config/dhcp for paths:${n_c}${_NL_}${all_missing_addnm_pr}"
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ]
 	then
 		print_msg -blue "" "Create missing addnmount entries automatically? (y|n)"
