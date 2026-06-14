@@ -1091,7 +1091,7 @@ dnsmasq_stop_restart_shared()
 		:
 	else
 		# fall back to all instances
-		reg_action "" "${cmd_pr} all dnsmasq instances." || return 1
+		reg_action -purple "" "${cmd_pr} all dnsmasq instances." || return 1
 		[ -n "${set_ids}" ] && rv=1
 		/etc/init.d/dnsmasq "${cmd}" &> /dev/null ||
 		{
@@ -1115,7 +1115,7 @@ dnsmasq_stop_restart_shared()
 			inst_pr="all dnsmasq instances"
 			inst_name=
 		fi
-		reg_action "" "${cmd_pr} ${inst_pr}." || return 1
+		reg_action -purple "" "${cmd_pr} ${inst_pr}." || return 1
 
 		if /etc/init.d/dnsmasq "${cmd}" "${inst_name}" &> /dev/null
 		then
@@ -2433,7 +2433,10 @@ do_start()
 		done
 
 		[ -n "${BLOCKSETS_TO_INSTALL}" ] &&
+		{
+			reg_action -1 -purple -fb "${BLOCKSETS_TO_INSTALL}" "" "Restoring ${bl_pr}."
 			install_blocksets restored_ids _ "${BLOCKSETS_TO_INSTALL}"
+		}
 		subtract_a_from_b "${restored_ids}" "${fail_ids}" fail_ids
 
 		[ -n "${restored_ids}" ] && log_msg -fb "${restored_ids}" "${green}Successfully restored blockset files from backup${n_c}{}."
@@ -2467,7 +2470,7 @@ do_start()
 	[ "${do_start_rv}" = 0 ] &&
 	{
 		get_elapsed_time_human elapsed_time "${initial_uptime_cs}"
-		reg_msg "" "Processing time for blockset generation and import: ${lblue}${elapsed_time:-"${yellow}unknown"}${n_c}"
+		reg_msg "Processing time for blockset generation and import: ${lblue}${elapsed_time:-"${yellow}unknown"}${n_c}"
 	}
 
 	:
@@ -2844,7 +2847,7 @@ pause_resume()
 			continue
 		}
 
-		reg_msg -fb "${set_id}" "Preparing to ${cmd} adblocking{}."
+		log_msg -fb "${set_id}" "Preparing to ${cmd} adblocking{}."
 
 		get_params -f "${cmd}" "${set_id}" \
 			curr_path \
@@ -2878,7 +2881,7 @@ pause_resume()
 
 	[ -n "${prep_ok_ids}" ] &&
 	{
-		reg_action -purple -fb "${prep_ok_ids}" "" "${state_progr_pr} adblocking{}."
+		reg_action -1 -purple -fb "${prep_ok_ids}" "" "${state_progr_pr} adblocking{}."
 
 		case "${cmd}" in
 			pause) restart_dnsmasq 3 act_ok_ids "${prep_ok_ids}" ;;
