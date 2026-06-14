@@ -711,8 +711,8 @@ get_dnsmasq_ips()
 			${IP_CMD:?} -4 route show table all to match 0.0.0.0
 			${IP_CMD:?} -6 route show table all to match ::
 		} |
-		grep -vE '^(127.0.0.1|::1)$' |
 		${SED_CMD:?} -nE '/.*\s+dev\s+/{s/.*\s+dev\s+//;s/\s+.*//;p}' |
+		grep -vE '^(127.0.0.1|::1)$' |
 		${SORT_CMD:?} -u
 	)"
 
@@ -855,7 +855,7 @@ get_dnsmasq_ips()
 		done
 		IFS="${DEFAULT_IFS}"
 
-		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: Failed to detect IP addresses which dnsmasq instance ${index} ('${inst_name}') is not listening on."; return 1; }
+		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: Failed to detect IP addresses which dnsmasq instance ${index} ('${inst_name}') is listening on."; return 1; }
 
 		export -n \
 			"NS4_${index}=${inst_ip_4}" \
