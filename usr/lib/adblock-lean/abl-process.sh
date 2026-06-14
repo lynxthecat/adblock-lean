@@ -414,7 +414,7 @@ process_set_part()
 				local list_size_human stats_pad suffix_pad
 				bytes2human list_size_human "${part_size_B}" -p
 				get_pad stats_pad "${print_id}" 42
-				get_pad suffix_pad "${cnt_human}" 8
+				get_pad suffix_pad "${cnt_human}" 9
 				log_msg "Successfully processed list:    ${green}${print_id}${n_c} ${stats_pad}[ ${orange}${list_size_human}${n_c}  - ${suffix_pad}${orange}${cnt_human} entries${n_c} ]" ;;
 			*)
 				rm -f "${dest_file}" "${list_stats_file}"
