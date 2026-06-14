@@ -1716,10 +1716,7 @@ init_act()
 				esac
 			}
 			libs_req=1 find_set_configs_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
-		select_dnsmasq_instances)
-			libs_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1
-			[ "${action}" = select_dnsmasq_instances ] && cfg_req=1 # require config when called directly
-			;;
+		select_dnsmasq_instances) libs_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
 		reload|restart) ;;
 		update) work_dir_req=1 CLEANUP_REQ=1 LOCK_REQ=1 ;;
 		*) reg_failure "Invalid command '${cur_act}'."; exit 1
@@ -3208,7 +3205,8 @@ export -n \
 	CUR_ACT='' \
 	CUR_CMD='' \
 	LIBS_SOURCED='' \
-	MAIN_UTILS_DETECTED=''
+	MAIN_UTILS_DETECTED='' \
+	CDI_FATAL=''
 
 set_ansi
 
