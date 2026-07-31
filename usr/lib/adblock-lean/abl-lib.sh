@@ -938,7 +938,7 @@ print_def_cfg_blockset()
 	# Optional path to directory on non-volatile storage device where persistent blockset should be stored
 	persist_blockset_dir="" @ string
 
-	# Test domains are automatically querried after loading the blockset into dnsmasq,
+	# Test domains are automatically queried after loading the blockset into dnsmasq,
 	# in order to verify that the blockset didn't break DNS resolution
 	# If query for any of the test domains fails, previous blockset is restored from backup
 	# If backup doesn't exist, the blockset is removed and adblock-lean is stopped
@@ -1005,7 +1005,7 @@ print_def_cfg_global()
 	# STOP - stop blockset generation (and fall back to previous blockset if available)
 	blockset_part_failed_action="SKIP" @ SKIP|STOP
 
-	# Mininum number of entries in any individual downloaded part
+	# Minimum number of entries in any individual downloaded part
 	min_block_part_entries="1" @ uint
 	min_ipv4_block_part_entries="1" @ uint
 	min_allow_part_entries="1" @ uint

@@ -2241,7 +2241,7 @@ upd_cron_job()
 	enable_cron_service || return 1
 	curr_cron="$(get_curr_crontab)"
 	case ${?} in
-		0) print_msg -green "Cron job for adblock-lean with schedule '${upd_schedule}' aldready exists."; return 0 ;;
+		0) print_msg -green "Cron job for adblock-lean with schedule '${upd_schedule}' already exists."; return 0 ;;
 		1) return 1 ;;
 		2) curr_cron="$(printf %s "${curr_cron}" | $SED_CMD "s~^.*${ABL_CRON_CMD}.*\$~~")" ;; # remove cron job with a different schedule
 		3) ;; # no adblock-lean cron job exists

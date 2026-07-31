@@ -389,7 +389,7 @@ get_cfg_format_install()
 	${SED_CMD:?} -En '/^[ \t]*(CONFIG_FORMAT|#[ \t]*config_format)=v/{s/.*=v//;p;:1 n;b1;}' "${1:?}" |
 	grep '^[0-9][0-9]*$' && return 0
 
-	log_msg_install -warn "" "Failed to determine fromat version of config file '${1}'."
+	log_msg_install -warn "" "Failed to determine format version of config file '${1}'."
 	printf '0\n'
 	return 1
 }
@@ -965,7 +965,7 @@ install_abl_files()
 		is_uint_install "${cur_cfg_format}" ||
 		{
 			migr_req=1
-			log_msg_install "" "Fromat version of config file '${cfg_file}' is unknown."
+			log_msg_install "" "Format version of config file '${cfg_file}' is unknown."
 			continue
 		}
 

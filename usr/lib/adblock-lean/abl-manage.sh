@@ -651,7 +651,7 @@ do_select_dnsmasq_instances() {
 			add2list select_ifaces "${ifaces}"
 		done
 
-		log_msg -fb "${set_id}" "Selected dnsmasq indexes{}: '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
+		log_msg -fb "${set_id}" "Selected dnsmasq indexes{}: '${select_indexes}' (network interfaces: ${select_ifaces//" "/, })."
 
 		for index in ${select_indexes}
 		do
@@ -842,7 +842,7 @@ get_dnsmasq_ips()
 				{ [ -n "${ip4_tmp}" ] || [ -n "${ip6_tmp}" ]; } ||
 					continue
 
-			# Prioritize loopback adresses
+			# Prioritize loopback addresses
 			[ "${inst_iface}" = lo ] &&
 			{
 				inst_ip_4="${ip4_tmp:-"${inst_ip_4}"}"
