@@ -53,7 +53,7 @@ fi
 AWK_CMD="/bin/busybox awk"
 
 
-check_util_install() { command -v "${1:?}" 1>/dev/null; }
+is_cmd_install() { command -v "${1:?}" 1>/dev/null; }
 
 had_f_install()
 {
@@ -190,7 +190,7 @@ find_files_install()
 
 	unset_vars_install "${ff_path_out_var}" || return 1
 
-	[ -n "${FF_EXEC}" ] && { check_util_install "${FF_EXEC%% *}" || { reg_failure_install "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
+	[ -n "${FF_EXEC}" ] && { is_cmd_install "${FF_EXEC%% *}" || { reg_failure_install "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
 
 	local had_f
 	had_f_install && had_f=1
@@ -1034,7 +1034,7 @@ install_abl_files()
 				blocklist_ipv4_urls=raw_ipv4_block_lists
 				min_good_line_count=min_blockset_entries
 				min_good_entries=min_blockset_entries
-				max_blocklist_file_size_KB=max_blockset_file_size_KB
+				max_blocklist_file_size_KB=max_blockset_size_KB
 			'
 
 			# convert into _DELIM_ separated lists
@@ -1207,7 +1207,7 @@ fetch_and_install()
 	local util
 	for util in tar find uclient-fetch jsonfilter dnsmasq
 	do
-		check_util_install "${util}" || inst_failed "Utility '${util}' not found."
+		is_cmd_install "${util}" || inst_failed "Utility '${util}' not found."
 	done
 
 	# Check dnsmasq
@@ -1372,6 +1372,9 @@ fetch_and_install()
 		[ "${DO_DIALOGS}" = 1 ] && [ "${REPLY}" = y ] || exit 0
 
 		clean_env_install
+		# for compatibility with older versions
+		set +o pipefail
+		set +f
 		. "${ABL_SERVICE_PATH}" || return 1
 		start
 		exit ${?}
