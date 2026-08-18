@@ -3,22 +3,17 @@
 
 # silence shellcheck warnings
 : "${blockset_part_failed_action:=}" \
-	"${max_download_retries:=}" "${deduplication:=}" \
+	"${max_download_attempts:=}" "${deduplication:=}" \
 	"${blue:=}" "${lblue:=}" "${green:=}" "${red:=}" "${yellow:=}" "${orange:=}" "${n_c:=}"
 
 PROCESSED_PARTS_DIR="${ABL_TMP_DIR}/blockset_parts"
 
 ERR_F="${ABL_TMP_DIR}/process-errors"
 
-SCHEDULE_DIR="${ABL_TMP_DIR}/schedule"
-
-PROCESSING_TIMEOUT_S=900 # 15 minutes
-IDLE_TIMEOUT_S=300 # 5 minutes
-
 ABL_TEST_DOM_BASE="adblocklean-test.totallybogus"
 
-ALL_LIST_FORMATS="raw dnsmasq hosts"
-ALL_LIST_TYPES="allow block ipv4_block"
+ALL_PART_FORMATS="raw hosts"
+ALL_PART_TYPES="allow block ipv4_block"
 
 
 # shellcheck disable=SC2034
@@ -26,13 +21,13 @@ hagezi_lists="anti.piracy blocklist-referral doh doh-vpn-proxy-bypass dyndns fak
 light multi native.amazon native.apple native.huawei native.lgwebos native.oppo-realme native.roku native.samsung \
 native.tiktok native.tiktok.extended native.vivo native.winoffice native.xiaomi nosafesearch nsfw popupads \
 pro pro.mini pro.plus pro.plus.mini social tif tif.medium tif.mini ultimate ultimate.mini urlshortener whitelist-referral" \
-hagezi_formats="raw dnsmasq" \
+hagezi_formats="raw" \
 hagezi_mirrors="github gitlab" \
 	hagezi_github_url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main" \
 	hagezi_gitlab_url="https://gitlab.com/hagezi/mirror/-/raw/main/dns-blocklists" \
 \
 oisd_lists="big small nsfw nsfw-small" \
-oisd_formats="raw dnsmasq" \
+oisd_formats="raw" \
 oisd_mirrors="oisd github" \
 	oisd_oisd_url="oisd.nl" \
 	oisd_github_url="https://raw.githubusercontent.com/sjhgvr/oisd/main" \
@@ -45,36 +40,6 @@ stevenblack_mirrors="github sbc_io" \
 
 
 # UTILITY FUNCTIONS
-
-# 1 - var name for centiseconds output
-get_uptime_cs() {
-	local __uptime i_cs gu_cs gu_s
-	unset_vars "${1}"
-
-	read -r __uptime _ < /proc/uptime &&
-	case "${__uptime}" in
-		''|*.*.*) false ;;
-		*.*) ;;
-		*) false ;;
-	esac &&
-	i_cs="${__uptime##*.}" &&
-	case "${i_cs}" in
-		'') gu_cs=00 ;;
-		?) gu_cs="${i_cs}0" ;;
-		??) gu_cs="${i_cs}" ;;
-		??*) gu_cs="${i_cs%"${i_cs#??}"}"
-	esac &&
-	gu_s="${__uptime%.*}" &&
-	is_uint "${gu_s}" "${gu_cs}" ||
-	{
-		reg_failure "Failed to get uptime from /proc/uptime."
-		export -n "${1}"=0
-		return 1
-	}
-	gu_cs="${gu_s:-0}${gu_cs:-00}"
-	gu_cs="${gu_cs#"${gu_cs%%[!0]*}"}"
-	export -n "${1}=${gu_cs:-0}"
-}
 
 # To use, first get initial uptime: 'get_uptime_cs INITIAL_UPTIME'
 # Then call this function to get elapsed time string at desired intervals, e.g.:
@@ -113,15 +78,15 @@ get_elapsed_time_human() {
 # HELPER FUNCTIONS
 
 # Env vars: TESTED_URLS
-# TODO: Parallelize domains lookup
-test_url_domains()
+test_fetch_doms()
 {
-	local list lists list_cat list_author url mirror all_urls type format dom \
+	local list lists list_cat feed_author url mirror all_urls type format \
+		doms valid_doms dom recs \
 		set_id="${1:?}"
 
 	for type in block ipv4_block allow
 	do
-		for format in ${ALL_LIST_FORMATS:?}
+		for format in ${ALL_PART_FORMATS:?}
 		do
 			local list_cat="${format}_${type}_lists"
 			get_bl_param_gl_var _ "${list_cat}" || continue # ignore invalid combinations
@@ -134,14 +99,14 @@ test_url_domains()
 				case "${list}" in
 					'') continue ;;
 					hagezi:*|oisd:*|stevenblack:*)
-						list_author="${list%%":"*}"
-						eval "mirror=\"\${${list_author}_default_mirror}\""
-						eval "url=\"\${${list_author}_${mirror}_url}\""
+						feed_author="${list%%":"*}"
+						eval "mirror=\"\${${feed_author}_default_mirror}\""
+						eval "url=\"\${${feed_author}_${mirror}_url}\""
 						[ -n "${url}" ] ;;
 					*) url="${list}"
 				esac &&
-				! is_included "${url}" "${TESTED_URLS}" "${_NL_}" &&
-				all_urls="${all_urls:+"${all_urls}${_NL_}"}${url}"
+				is_included "${url}" "${TESTED_URLS}" "${_NL_}" && continue
+				abl_append all_urls "${url}" "${_NL_}"
 			done
 		done
 	done
@@ -151,63 +116,73 @@ test_url_domains()
 	reg_action "Testing connectivity." || exit 1
 	debug_msg "URLs:${_NL_}${all_urls}"
 
-	printf '%s\n' "${all_urls}" |
-	${SED_CMD:?} -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}' |
-	${SORT_CMD:?} -u |
-	while IFS="${_NL_}" read -r dom || [ -n "${dom}" ]
+	doms="$(
+		printf '%s\n' "${all_urls}" |
+		${SED_CMD:?} -n '/http/{s~^http[s]*[:]*[/]*~~g;s~/.*~~;/^$/d;p;}' |
+		${SORT_CMD:?} -u)
+	"
+
+	[ -n "${doms}" ] || return 0
+
+	# Get list of valid domain names, ignore invalid
+	validate_doms valid_doms "${doms}" || return 1
+
+	# Every domain is tested against the same nameservers, so one pseudo-instance ID suffices
+	for dom in ${valid_doms}
 	do
-		[ -n "${dom}" ] || continue
-		try_lookup_domain "${dom}" "127.0.0.1" 2 ||
-			{ reg_failure "Lookup of '${dom}' failed."; exit 1; }
-	done || return 1
-	TESTED_URLS="${TESTED_URLS:+"${TESTED_URLS}${_NL_}"}${all_urls}"
+		abl_append recs "con__${dom} ${dom} ${PRIMARY_NS:?}" "${_NL_}"
+	done
+
+	# All url-domains must resolve
+	LOOKUP_FAIL_EARLY=1 lookup_targets _ "${recs}" 7 || return 1
+
+	abl_append TESTED_URLS "${all_urls}" "${_NL_}"
 	:
 }
 
 # 1 - var name for output
 # 2 - list URL or short identifier
-# 3 - list format (raw|dnsmasq)
+# 3 - list format (raw|hosts)
 # 4 - DL mirror
 # shellcheck disable=SC2329
-get_list_url()
+get_feed_url()
 {
-	local base_url prefix suffix raw_suffix dnsmasq_suffix hosts_suffix \
-		res_url list_author list_name lists list_id_lc formats \
+	local base_url prefix suffix raw_suffix hosts_suffix \
+		gfu_res feed_author list_name lists list_id_lc formats \
 		mirrors first_mirror \
-		out_var="${1}" list_id="${2}" format="${3}" mirror="${4}"
+		gfu_out_var="${1}" list_id="${2}" format="${3}" mirror="${4}"
 
-	unset_vars "${out_var}"
+	unset_vars "${gfu_out_var}"
 
-	case "${format}" in raw|dnsmasq|hosts) ;; *) reg_failure "Unexpected list format '${format}'."; return 1; esac
+	case "${format}" in raw|hosts) ;; *) reg_failure "Unexpected list format '${format}'."; return 1; esac
 
 	tolower list_id_lc "${list_id}"
 	case "${list_id_lc}" in hagezi:*|oisd:*|stevenblack:*) ;; *)
-		export -n "${out_var}=${list_id}"
+		export -n "${gfu_out_var}=${list_id}"
 		return 0
 	esac
 	list_id="${list_id_lc}"
 
-	list_author="${list_id%%\:*}" list_name="${list_id#*\:}"
+	feed_author="${list_id%%\:*}" list_name="${list_id#*\:}"
 
-	eval "lists=\"\${${list_author}_lists}\""
-	eval "base_url=\"\${${list_author}_${mirror}_url}\""
-	[ -n "${base_url}" ] || { reg_failure "Failed to get base URL for ${list_author} mirror '${mirror}'."; return 1; }
+	eval "lists=\"\${${feed_author}_lists}\""
+	eval "base_url=\"\${${feed_author}_${mirror}_url}\""
+	[ -n "${base_url}" ] || { reg_failure "Failed to get base URL for ${feed_author} mirror '${mirror}'."; return 1; }
 
-	is_included "${list_name}" "${lists}" || { reg_failure "Unknown ${list_author} list '${2}'."; return 1; }
+	is_included "${list_name}" "${lists}" || { reg_failure "Unknown ${feed_author} list '${2}'."; return 1; }
 
-	eval "formats=\"\${${list_author}_formats}\""
+	eval "formats=\"\${${feed_author}_formats}\""
 	is_included "${format}" "${formats}" ||
 		{ reg_failure "${list_id} is only available in formats: ${formats}."; return 1; }
 
-	eval "mirrors=\"\${${list_author}_mirrors}\""
+	eval "mirrors=\"\${${feed_author}_mirrors}\""
 	is_included "${mirror}" "${mirrors}" ||
-		{ reg_failure "Unexpected mirror '${mirror}' for list author ${list_author}."; return 1; }
+		{ reg_failure "Unexpected mirror '${mirror}' for list author ${feed_author}."; return 1; }
 
-	case "${list_author}" in
+	case "${feed_author}" in
 		hagezi)
 			prefix="${base_url}"
-			raw_suffix="/wildcard/${list_name}-onlydomains.txt"
-			dnsmasq_suffix="/dnsmasq/${list_name}.txt" ;;
+			raw_suffix="/wildcard/${list_name}-onlydomains.txt" ;;
 		stevenblack)
 			prefix="${base_url}"
 			case "${list_name}" in
@@ -218,241 +193,44 @@ get_list_url()
 			case "${mirror}" in
 				oisd)
 					prefix="https://${list_name}.${base_url}"
-					raw_suffix="/domainswild2"
-					dnsmasq_suffix="/dnsmasq2" ;;
+					raw_suffix="/domainswild2" ;;
 				github)
 					prefix="${base_url}"
 					list_name="${list_name//-/_}"
-					raw_suffix="/domainswild2_${list_name}.txt"
-					dnsmasq_suffix="/dnsmasq2_${list_name}.txt"
+					raw_suffix="/domainswild2_${list_name}.txt" ;;
 			esac
 	esac
 
 	eval "suffix=\"\${${format}_suffix}\""
-	res_url="${prefix}${suffix}"
-	[ -n "${res_url}" ] || { reg_failure "Failed to construct URL for list identifier '${list_id}'."; return 1; }
+	gfu_res="${prefix}${suffix}"
+	[ -n "${gfu_res}" ] || { reg_failure "Failed to construct URL for list identifier '${list_id}'."; return 1; }
 
-	: "${raw_suffix}" "${dnsmasq_suffix}" "${hosts_suffix}"
-	export -n "${out_var}=${res_url}"
+	: "${raw_suffix}" "${hosts_suffix}"
+	export -n "${gfu_out_var}=${gfu_res}"
 }
 
-
-# JOB SCHEDULER FUNCTIONS
-
-# get current job PID
-# 1 - var name for output
-get_curr_job_pid()
+get_part_process_path()
 {
-	local __pid pid_line
-	unset_vars "${1}"
-	IFS="${_NL_}" read -r -n512 -d '' _ _ _ _ _ pid_line _ < /proc/self/status
-	__pid="${pid_line##*[^0-9]}"
-	is_uint "${__pid}" || { reg_failure "Failed to get current job PID."; return 1; }
-	export -n "${1}=${__pid}"
-}
-
-# sets var named $1 to remaining time based on $PROCESSING_TIMEOUT_S or to $IDLE_TIMEOUT_S, whichever is lower
-# if timeout is hit, returns 1
-# 1 - var name to output remaining time
-get_remaining_time()
-{
-	local ct_curr_time_cs ct_curr_time_s ct_total_time_s ct_remaining_time_s
-	export -n "${1}"=0
-
-	get_uptime_cs ct_curr_time_cs || return 1
-	ct_curr_time_s=$((ct_curr_time_cs/100))
-	ct_total_time_s=$((INITIAL_UPTIME_S-ct_curr_time_s))
-
-	ct_remaining_time_s=$((PROCESSING_TIMEOUT_S-ct_total_time_s))
-	[ "${ct_remaining_time_s}" -gt 0 ] ||
-	{
-		reg_failure "Processing timeout (${PROCESSING_TIMEOUT_S} s) for scheduler (PID: ${scheduler_pid})."
-		return 1
-	}
-
-	case "$(( IDLE_TIMEOUT_S - (ct_curr_time_s-${CT_PREV_TIME_S:-${INITIAL_UPTIME_S}}) ))" in
-		0|-*)
-			reg_failure "Idle timeout (${IDLE_TIMEOUT_S} s) for scheduler (PID: ${scheduler_pid})."
-			return 1
-	esac
-
-	case $((IDLE_TIMEOUT_S-ct_remaining_time_s)) in
-		-*) ct_remaining_time_s="${IDLE_TIMEOUT_S}"
-	esac
-
-	CT_PREV_TIME_S=${ct_curr_time_s}
-	export -n "${1}=${ct_remaining_time_s}"
-}
-
-# 1 - job PID
-# 2 - job return code
-handle_done_job()
-{
-	local me=handle_done_job \
-		done_id fail_act_msg \
-		done_pid="${1}" done_job_rv="${2}"
-	[ -n "${done_pid}" ] || { reg_failure "${me}: received empty string for PID."; return 1; }
-	[ -n "${done_job_rv}" ] || { reg_failure "${me}: received empty string instead of return code for job ${done_pid}."; return 1; }
-
-	subtract_a_from_b "${done_pid}" "${RUNNING_PIDS}" RUNNING_PIDS
-	RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT-1))
-
-	if [ "${done_job_rv}" != 0 ]
-	then
-		eval "done_id=\"\${JOB_PRINT_ID_${done_pid}}\""
-		fail_act_msg="Skipping file and continuing."
-		[ "${blockset_part_failed_action}" = "STOP" ] && fail_act_msg="blockset_part_failed_action is set to 'STOP', exiting."
-
-		reg_failure "" "Processing job (PID ${done_pid:-unknown}) for list '${done_id:-unknown}' returned error code '${done_job_rv}'." "${yellow}${fail_act_msg}${n_c}"
-		[ "${blockset_part_failed_action}" = STOP ] && return 1
-	fi
-	:
-}
-
-# 1: list types (allow|block|ipv4_block)
-schedule_jobs()
-{
-	finalize_scheduler()
-	{
-		trap ':' USR1
-		[ -n "${USR_TRIG}" ] && log_msg -yellow "" "Job scheduler is stopping on receipt of USR1 signal."
-		[ "${1}" != 0 ] && [ -n "${RUNNING_PIDS}" ] &&
-		{
-			reg_msg -yellow "" "Stopping unfinished jobs (PIDS: ${RUNNING_PIDS})."
-			kill_pids_recursive "${RUNNING_PIDS}"
-			rm -rf "${PROCESSED_PARTS_DIR}"
-		}
-		rm -f "${sched_cb_fifo}"
-		exit "${1}"
-	}
-
-	local list_type format index list_indexes \
-		remaining_time_s \
-		done_pid done_rv \
-		origin print_id \
-		scheduler_pid \
-		RUNNING_PIDS \
-		RUNNING_JOBS_CNT=0 \
-		list_types="${1:?}"
-
-	get_curr_job_pid scheduler_pid || finalize_scheduler 1
-
-	trap 'USR_TRIG=1 finalize_scheduler 1' USR1
-
-	local sched_cb_fifo="${SCHEDULE_DIR:?}/scheduler_callback_${scheduler_pid}"
-	mkfifo "${sched_cb_fifo}" &&
-	exec 3<>"${sched_cb_fifo}" || { reg_failure "Failed to create FIFO '${sched_cb_fifo}'."; finalize_scheduler 1; }
-
-	for list_type in ${list_types}
-	do
-		eval "list_indexes=\"\${proc_indexes_${list_type}}\""
-		[ -n "${list_indexes}" ] || continue
-
-		for index in ${list_indexes}
-		do
-			get_remaining_time remaining_time_s || finalize_scheduler 1
-
-			# wait for job vacancy
-			while [ "${RUNNING_JOBS_CNT}" -ge "${PARALLEL_JOBS}" ] && [ -e "${sched_cb_fifo}" ] &&
-				read -t "${remaining_time_s}" -r done_pid done_rv < "${sched_cb_fifo}"
-			do
-				get_remaining_time remaining_time_s &&
-				handle_done_job "${done_pid}" "${done_rv}" || finalize_scheduler 1
-			done
-
-			get_remaining_time remaining_time_s || finalize_scheduler 1
-
-			eval \
-				"format=\"\${FORMAT_${index}}\"" \
-				"origin=\"\${ORIGIN_${index}}\"" \
-				"print_id=\"\${PRINT_ID_${index}}\""
-			assert_set "F_schedule_jobs" format origin print_id || finalize_scheduler 1
-
-			RUNNING_JOBS_CNT=$((RUNNING_JOBS_CNT+1))
-			process_set_part "${index}" "${list_type}" "${format}" "${origin}" "${print_id}" "${scheduler_pid}" &
-
-			RUNNING_PIDS="${RUNNING_PIDS} ${!}"
-			export -n "JOB_PRINT_ID_${!}"="${print_id}"
-		done
-	done
-
-	# wait for jobs to finish and handle errors
-	get_remaining_time remaining_time_s || return 1
-	while [ "${RUNNING_JOBS_CNT}" -gt 0 ] && [ -e "${sched_cb_fifo}" ] &&
-		read -t "${remaining_time_s}" -r done_pid done_rv < "${sched_cb_fifo}"
-	do
-		get_remaining_time remaining_time_s &&
-		handle_done_job "${done_pid}" "${done_rv}" || finalize_scheduler 1
-	done
-	get_remaining_time remaining_time_s || finalize_scheduler 1
-	[ "${RUNNING_JOBS_CNT}" = 0 ] ||
-		{ reg_failure "Not all jobs are done: RUNNING_JOBS_CNT=${RUNNING_JOBS_CNT}"; finalize_scheduler 1; }
-
-	finalize_scheduler 0
+	export -n "${1:?}=${PROCESSED_PARTS_DIR:?}/part_${2:?}${INTERM_COMPR_EXT}"
 }
 
 # 1: list index
 # 2: list type (block|ipv4_block|allow)
-# 3: list format (raw|dnsmasq|hosts)
+# 3: list format (raw|hosts)
 # 4: blockset ID
 # 5: scheduler PID
 # the rest of the args passed as-is to workers
 #
 # return codes:
-# 0 - Success
-# 1 - Fatal error (stop processing)
-# 2 - Download failure
-# 3 - Processing failure
+# 0: Success
+# 1: Fatal error (stop processing)
+# 2: Download failure
+# 3: Processing failure
+# 4: Size exceeded
 # shellcheck disable=SC2317,SC2329
 process_set_part()
 {
-	finalize_job()
-	{
-		[ -n "${2}" ] && reg_failure "${me}: ${2}"
-		case "${1}" in
-			0)
-				local list_size_human stats_pad suffix_pad
-				bytes2human list_size_human "${part_size_B}" -p
-				get_pad stats_pad "${print_id}" 42
-				get_pad suffix_pad "${cnt_human}" 9
-				log_msg "Successfully processed list:    ${green}${print_id}${n_c} ${stats_pad}[ ${orange}${list_size_human}${n_c}  - ${suffix_pad}${orange}${cnt_human} entries${n_c} ]" ;;
-			*)
-				rm -f "${dest_file}" "${list_stats_file}"
-				[ "${1}" = 1 ] &&
-				{
-					if [ -n "${curr_job_pid}" ]
-					then
-						: "${print_id:=unknown}"
-						reg_failure "Fatal error in processing job (PID: ${curr_job_pid}) for list '${print_id}'."
-					else
-						reg_failure "Fatal error reported by unknown processing job."
-					fi
-
-					[ -n "${scheduler_pid}" ] && [ -d "/proc/${scheduler_pid}" ] && {
-						kill -s USR1 "${scheduler_pid}"
-						wait_on_pid "${scheduler_pid}" 5
-					}
-
-					exit 1
-				}
-		esac
-
-		printf '%s\n' "${curr_job_pid} ${1}" > "${sched_cb_fifo}"
-		exit "${1}"
-	}
-
-	dl_list() { ${UCL_CMD:?} "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
-
-	conv_dnsmasq_to_raw()
-	{
-		local conv_prefix='s~^[ \t]*(local|server|address)=/~~' conv_suffix
-		case "${1}" in
-			block) conv_suffix='s~/$~~' ;;
-			ipv4_block) conv_prefix="s~^[ \t]*bogus-nxdomain=~~" ;;
-			allow) conv_suffix='s~/#$~~'
-		esac
-		${SED_CMD} -E "${conv_prefix};${conv_suffix}" | tr '/' '\n'
-	}
+	dl_feed() { ${UCL_CMD:?} "${1}" -O- --timeout=3 2> "${ucl_err_file}"; }
 
 	conv_hosts_to_raw()
 	{
@@ -470,98 +248,126 @@ process_set_part()
 
 	case_conv() { tr 'A-Z' 'a-z'; }
 
-	local me=process_set_part \
-		curr_job_pid msg msg_mirr \
-		pad print_id_pad mirror_pad \
-		print_id origin \
-		list_path list_author mirrors mirror curr_mirror first_mirror loop_prev_mirror \
-		min_entries \
-		index="${1:?}" list_type="${2:?}" format="${3:?}" origin="${4:?}" print_id="${5:?}" scheduler_pid="${6:?}"
+	local index="${1:?}"
 
-	debug_msg "${me}: index: ${index}; list_type: ${list_type}; format: ${format}; origin: ${origin}; print_id: ${print_id}; scheduler_pid: ${scheduler_pid}"
+	local \
+		me=process_set_part \
+		\
+		feed_author \
+		feed_path \
+		\
+		part_cnt \
+		cnt_human \
+		part_size_B \
+		part_size_human \
+		stats_pad \
+		suffix_pad \
+		\
+		min_part_entries_human \
+		fetch_cmd \
+		\
+		pipeline_rv \
+		pipeline_msg \
+		ucl_err \
+		\
+		mirrors \
+		mirror \
+		cur_mirror \
+		first_mirror \
+		loop_prev_mirror \
+		msg_mirr \
+		\
+		msg \
+		pad \
+		print_id_pad \
+		mirror_pad \
+		\
+		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${index}" \
+		rogue_el_file="${ABL_TMP_DIR}/rogue_el_${index}" \
+		part_compr_or_cat="${INTERM_COMPR_OR_CAT_STDOUT:?}"
 
-	get_curr_job_pid curr_job_pid || finalize_job 1
+	# vars set by the scheduler
+	assert_set "F_${me}" \
+		format \
+		origin \
+		print_id \
+		dest_file \
+		part_stats_file \
+		is_ipv4 \
+		max_download_attempts \
+		max_part_size \
+		min_part_entries || return 1
 
-	eval "min_entries=\"\${min_${list_type}_part_entries}\""
-
-	list_path="${print_id}"
+	debug_msg "${me}: scheduler_pid: ${SCHEDULER_PID}; index: ${index}; format: ${format}; origin: ${origin}; print_id: ${print_id}; dest_file: ${dest_file}; stats_file: ${part_stats_file}; is_ipv4: ${is_ipv4}; max_part_size: ${max_part_size}"
 
 	if [ "${origin}" = DL ] &&
-		list_author="${print_id%:*}" &&
-		case "${list_author}" in
+		feed_author="${print_id%:*}" &&
+		case "${feed_author}" in
 			hagezi|oisd|stevenblack) : ;;
 			*) false
 		esac
 	then
-		eval "mirrors=\"\${${list_author}_mirrors}\"" &&
+		eval "mirrors=\"\${${feed_author}_mirrors}\"" &&
 		trim_spaces mirrors &&
 		[ -n "${mirrors}" ] &&
 		first_mirror="${mirrors%% *}" &&
-		[ -n "${first_mirror}" ] || finalize_job 1 "Failed to process download mirrors for list author ${list_author}."
+		[ -n "${first_mirror}" ] || { reg_failure "Failed to process download mirrors for list author ${feed_author}."; return 1; }
 
-		eval "curr_mirror=\"\${${list_author}_default_mirror}\""
-		: "${curr_mirror:="${first_mirror}"}"
+		eval "cur_mirror=\"\${${feed_author}_default_mirror}\""
+		: "${cur_mirror:="${first_mirror}"}"
 	fi
 
-	local dest_file="${PROCESSED_PARTS_DIR}/${list_type}_${index}${INTERM_COMPR_EXT}" \
-		ucl_err_file="${ABL_TMP_DIR}/ucl_err_${index}" \
-		rogue_el_file="${ABL_TMP_DIR}/rogue_el_${index}" \
-		list_stats_file="${ABL_TMP_DIR}/${index}_stats" \
-		part_cnt cnt_human min_entries_human \
-		part_size_B retry=1 \
-		fetch_cmd \
-		part_compr_or_cat="${INTERM_COMPR_OR_CAT_STDOUT:?}" \
-		format_conv_or_cat="${CAT_CMD:?}" \
-		case_conv_or_cat="${CAT_CMD:?}" \
-		pipeline_msg ucl_err pipeline_rv
-
 	case "${origin}" in
-		DL) fetch_cmd=dl_list ;;
+		DL) fetch_cmd=dl_feed ;;
 		LOCAL) fetch_cmd="${CAT_CMD:?}" ;;
-		*) finalize_job 1 "Invalid list origin '${origin}'."
+		*) reg_failure "Invalid list origin '${origin}'."; return 1
 	esac
 
-	case "${list_type}" in
-		allow|block) val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$' ;;
-		ipv4_block) val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$' ;;
-		*) finalize_job 1 "Invalid list type '${list_type}'"
-	esac
+	local \
+		format_conv_or_cat="${CAT_CMD:?}" \
+		case_conv_or_cat="case_conv" \
+		val_entry_regex='^[[:alnum:]-]+$|^(\*|[[:alnum:]_-]+)([.][[:alnum:]_-]+)+$'
 
-	case "${format}" in
-		dnsmasq|hosts) format_conv_or_cat="conv_${format}_to_raw ${list_type}"
-	esac
+	[ "${format}" = hosts ] &&
+		format_conv_or_cat="conv_hosts_to_raw"
 
-	case "${list_type}" in
-		allow|block) case_conv_or_cat="case_conv"
-	esac
+	if [ "${is_ipv4}" = 1 ]
+	then
+		case_conv_or_cat="${CAT_CMD:?}"
+		val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$'
+	fi
 
+	local prev_mirror attempt=1
 	while :
 	do
-		# use forced mirror for this list author if set
-		if [ "${origin}" = DL ] && [ -n "${list_author}" ]
+		feed_path="${print_id}"
+		if [ "${origin}" = DL ] && [ -n "${feed_author}" ]
 		then
-			read_str_from_file -v curr_mirror -f "${SCHEDULE_DIR}/${list_author}-forced-mirror" -a 1 -q -n 128 -V "${curr_mirror}"
-			get_list_url list_path "${print_id}" "${format}" "${curr_mirror}" || finalize_job 1
+			prev_mirror="${cur_mirror}"
+			read_str_from_file -v cur_mirror -f "${PROCESSED_PARTS_DIR}/${feed_author}-forced-mirror" -a 1 -q -n 128 ||
+				cur_mirror="${prev_mirror}"
+			# Get URL, taking into account forced mirror for this feed author if set
+			get_feed_url feed_path "${print_id}" "${format}" "${cur_mirror}" || return 1
 		fi
 
-		get_pad mirror_pad "${curr_mirror}" 8
+		get_pad mirror_pad "${cur_mirror}" 8
 		msg_mirr=
-		[ -n "${curr_mirror}" ] && msg_mirr=" [   mirror: ${curr_mirror}${mirror_pad} ]"
+		[ -n "${cur_mirror}" ] && msg_mirr=" [   mirror: ${cur_mirror}${mirror_pad} ]"
 
-		rm -f "${rogue_el_file}" "${list_stats_file}" "${ucl_err_file}"
+		rm -f "${rogue_el_file}" "${part_stats_file}" "${ucl_err_file}"
 
-		msg="Processing ${format} ${list_type}list"
+		msg="Processing ${format} blockset part"
 		get_pad pad "${msg}" 30
 		get_pad print_id_pad "${print_id}" 42
 
 		reg_msg "${msg}: ${pad}${lblue}${print_id}${n_c}${msg_mirr:+"${print_id_pad}"}${msg_mirr}"
 
-		# Download or cat the list
-		${fetch_cmd} "${list_path}" |
+		# Download or cat the part
+		${fetch_cmd} "${feed_path}" |
 
 		# Limit size
 		{
-			head -c "${max_part_size_KB:?}k"
+			head -c "${max_part_size:?}k"
 			if read -rn1 -d ''
 			then cat 1>/dev/null; false
 			else :
@@ -571,11 +377,11 @@ process_set_part()
 		# Remove comment lines and trailing comments, remove whitespaces
 		${SED_CMD} 's/#.*$//; s/^[ \t]*//; s/[ \t]*$//; /^$/d' |
 
-		# Convert dnsmasq format to raw format
+		# Convert hosts to raw format
 		${format_conv_or_cat} |
 
 		# Count bytes and entries
-		tee >(wc -wc > "${list_stats_file}") |
+		tee >(wc -wc > "${part_stats_file}") |
 
 		# Convert to lowercase
 		${case_conv_or_cat} |
@@ -589,22 +395,18 @@ process_set_part()
 		pipeline_rv=${?}
 
 		# read stats
-		read_str_from_file -v "part_cnt part_size_B _" -f "${list_stats_file}" -a 2 -D "list stats" || finalize_job 1
+		read_str_from_file -n 64 -v "part_cnt part_size_B _" -f "${part_stats_file}" -a 2 -D "list stats" || return 1
 
 		# size-exceeded check
-		if ! [ $(( 1 + part_size_B / 1024)) -lt "${max_part_size_KB}" ]
-		then
-			reg_failure "" "Size of blockset part '${print_id}' reached the maximum value set in config (${max_part_size_KB} KB)."
-			log_msg "Consider either increasing this value in the config or removing the corresponding blockset part identifier or URL from config."
-			finalize_job 2
-		fi
+		[ $(( part_size_B <= max_part_size*1024 )) = 1 ] ||
+			return 4
 
 		if [ "${pipeline_rv}" = 0 ]
 		then
 			# rogue elements check
 			if [ -s "${rogue_el_file}" ]
 			then
-				read_str_from_file -d -n 512 -v "rogue_element" -f "${rogue_el_file}" -a 2 -D "rogue element"
+				read_str_from_file -d -n 512 -F "" -v "rogue_element" -f "${rogue_el_file}" -q -a 2 -D "rogue element"
 				local rogue_el_print
 				if [ -n "${rogue_element}" ]
 				then
@@ -613,25 +415,24 @@ process_set_part()
 					rogue_el_print="Unknown rogue element"
 				fi
 
-				case "${rogue_element}" in *"${CR_LF}"*)
-					log_msg -warn "blockset part '${print_id}' contains Windows-format (CR LF) newlines." \
-						"This file needs to be converted to Unix newline format (LF)."
-						finalize_job 3 ;;
+				case "${rogue_element}" in *"${CR}"*)
+					log_msg -warn "blockset part '${print_id}' contains Non-Unix (CR) newlines." \
+						"This file needs to be converted to Unix newline style (LF)."
+						return 3 ;;
 				esac
 
 				log_msg -warn "${rogue_el_print} identified in blockset part '${print_id}'."
-				[ -n "${rogue_element}" ] || finalize_job 3
+				[ -n "${rogue_element}" ] || return 3
 			fi
 
-			# min_entries check
-			int2human cnt_human "${part_cnt}" || finalize_job 1    # ${cnt_human} also used in finalize_job()
-
+			# min_part_entries check
+			int2human cnt_human "${part_cnt}" &&
 			local lines_cnt_low=
-			if [ "${origin}" = DL ] && [ "${part_cnt}" -lt "${min_entries}" ]
+			if [ "${origin}" = DL ] && [ "${part_cnt}" -lt "${min_part_entries}" ]
 			then
 				lines_cnt_low=1
-				int2human min_entries_human "${min_entries}" || finalize_job 1
-				reg_failure "Entries count in downloaded blockset part '${print_id}' is ${cnt_human}, which is less than configured minimum: ${min_entries_human}."
+				int2human min_part_entries_human "${min_part_entries}" || return 1
+				reg_failure "Entries count in downloaded blockset part '${print_id}' is ${cnt_human}, which is less than configured minimum: ${min_part_entries_human}."
 			fi
 		fi
 
@@ -651,63 +452,174 @@ process_set_part()
 		elif [ "${pipeline_rv}" != 0 ]
 		then
 			reg_failure "" "${pipeline_msg}"
-			finalize_job 1
+			return 1
 		else
+			bytes2human part_size_human "${part_size_B}" -p
+			get_pad stats_pad "${print_id}" 42
+			get_pad suffix_pad "${cnt_human}" 9
+			log_msg "Successfully processed part:    ${green}${print_id}${n_c} ${stats_pad}[ ${orange}${part_size_human}${n_c}  - ${suffix_pad}${orange}${cnt_human} entries${n_c} ]"
+
 			rm -f "${ucl_err_file}"
 			# set this mirror as forced if this is not the first DL attempt
-			[ "${origin}" = DL ] && [ -n "${list_author}" ] && [ "${retry}" != 1 ] &&
-				printf '%s\n' "${curr_mirror}" > "${SCHEDULE_DIR}/${list_author}-forced-mirror"
-			finalize_job 0
+			[ "${origin}" = DL ] && [ -n "${feed_author}" ] && [ "${attempt}" != 1 ] &&
+				printf '%s\n' "${cur_mirror}" > "${PROCESSED_PARTS_DIR}/${feed_author}-forced-mirror"
+			return 0
 		fi
 
-		retry=$((retry + 1))
-		if [ "${retry}" -gt "${max_download_retries}" ]
+		attempt=$((attempt + 1))
+		if [ ! "${attempt}" -le "${max_download_attempts}" ]
 		then
-			finalize_job 2 "${max_download_retries} download attempts failed for list '${print_id}'."
+			reg_failure "${max_download_attempts} download attempts failed for list '${print_id}'."
+			return 2
 		fi
 
 		log_msg -yellow "" "Processing job for list '${print_id}' is sleeping for 5 seconds after failed download attempt."
 		sleep 5 &
 		wait ${!}
 
-		if [ "${origin}" = DL ] && [ -n "${list_author}" ]
+		if [ "${origin}" = DL ] && [ -n "${feed_author}" ]
 		then
 			# cycle to the next mirror
 			next_mirror='' loop_prev_mirror=''
 			for mirror in ${mirrors}
 			do
-				[ "${loop_prev_mirror}" = "${curr_mirror}" ] && { next_mirror="${mirror}"; break; }
+				[ "${loop_prev_mirror}" = "${cur_mirror}" ] && { next_mirror="${mirror}"; break; }
 				loop_prev_mirror="${mirror}"
 			done
-			curr_mirror="${next_mirror:-"${first_mirror}"}"
+			cur_mirror="${next_mirror:-"${first_mirror}"}"
 		fi
 	done
 }
 
+part_size_exceeded()
+{
+	reg_failure "Size of blockset part '${1}' exceeded the maximum value set in config option 'max_part_size_KB' (${2} KB)."
+	log_msg "Consider either increasing this value in the blockset config or removing the corresponding blockset part identifier or URL from same config."
+}
+
+# shellcheck disable=SC2329
 gen_set_parts()
 {
+	processing_done_cb()
+	{
+		local \
+			index \
+			failed \
+			dest_file \
+			part_stats_file \
+			fail_jobs="${4}" \
+			unfinished_jobs="${5}" \
+			undispatched_jobs="${6}" \
+			expired_jobs="${7}" \
+			aborted_jobs="${8}"
+
+		[ "${?}" = 0 ] || return ${?}
+
+		failed="${fail_jobs}${unfinished_jobs}${undispatched_jobs}${expired_jobs}${aborted_jobs}"
+
+		[ -z "${failed}" ] && return 0
+
+		for index in ${failed}
+		do
+			job_get_params "${index}" part_stats_file dest_file || return 1
+			rm -f "${dest_file}"
+			printf 'FAIL 0\n' > "${part_stats_file}"
+		done
+
+		return 0
+	}
+
+	part_done_cb()
+	{
+		local indexes abort_sets set_id \
+			abort_indexes abort_sets \
+			index="${1}" rv="${2}"
+
+		# vars delivered by the scheduler
+		assert_set F_part_done_cb print_id dest_file part_stats_file max_part_size || exit 1
+
+		[ "${rv}" = 0 ] ||
+			rm -f "${dest_file}" "${part_stats_file}"
+
+		case "${rv}" in
+			0) return 0 ;;
+			1)
+				if [ -n "${print_id}" ]
+				then
+					reg_failure "Fatal error in processing job for list '${print_id}'."
+				else
+					reg_failure "Fatal error reported by unknown processing job."
+				fi
+				return 1
+		esac
+
+		if [ "${rv}" = 4 ]
+		then
+			part_size_exceeded "${print_id}" "${max_part_size}"
+		else
+			reg_failure "" "Processing job for list '${print_id:-unknown}' returned error code '${rv}'."
+		fi
+
+		for set_id in ${PROC_SET_IDS}
+		do
+			eval "indexes=\"\${set_indexes_${set_id}}\""
+			is_included "${index}" "${indexes}" || continue
+			[ "${blockset_part_failed_action}" = STOP ] &&
+			{
+				abl_append abort_sets "${set_id}"
+				add2list abort_indexes "${indexes}"
+				continue
+			}
+		done
+
+		[ -n "${abort_sets}" ] &&
+		{
+			log_msg -ob "${abort_sets}" "" "blockset_part_failed_action is set to 'STOP'. Stopping processing{}."
+			jobs_abort ${abort_indexes}
+		}
+
+		return 0
+	}
+
 	# shellcheck disable=SC2034
-	local INITIAL_UPTIME_S="${1:?}" list_types="${2:-"${ALL_LIST_TYPES}"}"
+	SCHEDULER_PID=
+	local part_type part_indexes index indexes \
+		set_ids="${1:?}"
+
+	assert_set F_gen_set_parts ALL_PART_TYPES || return 1
 
 	# clean up before processing
-	rm -rf "${PROCESSED_PARTS_DIR}" "${SCHEDULE_DIR}"
+	rm -rf "${PROCESSED_PARTS_DIR}"
 
-	try_mkdir -p "${SCHEDULE_DIR}" &&
 	try_mkdir -p "${PROCESSED_PARTS_DIR}" || return 1
 
 	reg_action -1 -purple "" "Downloading and processing blockset parts (max parallel jobs: ${PARALLEL_JOBS})."
 
 	# Asynchronously download and process parts, allowlist must be processed separately and first
-	schedule_jobs "${list_types}" &
+	for part_type in ${ALL_PART_TYPES}
+	do
+		eval "part_indexes=\"\${indexes_${part_type}}\""
+		[ -n "${part_indexes}" ] || continue
+		abl_append indexes "${part_indexes}"
+	done
+
+	DO_JOB_CB=process_set_part \
+	JOB_DONE_CB=part_done_cb \
+	SCHED_FINALIZE_CB=processing_done_cb \
+	SCHED_FAIL_MSG_CB=reg_failure \
+	SCHED_MAX_JOBS="${PARALLEL_JOBS}" \
+	SCHED_TIMEOUT_S=900 \
+	SCHED_IDLE_TIMEOUT_S=500 \
+	SCHED_JOB_TIMEOUT_S=300 \
+	SCHED_AUTO_JOB_TERM=1 \
+		schedule_jobs "${indexes}" &
+
 	SCHEDULER_PID=${!}
 
 	wait "${SCHEDULER_PID}"
 	local sched_rv=${?}
 	SCHEDULER_PID=
-	[ ${sched_rv} = 0 ] || return ${sched_rv}
-
-	reg_msg -green "" "Successfully generated preprocessed blockset files."
-	:
+	return ${sched_rv}
 }
 
 gen_blocksets()
@@ -715,13 +627,14 @@ gen_blocksets()
 	local \
 		me=gen_blocksets \
 		IFS="${DEFAULT_IFS}" \
-		processed_bl_file \
+		processed_set_file \
+		part \
 		set_id \
 		run_state \
-		curr_path \
-		curr_cnt \
-		curr_persist_path \
-		curr_persist_cnt \
+		cur_path \
+		cur_cnt \
+		cur_persist_path \
+		cur_persist_cnt \
 		conn_check_req \
 		skip_load_stop \
 		file_to_bk \
@@ -734,20 +647,17 @@ gen_blocksets()
 		install_path \
 		totalmem \
 		TESTED_URLS \
+		SCHED_ID=process \
 		\
 		raw_block_lists \
-		dnsmasq_block_lists\
 		hosts_block_lists \
-		local_list \
+		local_part \
 		\
-		all_process_lists \
-		dl_lists \
-		\
-		list_type format \
-		proc_index=0 \
+		part_type \
+		format \
+		index=0 \
 		set_indexes \
-		proc_set_ids \
-		blocksets_out_var="${1:?}" set_ids="${2:?}" initial_uptime_cs="${3:?}"
+		blocksets_out_var="${1:?}" set_ids="${2:?}"
 
 	: "${skip_load_stop}" "${bk_cnt}"
 
@@ -756,7 +666,7 @@ gen_blocksets()
 	if [ "${force_unload}" = auto ]
 	then
 		read -r _ totalmem _ < /proc/meminfo
-		if is_uint "${totalmem}" && [ "${totalmem}" -ge 410000 ]
+		if is_gr_eq 410000 "${totalmem}"
 		then
 			force_unload=0
 		else
@@ -768,19 +678,17 @@ gen_blocksets()
 	local no_local_found_msgs
 	for set_id in ${set_ids}
 	do
-		for list_type in ${ALL_LIST_TYPES}
+		for part_type in ${ALL_PART_TYPES}
 		do
-			for format in ${ALL_LIST_FORMATS:?}
-			do
-				[ "${format}" = raw ] &&
-				[ "${list_type}" != ipv4_block ] || continue
-				eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
-				{ [ -n "${local_list}" ] && [ -f "${local_list}" ]; } ||
-				{
-					export -n "local_${list_type}list_path_${set_id}="
-					no_local_found_msgs="${no_local_found_msgs}${no_local_found_msgs:+"${_NL_}"}${set_id}:No local ${list_type}list identified{}."
-				}
-			done
+			get_params "${set_id}" \
+				"local_part=local_${part_type}list_path"
+
+			{ [ -n "${local_part}" ] && [ -f "${local_part}" ]; } ||
+			{
+				export -n "local_${part_type}list_path_${set_id}="
+				abl_append no_local_found_msgs "${set_id}:No local ${part_type}list file found{}." "${_NL_}"
+			}
+
 		done
 	done
 
@@ -797,25 +705,30 @@ gen_blocksets()
 		IFS="${DEFAULT_IFS}"
 	}
 
-	for format in ${ALL_LIST_FORMATS:?}
+	local dl_parts
+	for format in ${ALL_PART_FORMATS:?}
 	do
-		local "all_process_lists_${format}="
-		for list_type in ${ALL_LIST_TYPES}
+		local "all_process_parts_${format}="
+
+		for part_type in ${ALL_PART_TYPES}
 		do
-			local "proc_indexes_${list_type}="
+			local "indexes_${part_type}="
+
+			# hosts-format is only valid for type 'block'
+			[ "${format}" = hosts ] && [ "${part_type}" != block ] && continue
 
 			for set_id in ${set_ids}
 			do
 				local "set_indexes_${set_id}="
+				get_params "${set_id}" \
+					"dl_parts=${format}_${part_type}_lists" \
+					"local_part=local_${part_type}list_path"
 
-				local_list=
-				eval "dl_lists=\"\${${format}_${list_type}_lists_${set_id}}\""
-				[ "${format}" = raw ] && eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
-				[ -n "${dl_lists}${local_list}" ] || continue
+				[ -n "${dl_parts}${local_part}" ] || continue
 
-				[ -n "${dl_lists}" ] &&
+				[ -n "${dl_parts}" ] &&
 				{
-					invalid_urls="$(printf %s "${dl_lists}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
+					invalid_urls="$(printf %s "${dl_parts}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
 					{
 						reg_failure "Invalid URLs detected:" "${invalid_urls}"
 						return 1
@@ -823,15 +736,14 @@ gen_blocksets()
 
 					[ "${format}" = raw ] &&
 					{
-						bad_hagezi_urls="$(printf %s "${dl_lists}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
+						bad_hagezi_urls="$(printf %s "${dl_parts}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
 						{
-							reg_failure "Following Hagezi URLs are in dnsmasq format and should be either changed to raw list URLs" \
-								"or moved to one of the 'dnsmasq_' config entries:" "${bad_hagezi_urls}"
+							reg_failure "Following Hagezi lists are in dnsmasq format and should be changed to raw-format lists:" "${bad_hagezi_urls}"
 							return 1
 						}
-						case "${list_type}" in block|allow)
+						case "${part_type}" in block|allow)
 							bad_hagezi_urls="$(
-								printf %s "${dl_lists}" |
+								printf %s "${dl_parts}" |
 								tr ' ' '\n' |
 								${SED_CMD} -En '/(raw.githubusercontent.com\/hagezi\/dns-blocklists\/|gitlab.com\/hagezi\/mirror\/)/{/onlydomains\./d;p;}'
 							)"
@@ -845,81 +757,129 @@ gen_blocksets()
 					}
 				}
 
-				for list in ${dl_lists}
+				for part in ${dl_parts}
 				do
-					add2list "all_process_lists_${format}" "${list}" "${_NL_}"
+					add2list "all_process_parts_${format}" "${part}" "${_NL_}"
 				done
-				[ -n "${local_list}" ] && add2list "all_process_lists_${format}" "local=${local_list}" "${_NL_}"
+				[ -n "${local_part}" ] && add2list "all_process_parts_${format}" "local=${local_part}" "${_NL_}"
 			done
 		done
 	done
 
+	local \
+		PROC_SET_IDS \
+		all_process_parts \
+		max_part_size \
+		max_part_size_prev \
+		min_part_entries \
+		min_part_entries_prev \
+		is_ipv4 \
+		is_ipv4_prev
 
-	for format in ${ALL_LIST_FORMATS:?}
+	for format in ${ALL_PART_FORMATS:?}
 	do
-		eval "all_process_lists=\"\${all_process_lists_${format}}\""
-		[ -n "${all_process_lists}" ] || continue
+		eval "all_process_parts=\"\${all_process_parts_${format}}\""
+		[ -n "${all_process_parts}" ] || continue
 
-		debug_msg "all_process_lists_${format}: '${all_process_lists}'"
+		debug_msg "all_process_parts_${format}: '${all_process_parts}'"
 
 		IFS="${_NL_}"
-		for list in ${all_process_lists}
+		for part in ${all_process_parts}
 		do
-			[ -n "${list}" ] || continue
+			[ -n "${part}" ] || continue
+
 			IFS="${DEFAULT_IFS}"
-			proc_index=$((proc_index+1))
-			export -n "INDEX_REFS_${proc_index}="
+			index=$((index+1))
+			export -n "INDEX_REFS_${index}="
 
 			origin=DL
-			case "${list}" in local=*)
+			case "${part}" in local=*)
 				origin=LOCAL
 			esac
-			export -n \
-				"FORMAT_${proc_index}=${format}" \
-				"ORIGIN_${proc_index}=${origin}" \
-				"PRINT_ID_${proc_index}=${list#"local="}"
 
-			for list_type in ${ALL_LIST_TYPES:?}
+			get_part_process_path dest_file "${index}"
+			job_set_params "${index}" \
+				"format=${format}" \
+				"origin=${origin}" \
+				"print_id=${part#"local="}" \
+				"dest_file=${PROCESSED_PARTS_DIR}/part_${index}${INTERM_COMPR_EXT}" \
+				"part_stats_file=${PROCESSED_PARTS_DIR}/${index}_stats"
+
+			for part_type in ${ALL_PART_TYPES:?}
 			do
+				# hosts-format is only valid for type 'block'
+				[ "${format}" = hosts ] && [ "${part_type}" != block ] && continue
+
+				case "${part_type}" in
+					ipv4_*) is_ipv4=1 ;;
+					*) is_ipv4=0 ;;
+				esac
+				eval "min_part_entries=\"\${min_${part_type}_part_entries}\""
+				assert_set "F_${me}" min_part_entries || return 1
+
 				for set_id in ${set_ids}
 				do
-					eval "dl_lists=\"\${${format}_${list_type}_lists_${set_id}}\""
-					eval "local_list=\"\${local_${list_type}list_path_${set_id}}\""
-					[ -n "${dl_lists}${local_list}" ] || continue
+					get_params "${set_id}" \
+						max_part_size \
+						"dl_parts=${format}_${part_type}_lists" \
+						"local_part=local_${part_type}list_path"
 
-					is_included "${list}" "${dl_lists}" ||
-					{ [ -n "${local_list}" ] && [ "${list}" = "local=${local_list}" ]; } ||
+					[ -n "${dl_parts}${local_part}" ] || continue
+
+					is_included "${part}" "${dl_parts}" ||
+					{ [ -n "${local_part}" ] && [ "${part}" = "local=${local_part}" ]; } ||
 						continue
 
-					add2list "INDEX_REFS_${proc_index}" "${set_id}"
-					add2list "proc_indexes_${list_type}" "${proc_index}"
-					add2list proc_set_ids "${set_id}"
-					add2list "set_indexes_${set_id}" "${proc_index}"
-					export -n "TYPE_${set_id}_${proc_index}=${list_type}"
+					# min_part_entries may be different if same feed is used as allow- in one blockset but as block- in another
+					job_get_params "${index}" \
+						"max_part_size_prev=max_part_size" \
+						"min_part_entries_prev=min_part_entries" \
+						"is_ipv4_prev=is_ipv4"
+
+					[ -n "${is_ipv4_prev}" ] && [ "${is_ipv4}" != "${is_ipv4_prev}" ] &&
+						{ reg_failure "Blockset part '${part#"local="}' is specified as both ipv4 and not."; return 1; }
+
+					[ -n "${min_part_entries_prev}" ] &&
+					[ "${min_part_entries_prev}" -lt "${min_part_entries}" ] &&
+						min_part_entries=${min_part_entries_prev}
+
+					[ -n "${max_part_size_prev}" ] &&
+					[ "${max_part_size_prev}" -gt "${max_part_size}" ] &&
+						max_part_size=${max_part_size_prev}
+
+					job_set_params "${index}" \
+						"max_part_size=${max_part_size}" \
+						"min_part_entries=${min_part_entries}" \
+						"is_ipv4=${is_ipv4}" \
+						"part_type_${set_id}=${part_type}"
+
+					abl_append "indexes_${part_type}" "${index}"
+					abl_append "set_indexes_${set_id}" "${index}"
+					add2list "INDEX_REFS_${index}" "${set_id}"
+					add2list PROC_SET_IDS "${set_id}"
 				done
 			done
 		done
 		IFS="${DEFAULT_IFS}"
 	done
 
-	[ -n "${proc_set_ids}" ] || { reg_failure "Nothing to process."; return 1; }
+	[ -n "${PROC_SET_IDS}" ] || { reg_failure "Nothing to process."; return 1; }
 
 	for set_id in ${set_ids}
 	do
-		is_included "${set_id}" "${proc_set_ids}" || { reg_failure -fb "${set_id}" "Nothing to process{}."; continue; }
+		is_included "${set_id}" "${PROC_SET_IDS}" || { reg_failure -fb "${set_id}" "Nothing to process{}."; continue; }
 		debug_msg "Processing bockset ${set_id}."
 		get_params -f "${me}" "${set_id}" run_state || return 1
 		get_params "${set_id}" \
-			curr_path \
-			curr_cnt \
-			curr_persist_path \
-			curr_persist_cnt \
+			cur_path \
+			cur_cnt \
+			cur_persist_path \
+			cur_persist_cnt \
 			bk_ext \
 			raw_block_lists \
-			dnsmasq_block_lists\
 			hosts_block_lists
 
-		[ -n "${raw_block_lists}${dnsmasq_block_lists}${hosts_block_lists}" ] ||
+		[ -n "${raw_block_lists}${hosts_block_lists}" ] ||
 			log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
 		skip_load_stop=
@@ -934,7 +894,7 @@ gen_blocksets()
 
 		[ "${force_unload_bl}" = 1 ] ||
 		[ -z "${conn_check_req}" ] ||
-		test_url_domains "${set_id}" ||
+		test_fetch_doms "${set_id}" ||
 			force_unload_bl=1
 
 		[ "${force_unload_bl}" = 1 ] &&
@@ -944,14 +904,14 @@ gen_blocksets()
 
 		bk_file=
 		file_to_bk=
-		if [ -n "${curr_path}" ]
+		if [ -n "${cur_path}" ]
 		then
-			file_to_bk=${curr_path}
-			bk_cnt=${curr_cnt}
-		elif [ -n "${curr_persist_path}" ]
+			file_to_bk=${cur_path}
+			bk_cnt=${cur_cnt}
+		elif [ -n "${cur_persist_path}" ]
 		then
-			file_to_bk=${curr_persist_path}
-			bk_cnt=${curr_persist_cnt}
+			file_to_bk=${cur_persist_path}
+			bk_cnt=${cur_persist_cnt}
 		fi
 
 		if [ -n "${file_to_bk}" ] &&
@@ -961,7 +921,7 @@ gen_blocksets()
 		is_dir_writable "${set_id}" "${file_to_bk%/*}"
 		then
 			bk_file="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
-			reg_action -fb "${set_id}" "Creating backup of current blockset file{}." &&
+			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}." &&
 			mv_blockset "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${set_id}" ||
 			{
 				reg_failure "Failed to create backup of current blockset file '${file_to_bk}'."
@@ -974,35 +934,35 @@ gen_blocksets()
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 -fb "${set_id}" "No existing blockset file found{}."
+			reg_msg -2 -fb "${set_id}" "" "No existing blockset file found{}."
 		fi
 		set_params "${set_id}" bk_file bk_cnt
 	done
 
-	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${proc_set_ids}"
-	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_PERSIST=0 do_stop "${blocksets_to_stop}" || return 1
+	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${PROC_SET_IDS}"
+	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_PERSIST=0 do_stop "${blocksets_to_stop}" || exit 1
 
-	gen_set_parts "$(( ${initial_uptime_cs:?} / 100 ))" ||
+	gen_set_parts "${set_ids}" ||
 	{
 		reg_failure "Failed to generate blockset parts."
 		return 1
 	}
 
-	for set_id in ${proc_set_ids}
+	for set_id in ${PROC_SET_IDS}
 	do
 		eval "set_indexes=\"\${set_indexes_${set_id}}\""
 		get_params -f "${me}" "${set_id}" install_path || return 1
 		get_params "${set_id}" final_compr_ext
 
-		processed_bl_file="${ABL_TMP_DIR}/processed-${set_id}${final_compr_ext}"
+		processed_set_file="${ABL_TMP_DIR}/processed-${set_id}${final_compr_ext}"
 
-		if gen_blockset "${set_id}" "${processed_bl_file}" "${set_indexes}" &&
-			try_mv "${processed_bl_file}" "${install_path}"
+		if gen_blockset "${set_id}" "${processed_set_file}" "${set_indexes}" &&
+			try_mv "${processed_set_file}" "${install_path}"
 		then
 			add2list "${blocksets_out_var}" "${set_id}"
 			debug_msg "install_path: ${install_path};"
 		else
-			rm -f "${processed_bl_file}"
+			rm -f "${processed_set_file}"
 			reg_failure -fb "${set_id}" "Failed to generate new blockset file{}."
 		fi
 	done
@@ -1069,37 +1029,28 @@ gen_blockset()
 			END {print A "\n"}'
 	}
 
-	# 1 - blockset ID
-	# 2 - extension incl '.'
-	# 2 - list type (block|ipv4_block)
-	# 3 - decompression command or 'cat'
+	# 1 - part indexes
 	print_set_parts()
 	{
-		print_file_cb()
-		{
-			${PART_EXTR_OR_CAT_STDOUT:?} "${1}"
-			local index_refs rv=${?}
+		local index index_refs part_file \
+			indexes="${1:?}"
 
+		for index in ${indexes}
+		do
+			get_part_process_path part_file "${index}"
+			${PART_EXTR_OR_CAT_STDOUT:?} "${part_file}"
+			rv=${?}
 			eval "index_refs=\"\${INDEX_REFS_${index}}\""
 			[ -z "${index_refs}" ] && rm -f "${1}"
-			return "${rv}"
-		}
-
-		local index \
-			list_type="${1:?}" set_id="${2:?}" set_indexes="${3:?}"
-
-		for index in ${set_indexes}
-		do
-			FF_EXEC="print_file_cb {}" \
-				find_files _ "${PROCESSED_PARTS_DIR}" "${list_type}_${index}" "" "${INTERM_COMPR_EXT}" "${set_id}" && printed=1
+			[ ${rv} = 0 ] || { printf ''; reg_failure "Failed command: '${PART_EXTR_OR_CAT_STDOUT:?} ${part_file}'."; return 1; }
 		done
-		[ -n "${printed}" ] || printf ''
 	}
 
 	local me=gen_blockset \
 		install_path \
-		min_good_entries min_good_entries_human \
-		max_blockset_file_size_KB \
+		min_entries min_entries_human \
+		max_part_size \
+		max_set_size \
 		errors \
 		dedup_cmd_or_cat="${CAT_CMD:?}" \
 		allow_filter_or_cat="${CAT_CMD:?}" \
@@ -1107,7 +1058,8 @@ gen_blockset()
 		final_compr_or_cat_stdout \
 		install_1_instance \
 		use_allowlist use_ipv4_blocklist \
-		merged_allow_f="${PROCESSED_PARTS_DIR}/allow" \
+		merged_allow_f \
+		proc_dir \
 		test_domains \
 		whitelist_mode \
 		\
@@ -1115,12 +1067,18 @@ gen_blockset()
 		out_f="${2:?}" \
 		set_indexes="${3:?}"
 
+	proc_dir="${ABL_TMP_DIR}/process-${set_id}"
+	merged_allow_f="${proc_dir}/allow"
+
+	rm -rf "${proc_dir}"
+
 	reg_action -purple -fb "${set_id}" "" "Generating blockset file{}."
 
 	get_params -f "${me}" "${set_id}" \
 		install_path \
-		max_blockset_file_size_KB \
-		min_good_entries\
+		max_part_size \
+		max_set_size \
+		min_entries \
 		final_compr_or_cat_stdout || return 1
 
 	get_params "${set_id}" \
@@ -1135,7 +1093,7 @@ gen_blockset()
 		*) assert_set "F_${me}" INTERM_COMPR_EXT || return 1
 	esac
 
-	local max_size_b=$((max_blockset_file_size_KB*1024))
+	local max_size_b=$((max_set_size*1024))
 	[ "${deduplication}" = 1 ] && dedup_cmd_or_cat="${SORT_CMD} -u -"
 
 	case "${AWK_CMD:?}" in
@@ -1144,31 +1102,59 @@ gen_blockset()
 
 	# shellcheck disable=SC2034
 	# Process results
-	local part_cnt part_size_B list_cnt_raw list_size_B index list_type print_id index_refs \
+	local part_file part_cnt part_size_B list_cnt_raw part_size_B index part_type print_id index_refs \
 		set_cnt_raw=0 set_size_B_raw=0 allow_cnt_raw=0 block_cnt_raw=0 ipv4_block_cnt_raw=0 \
-		set_cnt_raw_human set_size_B_raw_human set_size_B set_size_B_human
-
-	rm -f "${PROCESSED_PARTS_DIR:?}/allow" "${ABL_TMP_DIR:?}/block_stats" "${ABL_TMP_DIR}/ipv4_block_stats" "${ABL_TMP_DIR}/allow_stats" "${ABL_TMP_DIR}/abl-too-big.tmp"
+		set_cnt_raw_human set_size_B_raw_human set_size_B set_size_B_human \
+		block_indexes allow_indexes ipv4_block_indexes
 
 	for index in ${set_indexes}
 	do
 		eval "index_refs=\"\${INDEX_REFS_${index}}\""
 		subtract_a_from_b "${set_id}" "${index_refs}" "INDEX_REFS_${index}"
 
-		[ -s "${ABL_TMP_DIR}/${index}_stats" ] || continue
+		[ -s "${PROCESSED_PARTS_DIR}/${index}_stats" ] || { reg_failure "${me}: can not find file '${PROCESSED_PARTS_DIR}/${index}_stats'."; return 1; }
 
-		eval \
-			"list_type=\"\${TYPE_${set_id}_${index}}\"" \
-			"print_id=\"\${PRINT_ID_${index}}\"" &&
-		[ -n "${list_type}" ] &&
-		read_str_from_file -v "part_cnt part_size_B" -f "${ABL_TMP_DIR}/${index}_stats" -V 0 &&
-		is_uint "${part_cnt}" "${part_size_B}" &&
-		set_cnt_raw=$((set_cnt_raw+part_cnt)) &&
+		job_get_params "${index}" print_id "part_type=part_type_${set_id}" &&
+		[ -n "${part_type}" ] &&
+		read_str_from_file -n 64 -v "part_cnt part_size_B" -f "${PROCESSED_PARTS_DIR}/${index}_stats" -V 0 &&
+		{
+			[ "${part_cnt}" != FAIL ] || continue
+		} &&
+		is_uint "${part_cnt}" "${part_size_B}" ||
+			{ reg_failure "Failed to read processed stats for blockset part with index ${index} (ID '${print_id}', type '${part_type}')."; return 1; }
+
+		# This second part size check is necessary because download-time limit is against max of all sets
+		[ $(( part_size_B <= max_part_size*1024)) = 1 ] ||
+		{
+			get_part_process_path part_file "${index}"
+			rm -f "${part_file}"
+			part_size_exceeded "${print_id}" "${max_part_size}"
+			if [ "${blockset_part_failed_action}" = STOP ]
+			then
+				log_msg -ob "${set_id}" "blockset_part_failed_action is set to 'STOP'. Stopping processing{}."
+				for index in ${set_indexes}
+				do
+					get_part_process_path part_file "${index}"
+					rm -f "${part_file}"
+				done
+				return 1
+			elif [ "${set_indexes}" = "${index}" ]
+			then
+				log_msg -ib "${set_id}" "Failed to generate the only part{}."
+				return 1
+			else
+				log_msg "blockset_part_failed_action is set to 'SKIP'. Skipping part and continuing.."
+				continue
+			fi
+		}
+
+		set_cnt_raw=$((set_cnt_raw + part_cnt)) &&
 		set_size_B_raw=$((set_size_B_raw + part_size_B)) &&
-		eval \
-			"${list_type}_cnt_raw=\"\$(( ${list_type}_cnt_raw + part_cnt ))\"" \
-			"${list_type}_size_B=\"\$(( ${list_type}_size_B + part_size_B ))\"" ||
-				{ reg_failure "Failed to read processed stats for blockset part with index ${index} (ID '${print_id}', type '${list_type}')."; return 1; }
+		{
+			set_int "${part_type}_cnt_raw = ${part_type}_cnt_raw + part_cnt"
+			set_int "${part_type}_size_B = ${part_type}_size_B + part_size_B"
+		}
+		abl_append "${part_type}_indexes" "${index}"
 	done
 
 	[ "${set_cnt_raw}" -gt 0 ] ||
@@ -1179,31 +1165,33 @@ gen_blockset()
 
 	reg_msg "Uncompressed blockset parts size: ${orange}${set_size_B_raw_human}${n_c}, entries count: ${orange}${set_cnt_raw_human}${n_c}."
 
-	local list_cnt_raw_human list_size_B_human
-	for list_type in ${ALL_LIST_TYPES}
+	try_mkdir -p "${proc_dir}" || return 1
+
+	local list_cnt_raw_human part_size_B_human
+	for part_type in ${ALL_PART_TYPES}
 	do
 		# count entries for current list type
-		eval "list_cnt_raw=\"\${${list_type}_cnt_raw:-0}\"" \
-			"list_size_B=\"\${${list_type}_size_B:-0}\""
+		eval "list_cnt_raw=\"\${${part_type}_cnt_raw:-0}\"" \
+			"part_size_B=\"\${${part_type}_size_B:-0}\""
 
-		if ! [ "${list_cnt_raw}" -gt 0 ] || ! [ "${list_size_B}" -gt 0 ]
+		if ! [ "${list_cnt_raw}" -gt 0 ] || ! [ "${part_size_B}" -gt 0 ]
 		then
-			[ "${list_type}" = block ] &&
+			[ "${part_type}" = block ] &&
 			{
 				[ "${whitelist_mode}" = 1 ] || {
-					bytes2human list_size_B_raw_human "${list_size_B_raw:-0}"
+					bytes2human part_size_B_raw_human "${part_size_B_raw:-0}"
 					int2human list_cnt_raw_human "${list_cnt_raw:-0}"
-					reg_failure "Total entries count and size of block-entries: ${list_cnt_raw_human}, ${list_size_B_human}."
+					reg_failure "Total entries count and size of block-entries: ${list_cnt_raw_human}, ${part_size_B_human}."
 					return 1
 				}
 				log_msg -yellow "Whitelist mode is on - accepting empty blocklist."
 			}
-		elif [ "${list_type}" = ipv4_block ]
+		elif [ "${part_type}" = ipv4_block ]
 		then
 			use_ipv4_blocklist=1
-		elif [ "${list_type}" = allow ]
+		elif [ "${part_type}" = allow ]
 		then
-			print_set_parts allow "${set_id}" "${set_indexes}" |
+			print_set_parts "${allow_indexes}" |
 			# optional deduplication
 			${dedup_cmd_or_cat} >> "${merged_allow_f}" || return 1
 			use_allowlist=1
@@ -1234,7 +1222,7 @@ gen_blockset()
 	{
 		{
 			# print blockset parts
-			print_set_parts block "${set_id}" "${set_indexes}" |
+			print_set_parts "${block_indexes}" |
 			# optional deduplication
 			${dedup_cmd_or_cat} |
 
@@ -1242,7 +1230,7 @@ gen_blockset()
 			${allow_filter_or_cat} |
 
 			# count entries
-			tee >(wc -w > "${ABL_TMP_DIR}/block_stats") |
+			tee >(wc -w > "${proc_dir}/block_stats") |
 
 			# pack entries in 1024 characters long lines
 			${pack_cmd} block || exit 1
@@ -1250,10 +1238,10 @@ gen_blockset()
 			# print ipv4 blockset parts
 			if [ -n "${use_ipv4_blocklist}" ]
 			then
-				print_set_parts ipv4_block "${set_id}" "${set_indexes}" |
+				print_set_parts "${ipv4_block_indexes}" |
 				# optional deduplication
 				${dedup_cmd_or_cat} |
-				tee >(wc -w > "${ABL_TMP_DIR}/ipv4_block_stats") |
+				tee >(wc -w > "${proc_dir}/ipv4_block_stats") |
 				# add prefix
 				${SED_CMD} 's/^/bogus-nxdomain=/' || exit 1
 			fi
@@ -1263,7 +1251,7 @@ gen_blockset()
 			then
 				# optional deduplication
 				${dedup_cmd_or_cat} < "${merged_allow_f}" |
-				tee >(wc -w > "${ABL_TMP_DIR}/allow_stats") |
+				tee >(wc -w > "${proc_dir}/allow_stats") |
 				# pack entries in 1024 characters long lines
 				${pack_cmd} allow || exit 1
 
@@ -1286,7 +1274,7 @@ gen_blockset()
 		} |
 
 		# limit size
-		{ head -c "${max_size_b}"; read -rn1 -d '' && { touch "${ABL_TMP_DIR}/abl-too-big.tmp"; cat 1>/dev/null; } || true; } |
+		{ head -c "${max_size_b}"; read -rn1 -d '' && { touch "${proc_dir}/abl-too-big.tmp"; cat 1>/dev/null; } || true; } |
 
 		# compress or cat
 		${final_compr_or_cat_stdout} > "${out_f}"
@@ -1298,24 +1286,25 @@ gen_blockset()
 			[ -n "${errors}" ] && log_msg "STDERR output:${_NL_}${errors}"
 			return 1
 		}
+
 	rm -f "${ERR_F}"
 
-	if [ -f "${ABL_TMP_DIR}/abl-too-big.tmp" ]
+	if [ -f "${proc_dir}/abl-too-big.tmp" ]
 	then
 		rm -f "${out_f}"
-		reg_failure -fb "${set_id}" "Final uncompressed blockset file size{} exceeded ${max_blockset_file_size_KB} kiB set in max_blockset_file_size_KB config option!"
+		reg_failure -fb "${set_id}" "Final uncompressed blockset file size{} exceeded ${max_set_size} kiB set in max_blockset_size_KB config option!"
 		log_msg "Consider either increasing this value in the config or changing the blockset URLs."
 		return 1
 	fi
 
-	# check total entries count vs min_good_entries
+	# check total entries count vs min_entries
 	local read_cnt block_cnt ipv4_block_cnt allow_cnt \
 		gen_cnt=0 gen_cnt_human
-	for list_type in block ipv4_block allow
+	for part_type in block ipv4_block allow
 	do
 		read_cnt=0
-		read -r read_cnt 2>/dev/null < "${ABL_TMP_DIR}/${list_type}_stats"
-		local "${list_type}_cnt=${read_cnt:-0}"
+		read -r read_cnt 2>/dev/null < "${proc_dir}/${part_type}_stats"
+		local "${part_type}_cnt=${read_cnt:-0}"
 	done
 
 	gen_cnt=$(( block_cnt + ipv4_block_cnt + allow_cnt ))
@@ -1326,21 +1315,21 @@ gen_blockset()
 
 	int2human gen_cnt_human "${gen_cnt}" || return 1
 
-	if [ "${gen_cnt}" -lt "${min_good_entries}" ]
+	if [ "${gen_cnt}" -lt "${min_entries}" ]
 	then
-		int2human min_good_entries_human "${min_good_entries}" || return 1
-		reg_failure "Entries count (${gen_cnt_human}) is below the minimum value set in config (${min_good_entries_human})."
+		int2human min_entries_human "${min_entries}" || return 1
+		reg_failure "Entries count (${gen_cnt_human}) is below the minimum value set in config option 'min_entries' (${min_entries_human})."
 		return 1
 	fi
 
 	# check the final blockset with dnsmasq --test
-	reg_action "Checking the processed blockset file with 'dnsmasq --test'." || return 1
+	reg_action "Checking the processed blockset file with '${DMSQ_CMD:?} --test'." || return 1
 
 	rm -f "${ERR_F}"
 
 	{
 		try_extract -stdout "${out_f}" |
-		dnsmasq --test -C -
+		${DMSQ_CMD:?} --test -C -
 	} 2> "${ERR_F}"
 
 	if [ ${?} != 0 ] || ! grep -q "syntax check OK" "${ERR_F}"

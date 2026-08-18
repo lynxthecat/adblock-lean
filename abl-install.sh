@@ -53,7 +53,15 @@ fi
 AWK_CMD="/bin/busybox awk"
 
 
-check_util_install() { command -v "${1:?}" 1>/dev/null; }
+is_cmd_install() { command -v "${1:?}" 1>/dev/null; }
+
+had_f_install()
+{
+	case "${-}" in
+		*f*) return 0 ;;
+		*) return 1
+	esac
+}
 
 is_uint_install()
 {
@@ -151,7 +159,7 @@ check_func_install()
 }
 
 # asks the user to pick an option
-# 1 - input in the format 'a|b|c'
+# 1 - input in format 'a|b|c'
 # output via $REPLY
 pick_opt_install()
 {
@@ -177,16 +185,21 @@ pick_opt_install()
 #   5: filename suffix
 find_files_install()
 {
-	local me=find_files_install exec='' ff_file ff_found='' \
+	local me=find_files_install exec ff_file ff_found ff_fail \
 		ff_path_out_var="${1}" ff_dir="${2}" ff_prefix="${3}" ff_mid="${4}" ff_suffix="${5}"
 
 	unset_vars_install "${ff_path_out_var}" || return 1
 
-	[ -n "${FF_EXEC}" ] && { check_util_install "${FF_EXEC%% *}" || { reg_failure_install "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
+	[ -n "${FF_EXEC}" ] && { is_cmd_install "${FF_EXEC%% *}" || { reg_failure_install "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
+
+	local had_f
+	had_f_install && had_f=1
+	set +f
 
 	# shellcheck disable=SC2027
 	for ff_file in "${ff_dir}/${ff_prefix}"${ff_mid}"${ff_suffix}"
 	do
+		set -f
 		case "${ff_file}" in
 			''|*"*"*) continue ;;
 			[\$\(\)\{\}\"\`\'] ) reg_msg_install -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
@@ -196,11 +209,15 @@ find_files_install()
 		[ -n "${FF_EXEC}" ] &&
 		{
 			exec="${FF_EXEC//"{}"/"\"${ff_file}\""}"
-			eval "${exec}" || { reg_failure_install "${me}: '${exec}' returned code ${?}"; return 1; }
+			eval "${exec}" || { reg_failure_install "${me}: '${exec}' returned code ${?}"; ff_fail=1; break; }
 		}
 
 		ff_found="${ff_found}${ff_found:+"${_NL_}"}${ff_file}"
 	done
+
+	[ -n "${had_f}" ] || set +f
+
+	[ -n "${ff_fail}" ] && return 1
 
 	[ -n "${ff_found}" ] || return 2
 
@@ -211,7 +228,7 @@ find_files_install()
 # Splits path to file into dir, filename, ext
 split_path_install()
 {
-	local sp_file='' sp_fname='' sp_ext='' sp_dir='' \
+	local sp_file sp_fname sp_ext sp_dir \
 		sp_dir_out_var="${1}" sp_fname_out_var="${2}" sp_ext_out_var="${3}" sp_path="${4}"
 
 	unset_vars_install "${sp_dir_out_var}" "${sp_fname_out_var}" "${sp_ext_out_var}" || return 1
@@ -308,7 +325,6 @@ reg_msg_install()
 
 	[ "${log_level}" = 5 ] && msgs_dest="/dev/stderr" # Debug
 
-	set -f
 	IFS="${_DELIM_}"
 	for m in ${msgs}
 	do
@@ -327,7 +343,6 @@ reg_msg_install()
 		esac
 	done
 	IFS="${DEFAULT_IFS}"
-	set +f
 }
 
 # 1 - msg
@@ -598,9 +613,14 @@ fetch_abl_dist_install()
 	local fetch_rv extract_dir fetch_dir="${dist_dir_fetch}/fetch"
 	local tarball="${fetch_dir}/remote_abl.tar.gz" ucl_err_file="${fetch_dir}/ucl_err"
 
+	local had_f
+	had_f_install && had_f=1
+
 	rm -f "${ucl_err_file}" "${tarball}"
+	set +f
 	rm -rf "${fetch_dir}/${ABL_REPO_AUTHOR}-adblock-lean-"*
-	try_mkdir_install -p "${fetch_dir}" || return 1
+	set -f
+	try_mkdir_install -p "${fetch_dir}" || { [ -n "${had_f}" ] || set +f; return 1; }
 
 	uclient-fetch "${tarball_url_fetch}" -O "${tarball}" 2> "${ucl_err_file}" &&
 	grep -q "Download completed" "${ucl_err_file}" &&
@@ -615,10 +635,14 @@ fetch_abl_dist_install()
 	rm -f "${ucl_err_file}"
 
 	[ "${fetch_rv}" = 0 ] && {
+		set +f
 		mv "${extract_dir:-?}"/* "${dist_dir_fetch:-?}/" ||
-			{ rm -rf "${extract_dir:-?}"; reg_failure_install "Failed to move files to dist dir."; return 1; }
+			{ reg_failure_install "Failed to move files to dist dir."; fetch_rv=1; }
+		set -f
 	}
 	rm -rf "${extract_dir:-?}" "${fetch_dir:-?}"
+
+	[ -n "${had_f}" ] || set +f
 
 	return ${fetch_rv}
 }
@@ -760,7 +784,6 @@ install_abl_files()
 	[ -f "${dist_dir}/adblock-lean" ] || inst_failed "Can not find ${dist_dir}/adblock-lean"
 
 	log_msg_install "" "Installing new files..."
-
 
 	upd_cfg_format="$(get_cfg_format_install "${dist_dir}/adblock-lean")" || inst_failed
 	get_cur_main_cfg_path cur_main_cfg_path
@@ -998,6 +1021,7 @@ install_abl_files()
 				min_ipv4_blocklist_part_line_count=min_ipv4_block_part_entries
 				min_allowlist_part_line_count=min_allow_part_entries
 				max_file_part_size_KB=max_part_size_KB
+				max_download_retries=max_download_attempts
 			'
 
 			migrate_opts_blockset='
@@ -1008,11 +1032,9 @@ install_abl_files()
 				blocklist_urls=raw_block_lists
 				allowlist_urls=raw_allow_lists
 				blocklist_ipv4_urls=raw_ipv4_block_lists
-				dnsmasq_blocklist_urls=dnsmasq_block_lists
-				dnsmasq_blocklist_ipv4_urls=dnsmasq_ipv4_block_lists
-				dnsmasq_allowlist_urls=dnsmasq_allow_lists
-				min_good_line_count=min_good_entries
-				max_blocklist_file_size_KB=max_blockset_file_size_KB
+				min_good_line_count=min_blockset_entries
+				min_good_entries=min_blockset_entries
+				max_blocklist_file_size_KB=max_blockset_size_KB
 			'
 
 			# convert into _DELIM_ separated lists
@@ -1181,19 +1203,33 @@ fetch_and_install()
 	unexp_arg() { fetch_failed "fetch_and_install: unexpected argument '${1}'."; }
 
 
+	# Check dependencies
+	local util
+	for util in tar find uclient-fetch jsonfilter dnsmasq
+	do
+		is_cmd_install "${util}" || inst_failed "Utility '${util}' not found."
+	done
+
+	# Check dnsmasq
+	dnsmasq --help | grep -qe "--conf-script" ||
+		inst_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
+
+	# Test process substitution support
+	printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
+	/bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null ||
+	{
+		rm -f /tmp/abl-test
+		inst_failed "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
+	}
+	rm -f /tmp/abl-test
+
+
 	trap 'cleanup_and_exit_install 1' INT TERM
 	trap 'cleanup_and_exit_install ${?}' EXIT
 
 	set -o pipefail
 
-	local util
-
-	for util in tar find uclient-fetch jsonfilter
-	do
-		check_util_install "${util}" || inst_failed "Utility '${util}' not found."
-	done
-
-	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
+	local OPTIND file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
 		upd_channel='' req_upd_channel='' force_upd_channel=''
 
 	IGNORE_CACHE=
@@ -1336,6 +1372,9 @@ fetch_and_install()
 		[ "${DO_DIALOGS}" = 1 ] && [ "${REPLY}" = y ] || exit 0
 
 		clean_env_install
+		# for compatibility with older versions
+		set +o pipefail
+		set +f
 		. "${ABL_SERVICE_PATH}" || return 1
 		start
 		exit ${?}
@@ -1346,7 +1385,9 @@ fetch_and_install()
 		[ "$REPLY" = y ]
 	then
 		clean_env_install
-		set +o pipefail # for compatibility with older versions
+		# for compatibility with older versions
+		set +o pipefail
+		set +f
 		# shellcheck source=/dev/null
 		. "${ABL_SERVICE_PATH}"
 		setup
@@ -1360,25 +1401,14 @@ fetch_and_install()
 
 set_ansi_install
 
-# Test process substitution support
-printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
-/bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null ||
-{
-	rm -f /tmp/abl-test
-	inst_failed "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
-}
-rm -f /tmp/abl-test
-
-dnsmasq --help | grep -qe "--conf-script" ||
-	inst_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
-
-
 export ABL_IN_INSTALL=1
 [ -s "${ABL_SERVICE_PATH}" ] && export ABL_IS_UPDATE=1
 
 if [ -z "${INST_SOURCED}" ]
 then
+	set -f
 	fetch_and_install "${@}"
 else
 	:
 fi
+
