@@ -31,24 +31,20 @@ sch_is_cmd() {
 	is_cmd "${@}"
 }
 
+sch_job_term_ppid() {
+	term_ppid "${@}"
+}
+
+sch_has_f() {
+	has_f
+}
+
 sch_tr_leading() {
 	sch_check_name "var" "${1}" &&
 	tr_leading "${@}"
 }
 
-sch_tr_trailing() {
-	sch_check_name "var" "${1}" &&
-	tr_trailing "${@}"
-}
-
 # --- Unmodified code from upstream below
-
-sch_has_f() {
-	case "${-}" in
-		*f*) return 0 ;;
-		*) return 1
-	esac
-}
 
 # Look up PID of a job in list of '<pid>:<job ID>' entries
 # 1: out var
@@ -95,11 +91,11 @@ sch_get_uid() {
 }
 
 sch_check_name() {
-	local scn_pfx="SCH_JOB_PARAMS_${#SCHED_ID}_${SCHED_ID}_" scn_max_len=2020
+	local pfx="SCH_JOB_PARAMS_${#SCHED_ID}_${SCHED_ID}_" max_len=2020
 
-	[ "${1}" = var ] && scn_max_len=$((scn_max_len + ${#scn_pfx}))
+	[ "${1}" = var ] && max_len=$((max_len + ${#pfx}))
 
-	[ "${#2}" -le "${scn_max_len}" ] &&
+	[ "${#2}" -le "${max_len}" ] &&
 	case "${2}" in
 		''|*[!a-zA-Z0-9_]*) false ;;
 		*) : ;;
@@ -130,13 +126,18 @@ sch_check_var_name() {
 }
 
 # 1: caller
+# any extra args attached to err msg
 sch_in_main_process() {
-	local sip_uid
-	sch_get_uid sip_uid &&
-	[ "${sip_uid}" = "${SCHED_UID}" ] &&
-	eval "[ -n \"\${SCH_STARTED_${sip_uid}}\" ]" &&
+	local uid arg args caller="${1}"
+	sch_get_uid uid &&
+	[ "${uid}" = "${SCHED_UID}" ] &&
+	eval "[ -n \"\${SCH_STARTED_${uid}}\" ]" &&
 		return 0
-	sch_fail_msg "${1}: SCHED_UID is not set or scheduler is not running in this process."
+	[ "${#}" -ge 1 ] && shift
+	for arg in "${@}"; do
+		args="${args}${args:+, }'${arg}'"
+	done
+	sch_fail_msg "${caller}: Scheduler is not running in this process or SCHED_UID '${SCHED_UID}' doesn't match this process UID '${uid}'.${args:+" args: ${args}"}"
 	return 1
 }
 
@@ -155,7 +156,7 @@ sch_finalize() {
 		IFS=" "$'\t'$'\n' \
 		sch_rv="${1}"
 
-	sch_in_main_process "${sch_me}" ||
+	sch_in_main_process "${sch_me}" "${@}" ||
 		return "${sch_rv:-1}"
 
 	unset "SCH_STARTED_${SCHED_UID}"
@@ -242,7 +243,6 @@ sch_run_done_cb() {
 	sch_has_f && sch_had_f=1
 	set -f
 
-	# 'local' with invalid name aborts busybox ash
 	for sch_p in ${sch_names}; do
 		sch_check_var_name "${sch_p}" "${sch_me}" || { sch_names=; break; }
 	done
@@ -271,7 +271,7 @@ sch_read_rec() {
 		IFS= read -t 0 -r _ < "${srr_fifo}" &&
 			IFS= read -t 1 -r srr_tail < "${srr_fifo}"
 
-		[ -n "${BASH_VERSION}" ] || [ -n "${srr_rec}" ] || srr_tail=
+		[ -n "${BASH_VERSION}" ] || [ -n "${SHED_VERSION}" ] || [ -n "${srr_rec}" ] || srr_tail=
 
 		srr_rec="${srr_rec}${srr_tail}"
 		[ -n "${srr_rec}" ] || return 1
@@ -440,88 +440,6 @@ sch_term_run() {
 }
 
 #
-# Job termination functions
-#
-
-# Job termination callback (ppid-walk mechanism)
-# Args: job PIDs
-sched_job_term_mini() {
-	local \
-		me=sched_job_term_mini \
-		sjt_had_f \
-		sjt_p sjt_seeds sjt_all sjt_prev sjt_found sjt_try
-
-	sjt_seeds=
-	for sjt_p in "${@}"; do
-		sch_is_uint "${sjt_p}" ||
-			{ sch_fail_msg "${me}: ignoring invalid PID '${sjt_p}'."; continue; }
-		sch_append sjt_seeds "${sjt_p}"
-	done
-	[ -n "${sjt_seeds}" ] || return 0
-
-	# Freeze, re-scan to fixpoint, kill
-	sjt_all="${sjt_seeds}"
-	sjt_prev=
-
-	sch_has_f && sjt_had_f=1
-	set -f
-
-	for sjt_try in 1 2 3; do
-		kill -STOP ${sjt_all} 2>/dev/null
-
-		# Get all live descendant PIDs (space-separated, seeds excluded).
-		sjt_found="$(
-			set +f
-			cat /proc/[0-9]*/stat 2>/dev/null | {
-				set -f
-				# shellcheck disable=SC2016
-				${SCHED_AWK_CMD:-awk} -v seeds="${sjt_all}" '
-				/^[0-9]+ \(/ {
-					pid = $1
-					s = $0
-					# Strip "pid (comm) X " (X = single state char).
-					# comm may contain spaces and parens - the greedy match handles those;
-					#   a line that does not match is a fragment of a newline-containing comm - skip
-					if (!sub(/^[0-9]+ \(.*\) . /, "", s)) next
-					split(s, f, " ")
-					if (f[1] !~ /^[0-9]+$/) next
-					ppid[pid] = f[1]
-					valid++
-				}
-				END {
-					if (!valid) exit 1
-					n = split(seeds, a, " ")
-					for (i = 1; i <= n; i++)
-						if (a[i] ~ /^[0-9]+$/) {
-							seed[a[i]] = 1
-							want[a[i]] = 1
-						}
-					do {
-						changed = 0
-						for (p in ppid)
-							if (!(p in want) && (ppid[p] in want)) { want[p] = 1; changed = 1 }
-					} while (changed)
-					for (p in want) if (!(p in seed)) printf "%s ", p
-				}'
-			}
-		)" || {
-			sch_fail_msg "${me}: /proc scan failed."
-			break
-		}
-
-		sch_append sjt_all "${sjt_found}"
-		sch_tr_trailing sjt_all " "
-		[ "${sjt_all}" = "${sjt_prev}" ] && break
-		sjt_prev="${sjt_all}"
-	done
-
-	kill -KILL ${sjt_all} 2>/dev/null
-
-	[ -n "${sjt_had_f}" ] || set +f
-	:
-}
-
-#
 # User-facing functions
 #
 
@@ -556,7 +474,7 @@ schedule_jobs() {
 		[ -z "${val}" ] && [ -z "${3}" ] && return 0
 		sch_is_uint "${val}" && [ "${val}" -ge 1 ] ||
 			{ sch_fail_msg "Invalid value '${val}' of env var SCHED_${1#SCH_}."; return 1; }
-		sch_tr_leading val "0"
+		sch_tr_leading val "${val}" "0"
 		export -n "${1}=${val}"
 	}
 
@@ -582,8 +500,8 @@ schedule_jobs() {
 		sch_run_n \
 		sch_dir="/tmp" \
 		\
-		SCH_RUNNING_JOBS_CNT=0 \
 		SCH_IPC_FIFO \
+		SCH_RUNNING_JOBS_CNT=0 \
 		SCH_HAD_F \
 		SCH_REMAIN_TIME_CS \
 		SCH_INIT_UPTIME_CS \
@@ -612,7 +530,7 @@ schedule_jobs() {
 
 	sch_has_f && SCH_HAD_F=1
 
-	[ -n "${SCHED_AUTO_JOB_TERM}" ] && JOB_TERM_CB=sched_job_term_mini
+	[ -n "${SCHED_AUTO_JOB_TERM}" ] && JOB_TERM_CB=sch_job_term_ppid
 
 	# Check callbacks
 	sch_check_cb SCHED_FAIL_MSG_CB &&
@@ -754,37 +672,37 @@ schedule_jobs() {
 jobs_init() {
 	local \
 		IFS=" "$'\t'$'\n' \
-		sch_had_f \
-		sch_cur_params \
-		sch_param \
-		sch_job_id \
-		sch_ns \
-		sch_rv=0
+		had_f \
+		cur_params \
+		param \
+		job_id \
+		ns \
+		rv=0
 
 	# Resolved before any name is built: 'unset' with an invalid name aborts busybox ash
-	sch_get_ns sch_ns "jobs_init" || return 1
+	sch_get_ns ns "jobs_init" || return 1
 
-	sch_has_f && sch_had_f=1
+	sch_has_f && had_f=1
 	set -f
 
 	#shellcheck disable=SC2048
-	for sch_job_id in ${*}; do
-		sch_check_name "job ID" "${sch_job_id}" "jobs_init" ||
-			{ sch_rv=1; break; }
-		eval "sch_cur_params=\"\${SCH_JOB_PARAMS_${sch_ns}${sch_job_id}}\""
+	for job_id in ${*}; do
+		sch_check_name "job ID" "${job_id}" "jobs_init" ||
+			{ rv=1; break; }
+		eval "cur_params=\"\${SCH_JOB_PARAMS_${ns}${job_id}}\""
 
-		for sch_param in ${sch_cur_params}; do
-			case "${sch_param}" in
+		for param in ${cur_params}; do
+			case "${param}" in
 				''|*[!a-zA-Z0-9_]*) continue ;;
 			esac
-			unset "SCH_JOB_PARAM_${sch_ns}${#sch_job_id}_${sch_job_id}_${sch_param}"
+			unset "SCH_JOB_PARAM_${ns}${#job_id}_${job_id}_${param}"
 		done
-		unset "SCH_JOB_PARAMS_${sch_ns}${sch_job_id}" \
-			"SCH_TIMEOUT_JOB_${sch_ns}${sch_job_id}"
+		unset "SCH_JOB_PARAMS_${ns}${job_id}" \
+			"SCH_TIMEOUT_JOB_${ns}${job_id}"
 	done
 
-	[ -n "${sch_had_f}" ] || set +f
-	return "${sch_rv}"
+	[ -n "${had_f}" ] || set +f
+	return "${rv}"
 }
 
 # 1: job ID
@@ -896,36 +814,36 @@ job_set_timeout() {
 		sch_fail_msg "${sch_me}: invalid timeout value '${sch_val}' for job '${sch_job_id}'."
 		return 1
 	}
-	sch_tr_leading sch_val "0"
+	sch_tr_leading sch_val "${sch_val}" "0"
 	export -n "SCH_TIMEOUT_JOB_${sch_ns}${sch_job_id}=${sch_val}"
 }
 
 jobs_abort() {
 	local \
-		sch_me=jobs_abort \
+		me=jobs_abort \
 		IFS=" "$'\t'$'\n' \
-		sch_job_id sch_job_pid sch_kill_pids
+		job_id job_pid kill_pids
 
 	# guard against calls from DO_JOB_CB, SCHED_FINALIZE_CB or outside the scheduler
-	sch_in_main_process "${sch_me}" || return 1
+	sch_in_main_process "${me}" "${@}" || return 1
 
-	for sch_job_id in "${@}"; do
-		sch_check_name "job ID" "${sch_job_id}" "${sch_me}" || continue
-		sch_is_included "${sch_job_id}" "${SCH_JOB_IDS}" || { sch_fail_msg "${sch_me}: unknown job ID '${sch_job_id}'."; continue; }
+	for job_id in "${@}"; do
+		sch_check_name "job ID" "${job_id}" "${me}" || continue
+		sch_is_included "${job_id}" "${SCH_JOB_IDS}" || { sch_fail_msg "${me}: unknown job ID '${job_id}'."; continue; }
 		# Not dispatched yet: stays undispatched rather than aborted - outcome matters more than cause
-		if sch_is_included "${sch_job_id}" "${SCH_PENDING_IDS}"; then
-			sch_rm_elem SCH_PENDING_IDS "${sch_job_id}" "${SCH_PENDING_IDS}"
-		elif sch_pid_of_id sch_job_pid "${sch_job_id}" "${SCH_RUNNING}"; then
-			sch_rm_elem SCH_RUNNING "${sch_job_pid}:${sch_job_id}" "${SCH_RUNNING}"
+		if sch_is_included "${job_id}" "${SCH_PENDING_IDS}"; then
+			sch_rm_elem SCH_PENDING_IDS "${job_id}" "${SCH_PENDING_IDS}"
+		elif sch_pid_of_id job_pid "${job_id}" "${SCH_RUNNING}"; then
+			sch_rm_elem SCH_RUNNING "${job_pid}:${job_id}" "${SCH_RUNNING}"
 			[ -n "${SCH_DEADLINES}" ] &&
-				sch_deadline_rm_id SCH_DEADLINES "${sch_job_id}" "${SCH_DEADLINES}"
+				sch_deadline_rm_id SCH_DEADLINES "${job_id}" "${SCH_DEADLINES}"
 			SCH_RUNNING_JOBS_CNT=$((SCH_RUNNING_JOBS_CNT - 1))
-			sch_append SCH_UNREAPED "${sch_job_pid}:${sch_job_id}"
-			sch_append SCH_ABORTED_IDS "${sch_job_id}"
-			[ -n "${JOB_TERM_CB}" ] && sch_append sch_kill_pids "${sch_job_pid}"
+			sch_append SCH_UNREAPED "${job_pid}:${job_id}"
+			sch_append SCH_ABORTED_IDS "${job_id}"
+			[ -n "${JOB_TERM_CB}" ] && sch_append kill_pids "${job_pid}"
 		fi
 	done
-	[ -n "${sch_kill_pids}" ] || return 0
-	sch_term_run ${sch_kill_pids}
+	[ -n "${kill_pids}" ] || return 0
+	sch_term_run ${kill_pids}
 	:
 }

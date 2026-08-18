@@ -33,15 +33,6 @@ tolower()
 	export -n "${1}=${tl_str}"
 }
 
-trim_spaces()
-{
-	local tr_in tr_out
-	eval "tr_in=\"\${$1}\""
-	tr_out="${tr_in%"${tr_in##*[! 	]}"}"
-	tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
-	export -n "${1}=${tr_out}"
-}
-
 try_mv()
 {
 	local mv_q=
@@ -263,26 +254,26 @@ disable_hotplug_script()
 
 do_create_addnmounts()
 {
-	create_addnmount() { uci add_list "dhcp.@dnsmasq[${1}].addnmount=${2}"; }
 	process_addnm()
 	{
-		local missing_addnm index indexes="${1}" req_addnm="${2}"
-		check_addnmounts missing_addnm "${indexes}" "${req_addnm}" || return 1
-		for index in ${indexes}
+		local missing_addnm instance \
+			instances="${1}" req_addnm="${2}"
+		check_addnmounts missing_addnm "${instances}" "${req_addnm}" || return 1
+		for instance in ${instances}
 		do
-			add2list "req_addnm_${index}" "${req_addnm}" "${_NL_}"
+			add2list "req_addnm_${instance}" "${req_addnm}" "${_NL_}"
 		done
 		[ -z "${missing_addnm}" ] || is_included "${missing_addnm}" "${all_missing_addnm}" "${_NL_}" && return 0
 		add2list all_missing_addnm "${missing_addnm}" "${_NL_}"
-		all_missing_addnm_pr="${all_missing_addnm_pr}${all_missing_addnm_pr:+"${_NL_}"}${lblue}${missing_addnm}${n_c} (required for ${3})"
+		abl_append all_missing_addnm_pr "${lblue}${missing_addnm}${n_c} (required for ${3})" "${_NL_}"
 	}
 
 	local me=create_addnmounts \
 		IFS="${DEFAULT_IFS}" \
 		REPLY \
 		conf_dirs \
-		index dnsmasq_indexes all_dnsmasq_indexes \
-		req_addnm_index \
+		instance dmsq_instances all_dmsq_instances \
+		req_addnm_instance \
 		\
 		set_id \
 		bl_full_fname \
@@ -298,14 +289,14 @@ do_create_addnmounts()
 		add_list_failed \
 		path
 
-	# reset req_addnm_${index} vars, compile list of indexes
+	# reset req_addnm_${instance} vars, compile list of instances
 	for set_id in ${SET_IDS:?}
 	do
-		get_params -f "${me}" "${set_id}" dnsmasq_indexes || return 1
-		for index in ${dnsmasq_indexes}
+		get_params -f "${me}" "${set_id}" dmsq_instances || return 1
+		for instance in ${dmsq_instances}
 		do
-			local "req_addnm_${index}=" &&
-			add2list all_dnsmasq_indexes "${index}"
+			local "req_addnm_${instance}=" &&
+			add2list all_dmsq_instances "${instance}"
 		done
 	done
 
@@ -313,12 +304,12 @@ do_create_addnmounts()
 	for set_id in ${SET_IDS:?}
 	do
 		path_ram='' ignore_paths=''
-		get_params -f "${me}" "${set_id}" dnsmasq_indexes conf_dirs &&
+		get_params -f "${me}" "${set_id}" dmsq_instances conf_dirs &&
 		get_params "${set_id}" persist_mode persist_dir &&
 		get_compr_util_spec cra_compr_util_path cra_compr_ext "${compression_util:?}" || return 1
 
 		# Logger
-		process_addnm "${dnsmasq_indexes}" "${LOG_CMD}" "logging failed attempts by dnsmasq to load the blockset" || return 1
+		process_addnm "${dmsq_instances}" "${LOG_CMD}" "logging failed attempts by dnsmasq to load the blockset" || return 1
 
 		bl_full_fname=${BLOCKSET_BASE_FNAME:?}-${set_id}${cra_compr_ext}
 
@@ -326,14 +317,14 @@ do_create_addnmounts()
 		if [ -n "${cra_compr_ext}" ]
 		then
 			path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-			process_addnm "${dnsmasq_indexes}" "${cra_compr_util_path%% *}${_NL_}${path_ram}" "final blockset compression" || return 1
+			process_addnm "${dmsq_instances}" "${cra_compr_util_path%% *}${_NL_}${path_ram}" "final blockset compression" || return 1
 		fi
 
 		# Multiple dnsmasq instances
-		case "${dnsmasq_indexes}" in
-			*[0-9]*" "*[0-9]*)
+		case "${dmsq_instances}" in
+			*[0-9a-zA-Z_]*[" 	"]*[0-9a-zA-Z_]*)
 				path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
-				process_addnm "${dnsmasq_indexes}" "${path_ram}" "final blockset compression or blockset loading by multiple dnsmasq instances" || return 1 ;;
+				process_addnm "${dmsq_instances}" "${path_ram}" "final blockset compression or blockset loading by multiple dnsmasq instances" || return 1 ;;
 			*)
 				first_conf_dir="${conf_dirs%% *}"
 				is_valid_dir "${first_conf_dir}" || return 1
@@ -355,7 +346,7 @@ do_create_addnmounts()
 			is_included "${path_ram}" "${ignore_paths}" "${_NL_}" ||
 				ram_addnm="${_NL_}${path_ram}"
 			[ -n "${cra_compr_ext}" ] || cat_addnm="${_NL_}${CAT_CMD}"
-			process_addnm "${dnsmasq_indexes}" "${persist_dir}${ram_addnm}${cat_addnm}" "persistent blockset functionality" || return 1
+			process_addnm "${dmsq_instances}" "${persist_dir}${ram_addnm}${cat_addnm}" "persistent blockset functionality" || return 1
 		}
 	done
 
@@ -377,21 +368,22 @@ do_create_addnmounts()
 	fi
 	[ "${REPLY}" = y ] || return 0
 
-	del_addnmounts "${all_dnsmasq_indexes}"
+	del_addnmounts "${all_dmsq_instances}"
 	case ${?} in 0|3) : ;; *) false; esac &&
 
 	## Create addnmounts
-	for index in ${all_dnsmasq_indexes}
+	for instance in ${all_dmsq_instances}
 	do
-		eval "req_addnm_index=\"\${req_addnm_${index}}\""
-		[ -n "${req_addnm_index}" ] || continue
+		eval "req_addnm_instance=\"\${req_addnm_${instance}}\""
+		[ -n "${req_addnm_instance}" ] || continue
 
-		log_msg "" "Creating addnmount entries for dnsmasq instance ${index}:${_NL_}${blue}${req_addnm_index}${n_c}"
+		log_msg "" "Creating addnmount entries for dnsmasq instance '${instance}':${_NL_}${blue}${req_addnm_instance}${n_c}"
 		IFS="${_NL_}"
-		for path in ${req_addnm_index}
+		for path in ${req_addnm_instance}
 		do
 			IFS="${DEFAULT_IFS}"
-			create_addnmount "${index}" "${path}" || { add_list_failed=1; break 2; }
+			uci add_list "dhcp.${instance}.addnmount=${path}" ||
+				{ add_list_failed=1; break 2; }
 		done
 		IFS="${DEFAULT_IFS}"
 	done &&
@@ -404,9 +396,9 @@ do_create_addnmounts()
 		return 1
 	}
 
-	unset ADDNMOUNTS_SET DHCP_LOADED
-	DDI_FORCE=1 detect_dnsmasq_instances &&
-	check_dnsmasq_instances || return 1
+	unset C_PROCESSED
+	parse_dmsq_cfg &&
+	check_dmsq_instances || return 1
 
 	:
 }
@@ -479,7 +471,7 @@ do_setup()
 					get_pkg_name pkg_name "${util}" || return 1
 					add2list missing_utils "${util}"
 					add2list missing_packages "${orange}${pkg_name}${n_c}" ", "
-					missing_utils_print="${missing_utils_print}${missing_utils_print:+, }${lblue}GNU ${util}${n_c}"
+					abl_append missing_utils_print "${lblue}GNU ${util}${n_c}" ", "
 			esac
 		done
 
@@ -509,7 +501,7 @@ do_setup()
 				REPLY=n
 				if [ "${DO_DIALOGS}" = 1 ]
 				then
-					eval "util_size_B=\"\${${util}_size_B}\""
+					set_int "util_size_B = ${util}_size_B"
 					bytes2human util_size_human "${util_size_B}" || return 1
 					print_msg "Would you like to install ${lblue}GNU ${util}${n_c} automatically? Installed size: ${yellow}${util_size_human}${n_c}. (y|n)"
 					pick_opt "y|n"
@@ -564,6 +556,22 @@ do_setup()
 		:
 	}
 
+	# shellcheck disable=SC2329
+	add_found_cfg()
+	{
+		local cfg_id
+		split_path _ cfg_id _  "${1}"
+		cfg_id="${cfg_id#"blockset-"}"
+		is_alphanum "${cfg_id}" ||
+		{
+			reg_failure "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Deleting the file."
+			rm -f "${1}"
+			return 0
+		}
+		abl_append bl_cfgs_found "${1}" "${_NL_}"
+	}
+
+
 	local CUR_CMD=setup
 
 	[ -f "${ABL_SERVICE_PATH}" ] || { reg_failure "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
@@ -597,24 +605,8 @@ do_setup()
 		gen_global_config || return 2
 	fi
 
-	local bl_cfgs_found='' cfg_id cfg_path
-	for cfg_path in "${ABL_CFG_DIR:?}"/blockset-*.conf
-	do
-		case "${cfg_path}" in
-			*"*"*)
-				continue ;;
-			"${ABL_CFG_DIR}"/*)
-				split_path _ cfg_id _  "${cfg_path}"
-				cfg_id="${cfg_id#"blockset-"}"
-				is_alphanum "${cfg_id}" ||
-				{
-					reg_failure "Invalid blockset name '${cfg_id}' in file '${cfg_path}'. Only English letters, numbers and underlines are allowed. Deleting the file."
-					rm -f "${cfg_path}"
-					continue
-				}
-				bl_cfgs_found="${bl_cfgs_found}${bl_cfgs_found:+"${_NL_}"}${cfg_path}"
-		esac
-	done
+	FF_EXEC=add_found_cfg find_files _ "${ABL_CFG_DIR:?}/blockset-" "*" ".conf"
+	[ ${?} = 1 ] && return 1
 
 	REPLY=
 	if [ -n "${bl_cfgs_found}" ]
@@ -634,7 +626,7 @@ do_setup()
 
 	if [ "${REPLY}" = n ]
 	then
-		do_stop
+		FORCE_STOP_ALL=1 do_stop
 		# Remove and forget old configs
 		rm -f "${META_FILE}"
 		local set_id
@@ -708,7 +700,7 @@ do_setup()
 #  9: min line count
 get_preset()
 {
-	local gp_mem gp_lists_cnt gp_entr_cnt gp_lim_coeff gp_lists gp_entr_cnt_human gp_max_part_size gp_max_bl_size gp_min_lines
+	local gp_mem gp_lists_cnt gp_entr_cnt gp_lim_coeff gp_lists gp_entr_cnt_human gp_max_part_size gp_max_set_size gp_min_entries
 
 	eval "gp_mem=\"\${${1}_mem}\"
 		gp_lists_cnt=\"\${${1}_lists_cnt}\"
@@ -722,7 +714,7 @@ get_preset()
 
 	unset_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}"
 
-	do_calculate_limits "${gp_entr_cnt}" "${gp_lists_cnt}" "${gp_lim_coeff}" gp_min_lines gp_max_bl_size gp_max_part_size || return 1
+	do_calculate_limits "${gp_entr_cnt}" "${gp_lists_cnt}" "${gp_lim_coeff}" gp_min_entries gp_max_set_size gp_max_part_size || return 1
 
 	[ -n "${GP_PRINT_DESC}" ] && print_msg "" "${purple}${1}${n_c}: recommended for devices with ${gp_mem} MB of memory."
 
@@ -732,8 +724,8 @@ get_preset()
 		print_msg "${blue}Elements count:${n_c} ~${gp_entr_cnt_human}" \
 			"${blue}raw_block_lists${n_c}=\"${gp_lists}\"" \
 			"${blue}max_part_size_KB${n_c}=\"${gp_max_part_size}\"" \
-			"${blue}max_blockset_file_size_KB${n_c}=\"${gp_max_bl_size}\"" \
-			"${blue}min_good_entries${n_c}=\"${gp_min_lines}\""
+			"${blue}max_blockset_size_KB${n_c}=\"${gp_max_set_size}\"" \
+			"${blue}min_entries${n_c}=\"${gp_min_entries}\""
 	}
 
 	export -n \
@@ -743,8 +735,8 @@ get_preset()
 		"${5:-_}=${gp_mem}" \
 		"${6:-_}=${gp_lists}" \
 		"${7:-_}=${gp_max_part_size}" \
-		"${8:-_}=${gp_max_bl_size}" \
-		"${9:-_}=${gp_min_lines}" || return 1
+		"${8:-_}=${gp_max_set_size}" \
+		"${9:-_}=${gp_min_entries}" || return 1
 	:
 }
 
@@ -766,7 +758,7 @@ do_calculate_limits()
 	reasonable_round()
 	{
 		local input factor neg me=reasonable_round
-		eval "input=\"\${${1}}\""
+		set_int "input = ${1}"
 		case "${input}" in -*) neg='-' input="${input#-}"; esac
 		input="${input#"${input%%[!0]*}"}"
 		: "${input:=0}"
@@ -782,7 +774,7 @@ do_calculate_limits()
 	}
 
 	local me=calculate_limits lists_cnt tgt_entries_cnt tgt_entries_cnt_human lim_coeff final_entry_size_B source_entry_size_B \
-		cl_min_lines cl_max_bl_size_kb cl_max_part_size_kb \
+		cl_min_entries cl_max_set_size_kb cl_max_part_size_kb \
 		tgt_entries_cnt="${1}" lists_cnt="${2}" lim_coeff="${3:-1}"
 
 	unset_vars "${4}" "${5}" "${6}"
@@ -812,19 +804,19 @@ do_calculate_limits()
 	# Values are rounded down to reasonable degree
 
 	final_entry_size_B=20 # assumption
-	source_entry_size_B=20 # assumption for raw domains format. dnsmasq source format not used by default
+	source_entry_size_B=20 # assumption for raw domains format - TODO: distinguish from hosts format
 
 	# tgt_entries_cnt / 3.5
-	cl_min_lines=$((tgt_entries_cnt*10/35))
-	reasonable_round cl_min_lines || return 1
+	cl_min_entries=$((tgt_entries_cnt*10/35))
+	reasonable_round cl_min_entries || return 1
 
 	# (tgt_entries_cnt * final_entry_size_B * lim_coeff * 1.25)/1024
-	cl_max_bl_size_kb=$(( (tgt_entries_cnt*final_entry_size_B*lim_coeff*125)/(1024*100) + 1 ))
-	reasonable_round cl_max_bl_size_kb || return 1
+	cl_max_set_size_kb=$(( (tgt_entries_cnt*final_entry_size_B*lim_coeff*125)/(1024*100) + 1 ))
+	reasonable_round cl_max_set_size_kb || return 1
 
 	if [ "${lists_cnt}" -eq 1 ]
 	then
-		cl_max_part_size_kb=${cl_max_bl_size_kb}
+		cl_max_part_size_kb=${cl_max_set_size_kb}
 	else
 		# (tgt_entries_cnt * source_entry_size_B * lim_coeff * 1.03)/1024
 		cl_max_part_size_kb=$(( (tgt_entries_cnt*source_entry_size_B*lim_coeff*103)/(1024*100) + 1 ))
@@ -838,11 +830,11 @@ do_calculate_limits()
 		[ "${lists_cnt}" = 1 ] && lists_pr=list
 		print_msg "" "Recommended values for ${lists_cnt} ${lists_pr} with ${tgt_entries_cnt_human} total entries:" \
 			"${blue}max_part_size_KB${n_c}=\"${cl_max_part_size_kb}\"" \
-			"${blue}max_blockset_file_size_KB${n_c}=\"${cl_max_bl_size_kb}\"" \
-			"${blue}min_good_entries${n_c}=\"${cl_min_lines}\""
+			"${blue}max_blockset_size_KB${n_c}=\"${cl_max_set_size_kb}\"" \
+			"${blue}min_entries${n_c}=\"${cl_min_entries}\""
 	}
 
-	export -n "${4:-_}=${cl_min_lines}" "${5:-_}=${cl_max_bl_size_kb}" "${6:-_}=${cl_max_part_size_kb}" || return 1
+	export -n "${4:-_}=${cl_min_entries}" "${5:-_}=${cl_max_set_size_kb}" "${6:-_}=${cl_max_part_size_kb}" || return 1
 	:
 }
 
@@ -863,20 +855,20 @@ print_def_cfg()
 # -i <blockset_ID>
 # (optional) -d to print with allowed value types (otherwise print without)
 # (optional) -p to print with values from preset
-# (optional) -n to print with dnsmasq_indexes
-# (optional) -c to print with dnsmasq_conf_dirs
+# (optional) -n to print with dmsq_instances
+# (optional) -c to print with dmsq_conf_dirs
 print_def_cfg_blockset()
 {
 	local me=print_def_cfg_blockset \
-		preset print_types dnsmasq_indexes dnsmasq_conf_dirs \
-		pdc_lists pdc_max_part_size pdc_max_set_size pdc_min_lines \
-		opt set_id
+		preset print_types dmsq_instances conf_dirs \
+		pdc_lists pdc_max_part_size pdc_max_set_size pdc_min_entries \
+		OPTIND opt set_id
 
 	while getopts ":i:n:c:p:d" opt; do
 		case "${opt}" in
 			i) set_id=$OPTARG ;;
-			n) dnsmasq_indexes=$OPTARG ;;
-			c) dnsmasq_conf_dirs=$OPTARG ;;
+			n) dmsq_instances=$OPTARG ;;
+			c) conf_dirs=$OPTARG ;;
 			p) preset=$OPTARG ;;
 			d) print_types=1 ;;
 			*) bad_args "${me}" "${@}" ;;
@@ -888,8 +880,8 @@ print_def_cfg_blockset()
 	: "${preset:=small}"
 	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
 
-	get_preset "${preset}" _ _ _ _ pdc_lists _ pdc_max_set_size pdc_min_lines &&
-	assert_set "F_${me}" pdc_lists pdc_max_set_size pdc_min_lines || return 1
+	get_preset "${preset}" _ _ _ _ pdc_lists pdc_max_part_size pdc_max_set_size pdc_min_entries &&
+	assert_set "F_${me}" pdc_lists pdc_max_set_size pdc_min_entries || return 1
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
 
@@ -910,11 +902,6 @@ print_def_cfg_blockset()
 	raw_allow_lists="" @ string
 	raw_ipv4_block_lists="" @ string
 
-	# One or more *dnsmasq* format [blocklist]/[ipv4 blocklist]/[allowlist] URLs and/or short list identifiers separated by spaces
-	dnsmasq_block_lists="" @ string
-	dnsmasq_allow_lists="" @ string
-	dnsmasq_ipv4_block_lists="" @ string
-
 	# One or more *hosts* format blocklist URLs and/or short list identifiers separated by spaces
 	hosts_block_lists="" @ string
 
@@ -923,6 +910,12 @@ print_def_cfg_blockset()
 	# site2.com
 	local_allowlist_path="${ABL_CFG_DIR}/local-allowlist-${set_id}" @ string
 	local_blocklist_path="${ABL_CFG_DIR}/local-blocklist-${set_id}" @ string
+
+
+	# Path to optional local *ipv4* blocklist files in the form:
+	# <ipv4_address>
+	# <ipv4_address>
+	local_ipv4_blocklist_path="${ABL_CFG_DIR}/local-ipv4-blocklist-${set_id}" @ string
 
 	# Governs whether and how persistent blockset is used
 	# 'disable' (default): persistent blockset will not be used. The blockset file will be stored on the ramdisk.
@@ -945,11 +938,14 @@ print_def_cfg_blockset()
 	# Leaving this empty will disable verification
 	test_domains="google.com microsoft.com amazon.com" @ string
 
-	# Minimum number of good lines in final postprocessed blockset
-	min_good_entries="${pdc_min_lines}" @ uint
+	# Maximum size of any downloaded blockset part
+	max_part_size_KB="${pdc_max_part_size}" @ uint
 
 	# Maximum total size of combined, processed blockset
-	max_blockset_file_size_KB="${pdc_max_set_size}" @ uint
+	max_blockset_size_KB="${pdc_max_set_size}" @ uint
+
+	# Minimum number of entries in final postprocessed blockset
+	min_entries="${pdc_min_entries}" @ uint
 
 	# If a path to custom script is specified and that script defines functions
 	# 'report_success()', 'report_failure()' or 'report_update()',
@@ -959,10 +955,10 @@ print_def_cfg_blockset()
 	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
 	custom_script="" @ string
 
-	# dnsmasq instance indexes and config directories
+	# dnsmasq instance names and config directories
 	# normally this should be set automatically by the 'setup' command
-	dnsmasq_indexes="${dnsmasq_indexes}" @ uint_list
-	dnsmasq_conf_dirs="${dnsmasq_conf_dirs}" @ string
+	dnsmasq_instances="${dmsq_instances}" @ string
+	dnsmasq_conf_dirs="${conf_dirs}" @ string
 
 	EOT
 }
@@ -970,7 +966,7 @@ print_def_cfg_blockset()
 # (optional) -d to print with allowed value types (otherwise print without)
 print_def_cfg_global()
 {
-	local me=print_def_cfg_global print_types pdc_max_part_size preset
+	local me=print_def_cfg_global print_types preset OPTIND
 	while getopts ":i:n:c:p:d" opt; do
 		case "${opt}" in
 			i|n|c) : ;; # ignore these options
@@ -982,9 +978,6 @@ print_def_cfg_global()
 
 	: "${preset:=small}"
 	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
-
-	get_preset "${preset}" _ _ _ _ _ pdc_max_part_size &&
-	assert_set "F_${me}" pdc_max_part_size || return 1
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
 
@@ -1010,11 +1003,8 @@ print_def_cfg_global()
 	min_ipv4_block_part_entries="1" @ uint
 	min_allow_part_entries="1" @ uint
 
-	# Maximum size of any individual downloaded part
-	max_part_size_KB="${pdc_max_part_size}" @ uint
-
 	# Maximum number of download retries
-	max_download_retries="3" @ uint
+	max_download_attempts="3" @ uint
 
 	# Default download mirrors
 	# Hagezi mirror: 'github' or 'gitlab'
@@ -1081,7 +1071,7 @@ do_gen_blockset_config()
 
 		for _preset in $(printf %s "${ALL_PRESETS}" | tr ' ' '\n' | ${SED_CMD} 'x;1!H;$!d;x') # loop over presets in reverse order
 		do
-			eval "_mem=\"\${${_preset}_mem}\""
+			set_int "_mem = ${_preset}_mem"
 			# multiplying by 800 rather than 1024 to account for some memory not available to the kernel
 			[ "${_totalmem}" -ge $((_mem * 800)) ] && break
 		done
@@ -1091,7 +1081,7 @@ do_gen_blockset_config()
 	}
 
 	local cnt totalmem totalmem_human preset \
-		dnsmasq_indexes conf_dirs \
+		dmsq_instances conf_dirs \
 		new_cfg\
 		set_id="${1:-"${luci_new_blockset_name}"}"
 
@@ -1155,9 +1145,9 @@ do_gen_blockset_config()
 	add2list SET_IDS "${set_id}"
 	do_select_dnsmasq_instances "${set_id}" || return 1
 
-	get_params -f gen_blockset_config "${set_id}" dnsmasq_indexes conf_dirs &&
+	get_params -f gen_blockset_config "${set_id}" dmsq_instances conf_dirs &&
 	reg_action -purple "" "Generating new blockset config ${lblue}${set_id}${n_c} from preset '${preset}'." &&
-	new_cfg="$(print_def_cfg bl -i "${set_id}" -p "${preset}" -n "${dnsmasq_indexes}" -c "${conf_dirs}")" &&
+	new_cfg="$(print_def_cfg bl -i "${set_id}" -p "${preset}" -n "${dmsq_instances}" -c "${conf_dirs}")" &&
 	confirm_cfg_write "${set_id}" &&
 	write_config bl "${set_id}" "${new_cfg}" || return 1
 
@@ -1213,8 +1203,10 @@ parse_config()
 	local me=parse_config \
 		IFS="${DEFAULT_IFS}" \
 		cfg_pr \
-		curr_config \
+		cur_config \
 		i keys entries entries_type_pr entries_pr \
+		depr_keys depr_entries \
+		depr_opts="dnsmasq_block_lists${_DELIM_}dnsmasq_allow_lists${_DELIM_}dnsmasq_ipv4_block_lists" \
 		dup_keys dup_entries \
 		unexp_keys unexp_entries \
 		missing_keys missing_entries \
@@ -1225,7 +1217,7 @@ parse_config()
 			cfg_type="${1:?}" cfg_id="${2:?}" cfg_path="${3}" fixes_out_var="${4}" replace_keys_out_var="${5}"
 
 	: "${missing_entries}" "${bad_val_entries}" "${corrected_entries}"
-	: "${dup_keys}" "${dup_entries}" "${unexp_keys}" "${unexp_entries}"
+	: "${dup_keys}" "${dup_entries}" "${unexp_keys}" "${unexp_entries}" "${depr_keys}" "${depr_entries}"
 
 	[ -n "${cfg_path}" ] || get_cfg_path cfg_path "${cfg_id}" || return 1
 
@@ -1245,11 +1237,11 @@ parse_config()
 	{
 		def_cfg_format="$(print_def_cfg global | get_config_format)" || return 1
 		export -n "luci_def_cfg_format"="${def_cfg_format}"
-		curr_cfg_format="$(get_config_format "${cfg_path}")" || return 1
-		export -n "luci_curr_cfg_format_${cfg_id}"="${curr_cfg_format}"
-		is_uint "${curr_cfg_format}" ||
+		cur_cfg_format="$(get_config_format "${cfg_path}")" || return 1
+		export -n "luci_cur_cfg_format_${cfg_id}"="${cur_cfg_format}"
+		is_uint "${cur_cfg_format}" ||
 		{
-			log_msg -warn "" "Config format version '${curr_cfg_format}' is unknown or invalid."
+			log_msg -warn "" "Config format version '${cur_cfg_format}' is unknown or invalid."
 			add_cfg_fix "Update config format version"
 			force_upd_cfg_format=1
 		}
@@ -1258,10 +1250,10 @@ parse_config()
 	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
 
 	# read and sanitize current config
-	curr_config="$(san_config "${cfg_path}")" || { reg_failure "Failed to read the ${cfg_pr}."; return 1; }
+	cur_config="$(san_config "${cfg_path}")" || { reg_failure "Failed to read the ${cfg_pr}."; return 1; }
 
 	local bad_newline=
-	case "${curr_config}" in
+	case "${cur_config}" in
 		*"${CR_LF}"*) bad_newline="Windows-style (CR_LF)" ;;
 		*"${CR}"*) bad_newline="MacOS-style (CR)" ;;
 	esac
@@ -1272,13 +1264,13 @@ parse_config()
 	}
 
 	# parse config
-	local parse_vars entry_type \
+	local parse_line parse_lines entry_type \
 		valid_lines \
 		parser_err_file="${ABL_CFG_STAGING_DIR}/parser_err" \
 		awk_err_file="${ABL_CFG_STAGING_DIR}/awk_err" \
 		inval_entry_file="${ABL_CFG_STAGING_DIR}/inval_entry"
 	rm -f "${parser_err_file}" "${awk_err_file}" "${inval_entry_file}"
-	for entry_type in unexp bad_val missing dup
+	for entry_type in unexp bad_val missing dup depr
 	do
 		rm -f "${ABL_CFG_STAGING_DIR}/${entry_type}_entries"
 	done
@@ -1286,8 +1278,8 @@ parse_config()
 	# extract valid values from default config
 	valid_lines="$(print_def_cfg "${cfg_type}" -i "${cfg_id}" -d | san_config | tr '\n' "${_DELIM_:?}")" || return 1
 
-	parse_vars="$(
-		printf '%s\n' "${curr_config}" |
+	parse_lines="$(
+		printf '%s\n' "${cur_config}" |
 		${AWK_CMD:?} -F"=" \
 			-v q="'" \
 			-v blue="${blue}" \
@@ -1297,6 +1289,7 @@ parse_config()
 			-v DELIM="${_DELIM_:?}" \
 			-v V="${valid_lines}" \
 			-v M="${CFG_MIGRATE_OPTS}" \
+			-v D="${depr_opts}" \
 			-v A="${ABL_CFG_STAGING_DIR:?}" '
 		# return codes: 0=OK, 1=awk or default config error, 253=check double-quotes, 254=Invalid entry detected
 
@@ -1390,6 +1383,10 @@ parse_config()
 				}
 			}
 
+			# Create depr_keys_arr
+			split(D,d_tmp,DELIM)
+			for (ind in d_tmp)
+				depr_keys_arr[d_tmp[ind]]
 		}
 
 		# Process user config
@@ -1422,18 +1419,26 @@ parse_config()
 			split($2,tmp,"\"")
 			val=tmp[2]
 
-			# Handle migrated keys
+			# Deprecated keys
+			if ($1 in depr_keys_arr) {
+				if (! val) next
+				depr_keys=depr_keys $1 " "
+				print $0 >> A"/depr_entries"
+				next
+			}
+
+			# Migrated keys
 			if ($1 in migrate_keys_arr) {
 				new_key=migrate_keys_arr[$1]
 				if (check_value(new_key,val) == 0)
 				{
 					config_keys[new_key]
-					print get_var_name(new_key) "=\"" val "\""
+					print get_var_name(new_key) "=" val
 					next
 				}
 			}
 
-			# Handle duplicate keys
+			# Duplicate keys
 			if ($1 in config_keys) {
 				if (IGN) next
 				dup_keys=dup_keys $1 " "
@@ -1441,7 +1446,7 @@ parse_config()
 				next
 			}
 
-			# Handle unexpected keys
+			# Unexpected keys
 			if ($1 in def_arr) {} else {
 				if (IGN) next
 				unexp_keys=unexp_keys $1 " "
@@ -1452,7 +1457,7 @@ parse_config()
 			# Register the key
 			config_keys[$1]
 
-			# Handle unexpected values
+			# Unexpected values
 			if (check_value($1,val) != 0)
 			{
 				if (IGN) next
@@ -1462,7 +1467,7 @@ parse_config()
 				next
 			}
 
-			print get_var_name($1) "=\"" val "\""
+			print get_var_name($1) "=" val
 		}
 
 		END{
@@ -1473,10 +1478,11 @@ parse_config()
 					missing_keys=missing_keys key " "
 				}
 			}
-			print "missing_keys=\"" missing_keys "\" " \
-				"unexp_keys=\"" unexp_keys "\" " \
-				"dup_keys=\"" dup_keys "\" " \
-				"bad_val_keys=\"" bad_val_keys "\" "
+			print "missing_keys=" missing_keys
+			print "unexp_keys=" unexp_keys
+			print "dup_keys=" dup_keys
+			print "depr_keys=" depr_keys
+			print "bad_val_keys=" bad_val_keys
 			exit rv
 		}'
 	)" &&
@@ -1500,11 +1506,17 @@ parse_config()
 
 	rm -f "${parser_err_file}"
 
-	eval "${parse_vars}" ||
-	{
-		reg_failure "Failed to parse ${cfg_pr}."
-		return 3
-	}
+	debug_msg "" "parse_lines:" "${parse_lines}" ""
+
+	# Parse config lines into vars
+	IFS="${_NL_}"
+	for parse_line in ${parse_lines}
+	do
+		[ -n "${parse_line}" ] || continue
+		IFS="${DEFAULT_IFS}"
+		export -n "${parse_line?}" || { reg_failure "Failed to parse '${parse_line}'"; return 3; }
+	done
+	IFS="${DEFAULT_IFS}"
 
 	# remove trailing '/' from dir path
 	[ "${cfg_id}" = global ] ||
@@ -1518,8 +1530,9 @@ parse_config()
 
 	for i in \
 		"bad_val||Replace unexpected values with defaults" \
-		"dup|Duplicate|Remove duplicate entries from the config" \
-		"unexp|Unexpected|Remove unexpected entries from the config" \
+		"depr|Deprecated|Remove deprecated entries from config" \
+		"dup|Duplicate|Remove duplicate entries from config" \
+		"unexp|Unexpected|Remove unexpected entries from config" \
 		"missing|Missing|Add missing config entries with default values"
 	do
 		entry_type="${i%%|*}"
@@ -1554,9 +1567,9 @@ parse_config()
 
 	p_cfg_fixes="${p_cfg_fixes%$'\n'}"
 
-	if [ -z "${p_cfg_fixes}" ] && [ -z "${force_upd_cfg_format}" ] && [ "${curr_cfg_format}" != "${def_cfg_format}" ]
+	if [ -z "${p_cfg_fixes}" ] && [ -z "${force_upd_cfg_format}" ] && [ "${cur_cfg_format}" != "${def_cfg_format}" ]
 	then
-		log_msg -yellow "" "Current config format version '${curr_cfg_format}' differs from default config version '${def_cfg_format}'."
+		log_msg -yellow "" "Current config format version '${cur_cfg_format}' differs from default config version '${def_cfg_format}'."
 		add_cfg_fix "Update config format version"
 	fi
 
@@ -1707,11 +1720,11 @@ get_cfg_type()
 
 # 1: config type
 # 2: config ID
-# 3: keys to replace (whitespace-separated)
+# 3: keys to replace (space-separated)
 fix_config()
 {
 	local var_suffix \
-		dnsmasq_indexes conf_dirs \
+		dmsq_instances conf_dirs \
 		fixed_cfg \
 		bk_prefix \
 		cfg_type \
@@ -1722,14 +1735,14 @@ fix_config()
 
 	[ "${cfg_type}" = global ] || var_suffix="_${cfg_id}"
 
-	if is_included dnsmasq_indexes "${replace_keys}" || is_included dnsmasq_conf_dirs "${replace_keys}"
+	if is_included dnsmasq_instances "${replace_keys}" || is_included dnsmasq_conf_dirs "${replace_keys}"
 	then
 		do_select_dnsmasq_instances "${cfg_id}" || return 1
 	fi
 
 	[ "${cfg_type}" = bl ] &&
 	{
-		get_params "${cfg_id}" dnsmasq_indexes conf_dirs
+		get_params "${cfg_id}" dmsq_instances conf_dirs
 		bk_prefix="blockset-"
 	}
 
@@ -1750,10 +1763,10 @@ fix_config()
 
 	# recreate config from default while replacing values with values from the existing config
 	fixed_cfg="$(
-		print_def_cfg "${cfg_type}" -i "${cfg_id}" -n "${dnsmasq_indexes}" -c "${conf_dirs}" |
+		print_def_cfg "${cfg_type}" -i "${cfg_id}" -n "${dmsq_instances}" -c "${conf_dirs}" |
 		while IFS="${_NL_}" read -r def_line
 		do
-			curr_val=
+			cur_val=
 			case "${def_line}" in
 				\#*|'') printf '%s\n' "${def_line}"; continue ;;
 				*=*)
@@ -1764,8 +1777,8 @@ fix_config()
 						continue
 					fi
 
-					eval "curr_val=\"\${${key}${var_suffix}}\""
-					printf '%s\n' "${key}=\"${curr_val}\""
+					eval "cur_val=\"\${${key}${var_suffix}}\""
+					printf '%s\n' "${key}=\"${cur_val}\""
 					continue
 			esac
 		done
@@ -1861,8 +1874,7 @@ get_abl_version()
 	# Requires adblock-lean v0.7.3 and later (config format 9 or higher)
 	if \
 		cfg_format="$(get_config_format "${1}")" &&
-		is_uint "${cfg_format}" &&
-		[ "${cfg_format}" -ge 9 ] &&
+		is_gr_eq 9 "${cfg_format}" &&
 		grep -q '^\s*ABL_UPD_CHANNEL=' "${1}" &&
 		get_ver_str gv_upd_ch gv_ver "${1}"
 	then
@@ -1882,9 +1894,9 @@ get_abl_version()
 # 3 - automatic updates check is disabled for current update channel
 check_for_updates()
 {
-	local tarball_url curr_ver upd_ver upd_channel no_upd
+	local tarball_url cur_ver upd_ver upd_channel no_upd
 	unset UPD_AVAIL UPD_DIRECTIONS
-	get_abl_version "${ABL_SERVICE_PATH}" curr_ver upd_channel
+	get_abl_version "${ABL_SERVICE_PATH}" cur_ver upd_channel
 	case "${upd_channel}" in
 		release|latest|snapshot|branch=*) ;;
 		commit) no_upd="was installed from a specific Git commit" ;;
@@ -1907,12 +1919,12 @@ check_for_updates()
 		return 2
 	}
 
-	if [ "${upd_ver}" = "${curr_ver}" ]
+	if [ "${upd_ver}" = "${cur_ver}" ]
 	then
 		reg_msg "The locally installed adblock-lean is the latest version."
 		return 0
 	else
-		local upd_details="(update channel: ${upd_channel}, installed: '${curr_ver}', latest: '${upd_ver}')"
+		local upd_details="(update channel: ${upd_channel}, installed: '${cur_ver}', latest: '${upd_ver}')"
 		UPD_DIRECTIONS="Consider running: 'service adblock-lean update' to update it to the latest version."
 		export -n UPD_AVAIL_MSG="adblock-lean update is available ${upd_details}"
 		reg_msg -2 -yellow "The locally installed adblock-lean seems to be outdated ${upd_details}."

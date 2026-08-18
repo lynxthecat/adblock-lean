@@ -1229,7 +1229,7 @@ fetch_and_install()
 
 	set -o pipefail
 
-	local file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
+	local OPTIND file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
 		upd_channel='' req_upd_channel='' force_upd_channel=''
 
 	IGNORE_CACHE=

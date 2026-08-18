@@ -8,7 +8,7 @@ META_FILE="${ABL_RUN_DIR}/${META_FNAME}"
 META_PARAMS="PATH SINGLE_INSTANCE MD5 CNT"
 META_PARAMS_PERSIST="PATH MD5 CNT"
 
-IP_REGEX_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
+IP_REGEX_4='((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])'
 IP_REGEX_6='([0-9a-f]{0,4})(:[0-9a-f]{0,4}){2,7}'
 
 VAR2CFG_MAP="$(
@@ -18,19 +18,18 @@ VAR2CFG_MAP="$(
 		raw_block_lists
 		raw_allow_lists
 		raw_ipv4_block_lists
-		dnsmasq_block_lists
-		dnsmasq_allow_lists
-		dnsmasq_ipv4_block_lists
 		hosts_block_lists
 		local_allowlist_path
 		local_blocklist_path
+		local_ipv4_blocklist_path
 		persist_mode=persist_blockset_mode
 		persist_dir=persist_blockset_dir
 		test_domains
-		min_good_entries
-		max_blockset_file_size_KB
+		max_part_size=max_part_size_KB
+		max_set_size=max_blockset_size_KB
+		min_entries
 		custom_script
-		dnsmasq_indexes
+		dmsq_instances=dnsmasq_instances
 		conf_dirs=dnsmasq_conf_dirs
 	" |
 	${AWK_CMD:?} '{$1=$1; split($0,a,"="); if (!a[1]) next; if (!a[2]) a[2] = a[1]; print a[1] "=" a[2]}'
@@ -44,15 +43,14 @@ BL_PARAMS_MAP="
 	bk_file=BK_FILE
 	bk_cnt=BK_CNT
 	bk_ext=BK_EXT
-	curr_persist_path=PERSIST_PATH
-	curr_persist_cnt=PERSIST_CNT
-	curr_persist_md5=PERSIST_MD5
-	curr_path=PATH
-	curr_md5=MD5
-	curr_cnt=CNT
-	curr_single_instance=SINGLE_INSTANCE
+	cur_persist_path=PERSIST_PATH
+	cur_persist_cnt=PERSIST_CNT
+	cur_persist_md5=PERSIST_MD5
+	cur_path=PATH
+	cur_md5=MD5
+	cur_cnt=CNT
+	cur_1_instance=SINGLE_INSTANCE
 	install_path=INSTALL_PATH
-	install_md5=INSTALL_MD5
 	install_cnt=INSTALL_CNT
 	install_path_ram=INSTALL_PATH_RAM
 	install_1_instance=INSTALL_SINGLE_INSTANCE
@@ -234,20 +232,30 @@ try_extract()
 	${cmd} ${opts} "${te_file}" ||
 
 	{
-		[ -n "${stdout}" ] || rm_if_writable "${te_set_id}" "${te_fname}"*
+		[ -n "${stdout}" ] || rm_if_writable "${te_file}" # removes src and dest files
 		reg_failure "try_extract: ${te_err}${te_err:+ }Failed to extract '${te_file}'."
 		return 1
 	}
 }
 
+detect_all_ifaces()
+{
+	[ -n "${ALL_IFACES}" ] && return 0
+	ALL_IFACES="$(${SED_CMD:?} -n '/^\s*[^\s]*:/{s/^\s*//;s/:.*//p}' < /proc/net/dev | tr '\n' ' ')" &&
+	trim_spaces ALL_IFACES &&
+	[ -n "${ALL_IFACES}" ] &&
+		return 0
+	reg_failure "Failed to detect network interfaces."
+	return 1
+}
+
 
 ### dnsmasq support implementation
 
-# Sets blockset-specific dnsmasq context
-# Verifies that configured dnsmasq instances are running and that their indexes and conf-dirs match the config
+# Verifies that configured dnsmasq instances are running and that their names and conf-dirs match the config
 #
 # 1 - (optional) '-q' to quiet
-check_dnsmasq_instances()
+check_dmsq_instances()
 {
 	cdi_fatal() {
 		CDI_FATAL=1
@@ -262,23 +270,28 @@ check_dnsmasq_instances()
 
 	what_failed()
 	{
-		local set_id index dnsmasq_indexes cfg_opt _fail_ind _fail_sets
+		local set_id instance dmsq_instances cfg_opt _fail_ind _fail_sets
 		unset_vars "${1}" "${2}"
 		for set_id in ${SET_IDS}
 		do
-			get_params "${set_id}" dnsmasq_indexes
-			[ -n "${dnsmasq_indexes}" ] ||
-				{ get_cfg_opt cfg_opt "dnsmasq_indexes"; cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"; cdi_fatal "${set_id}"; return 1; }
+			get_params "${set_id}" dmsq_instances
+			[ -n "${dmsq_instances}" ] ||
+				{
+					get_cfg_opt cfg_opt dmsq_instances
+					cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"
+					cdi_fatal "${set_id}"
+					return 1
+				}
 
-			for index in ${dnsmasq_indexes}
+			for instance in ${dmsq_instances}
 			do
-				eval "[ \"\${RUNNING_${index}}\" = 1 ]" && continue
-				add2list _fail_ind "${index}"
+				eval "[ \"\${RUNNING_${instance}}\" = 1 ]" && continue
+				add2list _fail_ind "${instance}"
 				add2list _fail_sets "${set_id}"
 			done
 		done
 		[ -n "${_fail_ind}" ] &&
-		cdi_fail "dnsmasq instances with indexes '${_fail_ind//" "/"', '"}' are not running."
+		cdi_fail "dnsmasq instances '${_fail_ind//" "/"', '"}' are not running."
 		export -n "${1}=${_fail_ind}" "${2}=${_fail_sets}"
 		:
 	}
@@ -287,36 +300,39 @@ check_dnsmasq_instances()
 	[ -n "${SET_IDS}" ] || return 0
 	[ -n "${CDI_FATAL}" ] && return 1
 
-	local me=check_dnsmasq_instances \
-		quiet instance index dir \
+	local me=check_dmsq_instances \
+		quiet instance dir \
 		set_id \
 		instance_conf_dirs conf_dir_reg \
 		conf_dirs \
 		all_bl_conf_dirs \
-		dnsmasq_indexes \
-		failed_indexes failed_set_ids \
+		dmsq_instances \
+		failed_instances failed_set_ids \
 		skip_conf_dir_check \
-		inst_ind="dnsmasq instance with index"
+		inst_pr
 
 	[ "${1:-??}" = '-q' ] && quiet=1
 
-	detect_dnsmasq_instances
-	[ ${?} = 2 ] && return 1
+	parse_dmsq_cfg || return 1
+	parse_dmsq_runtime
+	[ ${?} = 1 ] && return 1
 
-	what_failed failed_indexes failed_set_ids || return 1
-	[ -n "${failed_indexes}" ] &&
+	what_failed failed_instances failed_set_ids || return 1
+	[ -n "${failed_instances}" ] &&
 	{
-		[ -n "${DNSMASQ_RESTART_TRIED}" ] && return 1
+		[ -n "${DMSQ_RESTART_TRIED}" ] && return 1
 		case "${CUR_CMD}" in
 			start|pause|resume|setup) ;;
 			*) return 1
 		esac
-		DNSMASQ_RESTART_TRIED=1
+		DMSQ_RESTART_TRIED=1
 
-		do_stop "${failed_set_ids}" &&
-		detect_dnsmasq_instances &&
-		what_failed failed_indexes failed_set_ids || return 1
-		[ -z "${failed_indexes}" ] ||
+		do_stop "${failed_set_ids}" || exit 1
+		parse_dmsq_runtime
+		[ ${?} = 1 ] && return 1
+
+		what_failed failed_instances failed_set_ids || return 1
+		[ -z "${failed_instances}" ] ||
 		{
 			# TODO: make sure stop all is executed on failure
 			cdi_fail "dnsmasq service is not working correctly."
@@ -336,24 +352,25 @@ check_dnsmasq_instances()
 
 	for set_id in ${SET_IDS}
 	do
-		get_params -f "${me}" "${set_id}" conf_dirs dnsmasq_indexes || return 1
+		get_params -f "${me}" "${set_id}" conf_dirs dmsq_instances || return 1
 		all_bl_conf_dirs=
 
-		for index in ${dnsmasq_indexes}
+		for instance in ${dmsq_instances}
 		do
+			inst_pr="dnsmasq instance '${instance}'"
 			# check if config section exists in /etc/config/dhcp
-			uci show "dhcp.@dnsmasq[${index}]" &>/dev/null ||
+			uci show "dhcp.${instance}" &>/dev/null ||
 			{
-				cdi_fail "${inst_ind} ${index} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
+				cdi_fail "${inst_pr} is running but not registered in /etc/config/dhcp. Use the command 'service dnsmasq restart' and then re-try."
 				return 1
 			}
 
 			[ -n "${skip_conf_dir_check}" ] && continue
 
-			eval "instance_conf_dirs=\"\${CONF_DIRS_${index}}\""
+			eval "instance_conf_dirs=\"\${R_CONF_DIRS_${instance}}\""
 			[ -n "${instance_conf_dirs}" ] ||
-				{ cdi_fail "Config directory is not set for dnsmasq instance with index ${index}."; return 1; }
-			all_bl_conf_dirs="${all_bl_conf_dirs}${instance_conf_dirs}${_NL_}"
+				{ cdi_fail "Failed to detect conf-dirs for ${inst_pr}."; return 1; }
+			abl_append all_bl_conf_dirs "${instance_conf_dirs}" "${_NL_}"
 
 			conf_dir_reg=
 			local IFS="${_NL_}"
@@ -365,7 +382,7 @@ check_dnsmasq_instances()
 				is_included "${dir}/" "${conf_dirs}" && conf_dir_reg=1
 				[ -d "${dir}" ] ||
 				{
-					cdi_fail "Conf-dir '${dir}' does not exist. ${inst_ind} ${index} is misconfigured."
+					cdi_fail "Conf-dir '${dir}' does not exist. ${inst_pr} is misconfigured."
 					cdi_fatal "${set_id}"
 					return 1
 				}
@@ -374,7 +391,7 @@ check_dnsmasq_instances()
 
 			[ -n "${conf_dir_reg}" ] ||
 			{
-				cdi_fail "Conf-dirs for ${inst_ind} ${index} changed."
+				cdi_fail "Conf-dirs for ${inst_pr} changed."
 				cdi_fatal "${set_id}"
 				return 1
 			}
@@ -388,7 +405,7 @@ check_dnsmasq_instances()
 			is_included "${dir}" "${all_bl_conf_dirs}" "${_NL_}" ||
 			is_included "${dir}/" "${all_bl_conf_dirs}" "${_NL_}" ||
 			{
-				cdi_fail "conf-dir directory '${dir}' is set in config{} but not used by configured dnsmasq instances '${dnsmasq_indexes}'." "${set_id}"
+				cdi_fail "conf-dir directory '${dir}' is set in config{} but not used by configured dnsmasq instances '${dmsq_instances}'." "${set_id}"
 				cdi_fatal "${set_id}"
 				return 1
 			}
@@ -399,160 +416,480 @@ check_dnsmasq_instances()
 
 }
 
-# Env vars: DDI_FORCE
+# Sets vars:
+#   C_PROCESSED
+#   C_CONF_DIRS
+#   C_CONF_DIRS_${inst}
+#   C_IFACES_${inst}
+#   ADDNMOUNTS_${inst}
+# shellcheck disable=SC2329
+parse_dmsq_cfg()
+{
+	accum_list_nl()
+	{
+		add2list "${2}" "${1}" "${_NL_}"
+	}
+
+	config_get_list_nl()
+	{
+		config_list_foreach "${2}" "${3}" accum_list_nl "${1}"
+	}
+
+	process_instance()
+	{
+		local confdirs ifaces notifaces
+
+		unset "C_CONF_DIRS_${1}" "C_IFACES_${1}" "ADDNMOUNTS_${1}"
+
+		config_get_list_nl confdirs "${1}" confdir
+		add2list C_CONF_DIRS "${confdirs}" "${_NL_}"
+		export -n "C_CONF_DIRS_${1}=${confdirs}"
+
+		config_get_list_nl "ADDNMOUNTS_${1}" "${1}" addnmount
+
+		config_get ifaces "${1}" interface
+		config_get notifaces "${1}" notinterface
+
+		: "${ifaces:="${ALL_IFACES}"}"
+		subtract_a_from_b "${notifaces}" "${ifaces}" ifaces
+		export -n "C_IFACES_${1}=${ifaces}"
+	}
+
+
+	[ -n "${C_PROCESSED}" ] && return 0
+
+	unset C_CONF_DIRS C_PROCESSED
+
+	debug_msg "" "Parsing dnsmasq config."
+
+	detect_all_ifaces || return 1
+
+	dbg_off
+
+	# gather conf dirs from /etc/config/dhcp
+	config_load_a dhcp || return 2
+	config_foreach process_instance dnsmasq
+
+	C_PROCESSED=1
+	dbg_on
+	:
+}
+
+# Env vars: PDR_QUIET
 #
-# populates global vars:
-#   ALL_CONF_DIRS, DNSMASQ_RUNNING_INDEXES, DNSMASQ_RUNNING_INST_CNT
-#   DNSMASQ_INST_NAME_${index}, IFACES_${index}, CONF_DIRS_${index}, CONF_DIRS_CNT_${index}, RUNNING_${index}, ADDNMOUNTS_${index}
-#   ADDNMOUNTS_SET, DNSMASQ_INST_SET
-#   DHCP_LOADED
+# Populates global vars:
+#   R_CONF_DIRS, DMSQ_RUNNING_INSTANCES, DMSQ_RUNNING_INST_CNT
+#   R_IFACES_${instance}, R_CONF_DIRS_${instance}, R_CONF_DIRS_CNT_${instance}, RUNNING_${instance}
+#   R_PROCESSED
 #
 # return codes:
 # 0: OK
-# 1: No running instances
-# 2: Fatal error
-detect_dnsmasq_instances()
+# 1: Fatal error
+# 2: No running instances
+parse_dmsq_runtime()
 {
-	# shellcheck disable=SC2317,SC2329
-	add_conf_dir_and_addnmounts()
-	{
-		local confdir
-		config_get confdir "${1}" confdir
-		[ -n "${confdir}" ] && add2list ALL_CONF_DIRS "${confdir}" "${_NL_}"
-		config_get "ADDNMOUNTS_${index}" "${1}" addnmount
-		index=$((index+1))
+	parse_fail() { reg_failure "Failed to process info for dnsmasq instance '${1}'${2:+ (code ${2})}."; }
+	no_running_inst() {
+		[ -n "${PDR_QUIET}" ] && return
+		reg_failure "No running dnsmasq instances found in dnsmasq runtime info${1:+ (code ${1})}."
+		reg_msg "netstat output:" "'${netstat_output}'"
 	}
 
-	[ -z "${DDI_FORCE}" ] && [ -n "${DNSMASQ_INST_SET}" ] && [ -n "${ADDNMOUNTS_SET}" ] &&
-		is_uint "${DNSMASQ_RUNNING_INST_CNT}" && [ "${DNSMASQ_RUNNING_INST_CNT}" -gt 0 ] && return 0
+	[ -n "${R_PROCESSED}" ] &&
+		is_gr_eq 0 "${DMSQ_RUNNING_INST_CNT}" && return 0
 
-	local me=detect_dnsmasq_instances \
-		nonempty instance instances running running_instances index l1_conf_file l1_conf_files conf_dirs i s f dir
+	local me=parse_dmsq_runtime \
+		IFS="${DEFAULT_IFS}" \
+		nonempty instance instances running l1_conf_file l1_conf_files conf_dirs_cnt conf_dirs i s f dir ujail_pid line \
+		ns_parse_res \
+		ifaces not_ifaces ifaces_by_instance instances_by_ujail_pid
 
-	unset DNSMASQ_RUNNING_INDEXES ALL_CONF_DIRS ADDNMOUNTS_SET DNSMASQ_INST_SET
-	DNSMASQ_RUNNING_INST_CNT=0
-	reg_action "" "Checking dnsmasq instances."
+	assert_set "F_${me}" C_PROCESSED || exit 1
 
-	dbg_off
-	[ -n "${DHCP_LOADED}" ] ||
-	{
-		# gather conf dirs from /etc/config/dhcp
-		{ check_func config_load 1>/dev/null || { [ -f /lib/functions.sh ] && . /lib/functions.sh; }; } &&
-		config_load dhcp ||
-			{ reg_failure "Failed to load /etc/config/dhcp"; return 2; }
-		DHCP_LOADED=1
-	}
-
-	index=0
-	config_foreach add_conf_dir_and_addnmounts dnsmasq
-	export -n ADDNMOUNTS_SET=1
+	unset DMSQ_RUNNING_INSTANCES R_CONF_DIRS R_PROCESSED
+	DMSQ_RUNNING_INST_CNT=0
+	debug_msg "" "Parsing dnsmasq runtime info."
 
 	# gather conf dirs from /tmp/
+	set +f
 	for dir in /tmp/dnsmasq.d /tmp/dnsmasq.cfg*
 	do
+		set -f
 		case "${dir}" in ''|*".cfg*") continue; esac
-		add2list ALL_CONF_DIRS "${dir}" "${_NL_}"
+		add2list R_CONF_DIRS "${dir}" "${_NL_}"
 	done
+	set -f
 
-	# gather info from '/etc/init.d/dnsmasq info'
+	# gather info from: ubus call service list
 
 	. /usr/share/libubox/jshn.sh &&
-	json_load "$(/etc/init.d/dnsmasq info)" &&
+	json_load "$(ubus call service list '{"name":"dnsmasq"}')" &&
 	json_get_keys nonempty &&
 	[ -n "${nonempty}" ] &&
+	json_is_a dnsmasq object &&
 	json_select dnsmasq &&
+	json_is_a instances object &&
 	json_select instances &&
 	json_get_keys instances &&
-	[ -n "${instances}" ] || { reg_failure "No running dnsmasq instances found."; return 1; }
+	[ -n "${instances}" ] || { no_running_inst 1; return 2; }
 
-	index=0
+	detect_all_ifaces || return 1
+
 	for instance in ${instances}
 	do
-		unset "DNSMASQ_INST_NAME_${index}" "RUNNING_${index}" "IFACES_${index}" "CONF_DIRS_${index}" "CONF_DIRS_CNT_${index}"
+		json_is_a "${instance}" object &&
+		is_alphanum "${instance}" ||
+			continue
+		unset "RUNNING_${instance}" "R_IFACES_${instance}" "R_CONF_DIRS_${instance}" "R_CONF_DIRS_CNT_${instance}"
+		conf_dirs=
+		conf_dirs_cnt=0
+		ifaces=
+		not_ifaces=
 
-		case "${instance}" in
-			*[!a-zA-Z0-9_]*) log_msg -warn "" "Detected dnsmasq instance with invalid name '${instance}'. Ignoring."; continue
-		esac
-		json_is_a "${instance}" object || continue # skip if $instance is not object
 		json_select "${instance}" &&
-		json_get_var running running &&
-		json_is_a command array &&
-		json_select command || { reg_failure "Failed to process info for dnsmasq instance '${instance}'."; return 2; }
+		json_get_var running running ||
+			{ parse_fail "${instance}" A; return 1; }
 
-		export -n "RUNNING_${index}=${running}"
-		[ -n "${running}" ] &&
+		[ "${running}" = 1 ] &&
 		{
-			add2list running_instances "${instance}" "${_NL_}"
-			add2list DNSMASQ_RUNNING_INDEXES "${index}"
+			json_get_var ujail_pid pid &&
+			json_is_a command array &&
+			json_select command &&
+			[ -n "${ujail_pid}" ] ||
+				{ parse_fail "${instance}" B; return 1; }
+
+			is_included "${instance}" "${DMSQ_RUNNING_INSTANCES}" ||
+				DMSQ_RUNNING_INST_CNT=$((DMSQ_RUNNING_INST_CNT+1))
+			abl_append DMSQ_RUNNING_INSTANCES "${instance}"
+
+			abl_append instances_by_ujail_pid "${ujail_pid}=${instance}" "${_DELIM_}"
+
+			# look for '-C' in values, get next value which is instance's conf file
+			l1_conf_files=
+			i=0
+			while json_is_a $((i+1)) string
+			do
+				i=$((i+1))
+				json_get_var s ${i}
+				[ "${s}" = '-C' ] || continue
+				json_get_var l1_conf_file $((i+1)) || return 1
+				add2list l1_conf_files "${l1_conf_file}" "${_NL_}"
+			done
+
+			json_select ..
+
+			IFS="${_NL_}"
+			set -- ${l1_conf_files}
+			IFS="${DEFAULT_IFS}"
+
+			# get ifaces for instance
+			ifaces="$( ${SED_CMD:?} -n '/^\s*interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}")"
+			: "${ifaces:="${ALL_IFACES}"}"
+			not_ifaces="$( ${SED_CMD:?} -n '/^\s*except-interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}")"
+			subtract_a_from_b "${not_ifaces//"${_NL_}"/ }" "${ifaces//"${_NL_}"/ }" ifaces
+			abl_append ifaces_by_instance "${instance}=${ifaces}" "${_DELIM_}"
+
+			debug_msg "${me}: ${instance} ifaces: '${ifaces}'"
+
+			# get conf-dirs for instance
+			conf_dirs="$(
+				for f in "${@}"
+				do
+					${SED_CMD} -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
+				done | ${SORT_CMD:?} -u
+			)"
+
+			IFS="${_NL_}"
+			set -- ${conf_dirs}
+			IFS="${DEFAULT_IFS}"
+			for dir in "${@}"
+			do
+				[ -n "${dir}" ] || continue
+				add2list R_CONF_DIRS "${dir}" "${_NL_}"
+				conf_dirs_cnt=$((conf_dirs_cnt + 1))
+			done
 		}
 
-		# look for '-C' in values, get next value which is instance's conf file
-		l1_conf_files=
-		i=0
-		while json_is_a $((i+1)) string
-		do
-			i=$((i+1))
-			json_get_var s ${i}
-			[ "${s}" = '-C' ] || continue
-			json_get_var l1_conf_file $((i+1)) || return 2
-			add2list l1_conf_files "${l1_conf_file}" "${_NL_}"
-		done
-		json_select ..
 		json_select ..
 
-		IFS="${_NL_}"
-		set -- ${l1_conf_files}
-		IFS="${DEFAULT_IFS}"
-
-		# get ifaces for instance
-		ifaces="$( ${SED_CMD} -n '/^\s*interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}" | sort -u )"
-		: "${ifaces:="$(fw4 zone lan)"}" # fall back to all LAN interfaces
-
-		# get conf-dirs for instance
-		conf_dirs="$(
-			for f in "${@}"
-			do
-				$SED_CMD -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
-			done | $SORT_CMD -u
-		)"
-
-		IFS="${_NL_}"
-		set -- ${conf_dirs}
-		IFS="${DEFAULT_IFS}"
-		for dir in "${@}"
-		do
-			add2list ALL_CONF_DIRS "${dir}" "${_NL_}"
-		done
-
-		export -n "DNSMASQ_INST_NAME_${index}=${instance}" \
-			"CONF_DIRS_${index}=${conf_dirs}" \
-			"IFACES_${index}=${ifaces}"
-		cnt_lines "CONF_DIRS_CNT_${index}" "${conf_dirs}"
-		index=$((index+1))
+		export -n \
+			"RUNNING_${instance}=${running}" \
+			"R_CONF_DIRS_${instance}=${conf_dirs}" \
+			"R_IFACES_${instance}=${ifaces}" \
+			"R_CONF_DIRS_CNT_${instance}=${conf_dirs_cnt}"
 	done
 	json_cleanup
-	cnt_lines DNSMASQ_RUNNING_INST_CNT "${running_instances}"
+
+	# Get nameserver IP's
+
+	# shellcheck disable=SC2155
+	local \
+		ip_output="$(${IP_CMD:?} -o addr show)" \
+		netstat_output="$(${NETSTAT_CMD:?} -plnt 2>/dev/null)"
+
+	[ "${DMSQ_RUNNING_INST_CNT}" -gt 0 ] || { no_running_inst 2; return 2; }
+
+
+	ns_parse_res="$(
+		set +f
+		{ cat /proc/[0-9]*/stat 2>/dev/null || true; } |
+	    ${AWK_CMD:?} \
+			-v delim="${_DELIM_}" \
+			-v instances_by_ujail_pid_str="${instances_by_ujail_pid}" \
+			-v ifaces_by_instance_str="${ifaces_by_instance}" \
+			-v netstat_output="${netstat_output}" \
+			-v ip_output="${ip_output//"\ "/ }" \
+			-v regex_4="^${IP_REGEX_4}(%[^:]+){0,1}#[0-9]+$" -v regex_6="^${IP_REGEX_6}(%[^:]+){0,1}#[0-9]+$" '
+
+		function append(cur,new) {
+			if (! cur) return new
+			if (! new) return cur
+			return cur " " new
+		}
+
+		function rank_ip(ip, inst_name,     iface, port) {
+			# rank:
+			# 0 = lo
+			# 1 = RFC1918 ipv4
+			# 2 = ULA ipv6
+			# 3 = other ipv4
+			# 4 = other ipv6
+
+			if (inst_name !~ /^[a-zA-Z0-9_]+$/) {exit 1}
+
+			ip=tolower(ip)
+
+			# Use <ip%iface> syntax for ipv6 link-local unicast
+			if (ip ~ /^fe[89ab]/) {
+				match (ip, /#.*$/)
+				port=substr(ip, RSTART, RLENGTH)
+				sub(/#.*/, "", ip)
+				iface = iface_by_ip[ip]
+				if (iface) iface = "%" iface
+				ip = ip iface port
+			}
+
+			if (ip ~ regex_4)
+				if (ip ~ /^127\./)
+					reg_ip(ip,"lo",inst_name)
+
+				else if (ip ~ /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/)
+					reg_ip(ip,"rfc1918",inst_name)
+				else
+					reg_ip(ip,"other_4",inst_name)
+			else if (ip ~ regex_6)
+				if (ip ~ /^::1#[0-9]+$/)
+					reg_ip(ip,"lo",inst_name)
+
+				else if (ip ~ /^(fc|fd)/)
+					reg_ip(ip,"ula",inst_name)
+
+				else
+					reg_ip(ip,"other_6",inst_name)
+			# ignore non-matching input
+		}
+
+		function reg_ip(ip,type,inst_name) {
+			cnt_local = cnt[inst_name "-" type] + 1
+			cnt_global= cnt[inst_name] + 1
+			if (cnt_local > max_local[type] || cnt_global > max_global) return
+			cnt[inst_name "-" type]++
+			cnt[inst_name]++
+
+			instances[inst_name]
+			ips_arr[inst_name "_" type "_" cnt_local] = ip
+		}
+
+		BEGIN {
+			types[1] = "lo"
+			types[2] = "rfc1918"
+			types[3] = "ula"
+			types[4] = "other_4"
+			types[5] = "other_6"
+			types_cnt=5
+
+			max_global = 16
+			max_local["lo"] = 2
+			max_local["rfc1918"] = 5
+			max_local["ula"] = 3
+			max_local["other_4"] = 3
+			max_local["other_6"] = 3
+
+			# map ujail PIDs to instance names
+			split( instances_by_ujail_pid_str, p, delim )
+			for (e in p) {
+				pair = p[e]
+				if (! pair) continue
+				split(pair,p_el,"=")
+				instances_by_ujail_pid[p_el[1]] = p_el[2]
+			}
+
+			# map [iface] to [IP]
+			split( ip_output, I, "\n" )
+			for (e in I) {
+				line = I[e]
+				if (! line) continue
+				split( line, l_el, " ")
+				iface=l_el[2]
+				ip = tolower( l_el[4] )
+				sub(/\/.*/, "", ip)
+				if (! ip) continue
+				iface_by_ip[ip] = iface
+				if (i2i_seen[ip]++) continue
+				ips_by_iface[iface] = append( ips_by_iface[iface], ip )
+			}
+
+			# map [instance name] to <[IP] [IP] ...>
+			split( ifaces_by_instance_str, f, delim )
+			for (e in f) {
+				pair = f[e]
+				if (! pair) continue
+				split( pair, f_el, "=" )
+				inst_name=f_el[1]
+				ifaces_str=f_el[2]
+				if (! inst_name || ! ifaces_str) continue
+				split( ifaces_str, ifaces_arr, " ")
+				for (i in ifaces_arr) {
+					iface=ifaces_arr[i]
+					if (! iface) continue
+					ips_by_instance[inst_name] = append( ips_by_instance[inst_name], ips_by_iface[iface] )
+				}
+			}
+		}
+
+		# find dnsmasq PIDs (children of ujail PIDs);
+		# map PIDs to instance names
+		/\([ 	]*dnsmasq[ 	]*\)/ {
+			pid=$1
+			sub(/^.*\) /, "", $0)
+			$0 = $0
+			ppid = $2
+			if (ppid in instances_by_ujail_pid) {} else next
+			inst_name = instances_by_ujail_pid[ppid]
+			instances_by_pid[pid] = inst_name
+		}
+
+		END {
+			n = split(netstat_output, n_lines, "\n")
+
+			for (i=1; i<=n; i++) {
+				line=n_lines[i]
+				if ( line !~ /LISTEN[ ].*\/dnsmasq$/) continue
+				$0 = line
+
+				pid = $7
+				if (pid !~ /\/dnsmasq$/) continue
+				sub("/dnsmasq","",pid)
+
+				inst_name=instances_by_pid[pid]
+				if (! inst_name) continue
+
+				ip = $4
+
+				# separate port from ip
+				port=ip
+				sub(/:[0-9]+$/, "", ip)
+				sub("^" ip ":", "", port)
+
+				if (port !~ /^[0-9]+$/) {exit 1}
+
+				# non-wildcard listeners
+				if (ip != "0.0.0.0" && ip != "::") {
+					# use port of the listener
+					ip = ip "#" port
+					# deduplicate
+					if (seen[ip]++) continue
+					rank_ip( ip, inst_name )
+					continue
+				}
+
+				# wildcard listeners
+				# uses port of the wildcard listener, per-instance IPs of ifaces gathered from l1_conf_files
+				split( ips_by_instance[inst_name], ips_tmp_arr, " " )
+				for (j in ips_tmp_arr) {
+					ip=ips_tmp_arr[j] "#" port
+					if (seen[ip]++) continue
+					rank_ip( ip, inst_name )
+				}
+			}
+
+			for (inst_name in instances) {
+				printf "%s=", inst_name
+				for (i = 1; i <= types_cnt; i++) {
+					type = types[i]
+					for (j = 1; j <= cnt[inst_name "-" type]; j++) {
+						printf "%s ", ips_arr[inst_name "_" type "_" j]
+					}
+				}
+				printf "\n"
+			}
+		}'
+	)" ||
+	{
+		reg_failure "" "Failed to get nameserver IPs for dnsmasq instances."
+		reg_msg \
+			"For diagnostics:" \
+			"" "ifaces_by_instance:" "'${ifaces_by_instance//"${_DELIM_}"/"${_NL_}"}'" \
+			"" "netstat output:" "'${netstat_output}'" \
+			"" "ip output:" "'${ip_output}'"
+		return 1
+	}
+
+
+	debug_msg "ns_parse_res:${_NL_}'${ns_parse_res}'"
+
+	[ -n "${ns_parse_res}" ] ||
+		{ no_running_inst 3; return 2; }
+
+	IFS="${_NL_}"
+	for line in ${ns_parse_res}
+	do
+		IFS="${DEFAULT_IFS}"
+		line="${line% }"
+
+		case "${line}" in
+			'') continue ;;
+		esac
+
+		instance="${line%%=*}"
+		ns="${line#"${instance}="}"
+
+		[ -n "${instance}" ] &&
+		is_included "${instance}" "${instances}" ||
+			{ reg_failure "${me}: invalid line in parser output: '${line}'."; return 1; }
+		[ -n "${ns}" ] ||
+			{ reg_failure "${me}: failed to detect active nameserver IP's for dnsmasq instance '${instance}'"; return 1; }
+		export -n "NS_${instance}=${ns}"
+	done
+	IFS="${DEFAULT_IFS}"
+
 	dbg_on
 
-	export -n DNSMASQ_INST_SET=1
+	PRIMARY_NS=$( ${SED_CMD:?} -En '/^\s*nameserver/{s/\s*nameserver\s+//;s/\s+$//;/^$/d;p}' /etc/resolv.conf )
+	export -n PRIMARY_NS="${PRIMARY_NS//"${_NL_}"/ }"
+	: "${PRIMARY_NS:="127.0.0.1 ::1"}"
 
-	[ "${DNSMASQ_RUNNING_INST_CNT}" -gt 0 ] && return 0
-	reg_failure "No running dnsmasq instances found."
-	return 1
+	export -n R_PROCESSED=1
 }
 
-# analyze dnsmasq instances and set $dnsmasq_conf_dirs
+# analyze dnsmasq instances and set params for each blockset: dmsq_instances, conf_dirs
 # 1 (optional): blockset ID's (defaults to all)
 do_select_dnsmasq_instances() {
-	validate_indexes() { printf '%s\n' "${1}" | grep -qE "^ *(a|${indexes_regex})( +(${indexes_regex}))*$"; }
+	validate_input()
+	{
+		printf '%s\n' "${1}" |
+		${SED_CMD} -E 's/\s+/ /g;s/^\s+//;s/\s+$//' |
+		grep -E "^(${2// /|})( +(${2// /|}))*$"
+	}
 
 	local me=select_dnsmasq_instances \
+		index indexes \
 		conf_dirs conf_dirs_instance \
 		conf_dirs_cnt \
 		select_conf_dirs \
 		select_skip_msg \
-		select_indexes \
-		instance index luci_indexes indexes_regex \
+		select_instances \
+		instance luci_instances \
 		ifaces \
 		REPLY \
 		first diff \
@@ -564,24 +901,25 @@ do_select_dnsmasq_instances() {
 
 	assert_set "F_${me}" SET_IDS &&
 	get_valid_set_ids set_ids "${set_ids_arg}" &&
-	detect_dnsmasq_instances || return 1
+	parse_dmsq_cfg &&
+	parse_dmsq_runtime || return 1
 
 	for set_id in ${set_ids}
 	do
 		select_skip_msg="Detected only 1 dnsmasq instance"
-		first=1 diff='' conf_dirs_cnt='' REPLY='' select_indexes='' indexes_regex='' conf_dirs='' conf_dirs_seen=''
+		first=1 diff='' conf_dirs_cnt='' REPLY='' select_instances='' conf_dirs='' conf_dirs_seen=''
 			ifaces='' select_ifaces=''
 			select_conf_dirs=''
 		if \
 		{
-			[ "${DNSMASQ_RUNNING_INST_CNT}" = 1 ] &&
-				select_indexes="${DNSMASQ_RUNNING_INDEXES%% *}"
+			[ "${DMSQ_RUNNING_INST_CNT}" = 1 ] &&
+				select_instances="${DMSQ_RUNNING_INSTANCES%% *}"
 		} ||
 		{
 			# check if all instances share same conf-dirs
-			for index in ${DNSMASQ_RUNNING_INDEXES}
+			for instance in ${DMSQ_RUNNING_INSTANCES}
 			do
-				eval "conf_dirs_instance=\"\${CONF_DIRS_${index}}\""
+				eval "conf_dirs_instance=\"\${R_CONF_DIRS_${instance}}\""
 				case "${first}" in
 					1)
 						first=
@@ -596,68 +934,83 @@ do_select_dnsmasq_instances() {
 			done
 			[ -n "${conf_dirs_seen}" ] &&
 			[ -z "${diff}" ] &&
-			select_indexes="${DNSMASQ_RUNNING_INDEXES}" &&
+			select_instances="${DMSQ_RUNNING_INSTANCES}" &&
 			select_skip_msg="Detected multiple dnsmasq instances which are using the same conf-dirs: ${_NL_}${blue}${conf_dirs// /" ${_NL_}"}${n_c}"
 		}
 		then
-			reg_msg "" "${select_skip_msg}" "Skipping manual dnsmasq instance selection."
+			reg_msg "" "${select_skip_msg}." "Skipping manual dnsmasq instance selection."
 		elif [ -z "${conf_dirs_seen}" ]
 		then
-			reg_failure "Failed to detect dnsmasq conf-dir paths for dnsmasq indexes '${DNSMASQ_RUNNING_INDEXES}'."
+			reg_failure "Failed to detect dnsmasq conf-dir paths for dnsmasq instances '${DMSQ_RUNNING_INSTANCES}'."
 			return 1
 		else
 			# Ask the user
 			reg_msg -blue "Multiple dnsmasq instances detected."
-			eval "luci_indexes=\"\${luci_dnsmasq_indexes_${set_id}}\""
+			eval "luci_instances=\"\${luci_dmsq_instances_${set_id}}\""
 			REPLY=a
 			if [ "${DO_DIALOGS}" = 1 ]
 			then
-				reg_msg "" "Existing dnsmasq instances and assigned network interfaces:"
-				for index in ${DNSMASQ_RUNNING_INDEXES}
+				reg_msg "" "Running dnsmasq instances and assigned network interfaces:"
+				index=1
+				for instance in ${DMSQ_RUNNING_INSTANCES}
 				do
-					eval "instance=\"\${DNSMASQ_INST_NAME_${index}}\"" \
-						"ifaces=\"\${IFACES_${index}}\""
+					local "instance_${index}=${instance}"
+					eval "ifaces=\"\${C_IFACES_${instance}}\""
 					ifaces="${ifaces//"${_NL_}"/, }"
-					reg_msg "${index}. Instance '${instance}': network interfaces '${ifaces}'"
-					indexes_regex="${indexes_regex}${indexes_regex:+|}${index}"
+					reg_msg "${index}: Instance '${instance}': network interfaces '${ifaces}'"
+					abl_append indexes "${index}"
+					index=$((index+1))
 				done
 				print_msg -fb "${set_id}" "" "Please select which dnsmasq instance should have active adblocking{}, or 'a' to abort." \
-					"To adblock on multiple instances, enter their indexes separated by whitespaces."
+					"To adblock on multiple instances, enter multiple instances separated by spaces."
 				while :
 				do
-					printf %s "${indexes_regex}|a: " > "${MSGS_DEST}"
+					printf %s "${indexes// /|}|a: " > "${MSGS_DEST}"
 					read -r REPLY
-					validate_indexes "${REPLY}" ||
-						{ printf '\n%s\n\n' "Please enter ${indexes_regex}|a" > "${MSGS_DEST}"; continue; }
+					if [ "${REPLY}" = a ]
+					then
+						reg_msg "Aborted config generation."
+						exit 0
+					elif REPLY="$(validate_input "${REPLY}" "${indexes}")"
+					then
+						for index in ${REPLY}
+						do
+							eval "instance=\"\${instance_${index}}\""
+							add2list select_instances "${instance}"
+						done
+					elif REPLY="$(validate_input "${REPLY}" "${DMSQ_RUNNING_INSTANCES}")"
+					then
+						add2list select_instances "${REPLY}"
+					else
+						printf '\n%s\n\n' "Please enter any combination of [${indexes}], or 'a' to abort." > "${MSGS_DEST}"
+						continue
+					fi
 					break
 				done
-			elif [ -n "${luci_indexes}" ]
+			elif [ -n "${luci_instances}" ]
 			then
-				REPLY="${luci_indexes}"
-				validate_indexes "${REPLY}" ||
-					{ reg_failure "Invalid dnsmasq instance indexes '${REPLY}'."; return 1; }
+				REPLY="$(validate_input "${luci_instances}" "{DMSQ_RUNNING_INSTANCES}")" ||
+					{ reg_failure "Invalid dnsmasq instances '${luci_instances}' (running instances: '${DMSQ_RUNNING_INSTANCES}')."; return 1; }
+				add2list select_instances "${REPLY}"
 			else
-				reg_failure -fb "${set_id}" "dnsmasq indexes not specified{}."
+				reg_failure -fb "${set_id}" "dnsmasq instances not specified{}."
 				return 1
 			fi
-
-			[ "${REPLY}" = a ] && { reg_msg "Aborted config generation."; exit 0; }
-			select_indexes="${REPLY}"
 		fi
 
-		for index in ${select_indexes}
+		for instance in ${select_instances}
 		do
-			eval "ifaces=\"\${IFACES_${index}}\""
+			eval "ifaces=\"\${C_IFACES_${instance}}\""
 			add2list select_ifaces "${ifaces}"
 		done
 
-		log_msg -fb "${set_id}" "Selected dnsmasq indexes{}: '${select_indexes}' (network intefaces: ${select_ifaces//" "/, })."
+		log_msg -fb "${set_id}" "Selected dnsmasq instances{}: '${select_instances}' (network intefaces: ${select_ifaces//" "/, })."
 
-		for index in ${select_indexes}
+		for instance in ${select_instances}
 		do
 			add_dir=
-			eval "conf_dirs=\"\${CONF_DIRS_${index}}\"
-				conf_dirs_cnt=\"\${CONF_DIRS_CNT_${index}}\""
+			eval "conf_dirs=\"\${R_CONF_DIRS_${instance}}\"
+				conf_dirs_cnt=\"\${R_CONF_DIRS_CNT_${instance}}\""
 
 			if [ "${conf_dirs_cnt}" = 1 ]
 			then
@@ -677,196 +1030,40 @@ do_select_dnsmasq_instances() {
 			[ -n "${add_dir}" ] && add2list select_conf_dirs "${add_dir}" "${_NL_}"
 		done
 
-		[ -n "${select_conf_dirs}" ] || { reg_failure "Failed to detect conf-dirs for dnsmasq indexes '${select_indexes}'."; return 1; }
+		[ -n "${select_conf_dirs}" ] || { reg_failure "Failed to detect conf-dirs for dnsmasq instances '${select_instances}'."; return 1; }
 
 		log_msg "Selected dnsmasq conf-dirs: '${select_conf_dirs//"${_NL_}"/"', '"/}'"
-		set_params "${set_id}" dnsmasq_indexes="${select_indexes}" conf_dirs="${select_conf_dirs}"
+		set_params "${set_id}" dmsq_instances="${select_instances}" conf_dirs="${select_conf_dirs}"
 	done
 
-	check_dnsmasq_instances "${set_ids}" || return 1
-
-	:
-}
-
-# Get interfaces each dnsmasq instance is listening on and associated IP addresses
-# Populates global vars: NS4_${dnsmasq_index}, NS6_${dnsmasq_index}
-get_dnsmasq_ips()
-{
-	local me=get_dnsmasq_ips \
-		IFS="${DEFAULT_IFS}" \
-		wan_devs odevs linux_ifaces dnp_res \
-		set_ids="${*:-"${SET_IDS}"}"
-
-	# get list of OpenWrt device names, store in $odevs
-	# shellcheck disable=SC2329
-	get_odevs_cb()
-	{
-		local dev section_id="$1"
-		config_get dev "${section_id}" name
-		odevs="${odevs}${odevs:+$'\n'}${dev}"
-	}
-
-	wan_devs="$(
-		{
-			${IP_CMD:?} -4 route show table all to match 0.0.0.0
-			${IP_CMD:?} -6 route show table all to match ::
-		} |
-		${SED_CMD:?} -nE '/.*\s+dev\s+/{s/.*\s+dev\s+//;s/\s+.*//;p}' |
-		grep -vE '^(127.0.0.1|::1)$' |
-		${SORT_CMD:?} -u
-	)"
-
-	debug_msg "wan_devs: '${wan_devs}'"
-
-	dbg_off
-	config_load network &&
-	config_foreach get_odevs_cb device &&
-
-	# get list of all linux ifaces + IP addresses
-	linux_ifaces="$(
-		${IP_CMD} -o addr show |
-		${SED_CMD} -nE "/^\s*[0-9]+:\s*/{s/^\s*[0-9]+\s*:\s+//;s/inet[6]*\s+//;s/\s(${IP_REGEX_4:?}|${IP_REGEX_6:?})(\/[0-9]+)\s.*/\1/;s/\s+/ /;s/\s+$//;p;}"
-	)" &&
-
-	dnp_res="$(
-		${NETSTAT_CMD} -plnt 2>/dev/null |
-		${AWK_CMD} -v regex_4="${IP_REGEX_4//\\./.}" -v regex_6="${IP_REGEX_6}" -v l_ifaces="${linux_ifaces}" -v odevs_str="${odevs}" -v wan_devs_str="${wan_devs}" '
-			function print_id(id)
-			{
-				if (out_4[id]) {rv = 0; out_val_4 = out_4[id]} else out_val_4 = "NIL"
-				if (out_6[id]) {rv = 0; out_val_6 = out_6[id]} else out_val_6 = "NIL"
-				print id " " out_val_4 " " out_val_6
-			}
-
-			BEGIN {
-				rv = 1
-
-				# array with WAN device names as keys
-				split(odevs_str,o,"\n")
-				for (d in o) { odevs[o[d]] }
-
-				# array with OpenWrt device names as keys
-				split(wan_devs_str,w,"\n")
-				for (d in w) { wan_devs[w[d]] }
-
-				# parse linux ifaces w/ ips into array keyed by ips, ignore WAN devices, prioritize OpenWrt devices
-				split(l_ifaces,a,"\n")
-				for (e in a) {
-					i=a[e]
-					n = index(i, " ")
-					if(n != 0) {
-						ip = substr(i, n + 1)
-						if_name=substr(i, 1, n - 1)
-						if (if_name in wan_devs) continue
-						if ( ips[ip] == "" || if_name in odevs ) {ips[ip] = if_name}
-					}
-				}
-			}
-
-			/LISTEN[ ].*\/dnsmasq$/ {
-				ip = $4
-				sub(/:[^:]+$/,"",ip)
-				if (ip in ips) {} else next
-				iface=ips[ip]
-
-				pid = $7
-				if (pid !~ /\/dnsmasq$/) next
-				sub("/dnsmasq","",pid)
-				if (! iface || ! pid) next
-
-				id = pid " " iface
-
-				if (iface in odevs) odevs_out[id]
-				else out[id]
-
-				if (ip ~ regex_4)
-				{
-					if (out_4[id] != "") {next}
-					out_4[id] = ip
-				}
-				else if (ip ~ regex_6)
-				{
-					if (out_6[id] != "") {next}
-					out_6[id] = ip
-				}
-				else next
-			}
-
-			END {
-				for (id in odevs_out) print_id(id)
-				for (id in out) print_id(id)
-				exit rv
-			}
-		'
-	)" &&
-	[ -n "${dnp_res}" ] ||
-		{ reg_failure "Failed to get network params for dnsmasq instances. Found Linux ifaces: '${linux_ifaces//"${_NL_}"/ }', OpenWrt devices: '${odevs}', "; return 1; }
-	dbg_on
-
-	debug_msg "get_dnsmasq_ips: all found entries:${_NL_}${dnp_res}" ""
-
-	# dnsmasq nameserver IP's
-	local line index dnsmasq_indexes \
-		all_dnsmasq_indexes \
-		set_id \
-		inst_name inst_pid inst_iface \
-		inst_ip_4 inst_ip_6
-
-	for set_id in ${set_ids}
-	do
-		get_params -f "${me}" "${set_id}" dnsmasq_indexes || continue
-		add2list all_dnsmasq_indexes "${dnsmasq_indexes}"
-	done
-
-	for index in ${all_dnsmasq_indexes}
-	do
-		# iface and nameservers
-		inst_ip_4='' inst_ip_6=''
-
-		eval "inst_name=\"\${DNSMASQ_INST_NAME_${index}}\""
-		inst_pid="$(${PGREP_CMD:?} -f '^/usr/sbin/dnsmasq.*'"${inst_name:-???}"'.pid$')" ||
-			{ reg_failure "No PID found for dnsmasq instance with index '${index}' (name: '${inst_name}')."; return 1; }
-
-		IFS="${_NL_}"
-		for line in ${dnp_res}
-		do
-			IFS="${DEFAULT_IFS}"
-			set -- ${line}
-			[ "${1}" = "${inst_pid}" ] || continue
-
-			inst_iface="${2}"
-			ip4_tmp="${3%"NIL"}"
-			ip6_tmp="${4%"NIL"}"
-
-			[ -n "${inst_iface}" ] &&
-				{ [ -n "${ip4_tmp}" ] || [ -n "${ip6_tmp}" ]; } ||
-					continue
-
-			# Prioritize loopback adresses
-			[ "${inst_iface}" = lo ] &&
-			{
-				inst_ip_4="${ip4_tmp:-"${inst_ip_4}"}"
-				inst_ip_6="${ip6_tmp:-"${inst_ip_6}"}"
-				continue
-			}
-
-			inst_ip_4="${inst_ip_4:-"${ip4_tmp}"}"
-			inst_ip_6="${inst_ip_6:-"${ip6_tmp}"}"
-		done
-		IFS="${DEFAULT_IFS}"
-
-		[ -n "${inst_ip_4}" ] || [ -n "${inst_ip_6}" ] || { reg_failure "${me}: Failed to detect IP addresses which dnsmasq instance ${index} ('${inst_name}') is listening on."; return 1; }
-
-		export -n \
-			"NS4_${index}=${inst_ip_4}" \
-			"NS6_${index}=${inst_ip_6}"
-	done
+	check_dmsq_instances "${set_ids}" || return 1
 
 	:
 }
 
 
 ### GENERAL HELPER FUNCTIONS
+
+get_affected_set_ids()
+{
+	local ges_id ges_all ges_inst ges_inst_tmp ges_state
+	unset_vars "${1}"
+	for ges_id in ${2}
+	do
+		get_params "${ges_id}" ges_inst=dmsq_instances
+		add2list ges_all "${ges_inst}"
+	done
+
+	for ges_id in ${SET_IDS}
+	do
+		is_included "${ges_id}" "${2}" && continue
+		get_params "${ges_id}" ges_state=run_state ges_inst=dmsq_instances
+		[ "${ges_state}" = 0 ] || continue
+		subtract_a_from_b "${ges_inst}" "${ges_all}" ges_inst_tmp
+		[ "${#ges_inst_tmp}" = "${#ges_all}" ] && continue
+		abl_append "${1}" "${ges_id}"
+	done
+}
 
 # shellcheck disable=SC2046,SC2086
 unset_param_vars()
@@ -907,7 +1104,7 @@ mv_blockset()
 
 	debug_msg "${me} end"
 	[ "${mv_rv}" = 0 ] &&
-		{ set_params "${mv_set_id}" curr_path="${mv_dst_f}"; return 0; }
+		{ set_params "${mv_set_id}" cur_path="${mv_dst_f}"; return 0; }
 
 	rm_if_writable "${mv_set_id}" "${mv_src_f}" "${mv_dst_f}"
 	reg_failure "Failed to move blockset '${mv_set_id}' from '${mv_src_f}' to '${mv_dst_f}' (cmd: '${mv_compr_cmd}')."
@@ -924,7 +1121,7 @@ try_mv_blockset()
 {
 	local transfer_cmd="try_mv -q" \
 		md5_changed \
-		curr_md5 \
+		cur_md5 \
 		mv_src_d mv_src_ext \
 		mv_dst_d mv_dst_ext \
 		mv_src_f="${1}" mv_dst_f="${2}" mv_compr_cmd="${3}" mv_set_id="${4:?}"
@@ -960,8 +1157,8 @@ try_mv_blockset()
 
 	[ -n "${md5_changed}" ] &&
 	{
-		get_md5 curr_md5 "${mv_dst_f}" || return 1
-		set_params "${mv_set_id}" curr_md5
+		get_md5 cur_md5 "${mv_dst_f}" || return 1
+		set_params "${mv_set_id}" cur_md5
 	}
 
 	:
@@ -1006,19 +1203,19 @@ check_persist_dir()
 
 check_persist_blockset()
 {
-	local max_blockset_file_size_KB min_good_entries min_good_entries_human \
+	local max_set_size min_entries min_entries_human \
 		persist_check_rv \
-		persist_ext persist_mode curr_persist_path curr_persist_cnt curr_persist_cnt_human curr_persist_size_b \
+		persist_ext persist_mode cur_persist_path cur_persist_cnt cur_persist_cnt_human cur_persist_size_b \
 		run_state \
-		curr_cnt \
+		cur_cnt \
 		set_id="${1}" final_compr_ext="${2}"
 
-	get_params -f "check_persist_blockset" "${set_id}" persist_mode min_good_entries max_blockset_file_size_KB run_state || return 1
-	get_params "${set_id}" curr_persist_path
-	debug_msg "Checking persistent blockset file: ${blue}${curr_persist_path}${n_c}"
+	get_params -f "check_persist_blockset" "${set_id}" persist_mode min_entries max_set_size run_state || return 1
+	get_params "${set_id}" cur_persist_path
+	debug_msg "Checking persistent blockset file: ${blue}${cur_persist_path}${n_c}"
 
 	{
-		[ -n "${curr_persist_path}" ] ||
+		[ -n "${cur_persist_path}" ] ||
 			{
 				[ "${run_state}" != 4 ] || [ "${persist_mode}" = manual ] && [ "${CUR_ACT}" != gen_persist_blockset ] &&
 					reg_failure -fb "${set_id}" "Persistent blockset file{} not found in directory '${persist_dir}'."
@@ -1027,37 +1224,37 @@ check_persist_blockset()
 	} &&
 
 	{
-		get_compr_spec persist_ext _ "${curr_persist_path}" ||
-			{ reg_failure "Can not find utility to extract persistent blockset file '${curr_persist_path}'."; false; }
+		get_compr_spec persist_ext _ "${cur_persist_path}" ||
+			{ reg_failure "Can not find utility to extract persistent blockset file '${cur_persist_path}'."; false; }
 	} &&
 
 	{
 		[ "${persist_ext}" = "${final_compr_ext}" ] ||
 		{
-			reg_failure "Extension '${persist_ext}' of persistent blockset file '${curr_persist_path}' does not match required extension '${final_compr_ext}'."
+			reg_failure "Extension '${persist_ext}' of persistent blockset file '${cur_persist_path}' does not match required extension '${final_compr_ext}'."
 			persist_check_rv=1
 		}
 	} &&
 
-	curr_persist_size_b="$(get_file_size "${curr_persist_path}")" &&
+	cur_persist_size_b="$(get_file_size "${cur_persist_path}")" &&
 	{
-		[ $(( curr_persist_size_b/1024 )) -le "${max_blockset_file_size_KB}" ] ||
-		{ reg_failure "Persistent blockset file '${curr_persist_path}' is larger than the maximum value set in config (${max_blockset_file_size_KB} KiB)."; false; }
+		[ $(( cur_persist_size_b/1024 )) -le "${max_set_size}" ] ||
+		{ reg_failure "Persistent blockset file '${cur_persist_path}' is larger than the maximum value set in config (${max_set_size} KiB)."; false; }
 	} &&
 
 	{
-		read_blockset_metadata -persist "${curr_persist_path%/*}/${META_FNAME_PERSIST:?}" "${set_id}" &&
-		get_params "${set_id}" curr_persist_cnt &&
-		[ -n "${curr_persist_cnt}" ] ||
-		{ reg_failure "Failed to process metadata for persistent blockset file '${curr_persist_path}'."; false; }
+		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_FNAME_PERSIST:?}" "${set_id}" &&
+		get_params "${set_id}" cur_persist_cnt &&
+		[ -n "${cur_persist_cnt}" ] ||
+		{ reg_failure "Failed to process metadata for persistent blockset file '${cur_persist_path}'."; false; }
 	} &&
 
 	{
-		[ "${curr_persist_cnt}" -ge "${min_good_entries}" ] ||
+		[ "${cur_persist_cnt}" -ge "${min_entries}" ] ||
 			{
-				int2human curr_persist_cnt_human "${curr_persist_cnt}"
-				int2human min_good_entries_human "${min_good_entries}" || return 1
-				reg_failure "Entries count (${curr_persist_cnt_human}) in the persistent blockset file '${curr_persist_path}' is below the minimum value set in config (${min_good_entries_human})."
+				int2human cur_persist_cnt_human "${cur_persist_cnt}"
+				int2human min_entries_human "${min_entries}" || return 1
+				reg_failure "Entries count (${cur_persist_cnt_human}) in the persistent blockset file '${cur_persist_path}' is below the minimum value set in config (${min_entries_human})."
 				false
 			}
 	} &&
@@ -1067,84 +1264,8 @@ check_persist_blockset()
 	return 1
 }
 
-# Env vars:
-#   CA_CHECK_DOMAINS: test DNS resolution
-#   CA_NOERR: do not print error for test domain lookup failing
-#
-# return values:
-# 0: All checks passed
-# 1: General error
-# 2: The blockset test domain failed to resolve (blockset not loaded)
-# 3: One of the test domains failed to resolve
-check_active_blockset()
-{
-	lookup_failed() { reg_failure "Lookup of test domain '${1}' failed (dnsmasq instance ${2}, IP addresses '${3}')."; }
-
-	local me=check_active_blockset \
-		test_domains \
-		family index dnsmasq_indexes instance_ns def_ns ns_ips ca_ns_4 ca_ns_6 ns_ips_sp ca_test_dom ca_id \
-		set_id="${1:?}" ca_md5="${2:?}" ca_single_instance="${3}"
-
-	reg_action -purple -fb "${set_id}" "" "Checking if adblocking is active{}." || return 1
-
-	check_dnsmasq_instances || return 1
-
-	get_params -f "${me}" "${set_id}" dnsmasq_indexes || return 1
-	get_params "${set_id}" test_domains
-
-	if [ "${ca_single_instance}" = 1 ]
-	then
-		ca_id="${set_id}" # blockset ID is used in test domain for single instance
-	else
-		ca_id="${ca_md5}"
-	fi
-	ca_test_dom="${ca_id}-${ABL_TEST_DOM_BASE:?}"
-
-	debug_msg "${me}: set_id:${set_id}; indexes:${dnsmasq_indexes}; id:${ca_id}; ca_single_instance:${ca_single_instance};"
-
-	for index in ${dnsmasq_indexes}
-	do
-		ns_ips='' ns_ips_sp=''
-
-		eval "ca_ns_4=\"\${NS4_${index}}\"" "ca_ns_6=\"\${NS6_${index}}\""
-		debug_msg "${me}: ips:${ca_ns_4};${ca_ns_6};"
-
-		for family in 4 6
-		do
-			case "${family}" in
-				4) def_ns=127.0.0.1 ;;
-				6) def_ns=::1
-			esac
-			eval "instance_ns=\"\${ca_ns_${family}:-${def_ns}}\""
-			add2list ns_ips "${instance_ns}" "${_NL_}"
-			add2list ns_ips_sp "${blue}${instance_ns}${n_c}" ", "
-		done
-
-		debug_msg "Testing dnsmasq instance ${index}." \
-			"Using following nameservers for DNS resolution verification: ${ns_ips_sp}" \
-			"Testing adblocking."
-
-		try_lookup_domain "${ca_test_dom}" "${ns_ips}" 10 -n ||
-			{
-				[ -n "${CA_NOERR}" ] || lookup_failed "${ca_test_dom}" "${index}" "${ns_ips_sp}"
-				return 2
-			}
-
-		[ -n "${CA_CHECK_DOMAINS}" ] &&
-		{
-			debug_msg "Testing DNS resolution."
-			for domain in ${test_domains}
-			do
-				try_lookup_domain "${domain}" "${ns_ips}" 5 || { lookup_failed "${domain}"; return 3; }
-			done
-		}
-	done
-
-	:
-}
-
 # 1: var name for printable missing paths output
-# 2: dnsmasq instance indexes to check
+# 2: dnsmasq instances to check
 # 3: list of newline-separated paths
 # shellcheck disable=SC2120
 check_addnmounts()
@@ -1156,24 +1277,24 @@ try_check_addnmounts()
 {
 	local me=check_addnmounts \
 		IFS="${DEFAULT_IFS}" \
-		ca_index ca_path ca_addnmounts \
-		ca_missing_var="${1}" ca_indexes="${2}" ca_req_addnm="${3}"
+		ca_instance ca_path ca_addnmounts \
+		ca_missing_var="${1}" ca_instances="${2}" ca_req_addnm="${3}"
 
 	unset_vars "${ca_missing_var}"
-	assert_set "F_${me}" ca_indexes ADDNMOUNTS_SET || return 1
+	assert_set "F_${me}" ca_instances C_PROCESSED || return 1
 
 	[ -n "${ca_req_addnm}" ] || return 0
 
-	for ca_index in ${ca_indexes}
+	for ca_instance in ${ca_instances}
 	do
-		is_uint "${ca_index}" || { reg_failure "${me}: Invalid dnsmasq index '${ca_index}'."; return 1; }
+		is_alphanum "${ca_instance}" || { reg_failure "${me}: Invalid dnsmasq instance name '${ca_instance}'."; return 1; }
 		IFS="${_NL_}"
 		for ca_path in ${ca_req_addnm}
 		do
 			[ -n "${ca_path}" ] || continue
 			IFS="${DEFAULT_IFS}"
 
-			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_index}}\""
+			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_instance}}\""
 			case "${ca_path}" in
 				/*) ;;
 				*) reg_failure "${me}: invalid path '${ca_path}'."; return 1
@@ -1184,7 +1305,7 @@ try_check_addnmounts()
 			while [ -n "${ca_path_tmp}" ] && [ "${i}" -le 10 ]
 			do
 				i=$((i+1))
-				is_included "${ca_path_tmp}" "${ca_addnmounts}" && continue 2
+				is_included "${ca_path_tmp}" "${ca_addnmounts}" "${_NL_}" && continue 2
 				ca_path_tmp="${ca_path_tmp%/*}"
 			done
 
@@ -1226,8 +1347,6 @@ set_global_env()
 
 	assert_set "F_${me}" CONFIG_LOADED || return 1
 
-	set -o pipefail
-
 	[ -n "${ABL_HOSTNAME_SET}" ] || ABL_HOSTNAME="$(uci get system.@system[0].hostname)"
 	export -n ABL_HOSTNAME ABL_HOSTNAME_SET=1
 
@@ -1251,7 +1370,7 @@ set_global_env()
 	get_compr_util_spec compr_util_path compr_ext "${compression_util:?}" || return 1
 
 	# dnsmasq instances
-	check_dnsmasq_instances || return 1
+	check_dmsq_instances || return 1
 
 	# check for missing addnmounts during version update
 	if [ -n "${ABL_IN_INSTALL:-"${upd_channel}"}" ] && [ -n "${SET_IDS}" ] && [ -z "${ADDNMOUNTS_CHECKED}" ]
@@ -1278,13 +1397,122 @@ set_global_env()
 	:
 }
 
+# Run states:
+# 0 - running
+# 1 - error
+# 2 - (reserved)
+# 3 - paused
+# 4 - stopped
+#
+# 1: blockset ID
+# 2: IDs of blocksets known to be active, or '?' to check now
+# 3-5 (optional): var names for output of run state, path, single-instance flag
+get_run_state()
+{
+	local me=get_run_state \
+		grs_cur_path grs_single_inst \
+		cur_md5 bk_file \
+		bl_check_res \
+		grs_state \
+		bl_in_conf_dir \
+		cs_res \
+		cd_state \
+		bl_file_exists=0 \
+		dns_check_res=0 \
+		conf_dir conf_dirs \
+			set_id="${1:?}" grs_active_ids="${2?}" \
+			state_out_var="${3:-_}" path_out_var="${4:-_}" single_inst_out_var="${5:-_}"
+
+	debug_msg "Checking state of blockset ${lblue}${set_id}${n_c}."
+
+	unset_vars "${state_out_var}" "${path_out_var}" "${single_inst_out_var}"
+	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
+
+	get_params "${set_id}" grs_cur_path=cur_path grs_single_inst=cur_1_instance cur_md5 conf_dirs bk_file
+
+	# only the install record describes how the blockset was installed - config says nothing about it
+	: "${grs_single_inst:=0}"
+
+	debug_msg "${me}: grs_single_inst=${grs_single_inst};cur_md5=${cur_md5}"
+
+	# Test adblocking. '?' means the caller has no up-to-date result to share
+	[ "${grs_active_ids}" = '?' ] &&
+		{ check_active_blocksets grs_active_ids "${set_id}" 0 || return 1; }
+	is_included "${set_id}" "${grs_active_ids}" && dns_check_res=1
+
+	[ -n "${grs_cur_path}" ] && [ -f "${grs_cur_path}" ] || grs_cur_path=
+
+	# conf-scripts codes:
+	# 0: all conf-scripts not found
+	# 1: all conf-scripts found
+	# 2: inconsistent state
+	for conf_dir in ${conf_dirs}
+	do
+		[ -f "${conf_dir}/${CS_BASE_FNAME}-${set_id}" ] && cd_state=1 || cd_state=0
+		[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
+
+		[ "${cs_res}" = "${cd_state}" ] || cs_res=2
+	done
+	: "${cs_res:=0}"
+
+	local all_conf_dirs
+	add2list all_conf_dirs "${R_CONF_DIRS}${_NL_}${C_CONF_DIRS}" "${_NL_}"
+
+	[ -n "${grs_cur_path}" ] ||
+		# Look for blockset file in all conf-dirs
+		{
+			for conf_dir in ${all_conf_dirs}
+			do
+				FF_FIRST=1 find_files grs_cur_path "${conf_dir}" "${BLOCKSET_BASE_FNAME}-${set_id}" ||
+				FF_FIRST=1 find_files grs_cur_path "${conf_dir}" "${BLOCKSET_BASE_FNAME}-${set_id}." "*" ||
+					continue
+				[ -n "${bl_in_conf_dir}" ] && grs_state=1 # blockset in conf-dir should only be found once, otherwise contradicts single-instance
+				bl_in_conf_dir=1
+				grs_single_inst=1
+			done
+		}
+
+	[ -n "${grs_cur_path}" ] && bl_file_exists=1
+
+	# Summarize
+	bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${grs_single_inst}"
+
+	[ "${grs_state}" = 1 ] ||
+		case "${bl_check_res}" in
+			1110|1101) grs_state=0 ;; # running
+			0100|0101)
+				if [ -n "${bl_in_conf_dir}" ]
+				then
+					grs_state=1
+				elif [ "${grs_cur_path}" = "${bk_file}" ]
+				then
+					grs_state=4 # stopped
+				else
+					grs_state=3  # paused
+				fi ;;
+			0000|0001) grs_state=4 ;; # stopped
+			*) grs_state=1 ;;
+		esac
+
+	[ "${grs_state}" = 1 ] &&
+		reg_failure "Unexpected state for blockset '${set_id}' (path '${grs_cur_path}')." \
+			"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${grs_single_inst};"
+
+	export -n "${state_out_var}=${grs_state}" "${path_out_var}=${grs_cur_path}" "${single_inst_out_var}=${grs_single_inst}"
+
+	debug_msg "${me}: set_id:${set_id}; run_state:${grs_state}; check res:${bl_check_res};"
+
+	:
+}
+
 set_blocksets_env()
 {
 	local \
 		me=set_blocksets_env \
-		valid_ids \
+		valid_ids active_ids \
 		set_id \
-		sbe_rv cur_sbe_rv \
+		rv cur_rv \
+		run_state cur_path cur_1_instance \
 		compr_util_path compr_ext compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout \
 		set_ids="${*:-"${SET_IDS}"}"
 
@@ -1310,27 +1538,36 @@ set_blocksets_env()
 		PART_EXTR_OR_CAT_STDOUT="try_extract -stdout"
 	}
 
-	read_blockset_metadata "${META_FILE:?}" "${valid_ids}" &&
-	get_dnsmasq_ips "${valid_ids}" || sbe_rv=1
+	read_blockset_metadata "${META_FILE:?}" "${valid_ids}" || rv=1
+
+	# check if abl_test_domain is resolved, for all blocksets at once
+	CA_NOERR=1 check_active_blocksets active_ids "${SET_IDS}" 0 || rv=1
+
+	for set_id in ${SET_IDS}
+	do
+		CA_NOERR=1 get_run_state "${set_id}" "${active_ids}" run_state cur_path cur_1_instance || return 1
+		set_params "${set_id}" run_state cur_path cur_1_instance
+	done
 
 	for set_id in ${valid_ids}
 	do
-		set_bl_env "${set_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}"
-		cur_sbe_rv=${?}
-		[ "${cur_sbe_rv}" = 0 ] || reg_failure -fb "${set_id}" "Failed to load environment{}."
-		sbe_rv=$(( ${sbe_rv:-0} + cur_sbe_rv ))
+		set_blockset_env "${set_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}"
+		cur_rv=${?}
+		[ "${cur_rv}" = 0 ] || reg_failure -fb "${set_id}" "Failed to load environment{}."
+		rv=$(( ${rv:-0} + cur_rv ))
 	done
 
-	debug_msg "${me} end" ""
+	debug_msg "${me} end, rv: ${rv}" ""
 
-	return ${sbe_rv}
+	return ${rv}
 }
 
 
+# Sets blockset-specific dnsmasq context
 # Populates global vars for individual blockset IDs
 # Env vars:
 #   SBE_STATUS: do not exit on non-critical errors
-set_bl_env()
+set_blockset_env()
 {
 	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${2} ${1}' to rebuild the ${3}${3:+ }blockset file."; }
 	wont_work() {
@@ -1338,122 +1575,13 @@ set_bl_env()
 			"Please run 'service adblock-lean create_addnmounts' to create required addnmount entries."
 	}
 
-	# Run states:
-	# 0 - running
-	# 1 - error
-	# 2 - (reserved)
-	# 3 - paused
-	# 4 - stopped
-	#
-	get_run_state()
-	{
-		local me=get_run_state \
-			grs_curr_path grs_single_inst \
-			curr_md5 install_1_instance bk_file \
-			bl_check_res \
-			grs_state \
-			bl_in_conf_dir \
-			cs_res \
-			cd_state \
-			bl_file_exists=0 \
-			dns_check_res=0 \
-			conf_dir conf_dirs \
-			set_id="${1:?}" state_out_var="${2:-_}" path_out_var="${3:-_}" single_inst_out_var="${4:-_}"
-
-		debug_msg "Checking state of blockset ${lblue}${set_id}${n_c}."
-
-		unset_vars "${state_out_var}" "${path_out_var}" "${single_inst_out_var}"
-		assert_set "F_${me}" GLOBAL_ENV_SET || return 1
-
-		get_params "${set_id}" grs_curr_path=curr_path grs_single_inst=curr_single_instance curr_md5 install_1_instance conf_dirs bk_file
-
-		: "${grs_single_inst:="${install_1_instance}"}"
-		: "${grs_single_inst:=0}"
-
-		debug_msg "${me}: grs_single_inst=${grs_single_inst};curr_md5=${curr_md5}"
-
-		# Test adblocking
-		if [ -n "${curr_md5}" ]
-		then
-			check_active_blockset "${set_id}" "${curr_md5}" "${grs_single_inst}"
-			case ${?} in
-				0) dns_check_res=1 ;; # pass
-				2) dns_check_res=0 ;; # not pass
-				*) dns_check_res=2 ;; # error
-			esac
-		fi
-
-		[ -n "${grs_curr_path}" ] && [ -f "${grs_curr_path}" ] || grs_curr_path=
-
-		# conf-scripts codes:
-		# 0: all conf-scripts not found
-		# 1: all conf-scripts found
-		# 2: inconsistent state
-		for conf_dir in ${conf_dirs}
-		do
-			[ -f "${conf_dir}/${CS_BASE_FNAME}-${set_id}" ] && cd_state=1 || cd_state=0
-			[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
-
-			[ "${cs_res}" = "${cd_state}" ] || cs_res=2
-		done
-		: "${cs_res:=0}"
-
-		[ -n "${grs_curr_path}" ] ||
-			# Look for blockset file in all conf-dirs
-			for conf_dir in ${ALL_CONF_DIRS}
-			do
-				for file in "${conf_dir}/${BLOCKSET_BASE_FNAME}-${set_id}" "${conf_dir}/${BLOCKSET_BASE_FNAME}-${set_id}."*
-				do
-					case "${file}" in *"*"*) continue; esac
-					[ -f "${file}" ] && { grs_curr_path="${file}"; break; }
-				done
-				[ -n "${bl_in_conf_dir}" ] && grs_state=1 # blockset in conf-dir should only be found once, otherwise contradicts single-instance
-				[ -n "${grs_curr_path}" ] && { bl_in_conf_dir=1 grs_single_inst=1; }
-			done
-
-		[ -n "${grs_curr_path}" ] && bl_file_exists=1
-
-		# Summarize
-		bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${grs_single_inst}"
-
-		[ "${grs_state}" = 1 ] ||
-			case "${bl_check_res}" in
-				1110|1101) grs_state=0 ;; # running
-				0100|0101)
-					if [ -n "${bl_in_conf_dir}" ]
-					then
-						grs_state=1
-					elif [ "${grs_curr_path}" = "${bk_file}" ]
-					then
-						grs_state=4 # stopped
-					else
-						grs_state=3  # paused
-					fi ;;
-				0000|0001) grs_state=4 ;; # stopped
-				*) grs_state=1 ;;
-			esac
-
-		[ "${grs_state}" = 1 ] &&
-			reg_failure "Unexpected state for blockset '${set_id}' (path '${grs_curr_path}')." \
-				"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${grs_single_inst};"
-
-		export -n "${state_out_var}=${grs_state}" "${path_out_var}=${grs_curr_path}" "${single_inst_out_var}=${grs_single_inst}"
-
-		debug_msg "${me}: set_id:${set_id}; run_state:${grs_state}; check res:${bl_check_res};"
-		set_params "${set_id}" run_state="${grs_state}"
-
-		:
-	}
-
 	local set_id="${1:?}" compr_ext="${2}" extr_cmd_stdout="${3}" compr_cmd_stdout="${4}" compr_cmd_to_file="${5}"
 
-	local me=set_bl_env \
+	local me=set_blockset_env \
 		IFS="${DEFAULT_IFS}" \
 		\
-		dnsmasq_indexes \
+		dmsq_instances \
 		conf_dirs \
-		\
-		run_state \
 		\
 		conf_script_log_avail \
 		\
@@ -1478,11 +1606,12 @@ set_bl_env()
 		persist_dir \
 		persist_mode \
 		\
-		curr_path \
-		curr_single_instance \
+		run_state \
+		cur_path \
+		cur_1_instance \
 		\
-		curr_persist_path \
-		curr_persist_cnt \
+		cur_persist_path \
+		cur_persist_cnt \
 		\
 		final_compress \
 		final_compr_ext \
@@ -1501,7 +1630,7 @@ set_bl_env()
 	debug_msg -fb "${set_id}" "Preparing blockset environment{}." "CUR_ACT: ${CUR_ACT}" "CUR_CMD: ${CUR_CMD}"
 
 	get_params -f "${me}" "${set_id}" \
-		dnsmasq_indexes \
+		dmsq_instances \
 		conf_dirs \
 		persist_mode || return 1
 
@@ -1510,7 +1639,7 @@ set_bl_env()
 	set_base_fname=${BLOCKSET_BASE_FNAME:?}-${set_id}
 
 	# conf-script error logging
-	check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${LOG_CMD:?}" || return 1
+	check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${LOG_CMD:?}" || return 1
 	[ -z "${sbe_missing_addnm}" ] && conf_script_log_avail=1
 
 	# Compression
@@ -1519,7 +1648,7 @@ set_bl_env()
 		assert_set "F_${me}" compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout || return 1
 		bl_full_fname_check=${set_base_fname:?}${compr_ext}
 		install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
-		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${extr_cmd_stdout%% *}${_NL_}${install_path_ram_check}" || return 1
+		check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${extr_cmd_stdout%% *}${_NL_}${install_path_ram_check}" || return 1
 
 		if [ -z "${sbe_missing_addnm}" ]
 		then
@@ -1541,10 +1670,10 @@ set_bl_env()
 	: "${bl_full_fname:="${set_base_fname:?}"}"
 
 	# Multiple dnsmasq instances
-	case "${dnsmasq_indexes}" in
+	case "${dmsq_instances}" in
 		*[0-9]*" "*[0-9]*)
 			install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname:?}
-			check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${install_path_ram_check}" || return 1
+			check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${install_path_ram_check}" || return 1
 			if [ -z "${sbe_missing_addnm}" ]
 			then
 				install_path_ram=${install_path_ram_check}
@@ -1567,19 +1696,20 @@ set_bl_env()
 	# addnmount for blockset on ramdisk - required regardless of compr/persist/multi_inst availability
 	sbe_missing_addnm=
 	is_included "${install_path_ram}" "${addnm_ignore_paths}" "${_NL_}" ||
-		check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${install_path_ram}" || return 1
+		check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${install_path_ram}" || return 1
 	[ -z "${sbe_missing_addnm}" ] || { wont_work "adblock-lean" "${sbe_missing_addnm}"; [ -n "${SBE_STATUS}" ] || return 1; }
 
-	CA_NOERR=1 get_run_state "${set_id}" run_state curr_path curr_single_instance || return 1
+	get_params "${set_id}" run_state cur_path cur_1_instance
 	case "${run_state}" in
 		0|3|4) ;;
 		*)
 			case "${CUR_CMD}" in start|pause|resume)
 				KEEP_PERSIST=1 stop_blocksets "${set_id}"
-				CA_NOERR=1 get_run_state "${set_id}" run_state curr_path curr_single_instance || return 1
+				# stopping the blockset invalidated the earlier result
+				CA_NOERR=1 get_run_state "${set_id}" '?' run_state cur_path cur_1_instance || return 1
+				set_params "${set_id}" run_state cur_path cur_1_instance
 			esac
 	esac
-	set_params "${set_id}" curr_path curr_single_instance="${curr_single_instance}"
 
 	# Persistent blockset
 	case "${persist_mode}" in manual|managed)
@@ -1588,7 +1718,7 @@ set_bl_env()
 			then
 				local cat_addnm=''
 				[ "${final_compress}" = 1 ] || cat_addnm="${_NL_}${CAT_CMD}"
-				check_addnmounts sbe_missing_addnm "${dnsmasq_indexes}" "${persist_dir}${cat_addnm}" || return 1
+				check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${persist_dir}${cat_addnm}" || return 1
 				if [ -z "${sbe_missing_addnm}" ]
 				then
 					persist_req=1
@@ -1616,9 +1746,9 @@ set_bl_env()
 		*) false
 	esac &&
 		{
-			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}." "*" ||
-			FF_RM_EXTRA=1 find_files curr_persist_path "${persist_dir}" "${set_base_fname}"
-			set_params "${set_id}" curr_persist_path
+			FF_RM_EXTRA=1 find_files cur_persist_path "${persist_dir}" "${set_base_fname}." "*" ||
+			FF_RM_EXTRA=1 find_files cur_persist_path "${persist_dir}" "${set_base_fname}"
+			set_params "${set_id}" cur_persist_path
 			[ "${persist_req}" = 1 ] &&
 			{
 				check_persist_blockset "${set_id}" "${final_compr_ext}"
@@ -1635,7 +1765,7 @@ set_bl_env()
 			[ "${ABL_INIT_ACT}" = boot ] ||
 			case "${CUR_ACT}" in
 				status|pause) : ;;
-				resume) [ "${run_state}" = 3 ] && is_persist "${curr_path}" "${set_id}" ;;
+				resume) [ "${run_state}" = 3 ] && is_persist "${cur_path}" "${set_id}" ;;
 				*) false
 			esac
 		then
@@ -1644,17 +1774,17 @@ set_bl_env()
 				[ "${CUR_ACT}" = resume ] || [ "${ABL_INIT_ACT}" = boot ] &&
 				{
 					start_action=load
-					install_path=${curr_persist_path}
+					install_path=${cur_persist_path}
 					install_1_instance=0
-					get_params "${set_id}" curr_persist_cnt
-					set_params "${set_id}" install_cnt="${curr_persist_cnt}"
+					get_params "${set_id}" cur_persist_cnt
+					set_params "${set_id}" install_cnt="${cur_persist_cnt}"
 				}
 			else
 				[ "${CUR_ACT}" = status ] ||
 				{
-					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${curr_persist_path}" "${curr_persist_path%/*}/${META_FNAME_PERSIST}"
-					[ "${curr_path}" = "${curr_persist_path}" ] && unset_metadata "${set_id}"
-					set_params "${set_id}" curr_persist_path= curr_persist_cnt=
+					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${cur_persist_path}" "${cur_persist_path%/*}/${META_FNAME_PERSIST}"
+					[ "${cur_path}" = "${cur_persist_path}" ] && unset_metadata "${set_id}"
+					set_params "${set_id}" cur_persist_path= cur_persist_cnt=
 				}
 
 				[ "${CUR_CMD}" = start ] &&
@@ -1689,8 +1819,8 @@ set_bl_env()
 	esac
 
 	pause_path="${install_path}"
-	[ "${persist_mode}" = manual ] && [ -n "${curr_path}" ] && [ "${curr_path}" = "${curr_persist_path}" ] &&
-		pause_path="${curr_persist_path}"
+	[ "${persist_mode}" = manual ] && [ -n "${cur_path}" ] && [ "${cur_path}" = "${cur_persist_path}" ] &&
+		pause_path="${cur_persist_path}"
 	[ "${install_path}" = "${install_path_ram}" ] && [ "${install_1_instance}" = 1 ] &&
 		pause_path="${ABL_RUN_DIR}/${bl_full_fname}"
 
@@ -1897,20 +2027,23 @@ try_install_blocksets()
 		me=install_blocksets \
 		\
 		installed_ids \
-		dnsmasq_ok_ids \
-		dnsmasq_fail_ids \
+		dmsq_ok_ids \
+		dmsq_fail_ids \
+		active_ids checked_ok_ids extra_ids \
+		test_domains td_doms td_recs td_passed_ids \
 		\
-		dnsmasq_stop_ids \
+		dmsq_stop_ids \
 		\
-		dnsmasq_indexes \
+		run_state \
+		dmsq_instances \
 		persist_mode \
 		skip_load_stop \
 		\
-		curr_path \
+		cur_path \
+		cur_md5 \
 		\
 		install_path \
 		install_path_ram \
-		install_md5 \
 		install_cnt \
 		install_1_instance \
 		\
@@ -1927,21 +2060,21 @@ try_install_blocksets()
 	for set_id in ${set_ids}
 	do
 		get_params "${set_id}" skip_load_stop
-		[ -n "${skip_load_stop}" ] || add2list dnsmasq_stop_ids "${set_id}"
+		[ -n "${skip_load_stop}" ] || add2list dmsq_stop_ids "${set_id}"
 	done
 
-	[ -z "${dnsmasq_stop_ids}" ] || stop_dnsmasq "${dnsmasq_stop_ids}" || return 1
+	[ -z "${dmsq_stop_ids}" ] || stop_dnsmasq "${dmsq_stop_ids}" || return 1
 
 	printf '\n' > "${MSGS_DEST}"
 
 	for set_id in ${set_ids}
 	do
-		get_params -f "${me}" "${set_id}" dnsmasq_indexes conf_dirs final_extr_or_cat_stdout install_path || { inst_failed "${set_id}"; continue; }
+		get_params -f "${me}" "${set_id}" dmsq_instances conf_dirs final_extr_or_cat_stdout install_path install_cnt || { inst_failed "${set_id}"; continue; }
 		get_params "${set_id}" install_1_instance conf_script_log_avail
 
 		log_msg "Installing blockset ${lblue}${set_id}${n_c} at ${blue}${install_path}${n_c}"
 
-		get_md5 install_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
+		get_md5 cur_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
 
 		[ "${install_1_instance}" = 1 ] ||
 		# Make conf-script
@@ -1952,43 +2085,61 @@ try_install_blocksets()
 			cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${set_id}" || { reg_failure "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
 				conf-script="\
 				${final_extr_or_cat_stdout} \"${install_path}\" && \
-				printf '%s\\n' \"address=/${install_md5}-${ABL_TEST_DOM_BASE}/#\" && \
+				printf '%s\\n' \"address=/${cur_md5}-${ABL_TEST_DOM_BASE}/#\" && \
 				exit 0; \
 				${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err \\\"conf-script at '${conf_dir}/${CS_BASE_FNAME}-${set_id}' failed.\\\";"} \
 				exit 0"
 			EOF
 		done
 
-		set_params "${set_id}" install_md5
+		set_params "${set_id}" \
+			cur_md5 \
+			cur_path="${install_path}" \
+			cur_1_instance="${install_1_instance}" \
+			cur_cnt="${install_cnt}"
 
 		add2list installed_ids "${set_id}"
 	done
 
-	[ -n "${installed_ids}" ] && restart_dnsmasq 5 dnsmasq_ok_ids "${installed_ids}"
-	subtract_a_from_b "${dnsmasq_ok_ids}" "${installed_ids}" dnsmasq_fail_ids
-	[ -n "${dnsmasq_fail_ids}" ] && inst_failed "${dnsmasq_fail_ids}"
-	[ -n "${dnsmasq_ok_ids}" ] || return 1
+	[ -n "${installed_ids}" ] && restart_dnsmasq 5 dmsq_ok_ids "${installed_ids}"
+	subtract_a_from_b "${dmsq_ok_ids}" "${installed_ids}" dmsq_fail_ids
+	[ -n "${dmsq_fail_ids}" ] && inst_failed "${dmsq_fail_ids}"
+	[ -n "${dmsq_ok_ids}" ] || return 1
 
-	for set_id in ${dnsmasq_ok_ids}
+	# Test all blocksets related to restarted dnsmasq instances
+	get_affected_set_ids extra_ids "${dmsq_ok_ids}"
+	check_active_blocksets active_ids "${dmsq_ok_ids} ${extra_ids}" 25 || return 1
+	subtract_a_from_b "${extra_ids}" "${active_ids}" active_ids
+
+	# Only worth testing DNS resolution where adblocking works, so passing this check implies both
+	for set_id in ${active_ids}
 	do
-		get_params -f "${me}" "${set_id}" install_path install_1_instance install_md5 install_cnt ||
-			{ inst_failed "${set_id}"; continue; }
+		get_params "${set_id}" test_domains
+		# a blockset with no valid test domains configured has nothing which could fail
+		validate_doms td_doms "${test_domains}" &&
+			abl_append td_recs "${set_id}=${td_doms}" "${_NL_}" ||
+			add2list checked_ok_ids "${set_id}"
+	done
 
-		CA_CHECK_DNS=1 check_active_blockset "${set_id}" "${install_md5}" "${install_1_instance}" ||
-			{
-				reg_failure -fb "${set_id}" "Active blockset check failed{}."
-				inst_failed "${set_id}"
-				continue
-			}
+	[ -n "${td_recs}" ] &&
+	{
+		LT_ACTION_MSG="Testing DNS resolution." \
+			lookup_test_doms td_passed_ids 5 "${td_recs}" || return 1
+		add2list checked_ok_ids "${td_passed_ids}"
+	}
+
+	for set_id in ${dmsq_ok_ids}
+	do
+		if ! is_included "${set_id}" "${checked_ok_ids}"
+		then
+			reg_failure -fb "${set_id}" "Active blockset check failed{}."
+			inst_failed "${set_id}"
+			continue
+		fi
 
 		rm_bk "${set_id}"
 
-		set_params "${set_id}" \
-			curr_path="${install_path}" \
-			curr_single_instance="${install_1_instance}" \
-			curr_md5="${install_md5}" \
-			curr_cnt="${install_cnt}" \
-			run_state=0
+		set_params "${set_id}" run_state=0
 
 		add2list "${try_inst_ok_ids_out_var}" "${set_id}"
 	done
@@ -1996,34 +2147,422 @@ try_install_blocksets()
 	:
 }
 
-# 1 - domain
-# 2 - nameservers
-# 3 - max attempts
-# 4 - (optional) '-n': don't check if result is 127.0.0.1 or 0.0.0.0
-try_lookup_domain()
+# Builds a dom name list for lookup_targets records
+# Returns 1 if no valid dom name found
+# 1: out-var for the space-separated list
+# 2: domain names
+validate_doms()
 {
-	local ns_res ip lookup_ok i=0 IFS="${DEFAULT_IFS}"
+	local dom invalid_doms \
+		vd_doms_var="${1:?}" vd_doms="${2}"
 
-	while :
+	unset_vars "${vd_doms_var}"
+
+	for dom in ${vd_doms}
 	do
-		for ip in ${2}
-		do
-			ns_res="$(${NSLOOKUP_CMD} "${1}" "${ip}" 2>/dev/null)" && { lookup_ok=1; break 2; }
-		done
-		i=$((i+1))
-		[ "${i}" -ge "${3}" ] && break
-		sleep 1
+		case "${dom}" in
+			*[!A-Za-z0-9._-]*) abl_append invalid_doms "'${dom}'" ", "; continue
+		esac
+		abl_append "${vd_doms_var}" "${dom}"
 	done
 
-	[ -n "${lookup_ok}" ] || return 2
+	[ -n "${invalid_doms}" ] && reg_failure "Ignoring invalid domain name(s): ${invalid_doms}"
+	eval "[ -n \"\${${vd_doms_var}}\" ]"
+}
 
-	[ "${4}" = '-n' ] && return 0
+# Checks whether adblocking is active for each blockset
+#
+# Env vars:
+#   CA_NOERR: do not print error for test domain lookup failing
+#
+# 1: out-var for active blockset IDs
+# 2: input blockset IDs
+# 3 (optional): lookup timeout in seconds
+#
+# return values:
+# 0: All blocksets tested OK
+# 1: Some blockset tests failed
+check_active_blocksets()
+{
+	local set_id md5 single_inst doms recs \
+		ab_active_out_var="${1:?}"
 
-	printf %s "${ns_res}" | grep -A1 ^Name | grep -qE '^Address: *(0\.0\.0\.0|127\.0\.0\.1)$' &&
-		{ reg_failure "Lookup of '${1}' resulted in 0.0.0.0 or 127.0.0.1."; return 3; }
+	shift
+
+	local ab_set_ids="${1:?}" timeout_s="${2}"
+
+	unset_vars "${ab_active_out_var}"
+
+	check_dmsq_instances || return 1
+
+	for set_id in ${ab_set_ids}
+	do
+		get_params "${set_id}" md5=cur_md5 single_inst=cur_1_instance
+
+		# In single-instance mode the test domain is identified by blockset ID, otherwise by checksum.
+		# With no record of how the blockset was installed, try both
+		case "${single_inst}" in
+			1) doms="${set_id}-${ABL_TEST_DOM_BASE:?}" ;;
+			'') doms="${set_id}-${ABL_TEST_DOM_BASE:?}${md5:+" ${md5}-${ABL_TEST_DOM_BASE}"}" ;;
+			*) [ -n "${md5}" ] || continue
+				doms="${md5}-${ABL_TEST_DOM_BASE:?}"
+		esac
+
+		abl_append recs "${set_id}=${doms}" "${_NL_}"
+	done
+
+	[ -n "${recs}" ] || return 0
+
+	debug_msg "recs='${recs}'"
+
+	LOOKUP_NOERR="${CA_NOERR}" \
+	LT_ACTION_MSG="Checking if adblocking is active." \
+		lookup_test_doms "${ab_active_out_var}" "${timeout_s:-0}" "${recs}"
+}
+
+# Looks up test domains for multiple blocksets, in one go across all associated dnsmasq instances
+# A blockset passes when, on every instance it uses, at least one of its domains resolved.
+#
+# Env vars:
+#   LT_ACTION_MSG: message to print before the lookups
+#   LOOKUP_NOERR: do not report the blocksets which failed
+#
+# 1: var name for output of IDs of blocksets which passed
+# 2: lookup timeout in seconds
+# 3: newline-separated records: '<blockset ID>=<domain>...'
+#
+# return values:
+# 0: Every blockset was checked
+# 1: Lookups could not be performed
+lookup_test_doms()
+{
+	local me=lookup_test_doms \
+		IFS="${_NL_}" \
+		set_id lt_checked_ids resolved_ids \
+		rec lu_recs \
+		instance instances set_insts failed_insts \
+		dom doms set_doms ns_ips \
+		hit ok cnt fail_report \
+		lt_out_var="${1:?}" timeout_s="${2:-0}" recs="${3:?}"
+
+	unset_vars "${lt_out_var}"
+
+	for rec in ${recs}
+	do
+		IFS="${DEFAULT_IFS}"
+		case "${rec}" in *=?*) ;; *) continue; esac # record without domains
+		set_id="${rec%%=*}" doms="${rec#*=}"
+
+		get_params "${set_id}" instances=dmsq_instances
+		[ -n "${instances}" ] || continue
+
+		local \
+			"doms_${set_id}=${doms}" \
+			"insts_${set_id}=${instances}"
+
+		check_var_names ${instances}
+		for instance in ${instances}
+		do
+			eval "ns_ips=\"\${NS_${instance}}\""
+			: "${ns_ips:="127.0.0.1 ::1"}"
+
+			debug_msg "Testing blockset '${set_id}' on dnsmasq instance '${instance}'." \
+				"Nameservers: ${blue}${ns_ips// /"${n_c}, ${blue}"}${n_c}" \
+				"Domains: ${doms}"
+
+			# blocksets with identical contents share a domain, so the same target ID can be built twice.
+			# lookup_targets keeps the first occurrence
+			for dom in ${doms}
+			do
+				abl_append lu_recs "${instance}__${dom} ${dom} ${ns_ips}" "${_NL_}"
+			done
+		done
+
+		add2list lt_checked_ids "${set_id}"
+	done
+
+	[ -n "${lt_checked_ids}" ] || return 0
+
+	reg_action -purple "" "${LT_ACTION_MSG:?}" || return 1
+
+	# Target IDs name their instance, so every instance shares one run, one job pool and one result list.
+	LOOKUP_NOERR=1 lookup_targets resolved_ids "${lu_recs}" "${timeout_s}"
+	case ${?} in 0|2) ;; *)
+		reg_failure "${me}: failed to look up domains."
+		[ -n "${ASSERT_NOEXIT}" ] || exit 1 # exit on internal scheduler errors
+		return 1
+	esac
+
+	for set_id in ${lt_checked_ids}
+	do
+		eval "set_insts=\"\${insts_${set_id}}\" set_doms=\"\${doms_${set_id}}\""
+		ok=0 cnt=0 failed_insts=
+		for instance in ${set_insts}
+		do
+			cnt=$((cnt+1))
+			# for each blockset, require at least one domain resolving
+			hit=
+			for dom in ${set_doms}
+			do
+				is_included "${instance}__${dom}" "${resolved_ids}" && { hit=1; break; }
+			done
+			[ -n "${hit}" ] && { ok=$((ok+1)); continue; }
+			add2list failed_insts "${instance}"
+		done
+
+		[ "${ok}" = "${cnt}" ] &&
+			{ add2list "${lt_out_var}" "${set_id}"; continue; }
+		abl_append fail_report \
+			"blockset '${set_id}' on dnsmasq instance(s): ${failed_insts}" "${_NL_}"
+	done
+
+	[ -n "${fail_report}" ] && [ -z "${LOOKUP_NOERR}" ] &&
+		reg_failure "No domain resolved:${_NL_}${fail_report}"
+
 	:
 }
 
+# Succeeds when every target resolved
+#
+# A target is a (domain, nameserver set) pair under a caller-chosen ID. It resolves as
+# soon as any one of its own nameservers answers, so the same domain can be tested
+# against several nameserver sets independently by giving each pair its own ID.
+# A repeated target ID is ignored after its first occurrence.
+#
+# 1: (optional) var name for output of the IDs of the targets which resolved
+# 2: newline-separated records: '<target ID> <domain> <nameserver>...'
+#    Vet config-sourced domain names with validate_doms first
+# 3: timeout (seconds)
+#
+# Env vars:
+#   LOOKUP_NOERR: do not print a message when the condition is not satisfied
+#   LOOKUP_FAIL_EARLY: stop as soon as the condition can no longer be satisfied. Leaves the
+#     remaining targets untested, so don't set it when the per-target results are needed.
+# shellcheck disable=SC2329
+lookup_targets()
+{
+	lookup_dom_cb()
+	{
+		local port
+		case "${ns}" in
+			*"#"*)
+				port="${ns##*"#"}"
+				ns="${ns%"#${port}"}"
+		esac
+		${NSLOOKUP_CMD:?} -port="${port:-53}" "${dom:?}" "${ns:?}" 1>/dev/null 2>/dev/null
+	}
+
+	lookup_done_cb()
+	{
+		if [ "${2}" = 0 ]
+		then
+			ASSERT_NOEXIT=1 assert_set "F_lookup_done_cb" dom job_tgt_index || return 1
+			# target may resolve on multiple nameservers - only count it once
+			test_exp "resolved_${job_tgt_index} == 0" &&
+				resolved_cnt=$((resolved_cnt+1))
+			set_int "resolved_${job_tgt_index}=1"
+			add2list RESOLVED_IDXS "${job_tgt_index}"
+			# rv 80 = terminate on early success
+			[ "${resolved_cnt}" = "${tgt_cnt}" ] && return 80
+			return 0
+		fi
+
+		# target only counts as failed once every one of its nameservers failed
+		set_int "failed_ns_${job_tgt_index} = failed_ns_${job_tgt_index} + 1"
+		# this target can no longer resolve, so neither can all of them
+		test_exp "failed_ns_${job_tgt_index} >= tgt_ns_cnt_${job_tgt_index}" &&
+			[ -n "${LOOKUP_FAIL_EARLY}" ] && [ -n "${is_last_round}" ] &&
+				return 2
+		:
+	}
+
+	finalize_lookups_cb()
+	{
+		[ -n "${RESOLVED_IDXS}" ] && printf '%s\n' "${RESOLVED_IDXS}" > "${RESOLVED_IDXS_FILE}"
+		[ "${1}" = 80 ] && return 0 # code 80 means early success
+		[ "${resolved_cnt}" = "${tgt_cnt}" ] && return 0
+		return 2
+	}
+
+	local \
+		me=lookup_targets \
+		IFS="${_NL_}" \
+		lookup_max_jobs=24 \
+		SCHED_ID=lookup \
+		rec fld fld_index \
+		tgt_id tgt_ids tgt_ns tgt_ns_cnt tgt_cnt=0 tgt_index \
+		dom all_doms unresolved_doms \
+		resolved_idxs resolved_cnt=0 \
+		job_tgt_index \
+		ns all_ns \
+		id ids job_cnt=0 \
+		lookup_rv \
+		RESOLVED_IDXS \
+		RESOLVED_IDXS_FILE="${ABL_TMP_DIR}/resolved-tgts" \
+		is_last_round \
+		sched_timeout_s \
+		lookup_start_cs lookup_elapsed_cs \
+			resolved_out_var="${1}" recs_in="${2}" lookup_timeout_s="${3:-0}"
+
+	[ -n "${resolved_out_var}" ] && unset_vars "${resolved_out_var}"
+
+	[ -n "${recs_in}" ] || return 0
+
+	# the record list is split before the first iteration, so IFS can be restored inside the loop
+	for rec in ${recs_in}
+	do
+		IFS="${DEFAULT_IFS}"
+		tgt_id='' dom='' tgt_ns='' fld_index=0
+		for fld in ${rec}
+		do
+			fld_index=$((fld_index+1))
+			case "${fld_index}" in
+				1) tgt_id="${fld}" ;;
+				2) dom="${fld}" ;;
+				*) add2list tgt_ns "${fld}" # remove duplicates
+			esac
+		done
+		[ -n "${tgt_id}" ] && [ -n "${dom}" ] && [ -n "${tgt_ns}" ] || bad_args "${me}" "${@}"
+
+		case "${dom}" in
+			*[!A-Za-z0-9._-]*)
+				reg_failure "${me}: invalid domain name '${dom}'."
+				return 1
+		esac
+		is_included "${tgt_id}" "${tgt_ids}" && continue
+
+		cnt_lines tgt_ns_cnt "${tgt_ns//[ $'\t']/$'\n'}"
+		tgt_cnt=$((tgt_cnt+1))
+		job_cnt=$((job_cnt+tgt_ns_cnt))
+		abl_append tgt_ids "${tgt_id}"
+		add2list all_doms "${dom}"
+		add2list all_ns "${tgt_ns}"
+		local \
+			"tgt_id_${tgt_cnt}=${tgt_id}" \
+			"tgt_dom_${tgt_cnt}=${dom}" \
+			"tgt_ns_${tgt_cnt}=${tgt_ns}" \
+			"tgt_ns_cnt_${tgt_cnt}=${tgt_ns_cnt}" \
+			"resolved_${tgt_cnt}=0" \
+			"failed_ns_${tgt_cnt}=0"
+	done
+
+	[ "${tgt_cnt}" = 0 ] && bad_args "${me}" "${@}"
+
+	sched_timeout_s=$(( 5 * (job_cnt/lookup_max_jobs + (job_cnt % lookup_max_jobs > 0) ) + 1 ))
+	[ "${sched_timeout_s}" -gt 30 ] && sched_timeout_s=30
+
+	get_uptime_cs lookup_start_cs
+
+	while :
+	do
+		: > "${RESOLVED_IDXS_FILE}"
+
+		# Only give up early on last attempt.
+		# Otherwise let running lookups finish to try and exclude more targets from the next round.
+		is_last_round=1
+		[ "${lookup_timeout_s}" -gt 0 ] &&
+		{
+			get_elapsed_time_cs lookup_elapsed_cs "${lookup_start_cs}"
+			[ $(( lookup_elapsed_cs + sched_timeout_s*100 < lookup_timeout_s*100 )) = 1 ] &&
+				is_last_round=
+		}
+
+		ids=
+		id=0
+		tgt_index=0
+		while [ "${tgt_index}" -lt "${tgt_cnt}" ]
+		do
+			tgt_index=$((tgt_index+1))
+			test_exp "resolved_${tgt_index} == 1" && continue # Ignore targets resolved earlier
+			set_int "failed_ns_${tgt_index} = 0"
+			eval "dom=\"\${tgt_dom_${tgt_index}}\" tgt_ns=\"\${tgt_ns_${tgt_index}}\""
+			for ns in ${tgt_ns}
+			do
+				id=$((id+1))
+				jobs_init "${id}"
+				abl_append ids "${id}"
+				job_set_params "${id}" \
+					"dom=${dom}" \
+					"ns=${ns}" \
+					"job_tgt_index=${tgt_index}"
+			done
+		done
+
+		DO_JOB_CB=lookup_dom_cb \
+		JOB_DONE_CB=lookup_done_cb \
+		SCHED_FINALIZE_CB=finalize_lookups_cb \
+		SCHED_FAIL_MSG_CB=reg_failure \
+		SCHED_DIR="${ABL_TMP_DIR}" \
+		SCHED_MAX_JOBS=${lookup_max_jobs} \
+		SCHED_JOB_TIMEOUT_S=3 \
+		SCHED_TIMEOUT_S=${sched_timeout_s} \
+		SCHED_IDLE_TIMEOUT_S=4 \
+			schedule_jobs "${ids}" &
+
+		SCHEDULER_PID=${!}
+		wait ${SCHEDULER_PID}
+		lookup_rv=${?}
+		SCHEDULER_PID=
+
+		# Record this round's hits, so the next round can skip them.
+		resolved_idxs=
+		read_str_from_file -D "resolved domains" -q -v resolved_idxs -f "${RESOLVED_IDXS_FILE}" -F "" -a 1 -n 4096 || [ ${?} = 2 ] || return 1
+		for tgt_index in ${resolved_idxs}
+		do
+			is_uint "${tgt_index}" && [ "${tgt_index}" -ge 1 ] && [ "${tgt_index}" -le "${tgt_cnt}" ] &&
+				set_int "resolved_${tgt_index} = 1"
+		done
+
+		resolved_cnt=0
+		tgt_index=0
+		while [ "${tgt_index}" -lt "${tgt_cnt}" ]
+		do
+			tgt_index=$((tgt_index+1))
+			test_exp "resolved_${tgt_index} == 1" &&
+				resolved_cnt=$((resolved_cnt+1))
+		done
+
+		case "${lookup_rv}" in
+			0) break ;;
+			2) : ;;
+			*) reg_failure "Scheduler failure when testing domains resolution."; return 1
+		esac
+
+		[ "${resolved_cnt}" = "${tgt_cnt}" ] && { lookup_rv=0; break; }
+
+		[ "${lookup_timeout_s}" -gt 0 ] || break
+		get_elapsed_time_cs lookup_elapsed_cs "${lookup_start_cs}"
+		[ $(( lookup_elapsed_cs < lookup_timeout_s*100 )) = 1 ] || break
+
+		sleep 1 &
+		wait ${!}
+	done
+
+
+	rm -f "${RESOLVED_IDXS_FILE}"
+
+	tgt_index=0
+	while [ "${tgt_index}" -lt "${tgt_cnt}" ]
+	do
+		tgt_index=$((tgt_index+1))
+		eval "tgt_id=\"\${tgt_id_${tgt_index}}\" dom=\"\${tgt_dom_${tgt_index}}\""
+
+		if test_exp "resolved_${tgt_index} == 1"
+		then
+			[ -n "${resolved_out_var}" ] && add2list "${resolved_out_var}" "${tgt_id}"
+		else
+			add2list unresolved_doms "${dom}"
+		fi
+	done
+
+	[ "${lookup_rv}" = 0 ] && return 0
+
+	[ -z "${LOOKUP_NOERR}" ] &&
+		reg_failure "Failed to satisfy domain resolution condition: ${all_doms}" \
+			"Unresolved domains: ${unresolved_doms}" "Tried nameservers: ${all_ns}"
+
+	return "${lookup_rv:-1}"
+}
 
 ### METADATA
 
@@ -2040,7 +2579,7 @@ unset_metadata()
 		for meta_param in ${META_PARAMS:?}
 		do
 			unset "${UNSET_PREFIX}${meta_param}_${set_id}"
-			unset_dbg="${unset_dbg}${unset_dbg:+"${_NL_}"}unset ${UNSET_PREFIX}${meta_param}_${set_id}"
+			abl_append unset_dbg "unset ${UNSET_PREFIX}${meta_param}_${set_id}" "${_NL_}"
 		done
 	done
 	[ -n "${unset_dbg}" ] && debug_msg "${_NL_}${unset_dbg}"
@@ -2064,7 +2603,7 @@ try_commit_metadata()
 		GBP_PREFIX \
 		param_set param_set_bl param param_val uci_fail \
 		set_id \
-		curr_path \
+		cur_path \
 		meta_fname \
 		meta_locations="${COMMIT_META_LOCATIONS:-"RAM PERSIST"}" \
 		meta_file="${META_FILE}"
@@ -2083,8 +2622,8 @@ try_commit_metadata()
 
 		for set_id in ${SET_IDS}
 		do
-			get_params "${set_id}" curr_path
-			[ -n "${curr_path}" ] || continue
+			get_params "${set_id}" cur_path
+			[ -n "${cur_path}" ] || continue
 
 			uci_tmp set "${META_FNAME}.${set_id}=blockset_id" || { uci_fail=1; break; }
 			for param in ${META_PARAMS}
@@ -2114,8 +2653,8 @@ try_commit_metadata()
 	for set_id in ${SET_IDS}
 	do
 		local persist_dir
-		get_params "${set_id}" persist_dir curr_path
-		is_persist "${curr_path}" "${set_id}" || continue
+		get_params "${set_id}" persist_dir cur_path
+		is_persist "${cur_path}" "${set_id}" || continue
 
 		[ -d "${persist_dir}" ] || { reg_failure -fb "${set_id}" "Can not update persistent metadata file{} because directory '${persist_dir}' is not found."; continue; }
 
@@ -2167,7 +2706,7 @@ read_blockset_metadata()
 try_read_blockset_metadata()
 {
 	append_err() {
-		[ -n "${1}" ] && rbm_errors="${rbm_errors}${rbm_errors:+"${_NL_}"}${1}"
+		[ -n "${1}" ] && abl_append rbm_errors "${1}" "${_NL_}"
 		is_included "${set_id}" "${req_ids}" && rbm_rv=1
 	}
 
@@ -2177,7 +2716,7 @@ try_read_blockset_metadata()
 			pv_param \
 			meta_val \
 			bl_md5 \
-			curr_path curr_cnt curr_md5 \
+			cur_path cur_cnt cur_md5 \
 			set_id="${1}"
 		local set_id_pr="blockset '${set_id}'"
 
@@ -2193,8 +2732,8 @@ try_read_blockset_metadata()
 			debug_msg "${blue}set metadata${n_c}: ${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
 		done
 
-		GBP_PREFIX="${rbm_prefix}" get_params "${set_id}" curr_cnt curr_md5 curr_path
-		[ -n "${curr_path}" ] || return 0
+		GBP_PREFIX="${rbm_prefix}" get_params "${set_id}" cur_cnt cur_md5 cur_path
+		[ -n "${cur_path}" ] || return 0
 
 		is_included "${set_id}" "${req_ids}" ||
 		{
@@ -2204,21 +2743,21 @@ try_read_blockset_metadata()
 		}
 
 		# check md5
-		get_md5 bl_md5 "${curr_path}" ||
+		get_md5 bl_md5 "${cur_path}" ||
 			{ append_err; return 1; }
 
-		[ "${curr_md5}" = "${bl_md5}" ] ||
-			append_err "MD5 sum not matching in ${sp_f_pr} for ${set_id_pr}, path '${curr_path}'. Metadata file has: '${curr_md5}', blockset file has: '${bl_md5}'."
+		[ "${cur_md5}" = "${bl_md5}" ] ||
+			append_err "MD5 sum not matching in ${sp_f_pr} for ${set_id_pr}, path '${cur_path}'. Metadata file has: '${cur_md5}', blockset file has: '${bl_md5}'."
 
 		# set persist params
 		[ "${rbm_type}" = PERSIST ] &&
 		{
-			[ "${curr_path%/*}" = "${meta_file%/*}" ] ||
+			[ "${cur_path%/*}" = "${meta_file%/*}" ] ||
 			{
-				append_err "Persistent blockset dir not matching in ${sp_f_pr} for ${set_id_pr}. Metadata file has: '${curr_path%/*}', metadata is at: '${meta_file%/*}'."
+				append_err "Persistent blockset dir not matching in ${sp_f_pr} for ${set_id_pr}. Metadata file has: '${cur_path%/*}', metadata is at: '${meta_file%/*}'."
 				return 1
 			}
-			set_params "${set_id}" curr_persist_md5="${curr_md5}" curr_persist_cnt="${curr_cnt}"
+			set_params "${set_id}" cur_persist_md5="${cur_md5}" cur_persist_cnt="${cur_cnt}"
 		}
 		:
 	}
@@ -2265,8 +2804,7 @@ try_read_blockset_metadata()
 	UNSET_PREFIX="${rbm_prefix}" unset_metadata "${req_ids}"
 
 	dbg_off
-	UCI_CONFIG_DIR="${meta_file%/*}" config_load "${meta_file##*/}" ||
-		{ reg_failure "${me}: failed to load ${sp_f_pr}."; return 1; }
+	UCI_CONFIG_DIR="${meta_file%/*}" config_load_a "${meta_file##*/}" || return 1
 	dbg_on
 
 	config_foreach populate_vars blockset_id
