@@ -788,16 +788,18 @@ rm_blocksets()
 
 rm_conf_scripts()
 {
-	local set_id conf_dir conf_dirs \
+	local set_id dir conf_dirs \
 		set_ids="${*:-"${SET_IDS}"}"
 
 	for set_id in ${set_ids}
 	do
 		debug_msg "${set_id}: removing conf-scripts"
 		get_params "${set_id}" conf_dirs
-		for conf_dir in ${conf_dirs}
+		for dir in ${conf_dirs}
 		do
-			rm -f "${conf_dir}/${CS_BASE_FNAME}-${set_id}"
+			rm -f "${dir}/${CS_BASE_FNAME}-${set_id}"
+			# Leftover legacy files
+			rm -f "${dir}/${CS_BASE_FNAME}" "${dir}/${BLOCKSET_BASE_FNAME:-???}"* "${dir}/.abl-extract_blocklist"
 		done
 	done
 
