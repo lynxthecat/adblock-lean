@@ -1020,7 +1020,6 @@ install_abl_files()
 				min_blocklist_ipv4_part_line_count=min_ipv4_block_part_entries
 				min_ipv4_blocklist_part_line_count=min_ipv4_block_part_entries
 				min_allowlist_part_line_count=min_allow_part_entries
-				max_file_part_size_KB=max_part_size_KB
 				max_download_retries=max_download_attempts
 			'
 
@@ -1035,7 +1034,10 @@ install_abl_files()
 				min_good_line_count=min_blockset_entries
 				min_good_entries=min_blockset_entries
 				max_blocklist_file_size_KB=max_blockset_size_KB
+				max_file_part_size_KB=max_part_size_KB
 			'
+
+			set -f
 
 			# convert into _DELIM_ separated lists
 			for cfg_type in global blockset
