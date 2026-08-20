@@ -600,7 +600,7 @@ gen_set_parts()
 	do
 		eval "part_indexes=\"\${indexes_${part_type}}\""
 		[ -n "${part_indexes}" ] || continue
-		abl_append indexes "${part_indexes}"
+		add2list indexes "${part_indexes}"
 	done
 
 	DO_JOB_CB=process_set_part \
@@ -661,7 +661,7 @@ gen_blocksets()
 
 	: "${skip_load_stop}" "${bk_cnt}"
 
-	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file{}."
+	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file(s){}."
 
 	if [ "${force_unload}" = auto ]
 	then
@@ -675,36 +675,6 @@ gen_blocksets()
 	fi
 
 	# Prepare processing for all blocksets
-	local no_local_found_msgs
-	for set_id in ${set_ids}
-	do
-		for part_type in ${ALL_PART_TYPES}
-		do
-			get_params "${set_id}" \
-				"local_part=local_${part_type}list_path"
-
-			{ [ -n "${local_part}" ] && [ -f "${local_part}" ]; } ||
-			{
-				export -n "local_${part_type}list_path_${set_id}="
-				abl_append no_local_found_msgs "${set_id}:No local ${part_type}list file found{}." "${_NL_}"
-			}
-
-		done
-	done
-
-	[ -n "${no_local_found_msgs}" ] &&
-	{
-		printf '\n' > "${MSGS_DEST}"
-		IFS="${_NL_}"
-		for msg in ${no_local_found_msgs}
-		do
-			IFS="${DEFAULT_IFS}"
-			set_id="${msg%%:*}"
-			reg_msg -fb "${set_id}" "${msg#"${set_id}:"}"
-		done
-		IFS="${DEFAULT_IFS}"
-	}
-
 	local dl_parts
 	for format in ${ALL_PART_FORMATS:?}
 	do
@@ -723,6 +693,9 @@ gen_blocksets()
 				get_params "${set_id}" \
 					"dl_parts=${format}_${part_type}_lists" \
 					"local_part=local_${part_type}list_path"
+
+				{ [ -n "${local_part}" ] && [ -f "${local_part}" ]; } ||
+					set_params "${set_id}" "local_${part_type}list_path="
 
 				[ -n "${dl_parts}${local_part}" ] || continue
 
@@ -934,7 +907,7 @@ gen_blocksets()
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 -fb "${set_id}" "" "No existing blockset file found{}."
+			reg_msg -2 -fb "${set_id}" "No existing blockset file found{}."
 		fi
 		set_params "${set_id}" bk_file bk_cnt
 	done
