@@ -27,7 +27,7 @@ VAR2CFG_MAP="$(
 		test_domains
 		max_part_size=max_part_size_KB
 		max_set_size=max_blockset_size_KB
-		min_entries
+		min_blockset_entries
 		custom_script
 		dmsq_instances=dnsmasq_instances
 		conf_dirs=dnsmasq_conf_dirs
@@ -1210,7 +1210,7 @@ check_persist_blockset()
 		cur_cnt \
 		set_id="${1}" final_compr_ext="${2}"
 
-	get_params -f "check_persist_blockset" "${set_id}" persist_mode min_entries max_set_size run_state || return 1
+	get_params -f "check_persist_blockset" "${set_id}" persist_mode min_entries=min_blockset_entries max_set_size run_state || return 1
 	get_params "${set_id}" cur_persist_path
 	debug_msg "Checking persistent blockset file: ${blue}${cur_persist_path}${n_c}"
 

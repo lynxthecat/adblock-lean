@@ -1078,7 +1078,7 @@ gen_blockset()
 		install_path \
 		max_part_size \
 		max_set_size \
-		min_entries \
+		min_entries=min_blockset_entries \
 		final_compr_or_cat_stdout || return 1
 
 	get_params "${set_id}" \
@@ -1318,7 +1318,7 @@ gen_blockset()
 	if [ "${gen_cnt}" -lt "${min_entries}" ]
 	then
 		int2human min_entries_human "${min_entries}" || return 1
-		reg_failure "Entries count (${gen_cnt_human}) is below the minimum value set in config option 'min_entries' (${min_entries_human})."
+		reg_failure "Entries count (${gen_cnt_human}) is below the minimum value set in config option 'min_blockset_entries' (${min_entries_human})."
 		return 1
 	fi
 

@@ -725,7 +725,7 @@ get_preset()
 			"${blue}raw_block_lists${n_c}=\"${gp_lists}\"" \
 			"${blue}max_part_size_KB${n_c}=\"${gp_max_part_size}\"" \
 			"${blue}max_blockset_size_KB${n_c}=\"${gp_max_set_size}\"" \
-			"${blue}min_entries${n_c}=\"${gp_min_entries}\""
+			"${blue}min_blockset_entries${n_c}=\"${gp_min_entries}\""
 	}
 
 	export -n \
@@ -831,7 +831,7 @@ do_calculate_limits()
 		print_msg "" "Recommended values for ${lists_cnt} ${lists_pr} with ${tgt_entries_cnt_human} total entries:" \
 			"${blue}max_part_size_KB${n_c}=\"${cl_max_part_size_kb}\"" \
 			"${blue}max_blockset_size_KB${n_c}=\"${cl_max_set_size_kb}\"" \
-			"${blue}min_entries${n_c}=\"${cl_min_entries}\""
+			"${blue}min_blockset_entries${n_c}=\"${cl_min_entries}\""
 	}
 
 	export -n "${4:-_}=${cl_min_entries}" "${5:-_}=${cl_max_set_size_kb}" "${6:-_}=${cl_max_part_size_kb}" || return 1
@@ -945,7 +945,7 @@ print_def_cfg_blockset()
 	max_blockset_size_KB="${pdc_max_set_size}" @ uint
 
 	# Minimum number of entries in final postprocessed blockset
-	min_entries="${pdc_min_entries}" @ uint
+	min_blockset_entries="${pdc_min_entries}" @ uint
 
 	# If a path to custom script is specified and that script defines functions
 	# 'report_success()', 'report_failure()' or 'report_update()',
