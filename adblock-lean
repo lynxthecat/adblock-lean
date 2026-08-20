@@ -1823,9 +1823,9 @@ init_act()
 	case ${cur_act} in
 		enabled|enable|disable|uninstall) ;;
 		gen_stats|calculate_limits) libs_req=1 ;;
-		status) local SBE_STATUS=1; cfg_req=1 find_set_configs_req=1 set_ids_req=1 work_dir_req=1 ;;
+		status) local SBE_STATUS=1; work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1;;
 		upd_cron_job) cfg_req=1 ;;
-		setup|gen_global_config) find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
+		setup|gen_global_config) work_dir_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
 		gen_blockset_config) work_dir_req=1 cfg_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
 		rm_blockset_config) libs_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
 		boot|create_addnmounts) cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
@@ -1846,7 +1846,7 @@ init_act()
 					2) reg_fail "Failed to kill running adblock-lean processes."; exit 1
 				esac
 			}
-			libs_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+			work_dir_req=1 libs_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
 		select_dnsmasq_instances) libs_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
 		reload|restart) ;;
 		update) work_dir_req=1 LOCK_REQ=1 ;;
@@ -2666,10 +2666,10 @@ do_stop()
 		ASSERT_NOEXIT=1 \
 		FAIL_STOP_REQ \
 		IFS="${DEFAULT_IFS}" \
-		stop_failed \
 		dir \
 		IN_STOP=1 \
 		force_stop_all="${FORCE_STOP_ALL:-}" \
+		set_env_ids \
 		set_id \
 		set_ids
 
@@ -2692,9 +2692,12 @@ do_stop()
 		} &&
 		for set_id in ${set_ids}
 		do
-			eval "[ -n \"\${BL_ENV_SET_${set_id}}\" ]" || set_blocksets_env "${set_id}" || { stop_failed=1; break; }
+			eval "[ -n \"\${BL_ENV_SET_${set_id}}\" ]" || abl_append set_env_ids "${set_id}"
 		done &&
-		[ -z "${stop_failed}" ] &&
+		{
+			[ -z "${set_env_ids}" ] ||
+			set_blocksets_env "${set_env_ids}"
+		} &&
 		stop_blocksets "${set_ids}" &&
 			return 0
 	}
