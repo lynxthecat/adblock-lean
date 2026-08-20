@@ -154,7 +154,7 @@ get_feed_url()
 
 	unset_vars "${gfu_out_var}"
 
-	case "${format}" in raw|hosts) ;; *) reg_failure "Unexpected list format '${format}'."; return 1; esac
+	case "${format}" in raw|hosts) ;; *) reg_fail "Unexpected list format '${format}'."; return 1; esac
 
 	tolower list_id_lc "${list_id}"
 	case "${list_id_lc}" in hagezi:*|oisd:*|stevenblack:*) ;; *)
@@ -167,17 +167,17 @@ get_feed_url()
 
 	eval "lists=\"\${${feed_author}_lists}\""
 	eval "base_url=\"\${${feed_author}_${mirror}_url}\""
-	[ -n "${base_url}" ] || { reg_failure "Failed to get base URL for ${feed_author} mirror '${mirror}'."; return 1; }
+	[ -n "${base_url}" ] || { reg_fail "Failed to get base URL for ${feed_author} mirror '${mirror}'."; return 1; }
 
-	is_included "${list_name}" "${lists}" || { reg_failure "Unknown ${feed_author} list '${2}'."; return 1; }
+	is_included "${list_name}" "${lists}" || { reg_fail "Unknown ${feed_author} list '${2}'."; return 1; }
 
 	eval "formats=\"\${${feed_author}_formats}\""
 	is_included "${format}" "${formats}" ||
-		{ reg_failure "${list_id} is only available in formats: ${formats}."; return 1; }
+		{ reg_fail "${list_id} is only available in formats: ${formats}."; return 1; }
 
 	eval "mirrors=\"\${${feed_author}_mirrors}\""
 	is_included "${mirror}" "${mirrors}" ||
-		{ reg_failure "Unexpected mirror '${mirror}' for list author ${feed_author}."; return 1; }
+		{ reg_fail "Unexpected mirror '${mirror}' for list author ${feed_author}."; return 1; }
 
 	case "${feed_author}" in
 		hagezi)
@@ -203,7 +203,7 @@ get_feed_url()
 
 	eval "suffix=\"\${${format}_suffix}\""
 	gfu_res="${prefix}${suffix}"
-	[ -n "${gfu_res}" ] || { reg_failure "Failed to construct URL for list identifier '${list_id}'."; return 1; }
+	[ -n "${gfu_res}" ] || { reg_fail "Failed to construct URL for list identifier '${list_id}'."; return 1; }
 
 	: "${raw_suffix}" "${hosts_suffix}"
 	export -n "${gfu_out_var}=${gfu_res}"
@@ -311,7 +311,7 @@ process_set_part()
 		trim_spaces mirrors &&
 		[ -n "${mirrors}" ] &&
 		first_mirror="${mirrors%% *}" &&
-		[ -n "${first_mirror}" ] || { reg_failure "Failed to process download mirrors for list author ${feed_author}."; return 1; }
+		[ -n "${first_mirror}" ] || { reg_fail "Failed to process download mirrors for list author ${feed_author}."; return 1; }
 
 		eval "cur_mirror=\"\${${feed_author}_default_mirror}\""
 		: "${cur_mirror:="${first_mirror}"}"
@@ -320,7 +320,7 @@ process_set_part()
 	case "${origin}" in
 		DL) fetch_cmd=dl_feed ;;
 		LOCAL) fetch_cmd="${CAT_CMD:?}" ;;
-		*) reg_failure "Invalid list origin '${origin}'."; return 1
+		*) reg_fail "Invalid list origin '${origin}'."; return 1
 	esac
 
 	local \
@@ -432,7 +432,7 @@ process_set_part()
 			then
 				lines_cnt_low=1
 				int2human min_part_entries_human "${min_part_entries}" || return 1
-				reg_failure "Entries count in downloaded blockset part '${print_id}' is ${cnt_human}, which is less than configured minimum: ${min_part_entries_human}."
+				reg_fail "Entries count in downloaded blockset part '${print_id}' is ${cnt_human}, which is less than configured minimum: ${min_part_entries_human}."
 			fi
 		fi
 
@@ -447,11 +447,11 @@ process_set_part()
 		then
 			[ -s "${ucl_err_file}" ] && ucl_err=" uclient-fetch output: ${_NL_}'$(cat "${ucl_err_file}")'."
 			rm -f "${ucl_err_file}"
-			reg_failure "" "Failed download attempt for list '${print_id}'.${pipeline_msg:+ }${pipeline_msg}${ucl_err}"
+			reg_fail "" "Failed download attempt for list '${print_id}'.${pipeline_msg:+ }${pipeline_msg}${ucl_err}"
 			[ -n "${ucl_err}" ] && log_msg "${ucl_err}"
 		elif [ "${pipeline_rv}" != 0 ]
 		then
-			reg_failure "" "${pipeline_msg}"
+			reg_fail "" "${pipeline_msg}"
 			return 1
 		else
 			bytes2human part_size_human "${part_size_B}" -p
@@ -469,7 +469,7 @@ process_set_part()
 		attempt=$((attempt + 1))
 		if [ ! "${attempt}" -le "${max_download_attempts}" ]
 		then
-			reg_failure "${max_download_attempts} download attempts failed for list '${print_id}'."
+			reg_fail "${max_download_attempts} download attempts failed for list '${print_id}'."
 			return 2
 		fi
 
@@ -493,7 +493,7 @@ process_set_part()
 
 part_size_exceeded()
 {
-	reg_failure "Size of blockset part '${1}' exceeded the maximum value set in config option 'max_part_size_KB' (${2} KB)."
+	reg_fail "Size of blockset part '${1}' exceeded the maximum value set in config option 'max_part_size_KB' (${2} KB)."
 	log_msg "Consider either increasing this value in the blockset config or removing the corresponding blockset part identifier or URL from same config."
 }
 
@@ -546,9 +546,9 @@ gen_set_parts()
 			1)
 				if [ -n "${print_id}" ]
 				then
-					reg_failure "Fatal error in processing job for list '${print_id}'."
+					reg_fail "Fatal error in processing job for list '${print_id}'."
 				else
-					reg_failure "Fatal error reported by unknown processing job."
+					reg_fail "Fatal error reported by unknown processing job."
 				fi
 				return 1
 		esac
@@ -557,7 +557,7 @@ gen_set_parts()
 		then
 			part_size_exceeded "${print_id}" "${max_part_size}"
 		else
-			reg_failure "" "Processing job for list '${print_id:-unknown}' returned error code '${rv}'."
+			reg_fail "" "Processing job for list '${print_id:-unknown}' returned error code '${rv}'."
 		fi
 
 		for set_id in ${PROC_SET_IDS}
@@ -600,13 +600,13 @@ gen_set_parts()
 	do
 		eval "part_indexes=\"\${indexes_${part_type}}\""
 		[ -n "${part_indexes}" ] || continue
-		abl_append indexes "${part_indexes}"
+		add2list indexes "${part_indexes}"
 	done
 
 	DO_JOB_CB=process_set_part \
 	JOB_DONE_CB=part_done_cb \
 	SCHED_FINALIZE_CB=processing_done_cb \
-	SCHED_FAIL_MSG_CB=reg_failure \
+	SCHED_FAIL_MSG_CB=reg_fail \
 	SCHED_MAX_JOBS="${PARALLEL_JOBS}" \
 	SCHED_TIMEOUT_S=900 \
 	SCHED_IDLE_TIMEOUT_S=500 \
@@ -661,7 +661,7 @@ gen_blocksets()
 
 	: "${skip_load_stop}" "${bk_cnt}"
 
-	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file{}."
+	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file(s){}."
 
 	if [ "${force_unload}" = auto ]
 	then
@@ -675,36 +675,6 @@ gen_blocksets()
 	fi
 
 	# Prepare processing for all blocksets
-	local no_local_found_msgs
-	for set_id in ${set_ids}
-	do
-		for part_type in ${ALL_PART_TYPES}
-		do
-			get_params "${set_id}" \
-				"local_part=local_${part_type}list_path"
-
-			{ [ -n "${local_part}" ] && [ -f "${local_part}" ]; } ||
-			{
-				export -n "local_${part_type}list_path_${set_id}="
-				abl_append no_local_found_msgs "${set_id}:No local ${part_type}list file found{}." "${_NL_}"
-			}
-
-		done
-	done
-
-	[ -n "${no_local_found_msgs}" ] &&
-	{
-		printf '\n' > "${MSGS_DEST}"
-		IFS="${_NL_}"
-		for msg in ${no_local_found_msgs}
-		do
-			IFS="${DEFAULT_IFS}"
-			set_id="${msg%%:*}"
-			reg_msg -fb "${set_id}" "${msg#"${set_id}:"}"
-		done
-		IFS="${DEFAULT_IFS}"
-	}
-
 	local dl_parts
 	for format in ${ALL_PART_FORMATS:?}
 	do
@@ -724,13 +694,16 @@ gen_blocksets()
 					"dl_parts=${format}_${part_type}_lists" \
 					"local_part=local_${part_type}list_path"
 
+				{ [ -n "${local_part}" ] && [ -f "${local_part}" ]; } ||
+					set_params "${set_id}" "local_${part_type}list_path="
+
 				[ -n "${dl_parts}${local_part}" ] || continue
 
 				[ -n "${dl_parts}" ] &&
 				{
 					invalid_urls="$(printf %s "${dl_parts}" | tr ' ' '\n' | grep -E '^(http[s]*://)*(www\.)*github\.com')" &&
 					{
-						reg_failure "Invalid URLs detected:" "${invalid_urls}"
+						reg_fail "Invalid URLs detected:" "${invalid_urls}"
 						return 1
 					}
 
@@ -738,7 +711,7 @@ gen_blocksets()
 					{
 						bad_hagezi_urls="$(printf %s "${dl_parts}" | tr ' ' '\n' | grep '/hagezi/.*/dnsmasq/')" &&
 						{
-							reg_failure "Following Hagezi lists are in dnsmasq format and should be changed to raw-format lists:" "${bad_hagezi_urls}"
+							reg_fail "Following Hagezi lists are in dnsmasq format and should be changed to raw-format lists:" "${bad_hagezi_urls}"
 							return 1
 						}
 						case "${part_type}" in block|allow)
@@ -749,7 +722,7 @@ gen_blocksets()
 							)"
 							[ -z "${bad_hagezi_urls}" ] ||
 							{
-								reg_failure "Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" \
+								reg_fail "Following Hagezi URLs are missing the '-onlydomains' suffix in the filename:" \
 									"${bad_hagezi_urls}"
 								return 1
 							}
@@ -837,7 +810,7 @@ gen_blocksets()
 						"is_ipv4_prev=is_ipv4"
 
 					[ -n "${is_ipv4_prev}" ] && [ "${is_ipv4}" != "${is_ipv4_prev}" ] &&
-						{ reg_failure "Blockset part '${part#"local="}' is specified as both ipv4 and not."; return 1; }
+						{ reg_fail "Blockset part '${part#"local="}' is specified as both ipv4 and not."; return 1; }
 
 					[ -n "${min_part_entries_prev}" ] &&
 					[ "${min_part_entries_prev}" -lt "${min_part_entries}" ] &&
@@ -863,11 +836,11 @@ gen_blocksets()
 		IFS="${DEFAULT_IFS}"
 	done
 
-	[ -n "${PROC_SET_IDS}" ] || { reg_failure "Nothing to process."; return 1; }
+	[ -n "${PROC_SET_IDS}" ] || { reg_fail "Nothing to process."; return 1; }
 
 	for set_id in ${set_ids}
 	do
-		is_included "${set_id}" "${PROC_SET_IDS}" || { reg_failure -fb "${set_id}" "Nothing to process{}."; continue; }
+		is_included "${set_id}" "${PROC_SET_IDS}" || { reg_fail -fb "${set_id}" "Nothing to process{}."; continue; }
 		debug_msg "Processing bockset ${set_id}."
 		get_params -f "${me}" "${set_id}" run_state || return 1
 		get_params "${set_id}" \
@@ -889,7 +862,7 @@ gen_blocksets()
 		case "${run_state}" in
 			0) ;;
 			3|4) force_unload_bl=0 conn_check_req='' skip_load_stop=1 ;;
-			*) reg_failure -fb "${set_id}" "${me}: unexpected run state '${run_state}'{}."; exit 1
+			*) reg_fail -fb "${set_id}" "${me}: unexpected run state '${run_state}'{}."; exit 1
 		esac
 
 		[ "${force_unload_bl}" = 1 ] ||
@@ -924,7 +897,7 @@ gen_blocksets()
 			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}." &&
 			mv_blockset "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${set_id}" ||
 			{
-				reg_failure "Failed to create backup of current blockset file '${file_to_bk}'."
+				reg_fail "Failed to create backup of current blockset file '${file_to_bk}'."
 				rm_if_writable "${set_id}" "${file_to_bk}"
 				bk_file=
 				bk_cnt=
@@ -934,7 +907,7 @@ gen_blocksets()
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
 			bk_file="${file_to_bk}"
 		else
-			reg_msg -2 -fb "${set_id}" "" "No existing blockset file found{}."
+			reg_msg -2 -fb "${set_id}" "No existing blockset file found{}."
 		fi
 		set_params "${set_id}" bk_file bk_cnt
 	done
@@ -944,7 +917,7 @@ gen_blocksets()
 
 	gen_set_parts "${set_ids}" ||
 	{
-		reg_failure "Failed to generate blockset parts."
+		reg_fail "Failed to generate blockset parts."
 		return 1
 	}
 
@@ -963,7 +936,7 @@ gen_blocksets()
 			debug_msg "install_path: ${install_path};"
 		else
 			rm -f "${processed_set_file}"
-			reg_failure -fb "${set_id}" "Failed to generate new blockset file{}."
+			reg_fail -fb "${set_id}" "Failed to generate new blockset file{}."
 		fi
 	done
 }
@@ -1042,7 +1015,7 @@ gen_blockset()
 			rv=${?}
 			eval "index_refs=\"\${INDEX_REFS_${index}}\""
 			[ -z "${index_refs}" ] && rm -f "${1}"
-			[ ${rv} = 0 ] || { printf ''; reg_failure "Failed command: '${PART_EXTR_OR_CAT_STDOUT:?} ${part_file}'."; return 1; }
+			[ ${rv} = 0 ] || { printf ''; reg_fail "Failed command: '${PART_EXTR_OR_CAT_STDOUT:?} ${part_file}'."; return 1; }
 		done
 	}
 
@@ -1078,7 +1051,7 @@ gen_blockset()
 		install_path \
 		max_part_size \
 		max_set_size \
-		min_entries \
+		min_entries=min_blockset_entries \
 		final_compr_or_cat_stdout || return 1
 
 	get_params "${set_id}" \
@@ -1112,7 +1085,7 @@ gen_blockset()
 		eval "index_refs=\"\${INDEX_REFS_${index}}\""
 		subtract_a_from_b "${set_id}" "${index_refs}" "INDEX_REFS_${index}"
 
-		[ -s "${PROCESSED_PARTS_DIR}/${index}_stats" ] || { reg_failure "${me}: can not find file '${PROCESSED_PARTS_DIR}/${index}_stats'."; return 1; }
+		[ -s "${PROCESSED_PARTS_DIR}/${index}_stats" ] || { reg_fail "${me}: can not find file '${PROCESSED_PARTS_DIR}/${index}_stats'."; return 1; }
 
 		job_get_params "${index}" print_id "part_type=part_type_${set_id}" &&
 		[ -n "${part_type}" ] &&
@@ -1121,7 +1094,7 @@ gen_blockset()
 			[ "${part_cnt}" != FAIL ] || continue
 		} &&
 		is_uint "${part_cnt}" "${part_size_B}" ||
-			{ reg_failure "Failed to read processed stats for blockset part with index ${index} (ID '${print_id}', type '${part_type}')."; return 1; }
+			{ reg_fail "Failed to read processed stats for blockset part with index ${index} (ID '${print_id}', type '${part_type}')."; return 1; }
 
 		# This second part size check is necessary because download-time limit is against max of all sets
 		[ $(( part_size_B <= max_part_size*1024)) = 1 ] ||
@@ -1158,7 +1131,7 @@ gen_blockset()
 	done
 
 	[ "${set_cnt_raw}" -gt 0 ] ||
-		{ reg_failure -fb "${set_id}" "Failed to generate preprocessed files with at least one entry{}."; return 1; }
+		{ reg_fail -fb "${set_id}" "Failed to generate preprocessed files with at least one entry{}."; return 1; }
 
 	bytes2human set_size_B_raw_human "${set_size_B_raw}" &&
 	int2human set_cnt_raw_human "${set_cnt_raw}" || return 1
@@ -1181,7 +1154,7 @@ gen_blockset()
 				[ "${whitelist_mode}" = 1 ] || {
 					bytes2human part_size_B_raw_human "${part_size_B_raw:-0}"
 					int2human list_cnt_raw_human "${list_cnt_raw:-0}"
-					reg_failure "Total entries count and size of block-entries: ${list_cnt_raw_human}, ${part_size_B_human}."
+					reg_fail "Total entries count and size of block-entries: ${list_cnt_raw_human}, ${part_size_B_human}."
 					return 1
 				}
 				log_msg -yellow "Whitelist mode is on - accepting empty blocklist."
@@ -1280,7 +1253,7 @@ gen_blockset()
 		${final_compr_or_cat_stdout} > "${out_f}"
 	} 2>"${ERR_F}" ||
 		{
-			reg_failure "Failed to merge blockset parts into output file '${out_f}'."
+			reg_fail "Failed to merge blockset parts into output file '${out_f}'."
 			errors="$(cat "${ERR_F}" 2>/dev/null | ${SED_CMD} '/^$/d')"
 			rm -f "${out_f}" "${ERR_F}"
 			[ -n "${errors}" ] && log_msg "STDERR output:${_NL_}${errors}"
@@ -1292,7 +1265,7 @@ gen_blockset()
 	if [ -f "${proc_dir}/abl-too-big.tmp" ]
 	then
 		rm -f "${out_f}"
-		reg_failure -fb "${set_id}" "Final uncompressed blockset file size{} exceeded ${max_set_size} kiB set in max_blockset_size_KB config option!"
+		reg_fail -fb "${set_id}" "Final uncompressed blockset file size{} exceeded ${max_set_size} kiB set in max_blockset_size_KB config option!"
 		log_msg "Consider either increasing this value in the config or changing the blockset URLs."
 		return 1
 	fi
@@ -1318,7 +1291,7 @@ gen_blockset()
 	if [ "${gen_cnt}" -lt "${min_entries}" ]
 	then
 		int2human min_entries_human "${min_entries}" || return 1
-		reg_failure "Entries count (${gen_cnt_human}) is below the minimum value set in config option 'min_entries' (${min_entries_human})."
+		reg_fail "Entries count (${gen_cnt_human}) is below the minimum value set in config option 'min_blockset_entries' (${min_entries_human})."
 		return 1
 	fi
 
@@ -1336,7 +1309,7 @@ gen_blockset()
 	then
 		errors="$(head -n10 "${ERR_F}" | ${SED_CMD} '/^$/d')"
 		rm -f "${ERR_F}" "${out_f}"
-		reg_failure "dnsmasq test on the processed blockset failed."
+		reg_fail "dnsmasq test on the processed blockset failed."
 		log_msg "Errors:" "${errors:-"No specifics: probably killed because of OOM."}"
 		return 2
 	fi

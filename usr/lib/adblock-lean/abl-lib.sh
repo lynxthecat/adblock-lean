@@ -40,7 +40,7 @@ try_mv()
 	[ -n "${1}" ] && [ -n "${2}" ] || bad_args "try_mv" "${@}"
 	mv -f "${1}" "${2}" && return 0
 
-	[ -n "${mv_q}" ] || reg_failure "Failed to move '${1}' to '${2}'."
+	[ -n "${mv_q}" ] || reg_fail "Failed to move '${1}' to '${2}'."
 	return 1
 }
 
@@ -78,7 +78,7 @@ bytes2human()
 	unset_vars "${1}"
 	local i="${2:-0}" s=0 d=0 m=1024 fp S bh_res pad align
 	[ "${3}" = '-p' ] && align=1
-	is_uint "${i}" || { reg_failure "bytes2human: invalid uint '${i}'."; return 1; }
+	is_uint "${i}" || { reg_fail "bytes2human: invalid uint '${i}'."; return 1; }
 	for S in B KiB MiB GiB TiB
 	do
 		[ $((i > m && s < 4)) = 0 ] && break
@@ -111,7 +111,7 @@ bytes2human()
 int2human()
 {
 	unset_vars "${1}"
-	is_uint "${2}" || { reg_failure "int2human: invalid uint '${2}'."; return 1; }
+	is_uint "${2}" || { reg_fail "int2human: invalid uint '${2}'."; return 1; }
 
 	local in_num="${2#"${2%%[!0]*}"}" out_num=
 	while :
@@ -135,7 +135,7 @@ get_md5()
 	is_hex_lc "${g_md5}" &&
 	export -n "${1}=${g_md5}" && return 0
 
-	reg_failure "Failed to get MD5 sum for file '${2}'"
+	reg_fail "Failed to get MD5 sum for file '${2}'"
 	return 1
 }
 
@@ -147,7 +147,7 @@ hp_scr_pr="the adblock-lean hotplug script"
 mk_hotplug_script()
 {
 	try_mk_hotplug_script "${@}" && return 0
-	reg_failure "Failed to activate ${hp_scr_pr}."
+	reg_fail "Failed to activate ${hp_scr_pr}."
 	disable_hotplug_script
 	return 1
 }
@@ -181,7 +181,7 @@ try_mk_hotplug_script()
 	cnt_lines df_lines_cnt "${hp_dev}" &&
 	[ "${df_lines_cnt}" = 1 ] ||
 	{
-		reg_failure "Unexpected or empty 'df' utility output '${hp_dev}' when checking device name for hotplug script. ${hp_fail_msg}."
+		reg_fail "Unexpected or empty 'df' utility output '${hp_dev}' when checking device name for hotplug script. ${hp_fail_msg}."
 		return 1
 	}
 
@@ -213,7 +213,7 @@ try_mk_hotplug_script()
 		rm -f "${ABL_HOTPLUG_PATH_DISABLED}"
 		try_mkdir -p "${ABL_HOTPLUG_PATH_ENABLED%/*}" &&
 		{
-			cp "${ABL_HOTPLUG_PATH_SRC}" "${ABL_HOTPLUG_PATH_ENABLED}" || { reg_failure "Failed to copy ${hp_scr_pr} to ${ABL_HOTPLUG_PATH_ENABLED}."; false; }
+			cp "${ABL_HOTPLUG_PATH_SRC}" "${ABL_HOTPLUG_PATH_ENABLED}" || { reg_fail "Failed to copy ${hp_scr_pr} to ${ABL_HOTPLUG_PATH_ENABLED}."; false; }
 		} &&
 			return 0
 	fi
@@ -246,7 +246,7 @@ disable_hotplug_script()
 	[ -z "${disable_req}" ] ||
 		try_mv "${ABL_HOTPLUG_PATH_ENABLED}" "${ABL_HOTPLUG_PATH_DISABLED}" && return 0
 
-	reg_failure "" "Failed to disable ${hp_scr_pr}. Deleting it."
+	reg_fail "" "Failed to disable ${hp_scr_pr}. Deleting it."
 	rm -f "${ABL_HOTPLUG_PATH_ENABLED}" "${ABL_HOTPLUG_PATH_DISABLED}"
 
 	return 1
@@ -392,7 +392,7 @@ do_create_addnmounts()
 	uci commit dhcp ||
 	{
 		uci revert dhcp
-		reg_failure "Failed to create or change addnmount entries."
+		reg_fail "Failed to create or change addnmount entries."
 		return 1
 	}
 
@@ -437,12 +437,12 @@ do_setup()
 				filter_cmd="grep -E '^[ \t]*($1)([ \t]|$)'"
 				;;
 			*)
-				reg_failure "Unexpected package manager '${PKG_MANAGER}'."
+				reg_fail "Unexpected package manager '${PKG_MANAGER}'."
 				return 1
 		esac
 
 		all_installed_pkgs="$(${pkgs_list_cmd})" && [ -n "${all_installed_pkgs}" ] || {
-			reg_failure "Failed to check installed packages with package manager '$PKG_MANAGER'."
+			reg_fail "Failed to check installed packages with package manager '$PKG_MANAGER'."
 			return 1
 		}
 		printf '%s\n' "$all_installed_pkgs" | eval "${filter_cmd}"
@@ -481,7 +481,7 @@ do_setup()
 			free_space_KB="$(${DF_CMD} -k /usr/ | tail -n1 | ${SED_CMD} -E 's/^[ \t]*([^ \t]+[ \t]+){3}//;s/[ \t]+.*//')"
 			mount_point="$(${DF_CMD} -k /usr/ | tail -n1 | ${SED_CMD} -E 's/.*[ \t]+//')"
 
-			is_uint "${free_space_KB}" || { reg_failure "Failed to check available free space."; return 1; }
+			is_uint "${free_space_KB}" || { reg_fail "Failed to check available free space."; return 1; }
 
 			free_space_B=$((free_space_KB*1024))
 
@@ -541,10 +541,10 @@ do_setup()
 				then
 					echo > "${MSGS_DEST}"
 					$PKG_MANAGER update && $PKG_INSTALL_CMD ${pkgs2install% } && return 0
-					reg_failure "Failed to automatically install packages. You can install them manually later."
+					reg_fail "Failed to automatically install packages. You can install them manually later."
 					return 1
 				else
-					reg_failure "Not enough free space at mount point '${mount_point}'."
+					reg_fail "Not enough free space at mount point '${mount_point}'."
 					print_msg "Free up some space, then you can manually install the packages later by issuing the command:" \
 						"$PKG_MANAGER update; $PKG_INSTALL_CMD ${pkgs2install% }"
 					return 1
@@ -564,7 +564,7 @@ do_setup()
 		cfg_id="${cfg_id#"blockset-"}"
 		is_alphanum "${cfg_id}" ||
 		{
-			reg_failure "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Deleting the file."
+			reg_fail "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Deleting the file."
 			rm -f "${1}"
 			return 0
 		}
@@ -574,13 +574,13 @@ do_setup()
 
 	local CUR_CMD=setup
 
-	[ -f "${ABL_SERVICE_PATH}" ] || { reg_failure "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
+	[ -f "${ABL_SERVICE_PATH}" ] || { reg_fail "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
 
 	# make the script executable
 	if [ ! -x "${ABL_SERVICE_PATH}" ]
 	then
 		reg_msg "" "Making ${ABL_SERVICE_PATH} executable."
-		chmod +x "${ABL_SERVICE_PATH}" || { reg_failure "Failed to make '${ABL_SERVICE_PATH}' executable."; return 1; }
+		chmod +x "${ABL_SERVICE_PATH}" || { reg_fail "Failed to make '${ABL_SERVICE_PATH}' executable."; return 1; }
 	else
 		reg_msg -green "" "${ABL_SERVICE_PATH} is already executable."
 	fi
@@ -725,7 +725,7 @@ get_preset()
 			"${blue}raw_block_lists${n_c}=\"${gp_lists}\"" \
 			"${blue}max_part_size_KB${n_c}=\"${gp_max_part_size}\"" \
 			"${blue}max_blockset_size_KB${n_c}=\"${gp_max_set_size}\"" \
-			"${blue}min_entries${n_c}=\"${gp_min_entries}\""
+			"${blue}min_blockset_entries${n_c}=\"${gp_min_entries}\""
 	}
 
 	export -n \
@@ -763,9 +763,9 @@ do_calculate_limits()
 		input="${input#"${input%%[!0]*}"}"
 		: "${input:=0}"
 		case "${input}" in
-			*[!0-9]*) reg_failure "${me}: invalid input '${input}'."; return 1 ;;
+			*[!0-9]*) reg_fail "${me}: invalid input '${input}'."; return 1 ;;
 			?|??) return 0 ;;
-			????????????*) reg_failure "${me}: input '${input}' too large."; return 1 ;;
+			????????????*) reg_fail "${me}: input '${input}' too large."; return 1 ;;
 			*)
 				factor=$(( 10**(${#input}-2) ))
 				export -n "${1}=${neg}$(( (input/factor) * factor ))"
@@ -797,8 +797,8 @@ do_calculate_limits()
 		break
 	done
 
-	[ "${tgt_entries_cnt}" -gt 0 ] || { reg_failure "${me}: Invalid entries count '${tgt_entries_cnt}'."; return 1; }
-	[ "${lists_cnt}" -gt 0 ] || { reg_failure "${me}: Invalid URLs count '${lists_cnt}'."; return 1; }
+	[ "${tgt_entries_cnt}" -gt 0 ] || { reg_fail "${me}: Invalid entries count '${tgt_entries_cnt}'."; return 1; }
+	[ "${lists_cnt}" -gt 0 ] || { reg_fail "${me}: Invalid URLs count '${lists_cnt}'."; return 1; }
 
 	# Default values calculation:
 	# Values are rounded down to reasonable degree
@@ -831,7 +831,7 @@ do_calculate_limits()
 		print_msg "" "Recommended values for ${lists_cnt} ${lists_pr} with ${tgt_entries_cnt_human} total entries:" \
 			"${blue}max_part_size_KB${n_c}=\"${cl_max_part_size_kb}\"" \
 			"${blue}max_blockset_size_KB${n_c}=\"${cl_max_set_size_kb}\"" \
-			"${blue}min_entries${n_c}=\"${cl_min_entries}\""
+			"${blue}min_blockset_entries${n_c}=\"${cl_min_entries}\""
 	}
 
 	export -n "${4:-_}=${cl_min_entries}" "${5:-_}=${cl_max_set_size_kb}" "${6:-_}=${cl_max_part_size_kb}" || return 1
@@ -878,7 +878,7 @@ print_def_cfg_blockset()
 	[ -n "${set_id}" ] || bad_args "${me}" "${@}"
 
 	: "${preset:=small}"
-	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
+	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_fail "${me}: invalid preset '${preset}'."; return 1; }
 
 	get_preset "${preset}" _ _ _ _ pdc_lists pdc_max_part_size pdc_max_set_size pdc_min_entries &&
 	assert_set "F_${me}" pdc_lists pdc_max_set_size pdc_min_entries || return 1
@@ -945,7 +945,7 @@ print_def_cfg_blockset()
 	max_blockset_size_KB="${pdc_max_set_size}" @ uint
 
 	# Minimum number of entries in final postprocessed blockset
-	min_entries="${pdc_min_entries}" @ uint
+	min_blockset_entries="${pdc_min_entries}" @ uint
 
 	# If a path to custom script is specified and that script defines functions
 	# 'report_success()', 'report_failure()' or 'report_update()',
@@ -977,7 +977,7 @@ print_def_cfg_global()
 	done
 
 	: "${preset:=small}"
-	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_failure "${me}: invalid preset '${preset}'."; return 1; }
+	is_included "${preset}" "${ALL_PRESETS:?}" || { reg_fail "${me}: invalid preset '${preset}'."; return 1; }
 
 	cat <<-EOT | if [ -n "${print_types}" ]; then cat; else ${SED_CMD} 's/[ \t]*@.*//'; fi
 
@@ -1064,7 +1064,7 @@ do_gen_blockset_config()
 
 		is_uint "${_totalmem}" ||
 		{
-			reg_failure "\$_totalmem has invalid value '${_totalmem}'. Failed to determine system memory capacity."
+			reg_fail "\$_totalmem has invalid value '${_totalmem}'. Failed to determine system memory capacity."
 			log_msg "Unable to select best preset for this system."
 			return 1
 		}
@@ -1139,7 +1139,7 @@ do_gen_blockset_config()
 		esac
 	fi
 
-	is_included "${preset}" "${ALL_PRESETS}" || { reg_failure "Invalid preset '${preset}'."; return 1; }
+	is_included "${preset}" "${ALL_PRESETS}" || { reg_fail "Invalid preset '${preset}'."; return 1; }
 	reg_msg -blue "Selected preset '${preset}'."
 
 	add2list SET_IDS "${set_id}"
@@ -1161,7 +1161,7 @@ get_cfg_path()
 	case "${2}" in
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
 		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
-		*) reg_failure "Invalid config name '${2}'."; return 1 ;;
+		*) reg_fail "Invalid config name '${2}'."; return 1 ;;
 	esac
 	export -n "${1}=${g_path}"
 }
@@ -1230,7 +1230,7 @@ parse_config()
 
 	[ -z "${cfg_path}" ] && bad_args "${me}" "${@}"
 
-	[ ! -f "${cfg_path}" ] && { reg_failure "Config file '${cfg_path}' not found."; return 1; }
+	[ ! -f "${cfg_path}" ] && { reg_fail "Config file '${cfg_path}' not found."; return 1; }
 
 	# Config format versions
 	[ -n "${CFG_IGNORE_NONCRIT}" ] ||
@@ -1250,7 +1250,7 @@ parse_config()
 	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
 
 	# read and sanitize current config
-	cur_config="$(san_config "${cfg_path}")" || { reg_failure "Failed to read the ${cfg_pr}."; return 1; }
+	cur_config="$(san_config "${cfg_path}")" || { reg_fail "Failed to read the ${cfg_pr}."; return 1; }
 
 	local bad_newline=
 	case "${cur_config}" in
@@ -1259,7 +1259,7 @@ parse_config()
 	esac
 	[ -n "${bad_newline}" ] &&
 	{
-		reg_failure "${bad_newline} newlines detected in ${cfg_pr}. Convert the config file to Unix-style (LF) newlines."
+		reg_fail "${bad_newline} newlines detected in ${cfg_pr}. Convert the config file to Unix-style (LF) newlines."
 		return 1
 	}
 
@@ -1490,15 +1490,15 @@ parse_config()
 	[ ! -s "${parser_err_file}" ] ||
 	{
 		local awk_rv=${?} inval_entry=''
-		[ -s "${awk_err_file}" ] && reg_failure "awk errors encountered while parsing ${cfg_pr}:${_NL_}$(cat "${awk_err_file}")"
-		[ -s "${parser_err_file}" ] && reg_failure "$(cat "${parser_err_file}")"
+		[ -s "${awk_err_file}" ] && reg_fail "awk errors encountered while parsing ${cfg_pr}:${_NL_}$(cat "${awk_err_file}")"
+		[ -s "${parser_err_file}" ] && reg_fail "$(cat "${parser_err_file}")"
 		[ -s "${inval_entry_file}" ] && inval_entry=": ${_NL_}'$(cat "${inval_entry_file}")'"
 
 		rm -f "${awk_err_file}" "${parser_err_file}"
 		case "${awk_rv}" in
-			253) reg_failure "Invalid entry in ${cfg_pr} (check double-quotes)${inval_entry}" ;;
-			254) reg_failure "Invalid entry in ${cfg_pr}${inval_entry}" ;;
-			*) reg_failure "Failed to parse ${cfg_pr}."; return 3
+			253) reg_fail "Invalid entry in ${cfg_pr} (check double-quotes)${inval_entry}" ;;
+			254) reg_fail "Invalid entry in ${cfg_pr}${inval_entry}" ;;
+			*) reg_fail "Failed to parse ${cfg_pr}."; return 3
 		esac
 
 		return 1
@@ -1514,7 +1514,7 @@ parse_config()
 	do
 		[ -n "${parse_line}" ] || continue
 		IFS="${DEFAULT_IFS}"
-		export -n "${parse_line?}" || { reg_failure "Failed to parse '${parse_line}'"; return 3; }
+		export -n "${parse_line?}" || { reg_fail "Failed to parse '${parse_line}'"; return 3; }
 	done
 	IFS="${DEFAULT_IFS}"
 
@@ -1588,7 +1588,7 @@ load_config()
 	dbg_off
 	try_load_config err_cfg ||
 	{
-		reg_failure "Failed to load config${err_cfg:+" '${err_cfg}'"}."
+		reg_fail "Failed to load config${err_cfg:+" '${err_cfg}'"}."
 		case "${err_cfg}" in
 			global) fix_cmd=gen_global_config ;;
 			blockset-*) fix_cmd="gen_blockset_config ${err_cfg}"
@@ -1644,7 +1644,7 @@ try_load_config()
 
 	if [ ! -f "${GLOBAL_CFG_FILE:?}" ]
 	then
-		reg_failure "Global config file '${GLOBAL_CFG_FILE:?}' is missing."
+		reg_fail "Global config file '${GLOBAL_CFG_FILE:?}' is missing."
 		return 1
 	fi
 
@@ -1700,7 +1700,7 @@ try_load_config()
 				"l_cfg_fixes=\"\${cfg_fixes_${cfg_id}}\"" \
 				"l_replace_keys=\"\${replace_keys_${cfg_id}}\""
 			[ -n "${l_cfg_fixes}" ] || continue
-			fix_config "${cfg_id}" "${l_replace_keys}" || { reg_failure "Failed to fix the config."; return 1; }
+			fix_config "${cfg_id}" "${l_replace_keys}" || { reg_fail "Failed to fix the config."; return 1; }
 		done
 	fi
 
@@ -1749,7 +1749,7 @@ fix_config()
 	local old_cfg_f="/tmp/adblock-lean_config_${bk_prefix}${cfg_id}.bk"
 	if ! cp "${cfg_path}" "${old_cfg_f}"
 	then
-		reg_failure "Failed to save old config file as ${old_cfg_f}."
+		reg_fail "Failed to save old config file as ${old_cfg_f}."
 		if [ -z "${APPROVE_UPD_CHANGES}" ]
 		then
 			[ "${DO_DIALOGS}" = 1 ] || return 1
@@ -1803,10 +1803,10 @@ write_config()
 
 	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
 	tmp_cfg_file="${ABL_CFG_STAGING_DIR:?}/write-config_${cfg_id}.tmp"
-	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_failure "Failed to write to file '${tmp_cfg_file}'."; return 1; }
+	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_fail "Failed to write to file '${tmp_cfg_file}'."; return 1; }
 
 	parse_config "${cfg_type}" "${cfg_id}" "${tmp_cfg_file}" ||
-		{ rm -f "${tmp_cfg_file}"; reg_failure "Failed to validate config file '${tmp_cfg_file}'."; dbg_on; return 1; }
+		{ rm -f "${tmp_cfg_file}"; reg_fail "Failed to validate config file '${tmp_cfg_file}'."; dbg_on; return 1; }
 	dbg_on
 
 	reg_msg "" "Saving the new config to '${cfg_file}'."
@@ -1869,7 +1869,7 @@ get_abl_version()
 	local gv_ver gv_upd_ch gv_rv cfg_format
 	unset_vars "${2}" "${3}"
 
-	[ -s "${1}" ] || { reg_failure "Can not find '${1}'."; return 1; }
+	[ -s "${1}" ] || { reg_fail "Can not find '${1}'."; return 1; }
 
 	# Requires adblock-lean v0.7.3 and later (config format 9 or higher)
 	if \
@@ -1915,7 +1915,7 @@ check_for_updates()
 
 	[ "${gh_ref_rv}" != 0 ] &&
 	{
-		reg_failure "" "Failed to check for adblock-lean updates."
+		reg_fail "" "Failed to check for adblock-lean updates."
 		return 2
 	}
 
@@ -1953,8 +1953,8 @@ enable_cron_service()
 {
 	local enable_failed="Failed to enable and start the cron service"
 
-	hash crontab || { reg_failure "${enable_failed}: 'crontab' utility is inaccessible."; return 1; }
-	[ -f "${ABL_CRON_SVC_PATH}" ] || { reg_failure "${enable_failed}: the cron service was not found at path '${ABL_CRON_SVC_PATH}'."; return 1; }
+	hash crontab || { reg_fail "${enable_failed}: 'crontab' utility is inaccessible."; return 1; }
+	[ -f "${ABL_CRON_SVC_PATH}" ] || { reg_fail "${enable_failed}: the cron service was not found at path '${ABL_CRON_SVC_PATH}'."; return 1; }
 
 	check_cron_service && return 0
 	log_msg -warn "The cron service is not enabled or not running."
@@ -1967,7 +1967,7 @@ enable_cron_service()
 	# try to enable and start the cron service
 	${ABL_CRON_SVC_PATH} enabled 1>/dev/null || ${ABL_CRON_SVC_PATH} enable && { ${ABL_CRON_SVC_PATH} start; sleep 2; }
 
-	check_cron_service || { printf '%s\n' "${red}Failed${n_c}"; reg_failure "${enable_failed}."; return 1; }
+	check_cron_service || { printf '%s\n' "${red}Failed${n_c}"; reg_fail "${enable_failed}."; return 1; }
 	printf '%s\n' "${green}OK${n_c}" > "${MSGS_DEST}"
 	:
 }
