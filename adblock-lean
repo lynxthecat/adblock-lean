@@ -2733,7 +2733,7 @@ do_stop()
 		commit_metadata
 	}
 
-	return 1
+	return 0 # uncoditional on purpose
 }
 
 # Env vars: FORCE_STOP
