@@ -127,7 +127,7 @@ cleanup_and_exit_install()
 {
 	trap - INT TERM EXIT
 	rm -rf "${ABL_TMP_DIR}" "${ABL_PID_DIR}"
-	[ "${1}" = 1 ] && reg_failure_install "Failed to install adblock-lean."
+	[ "${1}" = 1 ] && reg_fail_install "Failed to install adblock-lean."
 	[ -n "${ABL_LUCI_SOURCED}" ] && abl_inst_luci_exit "${1}"
 	exit "${1}"
 }
@@ -148,7 +148,7 @@ are_var_names_safe_install() {
 	local var_name
 	for var_name in "${@}"
 	do
-		case "${var_name}" in *[!a-zA-Z_]*) reg_failure_install "Invalid var name '${var_name}'."; return 1; esac
+		case "${var_name}" in *[!a-zA-Z_]*) reg_fail_install "Invalid var name '${var_name}'."; return 1; esac
 	done
 	:
 }
@@ -190,7 +190,7 @@ find_files_install()
 
 	unset_vars_install "${ff_path_out_var}" || return 1
 
-	[ -n "${FF_EXEC}" ] && { is_cmd_install "${FF_EXEC%% *}" || { reg_failure_install "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
+	[ -n "${FF_EXEC}" ] && { is_cmd_install "${FF_EXEC%% *}" || { reg_fail_install "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
 
 	local had_f
 	had_f_install && had_f=1
@@ -209,7 +209,7 @@ find_files_install()
 		[ -n "${FF_EXEC}" ] &&
 		{
 			exec="${FF_EXEC//"{}"/"\"${ff_file}\""}"
-			eval "${exec}" || { reg_failure_install "${me}: '${exec}' returned code ${?}"; ff_fail=1; break; }
+			eval "${exec}" || { reg_fail_install "${me}: '${exec}' returned code ${?}"; ff_fail=1; break; }
 		}
 
 		ff_found="${ff_found}${ff_found:+"${_NL_}"}${ff_file}"
@@ -259,7 +259,7 @@ try_mkdir_install()
 	local p=
 	[ "${1}" = '-p' ] && { p='-p'; shift; }
 	[ -d "${1}" ] && return 0
-	mkdir ${p} "${1}" || { reg_failure_install "Failed to create directory '${1}'."; return 1; }
+	mkdir ${p} "${1}" || { reg_fail_install "Failed to create directory '${1}'."; return 1; }
 	:
 }
 
@@ -352,7 +352,7 @@ write_log_file_install()
 	[ -n "${ABL_CURR_LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${2:-info}: ${1}" >> "${ABL_CURR_LOG_FILE}"
 }
 
-reg_failure_install()
+reg_fail_install()
 {
 	log_msg_install -err "" "${1}"
 	luci_errors="${luci_errors}${1}${_NL_}"
@@ -366,7 +366,7 @@ get_cfg_id_install()
 	case "${_cfg_fname}" in
 		config|global.conf|blockset-*.conf) : ;;
 		*)
-			reg_failure_install "Invalid config filename '${_cfg_fname}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			reg_fail_install "Invalid config filename '${_cfg_fname}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 1
 	esac
 
@@ -374,7 +374,7 @@ get_cfg_id_install()
 	_cfg_id="${_cfg_id%".conf"}"
 	case "${_cfg_id}" in
 		''|*[!a-zA-Z0-9_]*)
-			reg_failure_install "Invalid config name '${_cfg_id}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			reg_fail_install "Invalid config name '${_cfg_id}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 1 ;;
 	esac
 	export -n "${1}=${_cfg_id}"
@@ -386,7 +386,7 @@ inst_failed()
 	local fail_msg="${1}"
 	[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
 	rm -rf "${ABL_INST_DIR}" "${UCL_ERR_FILE}"
-	[ -n "${fail_msg}" ] && reg_failure_install "${fail_msg}"
+	[ -n "${fail_msg}" ] && reg_fail_install "${fail_msg}"
 	exit 1
 }
 
@@ -421,11 +421,11 @@ get_gh_ref_install()
 		# validate resulting ref
 		case "${gr_ref}" in
 			*[^"${_NL_}"]*"${_NL_}"*[^"${_NL_}"]*)
-				reg_failure_install "Got multiple download URLs for version '${gr_version}'." \
+				reg_fail_install "Got multiple download URLs for version '${gr_version}'." \
 					"If using commit hash, please specify the complete commit hash string."
 				return 1 ;;
 			''|*[!a-zA-Z0-9._-]*)
-				reg_failure_install "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
+				reg_fail_install "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
 				return 1
 		esac
 
@@ -566,7 +566,7 @@ get_gh_ref_install()
 						{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
 				)"
 				[ -n "${gr_branches}" ] || {
-					reg_failure_install "Failed to get adblock-lean branches via GH API (url: '${ABL_GH_URL_API}/branches')."
+					reg_fail_install "Failed to get adblock-lean branches via GH API (url: '${ABL_GH_URL_API}/branches')."
 					[ -f "${gr_ucl_err_file}" ] &&
 						log_msg_install "uclient-fetch log:${_NL_}$(cat "${gr_ucl_err_file}")"
 						rm -f "${gr_ucl_err_file}"
@@ -576,7 +576,7 @@ get_gh_ref_install()
 				gr_grep_ptrn="^${gr_hash}"
 			fi ;;
 		*)
-			reg_failure_install "Invalid update channel '${gr_channel}'."
+			reg_fail_install "Invalid update channel '${gr_channel}'."
 			return 1
 	esac
 
@@ -587,7 +587,7 @@ get_gh_ref_install()
 	if [ -z "${gr_ref}" ]
 	then
 		gr_fetch_rv=1
-		reg_failure_install "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
+		reg_fail_install "Failed to get GitHub download URL for ${gr_ver_type} '${gr_version}' (update channel: '${gr_channel}')."
 		[ -f "${gr_ucl_err_file}" ] && log_msg_install "uclient-fetch output:${_NL_}$(cat "${gr_ucl_err_file}")"
 	fi
 	rm -rf "${gr_fetch_tmp_dir:-?}"
@@ -606,7 +606,7 @@ get_gh_ref_install()
 # 2 - distribution directory
 fetch_abl_dist_install()
 {
-	[ -n "${1}" ] && [ -n "${2}" ] || { reg_failure_install "fetch_abl_dist_install: missing arguments."; return 1; }
+	[ -n "${1}" ] && [ -n "${2}" ] || { reg_fail_install "fetch_abl_dist_install: missing arguments."; return 1; }
 
 	local tarball_url_fetch="${1}" dist_dir_fetch="${2}"
 
@@ -637,7 +637,7 @@ fetch_abl_dist_install()
 	[ "${fetch_rv}" = 0 ] && {
 		set +f
 		mv "${extract_dir:-?}"/* "${dist_dir_fetch:-?}/" ||
-			{ reg_failure_install "Failed to move files to dist dir."; fetch_rv=1; }
+			{ reg_fail_install "Failed to move files to dist dir."; fetch_rv=1; }
 		set -f
 	}
 	rm -rf "${extract_dir:-?}" "${fetch_dir:-?}"
@@ -657,7 +657,7 @@ find_set_configs_install()
 		split_path_install _ cfg_id _  "${1}"
 		cfg_id="${cfg_id#"blockset-"}"
 		case "${cfg_id}" in ''|*[!a-zA-Z0-9_]*)
-			reg_failure_install "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			reg_fail_install "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 0
 		esac
 
@@ -740,7 +740,7 @@ rm_incompat_config()
 			continue
 		}
 
-		reg_failure_install "Failed to save old config file as ${incompat_cfg_bk}."
+		reg_fail_install "Failed to save old config file as ${incompat_cfg_bk}."
 		rm -f "${cfg_path}"
 	done
 	IFS="${DEFAULT_IFS}"
@@ -1120,7 +1120,7 @@ install_abl_files()
 						then
 							reg_msg_install "Old config file was saved as ${bk_cfg_f}"
 						else
-							reg_failure_install "Failed to save old config file as ${bk_cfg_f}"
+							reg_fail_install "Failed to save old config file as ${bk_cfg_f}"
 						fi
 
 					ACCEPT_UNKNOWN_SET_IDS=1 \
@@ -1163,7 +1163,7 @@ install_abl_files()
 					then
 						reg_msg_install "" "Old config file was saved as ${bk_cfg_f}"
 					else
-						reg_failure_install "Failed to save old config file as ${bk_cfg_f}."
+						reg_fail_install "Failed to save old config file as ${bk_cfg_f}."
 					fi
 
 				rm -f "${LEGACY_CFG_FILE}"
@@ -1171,7 +1171,7 @@ install_abl_files()
 				exit 0
 			}
 
-			reg_failure_install "Failed to migrate config."
+			reg_fail_install "Failed to migrate config."
 			[ -s "${LEGACY_CFG_FILE}" ] &&
 				log_msg_install -yellow "Please rename or delete the config file '${LEGACY_CFG_FILE}' and use the command 'service adblock-lean setup' to create new config."
 		)
@@ -1197,7 +1197,7 @@ fetch_and_install()
 	{
 		local fail_msg="${1}"
 		[ -s "${UCL_ERR_FILE:?}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
-		[ -n "${fail_msg}" ] && reg_failure_install "${fail_msg}"
+		[ -n "${fail_msg}" ] && reg_fail_install "${fail_msg}"
 		rm -rf "${ABL_PID_DIR:?}"
 		inst_failed
 	}
@@ -1346,7 +1346,7 @@ fetch_and_install()
 	(
 		clean_env_install &&
 		INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
-			{ reg_failure_install "Failed to source fetched install script."; exit 1; }
+			{ reg_fail_install "Failed to source fetched install script."; exit 1; }
 		install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}"
 	) || inst_failed
 

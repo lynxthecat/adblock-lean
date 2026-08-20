@@ -24,7 +24,7 @@ sch_get_uptime_cs() {
 }
 
 sch_fail_msg() {
-	reg_failure "${@}"
+	reg_fail "${@}"
 }
 
 sch_is_cmd() {

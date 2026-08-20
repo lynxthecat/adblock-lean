@@ -110,7 +110,7 @@ get_compr_spec()
 	case "${gcs_file}" in
 		*.gz) gcs_ext=.gz gcs_util=gzip ;;
 		*.zst) gcs_ext=.zst gcs_util=zstd ;;
-		*.*) reg_failure "Unexpected extension '${gcs_file##*.}' in file '${gcs_path}'."; return 1
+		*.*) reg_fail "Unexpected extension '${gcs_file##*.}' in file '${gcs_path}'."; return 1
 	esac
 	export -n "${extn_out_var}=${gcs_ext}" "${util_out_var}=${gcs_util}"
 }
@@ -134,11 +134,11 @@ get_compr_util_spec()
 			detect_util gcu_util_path "" zstd "/usr/bin/zstd" &&
 			gcu_ext=.zst ;;
 		none) : ;;
-		*) reg_failure "Unexpected compression utility '${gcu_util_name}'."; false
+		*) reg_fail "Unexpected compression utility '${gcu_util_name}'."; false
 	esac ||
 	{
 		gcu_util_path='' gcu_ext=''
-		reg_failure "Compression utility '${gcu_util_name}' can not be used."
+		reg_fail "Compression utility '${gcu_util_name}' can not be used."
 		if detect_util gcu_util_path "gzip" "" "/usr/libexec/gzip-gnu"
 		then
 			log_msg "Falling back to gzip compression."
@@ -179,7 +179,7 @@ try_compress()
 
 	${tc_cmd} "${tc_in_file}" ||
 		{
-			reg_failure "try_compress: ${tc_err}${tc_err:+ }Failed to compress '${tc_in_file}'."
+			reg_fail "try_compress: ${tc_err}${tc_err:+ }Failed to compress '${tc_in_file}'."
 			rm_if_writable "${tc_set_id}" "${tc_in_file}";
 			return 1
 		}
@@ -233,7 +233,7 @@ try_extract()
 
 	{
 		[ -n "${stdout}" ] || rm_if_writable "${te_file}" # removes src and dest files
-		reg_failure "try_extract: ${te_err}${te_err:+ }Failed to extract '${te_file}'."
+		reg_fail "try_extract: ${te_err}${te_err:+ }Failed to extract '${te_file}'."
 		return 1
 	}
 }
@@ -245,7 +245,7 @@ detect_all_ifaces()
 	trim_spaces ALL_IFACES &&
 	[ -n "${ALL_IFACES}" ] &&
 		return 0
-	reg_failure "Failed to detect network interfaces."
+	reg_fail "Failed to detect network interfaces."
 	return 1
 }
 
@@ -265,7 +265,7 @@ check_dmsq_instances()
 	cdi_fail()
 	{
 		[ -n "${quiet}" ] && return 0
-		reg_failure -fb "${2}" "${1}"
+		reg_fail -fb "${2}" "${1}"
 	}
 
 	what_failed()
@@ -488,10 +488,10 @@ parse_dmsq_cfg()
 # 2: No running instances
 parse_dmsq_runtime()
 {
-	parse_fail() { reg_failure "Failed to process info for dnsmasq instance '${1}'${2:+ (code ${2})}."; }
+	parse_fail() { reg_fail "Failed to process info for dnsmasq instance '${1}'${2:+ (code ${2})}."; }
 	no_running_inst() {
 		[ -n "${PDR_QUIET}" ] && return
-		reg_failure "No running dnsmasq instances found in dnsmasq runtime info${1:+ (code ${1})}."
+		reg_fail "No running dnsmasq instances found in dnsmasq runtime info${1:+ (code ${1})}."
 		reg_msg "netstat output:" "'${netstat_output}'"
 	}
 
@@ -826,7 +826,7 @@ parse_dmsq_runtime()
 		}'
 	)" ||
 	{
-		reg_failure "" "Failed to get nameserver IPs for dnsmasq instances."
+		reg_fail "" "Failed to get nameserver IPs for dnsmasq instances."
 		reg_msg \
 			"For diagnostics:" \
 			"" "ifaces_by_instance:" "'${ifaces_by_instance//"${_DELIM_}"/"${_NL_}"}'" \
@@ -856,9 +856,9 @@ parse_dmsq_runtime()
 
 		[ -n "${instance}" ] &&
 		is_included "${instance}" "${instances}" ||
-			{ reg_failure "${me}: invalid line in parser output: '${line}'."; return 1; }
+			{ reg_fail "${me}: invalid line in parser output: '${line}'."; return 1; }
 		[ -n "${ns}" ] ||
-			{ reg_failure "${me}: failed to detect active nameserver IP's for dnsmasq instance '${instance}'"; return 1; }
+			{ reg_fail "${me}: failed to detect active nameserver IP's for dnsmasq instance '${instance}'"; return 1; }
 		export -n "NS_${instance}=${ns}"
 	done
 	IFS="${DEFAULT_IFS}"
@@ -941,7 +941,7 @@ do_select_dnsmasq_instances() {
 			reg_msg "" "${select_skip_msg}." "Skipping manual dnsmasq instance selection."
 		elif [ -z "${conf_dirs_seen}" ]
 		then
-			reg_failure "Failed to detect dnsmasq conf-dir paths for dnsmasq instances '${DMSQ_RUNNING_INSTANCES}'."
+			reg_fail "Failed to detect dnsmasq conf-dir paths for dnsmasq instances '${DMSQ_RUNNING_INSTANCES}'."
 			return 1
 		else
 			# Ask the user
@@ -990,10 +990,10 @@ do_select_dnsmasq_instances() {
 			elif [ -n "${luci_instances}" ]
 			then
 				REPLY="$(validate_input "${luci_instances}" "{DMSQ_RUNNING_INSTANCES}")" ||
-					{ reg_failure "Invalid dnsmasq instances '${luci_instances}' (running instances: '${DMSQ_RUNNING_INSTANCES}')."; return 1; }
+					{ reg_fail "Invalid dnsmasq instances '${luci_instances}' (running instances: '${DMSQ_RUNNING_INSTANCES}')."; return 1; }
 				add2list select_instances "${REPLY}"
 			else
-				reg_failure -fb "${set_id}" "dnsmasq instances not specified{}."
+				reg_fail -fb "${set_id}" "dnsmasq instances not specified{}."
 				return 1
 			fi
 		fi
@@ -1030,7 +1030,7 @@ do_select_dnsmasq_instances() {
 			[ -n "${add_dir}" ] && add2list select_conf_dirs "${add_dir}" "${_NL_}"
 		done
 
-		[ -n "${select_conf_dirs}" ] || { reg_failure "Failed to detect conf-dirs for dnsmasq instances '${select_instances}'."; return 1; }
+		[ -n "${select_conf_dirs}" ] || { reg_fail "Failed to detect conf-dirs for dnsmasq instances '${select_instances}'."; return 1; }
 
 		log_msg "Selected dnsmasq conf-dirs: '${select_conf_dirs//"${_NL_}"/"', '"/}'"
 		set_params "${set_id}" dmsq_instances="${select_instances}" conf_dirs="${select_conf_dirs}"
@@ -1107,7 +1107,7 @@ mv_blockset()
 		{ set_params "${mv_set_id}" cur_path="${mv_dst_f}"; return 0; }
 
 	rm_if_writable "${mv_set_id}" "${mv_src_f}" "${mv_dst_f}"
-	reg_failure "Failed to move blockset '${mv_set_id}' from '${mv_src_f}' to '${mv_dst_f}' (cmd: '${mv_compr_cmd}')."
+	reg_fail "Failed to move blockset '${mv_set_id}' from '${mv_src_f}' to '${mv_dst_f}' (cmd: '${mv_compr_cmd}')."
 	return 1
 }
 
@@ -1129,13 +1129,13 @@ try_mv_blockset()
 	split_path mv_src_d _ mv_src_ext "${mv_src_f}" &&
 	split_path mv_dst_d _ mv_dst_ext "${mv_dst_f}" || return 1
 
-	is_valid_dir "${mv_src_d}" && is_valid_dir "${mv_dst_d}" || { reg_failure "${me}: unexpected src dir '${mv_src_d}' or dest dir '${mv_dst_d}'."; return 1; }
+	is_valid_dir "${mv_src_d}" && is_valid_dir "${mv_dst_d}" || { reg_fail "${me}: unexpected src dir '${mv_src_d}' or dest dir '${mv_dst_d}'."; return 1; }
 
-	[ -f "${mv_src_f}" ] || { reg_failure "${me}: file '${mv_src_f}' not found."; return 1; }
+	[ -f "${mv_src_f}" ] || { reg_fail "${me}: file '${mv_src_f}' not found."; return 1; }
 
 	[ "${mv_src_f}" = "${mv_dst_f}" ] && return 0
 
-	is_dir_writable "${mv_set_id}" "${mv_dst_d}" || { reg_failure "${me}: logic bug: attempted write into protected dir '${mv_dst_d}'."; return 1; }
+	is_dir_writable "${mv_set_id}" "${mv_dst_d}" || { reg_fail "${me}: logic bug: attempted write into protected dir '${mv_dst_d}'."; return 1; }
 
 	is_dir_writable "${mv_set_id}" "${mv_src_d}" || transfer_cmd="cp"
 
@@ -1184,8 +1184,8 @@ check_persist_dir()
 	[ -d "${persist_dir}" ] ||
 	{
 		case "${persist_dir}" in
-			''|/) reg_failure "Empty or invalid persistent blockset directory '${persist_dir}' specified in config option persist_blockset_dir." ;;
-			*) reg_failure "Can not find persistent blockset directory: ${persist_dir}"
+			''|/) reg_fail "Empty or invalid persistent blockset directory '${persist_dir}' specified in config option persist_blockset_dir." ;;
+			*) reg_fail "Can not find persistent blockset directory: ${persist_dir}"
 		esac
 		return 1
 	}
@@ -1193,10 +1193,10 @@ check_persist_dir()
 	mnt_point="$(${DF_CMD} "${persist_dir}" |
 		${AWK_CMD} '/^[ \t]*Filesystem[ \t]/{next} {i++; print $6} END{ if(i == 1) exit 0; exit 1}')" &&
 	[ -d "${mnt_point}" ] ||
-		{ reg_failure "Failed to get the mount point for partition where the persistent blockset is stored (got '${mnt_point}')."; return 1; }
+		{ reg_fail "Failed to get the mount point for partition where the persistent blockset is stored (got '${mnt_point}')."; return 1; }
 
 	[ "${persist_dir}" != "${mnt_point}" ] ||
-		{  reg_failure "Persistent directory '${persist_dir}' is the same as the mount point. Please use a subdirectory."; return 1; }
+		{  reg_fail "Persistent directory '${persist_dir}' is the same as the mount point. Please use a subdirectory."; return 1; }
 
 	:
 }
@@ -1218,20 +1218,20 @@ check_persist_blockset()
 		[ -n "${cur_persist_path}" ] ||
 			{
 				[ "${run_state}" != 4 ] || [ "${persist_mode}" = manual ] && [ "${CUR_ACT}" != gen_persist_blockset ] &&
-					reg_failure -fb "${set_id}" "Persistent blockset file{} not found in directory '${persist_dir}'."
+					reg_fail -fb "${set_id}" "Persistent blockset file{} not found in directory '${persist_dir}'."
 				false
 			}
 	} &&
 
 	{
 		get_compr_spec persist_ext _ "${cur_persist_path}" ||
-			{ reg_failure "Can not find utility to extract persistent blockset file '${cur_persist_path}'."; false; }
+			{ reg_fail "Can not find utility to extract persistent blockset file '${cur_persist_path}'."; false; }
 	} &&
 
 	{
 		[ "${persist_ext}" = "${final_compr_ext}" ] ||
 		{
-			reg_failure "Extension '${persist_ext}' of persistent blockset file '${cur_persist_path}' does not match required extension '${final_compr_ext}'."
+			reg_fail "Extension '${persist_ext}' of persistent blockset file '${cur_persist_path}' does not match required extension '${final_compr_ext}'."
 			persist_check_rv=1
 		}
 	} &&
@@ -1239,14 +1239,14 @@ check_persist_blockset()
 	cur_persist_size_b="$(get_file_size "${cur_persist_path}")" &&
 	{
 		[ $(( cur_persist_size_b/1024 )) -le "${max_set_size}" ] ||
-		{ reg_failure "Persistent blockset file '${cur_persist_path}' is larger than the maximum value set in config (${max_set_size} KiB)."; false; }
+		{ reg_fail "Persistent blockset file '${cur_persist_path}' is larger than the maximum value set in config (${max_set_size} KiB)."; false; }
 	} &&
 
 	{
 		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_FNAME_PERSIST:?}" "${set_id}" &&
 		get_params "${set_id}" cur_persist_cnt &&
 		[ -n "${cur_persist_cnt}" ] ||
-		{ reg_failure "Failed to process metadata for persistent blockset file '${cur_persist_path}'."; false; }
+		{ reg_fail "Failed to process metadata for persistent blockset file '${cur_persist_path}'."; false; }
 	} &&
 
 	{
@@ -1254,7 +1254,7 @@ check_persist_blockset()
 			{
 				int2human cur_persist_cnt_human "${cur_persist_cnt}"
 				int2human min_entries_human "${min_entries}" || return 1
-				reg_failure "Entries count (${cur_persist_cnt_human}) in the persistent blockset file '${cur_persist_path}' is below the minimum value set in config (${min_entries_human})."
+				reg_fail "Entries count (${cur_persist_cnt_human}) in the persistent blockset file '${cur_persist_path}' is below the minimum value set in config (${min_entries_human})."
 				false
 			}
 	} &&
@@ -1270,7 +1270,7 @@ check_persist_blockset()
 # shellcheck disable=SC2120
 check_addnmounts()
 {
-	try_check_addnmounts "${@}" || { reg_failure "Failed to check addnmount entries."; return 1; }
+	try_check_addnmounts "${@}" || { reg_fail "Failed to check addnmount entries."; return 1; }
 }
 
 try_check_addnmounts()
@@ -1287,7 +1287,7 @@ try_check_addnmounts()
 
 	for ca_instance in ${ca_instances}
 	do
-		is_alphanum "${ca_instance}" || { reg_failure "${me}: Invalid dnsmasq instance name '${ca_instance}'."; return 1; }
+		is_alphanum "${ca_instance}" || { reg_fail "${me}: Invalid dnsmasq instance name '${ca_instance}'."; return 1; }
 		IFS="${_NL_}"
 		for ca_path in ${ca_req_addnm}
 		do
@@ -1297,7 +1297,7 @@ try_check_addnmounts()
 			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_instance}}\""
 			case "${ca_path}" in
 				/*) ;;
-				*) reg_failure "${me}: invalid path '${ca_path}'."; return 1
+				*) reg_fail "${me}: invalid path '${ca_path}'."; return 1
 			esac
 
 			ca_path_tmp="${ca_path}"
@@ -1359,7 +1359,7 @@ set_global_env()
 				# cap PARALLEL_JOBS to 4 in 'auto' mode
 				PARALLEL_JOBS=$(( (cpu_cnt>4)*4 + (cpu_cnt<=4)*cpu_cnt ))
 			else
-				reg_failure "Failed to detect CPU core count. Parallel processing will be disabled."
+				reg_fail "Failed to detect CPU core count. Parallel processing will be disabled."
 				PARALLEL_JOBS=1
 			fi ;;
 		*)
@@ -1495,7 +1495,7 @@ get_run_state()
 		esac
 
 	[ "${grs_state}" = 1 ] &&
-		reg_failure "Unexpected state for blockset '${set_id}' (path '${grs_cur_path}')." \
+		reg_fail "Unexpected state for blockset '${set_id}' (path '${grs_cur_path}')." \
 			"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${grs_single_inst};"
 
 	export -n "${state_out_var}=${grs_state}" "${path_out_var}=${grs_cur_path}" "${single_inst_out_var}=${grs_single_inst}"
@@ -1553,7 +1553,7 @@ set_blocksets_env()
 	do
 		set_blockset_env "${set_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}"
 		cur_rv=${?}
-		[ "${cur_rv}" = 0 ] || reg_failure -fb "${set_id}" "Failed to load environment{}."
+		[ "${cur_rv}" = 0 ] || reg_fail -fb "${set_id}" "Failed to load environment{}."
 		rv=$(( ${rv:-0} + cur_rv ))
 	done
 
@@ -1571,7 +1571,7 @@ set_blockset_env()
 {
 	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${2} ${1}' to rebuild the ${3}${3:+ }blockset file."; }
 	wont_work() {
-		reg_failure -wb "${set_id}" "" "${1} can not be used{} because of missing addnmounts in /etc/config/dhcp: ${2}" \
+		reg_fail -wb "${set_id}" "" "${1} can not be used{} because of missing addnmounts in /etc/config/dhcp: ${2}" \
 			"Please run 'service adblock-lean create_addnmounts' to create required addnmount entries."
 	}
 
@@ -1806,11 +1806,11 @@ set_blockset_env()
 
 	case "${CUR_CMD}" in start|resume)
 		[ -z "${FORCE_PERSIST_INSTALL}" ] || is_persist "${install_path}" "${set_id}" ||
-			{ reg_failure -b "${set_id}" "Can not generate persistent blockset file{}."; return 1; }
+			{ reg_fail -b "${set_id}" "Can not generate persistent blockset file{}."; return 1; }
 	esac
 
 	[ -n "${install_path}" ] ||
-		{ reg_failure -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
+		{ reg_fail -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
 
 	[ -n "${install_path}" ] &&
 	case "${start_action}" in
@@ -1877,7 +1877,7 @@ is_known_set_id()
 		is_included "${1}" "${SET_IDS}" ||
 			{ akb_err="Blockset '${1}' is not included in registered blockset IDs '${SET_IDS// /\', \'}'."; false; }
 	} ||
-		{ reg_failure "${2:+"${2}: "}${akb_err}"; return 1; }
+		{ reg_fail "${2:+"${2}: "}${akb_err}"; return 1; }
 	:
 }
 
@@ -1928,7 +1928,7 @@ get_params()
 		[ -n "${val}" ] || [ -z "${force_err}" ] &&
 			{ export -n "${var_name}=${val}"; continue; }
 
-		reg_failure "${err_func}: Value not set for \${${gl_var}_${set_id}}."
+		reg_fail "${err_func}: Value not set for \${${gl_var}_${set_id}}."
 		return 1
 	done
 	:
@@ -1979,7 +1979,7 @@ inst_failed()
 	{
 		local set_pr=blockset
 		case "${fail_report_ids}" in *" "*) set_pr=blocksets; esac
-		reg_failure "Failed to install ${set_pr}: ${fail_ids}"
+		reg_fail "Failed to install ${set_pr}: ${fail_ids}"
 		add2list inst_fail_reported_ids "${fail_report_ids}"
 	}
 	KEEP_BK=1 stop_blocksets "${fail_ids}"
@@ -2082,7 +2082,7 @@ try_install_blocksets()
 		do
 			is_valid_dir "${conf_dir}" || { inst_failed "${set_id}"; continue 2; }
 
-			cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${set_id}" || { reg_failure "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
+			cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${set_id}" || { reg_fail "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
 				conf-script="\
 				${final_extr_or_cat_stdout} \"${install_path}\" && \
 				printf '%s\\n' \"address=/${cur_md5}-${ABL_TEST_DOM_BASE}/#\" && \
@@ -2132,7 +2132,7 @@ try_install_blocksets()
 	do
 		if ! is_included "${set_id}" "${checked_ok_ids}"
 		then
-			reg_failure -fb "${set_id}" "Active blockset check failed{}."
+			reg_fail -fb "${set_id}" "Active blockset check failed{}."
 			inst_failed "${set_id}"
 			continue
 		fi
@@ -2166,7 +2166,7 @@ validate_doms()
 		abl_append "${vd_doms_var}" "${dom}"
 	done
 
-	[ -n "${invalid_doms}" ] && reg_failure "Ignoring invalid domain name(s): ${invalid_doms}"
+	[ -n "${invalid_doms}" ] && reg_fail "Ignoring invalid domain name(s): ${invalid_doms}"
 	eval "[ -n \"\${${vd_doms_var}}\" ]"
 }
 
@@ -2288,7 +2288,7 @@ lookup_test_doms()
 	# Target IDs name their instance, so every instance shares one run, one job pool and one result list.
 	LOOKUP_NOERR=1 lookup_targets resolved_ids "${lu_recs}" "${timeout_s}"
 	case ${?} in 0|2) ;; *)
-		reg_failure "${me}: failed to look up domains."
+		reg_fail "${me}: failed to look up domains."
 		[ -n "${ASSERT_NOEXIT}" ] || exit 1 # exit on internal scheduler errors
 		return 1
 	esac
@@ -2317,7 +2317,7 @@ lookup_test_doms()
 	done
 
 	[ -n "${fail_report}" ] && [ -z "${LOOKUP_NOERR}" ] &&
-		reg_failure "No domain resolved:${_NL_}${fail_report}"
+		reg_fail "No domain resolved:${_NL_}${fail_report}"
 
 	:
 }
@@ -2426,7 +2426,7 @@ lookup_targets()
 
 		case "${dom}" in
 			*[!A-Za-z0-9._-]*)
-				reg_failure "${me}: invalid domain name '${dom}'."
+				reg_fail "${me}: invalid domain name '${dom}'."
 				return 1
 		esac
 		is_included "${tgt_id}" "${tgt_ids}" && continue
@@ -2491,7 +2491,7 @@ lookup_targets()
 		DO_JOB_CB=lookup_dom_cb \
 		JOB_DONE_CB=lookup_done_cb \
 		SCHED_FINALIZE_CB=finalize_lookups_cb \
-		SCHED_FAIL_MSG_CB=reg_failure \
+		SCHED_FAIL_MSG_CB=reg_fail \
 		SCHED_DIR="${ABL_TMP_DIR}" \
 		SCHED_MAX_JOBS=${lookup_max_jobs} \
 		SCHED_JOB_TIMEOUT_S=3 \
@@ -2525,7 +2525,7 @@ lookup_targets()
 		case "${lookup_rv}" in
 			0) break ;;
 			2) : ;;
-			*) reg_failure "Scheduler failure when testing domains resolution."; return 1
+			*) reg_fail "Scheduler failure when testing domains resolution."; return 1
 		esac
 
 		[ "${resolved_cnt}" = "${tgt_cnt}" ] && { lookup_rv=0; break; }
@@ -2558,7 +2558,7 @@ lookup_targets()
 	[ "${lookup_rv}" = 0 ] && return 0
 
 	[ -z "${LOOKUP_NOERR}" ] &&
-		reg_failure "Failed to satisfy domain resolution condition: ${all_doms}" \
+		reg_fail "Failed to satisfy domain resolution condition: ${all_doms}" \
 			"Unresolved domains: ${unresolved_doms}" "Tried nameservers: ${all_ns}"
 
 	return "${lookup_rv:-1}"
@@ -2589,7 +2589,7 @@ unset_metadata()
 commit_metadata()
 {
 	try_commit_metadata && return 0
-	reg_failure "Failed to create or update the metadata file (return code ${?})."
+	reg_fail "Failed to create or update the metadata file (return code ${?})."
 	return 1
 }
 
@@ -2642,7 +2642,7 @@ try_commit_metadata()
 			uci_tmp revert "${META_FNAME}"
 			rm -f "${meta_file}"
 			[ -n "${uci_fail}" ] &&
-				{ reg_failure "Failed to create/update the metadata file '${meta_file}'."; return 2; }
+				{ reg_fail "Failed to create/update the metadata file '${meta_file}'."; return 2; }
 		}
 	}
 
@@ -2656,7 +2656,7 @@ try_commit_metadata()
 		get_params "${set_id}" persist_dir cur_path
 		is_persist "${cur_path}" "${set_id}" || continue
 
-		[ -d "${persist_dir}" ] || { reg_failure -fb "${set_id}" "Can not update persistent metadata file{} because directory '${persist_dir}' is not found."; continue; }
+		[ -d "${persist_dir}" ] || { reg_fail -fb "${set_id}" "Can not update persistent metadata file{} because directory '${persist_dir}' is not found."; continue; }
 
 		uci_fail=
 		meta_file="${persist_dir%/}/${meta_fname:?}"
@@ -2674,7 +2674,7 @@ try_commit_metadata()
 		[ -z "${uci_fail}" ] &&
 		uci_tmp commit "${meta_fname}" && [ -s "${meta_file}" ] ||
 			{
-				reg_failure -fb "${set_id}" "Failed to create/update persistent metadata file '${meta_file}'{}."
+				reg_fail -fb "${set_id}" "Failed to create/update persistent metadata file '${meta_file}'{}."
 				uci_tmp revert "${meta_fname}"
 				rm -f "${meta_file}"
 			}
@@ -2786,7 +2786,7 @@ try_read_blockset_metadata()
 
 	[ -n "${SET_IDS}" ] || return 0
 
-	[ -n "${meta_ids}" ] || { reg_failure "${me}: no blockset configs specified."; return 1; }
+	[ -n "${meta_ids}" ] || { reg_fail "${me}: no blockset configs specified."; return 1; }
 
 	[ -f "${meta_file}" ] ||
 		{ debug_msg "${me}: can not find ${sp_f_pr}."; return 0; }
@@ -2813,7 +2813,7 @@ try_read_blockset_metadata()
 	for rbm_err in ${rbm_errors}
 	do
 		IFS="${DEFAULT_IFS}"
-		reg_failure "${me}: ${rbm_err}"
+		reg_fail "${me}: ${rbm_err}"
 	done
 	IFS="${DEFAULT_IFS}"
 
