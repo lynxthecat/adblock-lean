@@ -1289,7 +1289,6 @@ restart_dnsmasq()
 	then
 		res_attempts=$(seq 1 30)
 
-		reg_action "Waiting for initialization of dnsmasq instances: ${lblue}${instances// /"${n_c}, ${lblue}"}${n_c}." || return 1
 		for instance in ${instances}
 		do
 			for i in ${res_attempts:-1 2 3 4 5}
@@ -1821,12 +1820,12 @@ init_act()
 	# set requirements
 	case ${cur_act} in
 		reload|restart|enabled|enable|disable|uninstall) ;;
-		gen_stats|calculate_limits) 		libs_req=1 ;;
-		status) local SBE_STATUS=1; 		work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 ;;
-		setup|gen_global_config) 			work_dir_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
-		gen_blockset_config) 				work_dir_req=1 cfg_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
-		upd_cron_job) 						cfg_req=1 ;;
-		update) 							LOCK_REQ=1 ;;
+		gen_stats|calculate_limits) 	libs_req=1 ;;
+		status) local SBE_STATUS=1; 	work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 ;;
+		setup|gen_global_config) 		work_dir_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+		gen_blockset_config) 			work_dir_req=1 cfg_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+		upd_cron_job) 					cfg_req=1 ;;
+		update) 						LOCK_REQ=1 ;;
 
 		boot|start|pause|resume|create_addnmounts|gen_persist_blockset|rm_blockset_config|select_dnsmasq_instances)
 			work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
@@ -2283,11 +2282,13 @@ do_rm_blockset_config()
 	persist_meta_file="${persist_dir}/${META_BASE_FNAME_PERSIST:?}-${set_id}" &&
 	read_blockset_metadata -persist "${persist_meta_file}" "${set_id}"
 
-	reg_action -purple "Removing blockset ${lblue}${set_id}${n_c}."
+	reg_action -purple "" "Removing blockset ${lblue}${set_id}${n_c}."
 
 	KEEP_PERSIST=0 do_stop "${set_id}" || { FAIL_STOP_REQ=1; exit 1; }
+	unset_param_vars "${set_id}"
 	rm -f "${cfg_path}" ||
 		{ reg_fail "Failed to remove blockset config '${set_id}'."; return 1; }
+	subtract_a_from_b "${set_id}" "${SET_IDS}" SET_IDS
 
 	log_msg -green "Successfully removed blockset config '${set_id}'."
 }
@@ -3061,10 +3062,6 @@ update()
 	{
 		local set_id
 		check_func unset_param_vars && unset_param_vars "${SET_IDS}"
-		for set_id in ${SET_IDS}
-		do
-			unset "BL_ENV_SET_${set_id}"
-		done
 		unset action ABL_INIT_ACT ABL_CMD CUR_CMD CUR_ACT ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED BL_PARAMS_MAP VAR2CFG_MAP SET_IDS GLOBAL_ENV_SET SKIP_SET_ENV MAIN_UTILS_DETECTED
 		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 	}

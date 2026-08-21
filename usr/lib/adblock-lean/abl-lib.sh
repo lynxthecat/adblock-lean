@@ -17,7 +17,7 @@ ALL_PRESETS="mini small medium large huge"
 	mini_lists="hagezi:pro.mini" mini_lists_cnt=1 mini_cnt=85000 mini_mem=64
 	small_lists="hagezi:pro" small_lists_cnt=1 small_cnt=250000 small_mem=128
 	medium_lists="hagezi:pro hagezi:tif.mini" medium_lists_cnt=2 medium_cnt=350000 medium_mem=256
-	large_lists="hagezi:pro hagezi:tif.medium" large_lists_cnt=2 large_cnt=1200000 large_mem=512
+	large_lists="hagezi:pro hagezi:tif.medium" large_lists_cnt=2 large_cnt=750000 large_mem=512
 	huge_lists="hagezi:pro hagezi:tif" huge_lists_cnt=2 huge_cnt=2400000 huge_mem=1024
 }
 
@@ -556,22 +556,6 @@ do_setup()
 		:
 	}
 
-	# shellcheck disable=SC2329
-	add_found_cfg()
-	{
-		local cfg_id
-		split_path _ cfg_id _  "${1}"
-		cfg_id="${cfg_id#"blockset-"}"
-		is_alphanum "${cfg_id}" ||
-		{
-			reg_fail "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Deleting the file."
-			rm -f "${1}"
-			return 0
-		}
-		abl_append bl_cfgs_found "${1}" "${_NL_}"
-	}
-
-
 	local CUR_CMD=setup
 
 	[ -f "${ABL_SERVICE_PATH}" ] || { reg_fail "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
@@ -605,15 +589,12 @@ do_setup()
 		gen_global_config || return 2
 	fi
 
-	FF_EXEC=add_found_cfg find_files _ "${ABL_CFG_DIR:?}/blockset-" "*" ".conf"
-	[ ${?} = 1 ] && return 1
-
 	REPLY=
-	if [ -n "${bl_cfgs_found}" ]
+	if [ -n "${SET_IDS}" ]
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg "" "Found existing blockset config files:${_NL_}${bl_cfgs_found}." \
+			print_msg "" "Found existing blockset configs:${_NL_}${SET_IDS}." \
 				"${_NL_}[k]eep existing blockset config files or remove them and create a [n]ew one, or [a]bort? (k|n|a)"
 			pick_opt 'k|n|a'
 			[ "${REPLY}" = a ] && return 0
@@ -632,14 +613,9 @@ do_setup()
 		local set_id
 		for set_id in ${SET_IDS}
 		do
-			unset "BL_ENV_SET_${set_id}"
+			do_rm_blockset_config "${set_id}"
 		done
-		unset_param_vars "${SET_IDS}"
 		unset SET_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
-		for cfg_path in ${bl_cfgs_found}
-		do
-			rm -f "${cfg_path}"
-		done
 
 		# generate blockset config
 		do_gen_blockset_config || return 2

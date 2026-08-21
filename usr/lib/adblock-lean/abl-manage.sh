@@ -1076,7 +1076,12 @@ unset_param_vars()
 			BEGIN{
 				split(MAP,map_in,"\n")
 				split(IDS,ids_in," ")
-				for (ind in ids_in) {if (ids_in[ind]) ids_arr[ids_in[ind]]}
+				for (ind in ids_in) {
+					id=ids_in[ind]
+					if (! id) continue
+					printf "%s ", "BL_ENV_SET_" id
+					ids_arr[id]
+				}
 				for (ind in map_in) {
 					param_var=map_in[ind]
 					sub(/^.*=/,"",param_var)
@@ -2123,8 +2128,8 @@ try_install_blocksets()
 
 	[ -n "${td_recs}" ] &&
 	{
-		LT_ACTION_MSG="Testing DNS resolution." \
-			lookup_test_doms td_passed_ids 5 "${td_recs}" || return 1
+		reg_action -purple "Testing DNS resolution." || return 1
+		lookup_test_doms td_passed_ids 5 "${td_recs}" || return 1
 		add2list checked_ok_ids "${td_passed_ids}"
 	}
 
@@ -2215,8 +2220,8 @@ check_active_blocksets()
 
 	debug_msg "recs='${recs}'"
 
+	reg_action -purple "Checking if adblocking is active." || return 1
 	LOOKUP_NOERR="${CA_NOERR}" \
-	LT_ACTION_MSG="Checking if adblocking is active." \
 		lookup_test_doms "${ab_active_out_var}" "${timeout_s:-0}" "${recs}"
 }
 
@@ -2224,7 +2229,6 @@ check_active_blocksets()
 # A blockset passes when, on every instance it uses, at least one of its domains resolved.
 #
 # Env vars:
-#   LT_ACTION_MSG: message to print before the lookups
 #   LOOKUP_NOERR: do not report the blocksets which failed
 #
 # 1: var name for output of IDs of blocksets which passed
@@ -2282,8 +2286,6 @@ lookup_test_doms()
 	done
 
 	[ -n "${lt_checked_ids}" ] || return 0
-
-	reg_action -purple "" "${LT_ACTION_MSG:?}" || return 1
 
 	# Target IDs name their instance, so every instance shares one run, one job pool and one result list.
 	LOOKUP_NOERR=1 lookup_targets resolved_ids "${lu_recs}" "${timeout_s}"
