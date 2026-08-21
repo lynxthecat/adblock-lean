@@ -55,10 +55,10 @@ Usage: service adblock-lean <command> [blockset_ID] [... [blockset_ID] ...]
 	pause                     Pause adblock-lean
 	resume                    Resume adblock-lean
 	status                    Print status of specified blocksets
-	gen_blockset_config      Create new blockset config file (or replace an existing one) based on a pre-defined preset
-	rm_blockset_config       Remove existing blockset config file
+	gen_blockset_config       Create new blockset config file (or replace an existing one) based on a pre-defined preset
+	rm_blockset_config        Remove existing blockset config file
 	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
-	gen_persist_blockset     Generate persistent blockset file and accompanying md5 hash file
+	gen_persist_blockset      Generate persistent blockset file and accompanying md5 hash file
 	                            Use this command to create or update persistent blockset when persist_blockset_mode is 'manual'
 "
 
@@ -1799,7 +1799,6 @@ init_act()
 {
 	local \
 		cfg_req \
-		global_cfg_req \
 		libs_req \
 		work_dir_req \
 		log_rotate_req \
@@ -1821,16 +1820,17 @@ init_act()
 
 	# set requirements
 	case ${cur_act} in
-		enabled|enable|disable|uninstall) ;;
-		gen_stats|calculate_limits) libs_req=1 ;;
-		status) local SBE_STATUS=1; work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1;;
-		upd_cron_job) cfg_req=1 ;;
-		setup|gen_global_config) work_dir_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
-		gen_blockset_config) work_dir_req=1 cfg_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
-		rm_blockset_config) libs_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		boot|create_addnmounts) cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		pause) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		start|resume|gen_persist_blockset) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
+		reload|restart|enabled|enable|disable|uninstall) ;;
+		gen_stats|calculate_limits) 		libs_req=1 ;;
+		status) local SBE_STATUS=1; 		work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 ;;
+		setup|gen_global_config) 			work_dir_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+		gen_blockset_config) 				work_dir_req=1 cfg_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+		upd_cron_job) 						cfg_req=1 ;;
+		update) 							LOCK_REQ=1 ;;
+
+		boot|start|pause|resume|create_addnmounts|gen_persist_blockset|rm_blockset_config|select_dnsmasq_instances)
+			work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
+
 		stop)
 			check_lock
 			case ${?} in
@@ -1846,20 +1846,15 @@ init_act()
 					2) reg_fail "Failed to kill running adblock-lean processes."; exit 1
 				esac
 			}
-			work_dir_req=1 libs_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
-		select_dnsmasq_instances) libs_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		reload|restart) ;;
-		update) work_dir_req=1 LOCK_REQ=1 ;;
+			work_dir_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
+
 		*) reg_fail "Invalid command '${cur_act}'."; exit 1
 	esac
 
 	# source library scripts
-	if [ -n "${libs_req}" ] || [ -n "${cfg_req}" ]
-	then
-		source_libs || exit 1
-	fi
-
-	[ -n "${cfg_req}" ] && global_cfg_req=1
+	[ -n "${cfg_req}" ] || [ -n "${find_set_configs_req}" ] && libs_req=1
+	[ -n "${libs_req}" ] &&
+		{ source_libs || exit 1; }
 
 	[ -z "${find_set_configs_req}" ] ||
 	{
@@ -1868,7 +1863,7 @@ init_act()
 		PARAMS_RESET=1
 	}
 
-	[ -z "${global_cfg_req}" ] || [ -n "${CONFIG_LOADED}" ] || [ -s "${GLOBAL_CFG_FILE:?}" ] ||
+	[ -z "${cfg_req}" ] || [ -n "${CONFIG_LOADED}" ] || [ -s "${GLOBAL_CFG_FILE:?}" ] ||
 		{ reg_fail "Global config file '${GLOBAL_CFG_FILE}' is missing." "Use the command 'service adblock-lean gen_global_config' to create new config."; exit 1; }
 
 	[ -z "${set_ids_req}" ] || [ -n "${SET_IDS}" ] ||
