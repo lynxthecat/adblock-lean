@@ -8,7 +8,7 @@
 
 ### GLOBAL VARIABLES
 ABL_CRON_SVC_PATH=/etc/init.d/cron
-ALL_PRESETS="mini small medium large large_relaxed"
+ALL_PRESETS="mini small medium large huge"
 
 # PRESETS
 # lists_cnt - urls count, cnt - target elements count, mem - intended device memory in MB
@@ -17,8 +17,8 @@ ALL_PRESETS="mini small medium large large_relaxed"
 	mini_lists="hagezi:pro.mini" mini_lists_cnt=1 mini_cnt=85000 mini_mem=64
 	small_lists="hagezi:pro" small_lists_cnt=1 small_cnt=250000 small_mem=128
 	medium_lists="hagezi:pro hagezi:tif.mini" medium_lists_cnt=2 medium_cnt=350000 medium_mem=256
-	large_lists="hagezi:pro hagezi:tif" large_lists_cnt=2 large_cnt=1200000 large_mem=512
-	large_relaxed_lists="hagezi:pro hagezi:tif" large_relaxed_lists_cnt=2 large_relaxed_cnt=1200000 large_relaxed_mem=1024 large_relaxed_coeff=2
+	large_lists="hagezi:pro hagezi:tif.medium" large_lists_cnt=2 large_cnt=1200000 large_mem=512
+	huge_lists="hagezi:pro hagezi:tif" huge_lists_cnt=2 huge_cnt=2400000 huge_mem=1024
 }
 
 ### UTILITY FUNCTIONS
@@ -688,7 +688,7 @@ do_setup()
 #  GP_PRINT_DESC: print description
 #  GP_PRINT_VALS: print values
 # Input:
-#  1: preset name (mini|small|medium|large|large_relaxed)
+#  1: preset name (mini|small|medium|large|huge)
 # Output via vars:
 #  2: entries count
 #  3: lists count
