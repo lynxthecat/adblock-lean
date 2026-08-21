@@ -55,10 +55,10 @@ Usage: service adblock-lean <command> [blockset_ID] [... [blockset_ID] ...]
 	pause                     Pause adblock-lean
 	resume                    Resume adblock-lean
 	status                    Print status of specified blocksets
-	gen_blockset_config      Create new blockset config file (or replace an existing one) based on a pre-defined preset
-	rm_blockset_config       Remove existing blockset config file
+	gen_blockset_config       Create new blockset config file (or replace an existing one) based on a pre-defined preset
+	rm_blockset_config        Remove existing blockset config file
 	select_dnsmasq_instances  Analyze dnsmasq instances and set dnsmasq conf-dir
-	gen_persist_blockset     Generate persistent blockset file and accompanying md5 hash file
+	gen_persist_blockset      Generate persistent blockset file and accompanying md5 hash file
 	                            Use this command to create or update persistent blockset when persist_blockset_mode is 'manual'
 "
 
@@ -779,7 +779,7 @@ rm_blocksets()
 			eval "rm_path=\"\${${rm_enum}_path}\""
 			[ -n "${rm_path}" ] || continue
 			[ "${rm_enum}" = install ] || set_params "${set_id}" "${rm_enum}_path"=
-			rm_if_writable "${set_id}" "${rm_path}" "${rm_path%/*}/${META_FNAME_PERSIST:?}"
+			rm_if_writable "${set_id}" "${rm_path}" "${rm_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}"
 		done
 	done
 
@@ -1008,9 +1008,10 @@ debug_msg() { reg_msg -5 -d "${@}"; }
 # Optional args:
 # -[0|1|2|3|4|5] : message level (default: 3)
 # -[action|report|noprint|err|warn|[color]
-# -b: append 'blockset[s] <OPTARG>' to the message
-# -d: message is debug
+# -b: replace '{}' with 'blockset[s] <OPTARG>'
 # -ib|-ob|-fb|-wb: same as above, plus [in|of|for|with ] prefix
+# -bf: same as above, force printing blockset ID
+# -d: message is debug
 reg_msg()
 {
 	append_msg()
@@ -1024,7 +1025,7 @@ reg_msg()
 	local m msgs msgs_nc msgs_prefix debug_prefix _arg err_l=info color _n_c \
 		print_req sys_log_req log_file_req action_req report_req noprint \
 		set_ids ids_pr_prefix fetch_ids set_ids_pr \
-		set_id_hl_on set_id_hl_off \
+		set_id_hl_on set_id_hl_off force_ids \
 		msg_level msgs_dest="${MSGS_DEST}" \
 		\
 		reg_req \
@@ -1053,6 +1054,7 @@ reg_msg()
 					append_msg "${_arg}"
 				fi ;;
 			-b) fetch_ids=1 ;;
+			-bf) fetch_ids=1 force_ids=1 ;;
 			-d ) [ -n "${ABL_DEBUG}" ] || return 0; debug_prefix="${orange}debug:${n_c} " ;;
 			-ib) ids_pr_prefix="in " fetch_ids=1 ;;
 			-fb) ids_pr_prefix="for " fetch_ids=1 ;;
@@ -1070,19 +1072,18 @@ reg_msg()
 	done
 	msgs="${msgs%"${_DELIM_}"}"
 
-	[ -n "${set_ids}" ] && { [ -z "${SET_IDS}" ] || ! subtract_a_from_b "${set_ids}" "${SET_IDS}"; } &&
+	[ -n "${set_ids}" ] && { [ -n "${force_ids}" ] || [ -z "${SET_IDS}" ] || ! subtract_a_from_b "${set_ids}" "${SET_IDS}"; } &&
 	{
 		case "${err_l}" in
 			err|warn) ;;
 			*) set_id_hl_on="${lblue}" set_id_hl_off="${n_c}"
 		esac
-		[ "${err_l}" ]
 		case "${set_ids}" in
 			*" "*) set_ids_pr=" ${ids_pr_prefix}blocksets: ${set_id_hl_on}${set_ids// /"${set_id_hl_off}, ${set_id_hl_on}"}${set_id_hl_off}" ;;
 			*) set_ids_pr=" ${ids_pr_prefix}blockset ${set_id_hl_on}${set_ids}${set_id_hl_off}" ;;
 		esac
 	}
-	msgs="${msgs//"{}"/"${set_ids_pr}"}"
+	[ -n "${set_ids}" ] && msgs="${msgs//"{}"/"${set_ids_pr}"}"
 
 	: "${msg_level:=3}"
 
@@ -1289,7 +1290,6 @@ restart_dnsmasq()
 	then
 		res_attempts=$(seq 1 30)
 
-		reg_action "Waiting for initialization of dnsmasq instances: ${lblue}${instances// /"${n_c}, ${lblue}"}${n_c}." || return 1
 		for instance in ${instances}
 		do
 			for i in ${res_attempts:-1 2 3 4 5}
@@ -1799,7 +1799,6 @@ init_act()
 {
 	local \
 		cfg_req \
-		global_cfg_req \
 		libs_req \
 		work_dir_req \
 		log_rotate_req \
@@ -1821,16 +1820,17 @@ init_act()
 
 	# set requirements
 	case ${cur_act} in
-		enabled|enable|disable|uninstall) ;;
-		gen_stats|calculate_limits) libs_req=1 ;;
-		status) local SBE_STATUS=1; work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1;;
-		upd_cron_job) cfg_req=1 ;;
-		setup|gen_global_config) work_dir_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
-		gen_blockset_config) work_dir_req=1 cfg_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
-		rm_blockset_config) libs_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		boot|create_addnmounts) cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		pause) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		start|resume|gen_persist_blockset) work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
+		reload|restart|enabled|enable|disable|uninstall) ;;
+		gen_stats|calculate_limits) 	libs_req=1 ;;
+		status) local SBE_STATUS=1; 	work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 ;;
+		setup|gen_global_config) 		work_dir_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+		gen_blockset_config) 			work_dir_req=1 cfg_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+		upd_cron_job) 					cfg_req=1 ;;
+		update) 						LOCK_REQ=1 ;;
+
+		boot|start|pause|resume|create_addnmounts|gen_persist_blockset|rm_blockset_config|select_dnsmasq_instances)
+			work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
+
 		stop)
 			check_lock
 			case ${?} in
@@ -1846,20 +1846,15 @@ init_act()
 					2) reg_fail "Failed to kill running adblock-lean processes."; exit 1
 				esac
 			}
-			work_dir_req=1 libs_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
-		select_dnsmasq_instances) libs_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
-		reload|restart) ;;
-		update) work_dir_req=1 LOCK_REQ=1 ;;
+			work_dir_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
+
 		*) reg_fail "Invalid command '${cur_act}'."; exit 1
 	esac
 
 	# source library scripts
-	if [ -n "${libs_req}" ] || [ -n "${cfg_req}" ]
-	then
-		source_libs || exit 1
-	fi
-
-	[ -n "${cfg_req}" ] && global_cfg_req=1
+	[ -n "${cfg_req}" ] || [ -n "${find_set_configs_req}" ] && libs_req=1
+	[ -n "${libs_req}" ] &&
+		{ source_libs || exit 1; }
 
 	[ -z "${find_set_configs_req}" ] ||
 	{
@@ -1868,7 +1863,7 @@ init_act()
 		PARAMS_RESET=1
 	}
 
-	[ -z "${global_cfg_req}" ] || [ -n "${CONFIG_LOADED}" ] || [ -s "${GLOBAL_CFG_FILE:?}" ] ||
+	[ -z "${cfg_req}" ] || [ -n "${CONFIG_LOADED}" ] || [ -s "${GLOBAL_CFG_FILE:?}" ] ||
 		{ reg_fail "Global config file '${GLOBAL_CFG_FILE}' is missing." "Use the command 'service adblock-lean gen_global_config' to create new config."; exit 1; }
 
 	[ -z "${set_ids_req}" ] || [ -n "${SET_IDS}" ] ||
@@ -2259,11 +2254,18 @@ version()
 gen_blockset_config()
 {
 	local CUR_ACT=gen_blockset_config
-	local CUR_CMD=${CUR_ACT}
+	local CUR_CMD="${CUR_ACT}" set_id="${1}"
 	init_act "${CUR_ACT}" &&
 	set_all_env &&
-	do_gen_blockset_config "${@}" &&
-	do_create_addnmounts "${@}"
+	do_gen_blockset_config set_id "${set_id}" &&
+	do_create_addnmounts "${set_id}" || return 1
+	if [ "${DO_DIALOGS}" = 1 ]
+	then
+		print_msg -bf "${set_id}" "" "Start{} now? (y|n)"
+		pick_opt "y|n"
+		[ "${REPLY}" = y ] || return 0
+		start "${set_id}"
+	fi
 }
 
 rm_blockset_config()
@@ -2285,14 +2287,16 @@ do_rm_blockset_config()
 
 	get_params "${set_id}" persist_dir
 	[ -n "${persist_dir}" ] &&
-	persist_meta_file="${persist_dir}/${META_FNAME_PERSIST:?}" &&
+	persist_meta_file="${persist_dir}/${META_BASE_FNAME_PERSIST:?}-${set_id}" &&
 	read_blockset_metadata -persist "${persist_meta_file}" "${set_id}"
 
-	reg_action -purple "Removing blockset ${lblue}${set_id}${n_c}."
+	reg_action -purple -bf "${set_id}" "" "Removing blockset{}."
 
 	KEEP_PERSIST=0 do_stop "${set_id}" || { FAIL_STOP_REQ=1; exit 1; }
+	unset_param_vars "${set_id}"
 	rm -f "${cfg_path}" ||
 		{ reg_fail "Failed to remove blockset config '${set_id}'."; return 1; }
+	subtract_a_from_b "${set_id}" "${SET_IDS}" SET_IDS
 
 	log_msg -green "Successfully removed blockset config '${set_id}'."
 }
@@ -2637,6 +2641,7 @@ gen_persist_blockset()
 	done
 
 	[ -n "${ok_set_ids}" ] &&
+	create_addnmounts &&
 		FORCE_PERSIST_INSTALL=1 do_start "${ok_set_ids}"
 }
 
@@ -2928,7 +2933,7 @@ pause_resume()
 		act_fail_ids \
 		extra_ids \
 		\
-		set_id set_id_pr \
+		set_id \
 		run_state \
 		cur_path \
 		cur_cnt \
@@ -2964,8 +2969,6 @@ pause_resume()
 	for set_id in ${set_ids}
 	do
 		get_params -f "${cmd}" "${set_id}" run_state || return 1
-
-		set_id_pr="blockset ${lblue}${set_id}${n_c}"
 
 		case "${run_state}" in
 			0|3|4) ;;
@@ -3065,10 +3068,6 @@ update()
 	{
 		local set_id
 		check_func unset_param_vars && unset_param_vars "${SET_IDS}"
-		for set_id in ${SET_IDS}
-		do
-			unset "BL_ENV_SET_${set_id}"
-		done
 		unset action ABL_INIT_ACT ABL_CMD CUR_CMD CUR_ACT ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED BL_PARAMS_MAP VAR2CFG_MAP SET_IDS GLOBAL_ENV_SET SKIP_SET_ENV MAIN_UTILS_DETECTED
 		unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 	}

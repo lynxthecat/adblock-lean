@@ -8,7 +8,7 @@
 
 ### GLOBAL VARIABLES
 ABL_CRON_SVC_PATH=/etc/init.d/cron
-ALL_PRESETS="mini small medium large large_relaxed"
+ALL_PRESETS="mini small medium large huge"
 
 # PRESETS
 # lists_cnt - urls count, cnt - target elements count, mem - intended device memory in MB
@@ -17,8 +17,8 @@ ALL_PRESETS="mini small medium large large_relaxed"
 	mini_lists="hagezi:pro.mini" mini_lists_cnt=1 mini_cnt=85000 mini_mem=64
 	small_lists="hagezi:pro" small_lists_cnt=1 small_cnt=250000 small_mem=128
 	medium_lists="hagezi:pro hagezi:tif.mini" medium_lists_cnt=2 medium_cnt=350000 medium_mem=256
-	large_lists="hagezi:pro hagezi:tif" large_lists_cnt=2 large_cnt=1200000 large_mem=512
-	large_relaxed_lists="hagezi:pro hagezi:tif" large_relaxed_lists_cnt=2 large_relaxed_cnt=1200000 large_relaxed_mem=1024 large_relaxed_coeff=2
+	large_lists="hagezi:pro hagezi:tif.medium" large_lists_cnt=2 large_cnt=750000 large_mem=512
+	huge_lists="hagezi:pro hagezi:tif" huge_lists_cnt=2 huge_cnt=2400000 huge_mem=1024
 }
 
 ### UTILITY FUNCTIONS
@@ -556,22 +556,6 @@ do_setup()
 		:
 	}
 
-	# shellcheck disable=SC2329
-	add_found_cfg()
-	{
-		local cfg_id
-		split_path _ cfg_id _  "${1}"
-		cfg_id="${cfg_id#"blockset-"}"
-		is_alphanum "${cfg_id}" ||
-		{
-			reg_fail "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Deleting the file."
-			rm -f "${1}"
-			return 0
-		}
-		abl_append bl_cfgs_found "${1}" "${_NL_}"
-	}
-
-
 	local CUR_CMD=setup
 
 	[ -f "${ABL_SERVICE_PATH}" ] || { reg_fail "adblock-lean service file doesn't exist at ${ABL_SERVICE_PATH}."; return 1; }
@@ -605,16 +589,13 @@ do_setup()
 		gen_global_config || return 2
 	fi
 
-	FF_EXEC=add_found_cfg find_files _ "${ABL_CFG_DIR:?}/blockset-" "*" ".conf"
-	[ ${?} = 1 ] && return 1
-
 	REPLY=
-	if [ -n "${bl_cfgs_found}" ]
+	if [ -n "${SET_IDS}" ]
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg "" "Found existing blockset config files:${_NL_}${bl_cfgs_found}." \
-				"${_NL_}[k]eep existing blockset config files or remove them and create a [n]ew one, or [a]bort? (k|n|a)"
+			print_msg -bf "${SET_IDS}" "" "Found existing blockset configs:{}." \
+				"[${lblue}k${n_c}]eep existing blockset config files or remove them and create a [${lblue}n${n_c}]ew one, or [${lblue}a${n_c}]bort? (k|n|a)"
 			pick_opt 'k|n|a'
 			[ "${REPLY}" = a ] && return 0
 		else
@@ -632,17 +613,12 @@ do_setup()
 		local set_id
 		for set_id in ${SET_IDS}
 		do
-			unset "BL_ENV_SET_${set_id}"
+			do_rm_blockset_config "${set_id}"
 		done
-		unset_param_vars "${SET_IDS}"
 		unset SET_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
-		for cfg_path in ${bl_cfgs_found}
-		do
-			rm -f "${cfg_path}"
-		done
 
 		# generate blockset config
-		do_gen_blockset_config || return 2
+		do_gen_blockset_config _ || return 2
 	fi
 
 	load_config &&
@@ -675,10 +651,9 @@ do_setup()
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
-		print_msg "" "${purple}Setup is complete.${n_c}" "" "${lblue}Start adblock-lean now?${n_c} (y|n)"
+		print_msg "" "${purple}Setup is complete.${n_c}" "" "${blue}Start adblock-lean now?${n_c} (y|n)"
 		pick_opt "y|n"
 		[ "${REPLY}" != y ] && return 0
-		echo > "${MSGS_DEST}"
 		start
 	fi
 	:
@@ -688,7 +663,7 @@ do_setup()
 #  GP_PRINT_DESC: print description
 #  GP_PRINT_VALS: print values
 # Input:
-#  1: preset name (mini|small|medium|large|large_relaxed)
+#  1: preset name (mini|small|medium|large|huge)
 # Output via vars:
 #  2: entries count
 #  3: lists count
@@ -1045,11 +1020,12 @@ confirm_cfg_write()
 	local cfg_file cfg_id="${1:?}"
 	get_cfg_path cfg_file "${cfg_id}" || return 1
 	[ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -z "${APPROVE_CFG_WRITE}" ] && [ -f "${cfg_file}" ] || return 0
-	print_msg -blue "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
+	print_msg "" "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
 	pick_opt "y|n" && [ "${REPLY}" != n ]
 }
 
-# 1: new blockset ID
+# 1: out-var for new blockset ID
+# 2: new blockset ID (arg)
 do_gen_blockset_config()
 {
 	# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
@@ -1082,26 +1058,27 @@ do_gen_blockset_config()
 
 	local cnt totalmem totalmem_human preset \
 		dmsq_instances conf_dirs \
-		new_cfg\
-		set_id="${1:-"${luci_new_blockset_name}"}"
+		new_cfg \
+		gbc_out_var="${1}" \
+		gbc_id="${2:-"${luci_new_blockset_name}"}"
 
 	while :
 	do
-		is_alphanum "${set_id}" && break
+		is_alphanum "${gbc_id}" && break
 
-		[ -z "${set_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
-			print_msg "Invalid blockset name '${set_id}'. Use English letters and/or numbers and/or underlines."
+		[ -z "${gbc_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
+			print_msg "Invalid blockset name '${gbc_id}'. Use English letters and/or numbers and/or underlines."
 
 		[ -n "${luci_new_blockset_name}" ] && return 1
 
 		[ "${DO_DIALOGS}" = 1 ] ||
 		{
-			set_id=01
+			gbc_id=01
 			break
 		}
 
 		print_msg -blue "" "Name the new blockset:"
-		read -r set_id
+		read -r gbc_id
 	done
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${luci_preset}" ]
@@ -1142,16 +1119,18 @@ do_gen_blockset_config()
 	is_included "${preset}" "${ALL_PRESETS}" || { reg_fail "Invalid preset '${preset}'."; return 1; }
 	reg_msg -blue "Selected preset '${preset}'."
 
-	add2list SET_IDS "${set_id}"
-	do_select_dnsmasq_instances "${set_id}" || return 1
+	add2list SET_IDS "${gbc_id}"
+	do_select_dnsmasq_instances "${gbc_id}" || return 1
 
-	get_params -f gen_blockset_config "${set_id}" dmsq_instances conf_dirs &&
-	reg_action -purple "" "Generating new blockset config ${lblue}${set_id}${n_c} from preset '${preset}'." &&
-	new_cfg="$(print_def_cfg bl -i "${set_id}" -p "${preset}" -n "${dmsq_instances}" -c "${conf_dirs}")" &&
-	confirm_cfg_write "${set_id}" &&
-	write_config bl "${set_id}" "${new_cfg}" || return 1
+	get_params -f gen_blockset_config "${gbc_id}" dmsq_instances conf_dirs &&
+	reg_action -purple -bf "${gbc_id}" "" "Generating new blockset config{} from preset '${preset}'." &&
+	new_cfg="$(print_def_cfg bl -i "${gbc_id}" -p "${preset}" -n "${dmsq_instances}" -c "${conf_dirs}")" &&
+	confirm_cfg_write "${gbc_id}" &&
+	write_config bl "${gbc_id}" "${new_cfg}" || return 1
 
-	:
+	log_msg -green "Successfully generated blockset config '${gbc_id}'."
+
+	export -n "${gbc_out_var}=${gbc_id}"
 }
 
 get_cfg_path()

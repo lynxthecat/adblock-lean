@@ -3,7 +3,7 @@
 # shellcheck source=/dev/null
 
 META_FNAME="blockset-metadata"
-META_FNAME_PERSIST="persist_blockset-metadata"
+META_BASE_FNAME_PERSIST="persist_blockset-metadata"
 META_FILE="${ABL_RUN_DIR}/${META_FNAME}"
 META_PARAMS="PATH SINGLE_INSTANCE MD5 CNT"
 META_PARAMS_PERSIST="PATH MD5 CNT"
@@ -90,7 +90,7 @@ get_cfg_opt()
 
 
 # silence shellcheck warnings
-: "${blue:=}" "${lblue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
+: "${blue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
 
 
 # UTILITY FUNCTIONS
@@ -1076,7 +1076,12 @@ unset_param_vars()
 			BEGIN{
 				split(MAP,map_in,"\n")
 				split(IDS,ids_in," ")
-				for (ind in ids_in) {if (ids_in[ind]) ids_arr[ids_in[ind]]}
+				for (ind in ids_in) {
+					id=ids_in[ind]
+					if (! id) continue
+					printf "%s ", "BL_ENV_SET_" id
+					ids_arr[id]
+				}
 				for (ind in map_in) {
 					param_var=map_in[ind]
 					sub(/^.*=/,"",param_var)
@@ -1243,7 +1248,7 @@ check_persist_blockset()
 	} &&
 
 	{
-		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_FNAME_PERSIST:?}" "${set_id}" &&
+		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}" "${set_id}" &&
 		get_params "${set_id}" cur_persist_cnt &&
 		[ -n "${cur_persist_cnt}" ] ||
 		{ reg_fail "Failed to process metadata for persistent blockset file '${cur_persist_path}'."; false; }
@@ -1423,7 +1428,7 @@ get_run_state()
 			set_id="${1:?}" grs_active_ids="${2?}" \
 			state_out_var="${3:-_}" path_out_var="${4:-_}" single_inst_out_var="${5:-_}"
 
-	debug_msg "Checking state of blockset ${lblue}${set_id}${n_c}."
+	debug_msg -bf "${set_id}" "Checking state of blockset{}."
 
 	unset_vars "${state_out_var}" "${path_out_var}" "${single_inst_out_var}"
 	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
@@ -1782,7 +1787,7 @@ set_blockset_env()
 			else
 				[ "${CUR_ACT}" = status ] ||
 				{
-					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${cur_persist_path}" "${cur_persist_path%/*}/${META_FNAME_PERSIST}"
+					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${cur_persist_path}" "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST}-${set_id}"
 					[ "${cur_path}" = "${cur_persist_path}" ] && unset_metadata "${set_id}"
 					set_params "${set_id}" cur_persist_path= cur_persist_cnt=
 				}
@@ -2072,7 +2077,7 @@ try_install_blocksets()
 		get_params -f "${me}" "${set_id}" dmsq_instances conf_dirs final_extr_or_cat_stdout install_path install_cnt || { inst_failed "${set_id}"; continue; }
 		get_params "${set_id}" install_1_instance conf_script_log_avail
 
-		log_msg "Installing blockset ${lblue}${set_id}${n_c} at ${blue}${install_path}${n_c}"
+		log_msg -bf "${set_id}" "Installing blockset{} at ${blue}${install_path}${n_c}"
 
 		get_md5 cur_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
 
@@ -2123,8 +2128,8 @@ try_install_blocksets()
 
 	[ -n "${td_recs}" ] &&
 	{
-		LT_ACTION_MSG="Testing DNS resolution." \
-			lookup_test_doms td_passed_ids 5 "${td_recs}" || return 1
+		reg_action -purple "Testing DNS resolution." || return 1
+		lookup_test_doms td_passed_ids 5 "${td_recs}" || return 1
 		add2list checked_ok_ids "${td_passed_ids}"
 	}
 
@@ -2215,8 +2220,8 @@ check_active_blocksets()
 
 	debug_msg "recs='${recs}'"
 
+	reg_action -purple "Checking if adblocking is active." || return 1
 	LOOKUP_NOERR="${CA_NOERR}" \
-	LT_ACTION_MSG="Checking if adblocking is active." \
 		lookup_test_doms "${ab_active_out_var}" "${timeout_s:-0}" "${recs}"
 }
 
@@ -2224,7 +2229,6 @@ check_active_blocksets()
 # A blockset passes when, on every instance it uses, at least one of its domains resolved.
 #
 # Env vars:
-#   LT_ACTION_MSG: message to print before the lookups
 #   LOOKUP_NOERR: do not report the blocksets which failed
 #
 # 1: var name for output of IDs of blocksets which passed
@@ -2282,8 +2286,6 @@ lookup_test_doms()
 	done
 
 	[ -n "${lt_checked_ids}" ] || return 0
-
-	reg_action -purple "" "${LT_ACTION_MSG:?}" || return 1
 
 	# Target IDs name their instance, so every instance shares one run, one job pool and one result list.
 	LOOKUP_NOERR=1 lookup_targets resolved_ids "${lu_recs}" "${timeout_s}"
@@ -2649,9 +2651,9 @@ try_commit_metadata()
 	is_included PERSIST "${meta_locations}" || return 0
 
 	# Persist metadata
-	meta_fname="${META_FNAME_PERSIST}"
 	for set_id in ${SET_IDS}
 	do
+		meta_fname="${META_BASE_FNAME_PERSIST}-${set_id}"
 		local persist_dir
 		get_params "${set_id}" persist_dir cur_path
 		is_persist "${cur_path}" "${set_id}" || continue
