@@ -3,7 +3,7 @@
 # shellcheck source=/dev/null
 
 META_FNAME="blockset-metadata"
-META_FNAME_PERSIST="persist_blockset-metadata"
+META_BASE_FNAME_PERSIST="persist_blockset-metadata"
 META_FILE="${ABL_RUN_DIR}/${META_FNAME}"
 META_PARAMS="PATH SINGLE_INSTANCE MD5 CNT"
 META_PARAMS_PERSIST="PATH MD5 CNT"
@@ -1243,7 +1243,7 @@ check_persist_blockset()
 	} &&
 
 	{
-		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_FNAME_PERSIST:?}" "${set_id}" &&
+		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}" "${set_id}" &&
 		get_params "${set_id}" cur_persist_cnt &&
 		[ -n "${cur_persist_cnt}" ] ||
 		{ reg_fail "Failed to process metadata for persistent blockset file '${cur_persist_path}'."; false; }
@@ -1782,7 +1782,7 @@ set_blockset_env()
 			else
 				[ "${CUR_ACT}" = status ] ||
 				{
-					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${cur_persist_path}" "${cur_persist_path%/*}/${META_FNAME_PERSIST}"
+					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${cur_persist_path}" "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST}-${set_id}"
 					[ "${cur_path}" = "${cur_persist_path}" ] && unset_metadata "${set_id}"
 					set_params "${set_id}" cur_persist_path= cur_persist_cnt=
 				}
@@ -2649,9 +2649,9 @@ try_commit_metadata()
 	is_included PERSIST "${meta_locations}" || return 0
 
 	# Persist metadata
-	meta_fname="${META_FNAME_PERSIST}"
 	for set_id in ${SET_IDS}
 	do
+		meta_fname="${META_BASE_FNAME_PERSIST}-${set_id}"
 		local persist_dir
 		get_params "${set_id}" persist_dir cur_path
 		is_persist "${cur_path}" "${set_id}" || continue

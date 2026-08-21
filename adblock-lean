@@ -779,7 +779,7 @@ rm_blocksets()
 			eval "rm_path=\"\${${rm_enum}_path}\""
 			[ -n "${rm_path}" ] || continue
 			[ "${rm_enum}" = install ] || set_params "${set_id}" "${rm_enum}_path"=
-			rm_if_writable "${set_id}" "${rm_path}" "${rm_path%/*}/${META_FNAME_PERSIST:?}"
+			rm_if_writable "${set_id}" "${rm_path}" "${rm_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}"
 		done
 	done
 
@@ -2285,7 +2285,7 @@ do_rm_blockset_config()
 
 	get_params "${set_id}" persist_dir
 	[ -n "${persist_dir}" ] &&
-	persist_meta_file="${persist_dir}/${META_FNAME_PERSIST:?}" &&
+	persist_meta_file="${persist_dir}/${META_BASE_FNAME_PERSIST:?}-${set_id}" &&
 	read_blockset_metadata -persist "${persist_meta_file}" "${set_id}"
 
 	reg_action -purple "Removing blockset ${lblue}${set_id}${n_c}."
