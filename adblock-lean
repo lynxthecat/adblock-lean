@@ -1008,9 +1008,10 @@ debug_msg() { reg_msg -5 -d "${@}"; }
 # Optional args:
 # -[0|1|2|3|4|5] : message level (default: 3)
 # -[action|report|noprint|err|warn|[color]
-# -b: append 'blockset[s] <OPTARG>' to the message
-# -d: message is debug
+# -b: replace '{}' with 'blockset[s] <OPTARG>'
 # -ib|-ob|-fb|-wb: same as above, plus [in|of|for|with ] prefix
+# -bf: same as above, force printing blockset ID
+# -d: message is debug
 reg_msg()
 {
 	append_msg()
@@ -1024,7 +1025,7 @@ reg_msg()
 	local m msgs msgs_nc msgs_prefix debug_prefix _arg err_l=info color _n_c \
 		print_req sys_log_req log_file_req action_req report_req noprint \
 		set_ids ids_pr_prefix fetch_ids set_ids_pr \
-		set_id_hl_on set_id_hl_off \
+		set_id_hl_on set_id_hl_off force_ids \
 		msg_level msgs_dest="${MSGS_DEST}" \
 		\
 		reg_req \
@@ -1053,6 +1054,7 @@ reg_msg()
 					append_msg "${_arg}"
 				fi ;;
 			-b) fetch_ids=1 ;;
+			-bf) fetch_ids=1 force_ids=1 ;;
 			-d ) [ -n "${ABL_DEBUG}" ] || return 0; debug_prefix="${orange}debug:${n_c} " ;;
 			-ib) ids_pr_prefix="in " fetch_ids=1 ;;
 			-fb) ids_pr_prefix="for " fetch_ids=1 ;;
@@ -1070,19 +1072,18 @@ reg_msg()
 	done
 	msgs="${msgs%"${_DELIM_}"}"
 
-	[ -n "${set_ids}" ] && { [ -z "${SET_IDS}" ] || ! subtract_a_from_b "${set_ids}" "${SET_IDS}"; } &&
+	[ -n "${set_ids}" ] && { [ -n "${force_ids}" ] || [ -z "${SET_IDS}" ] || ! subtract_a_from_b "${set_ids}" "${SET_IDS}"; } &&
 	{
 		case "${err_l}" in
 			err|warn) ;;
 			*) set_id_hl_on="${lblue}" set_id_hl_off="${n_c}"
 		esac
-		[ "${err_l}" ]
 		case "${set_ids}" in
 			*" "*) set_ids_pr=" ${ids_pr_prefix}blocksets: ${set_id_hl_on}${set_ids// /"${set_id_hl_off}, ${set_id_hl_on}"}${set_id_hl_off}" ;;
 			*) set_ids_pr=" ${ids_pr_prefix}blockset ${set_id_hl_on}${set_ids}${set_id_hl_off}" ;;
 		esac
 	}
-	msgs="${msgs//"{}"/"${set_ids_pr}"}"
+	[ -n "${set_ids}" ] && msgs="${msgs//"{}"/"${set_ids_pr}"}"
 
 	: "${msg_level:=3}"
 
@@ -2253,11 +2254,18 @@ version()
 gen_blockset_config()
 {
 	local CUR_ACT=gen_blockset_config
-	local CUR_CMD=${CUR_ACT}
+	local CUR_CMD="${CUR_ACT}" set_id="${1}"
 	init_act "${CUR_ACT}" &&
 	set_all_env &&
-	do_gen_blockset_config "${@}" &&
-	do_create_addnmounts "${@}"
+	do_gen_blockset_config set_id "${set_id}" &&
+	do_create_addnmounts "${set_id}" || return 1
+	if [ "${DO_DIALOGS}" = 1 ]
+	then
+		print_msg -bf "${set_id}" "" "Start{} now? (y|n)"
+		pick_opt "y|n"
+		[ "${REPLY}" = y ] || return 0
+		start "${set_id}"
+	fi
 }
 
 rm_blockset_config()
@@ -2282,7 +2290,7 @@ do_rm_blockset_config()
 	persist_meta_file="${persist_dir}/${META_BASE_FNAME_PERSIST:?}-${set_id}" &&
 	read_blockset_metadata -persist "${persist_meta_file}" "${set_id}"
 
-	reg_action -purple "" "Removing blockset ${lblue}${set_id}${n_c}."
+	reg_action -purple -bf "${set_id}" "" "Removing blockset{}."
 
 	KEEP_PERSIST=0 do_stop "${set_id}" || { FAIL_STOP_REQ=1; exit 1; }
 	unset_param_vars "${set_id}"
@@ -2925,7 +2933,7 @@ pause_resume()
 		act_fail_ids \
 		extra_ids \
 		\
-		set_id set_id_pr \
+		set_id \
 		run_state \
 		cur_path \
 		cur_cnt \
@@ -2961,8 +2969,6 @@ pause_resume()
 	for set_id in ${set_ids}
 	do
 		get_params -f "${cmd}" "${set_id}" run_state || return 1
-
-		set_id_pr="blockset ${lblue}${set_id}${n_c}"
 
 		case "${run_state}" in
 			0|3|4) ;;

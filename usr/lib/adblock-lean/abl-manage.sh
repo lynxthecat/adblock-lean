@@ -90,7 +90,7 @@ get_cfg_opt()
 
 
 # silence shellcheck warnings
-: "${blue:=}" "${lblue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
+: "${blue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
 
 
 # UTILITY FUNCTIONS
@@ -1428,7 +1428,7 @@ get_run_state()
 			set_id="${1:?}" grs_active_ids="${2?}" \
 			state_out_var="${3:-_}" path_out_var="${4:-_}" single_inst_out_var="${5:-_}"
 
-	debug_msg "Checking state of blockset ${lblue}${set_id}${n_c}."
+	debug_msg -bf "${set_id}" "Checking state of blockset{}."
 
 	unset_vars "${state_out_var}" "${path_out_var}" "${single_inst_out_var}"
 	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
@@ -2077,7 +2077,7 @@ try_install_blocksets()
 		get_params -f "${me}" "${set_id}" dmsq_instances conf_dirs final_extr_or_cat_stdout install_path install_cnt || { inst_failed "${set_id}"; continue; }
 		get_params "${set_id}" install_1_instance conf_script_log_avail
 
-		log_msg "Installing blockset ${lblue}${set_id}${n_c} at ${blue}${install_path}${n_c}"
+		log_msg -bf "${set_id}" "Installing blockset{} at ${blue}${install_path}${n_c}"
 
 		get_md5 cur_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
 
