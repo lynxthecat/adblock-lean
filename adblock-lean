@@ -2637,6 +2637,7 @@ gen_persist_blockset()
 	done
 
 	[ -n "${ok_set_ids}" ] &&
+	create_addnmounts &&
 		FORCE_PERSIST_INSTALL=1 do_start "${ok_set_ids}"
 }
 
