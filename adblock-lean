@@ -2409,15 +2409,16 @@ select_dnsmasq_instances()
 	local \
 		CUR_ACT="${me}" \
 		CUR_CMD="${me}" \
-		set_id \
+		set_id set_ids \
 		cfg_path \
 		upd_cfg \
-		dmsq_instances conf_dirs \
-		set_ids="${*:-"${SET_IDS}"}"
+		dmsq_instances conf_dirs
 
 	init_act "${CUR_ACT}" &&
+	set_ids="${*:-"${SET_IDS}"}" &&
 	set_all_env "${set_ids}" &&
-	do_select_dnsmasq_instances "${@}" || return 1
+	do_select_dnsmasq_instances "${set_ids}" || return 1
+
 	for set_id in ${set_ids}
 	do
 		get_cfg_path cfg_path "${set_id}" &&
