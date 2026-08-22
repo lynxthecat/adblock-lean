@@ -496,7 +496,7 @@ parse_dmsq_runtime()
 	}
 
 	[ -n "${R_PROCESSED}" ] &&
-		is_gr_eq 0 "${DMSQ_RUNNING_INST_CNT}" && return 0
+		is_gr_eq 1 "${DMSQ_RUNNING_INST_CNT}" && return 0
 
 	local me=parse_dmsq_runtime \
 		IFS="${DEFAULT_IFS}" \
@@ -884,11 +884,11 @@ do_select_dnsmasq_instances() {
 
 	local me=select_dnsmasq_instances \
 		index indexes \
-		conf_dirs conf_dirs_instance \
-		conf_dirs_cnt \
+		conf_dirs conf_dirs_instance conf_dirs_seen conf_dirs_cnt \
 		select_conf_dirs \
-		select_skip_msg \
+		force_instances \
 		select_instances \
+		select_ifaces \
 		instance luci_instances \
 		ifaces \
 		REPLY \
@@ -901,20 +901,19 @@ do_select_dnsmasq_instances() {
 
 	assert_set "F_${me}" SET_IDS &&
 	get_valid_set_ids set_ids "${set_ids_arg}" &&
+	[ -n "${set_ids}" ] &&
 	parse_dmsq_cfg &&
 	parse_dmsq_runtime || return 1
 
-	for set_id in ${set_ids}
-	do
-		select_skip_msg="Detected only 1 dnsmasq instance"
-		first=1 diff='' conf_dirs_cnt='' REPLY='' select_instances='' conf_dirs='' conf_dirs_seen=''
-			ifaces='' select_ifaces=''
-			select_conf_dirs=''
-		if \
-		{
-			[ "${DMSQ_RUNNING_INST_CNT}" = 1 ] &&
-				select_instances="${DMSQ_RUNNING_INSTANCES%% *}"
-		} ||
+	[ -n "${DMSQ_RUNNING_INSTANCES}" ] && [ "${DMSQ_RUNNING_INST_CNT}" -gt 0 ] ||
+		{ reg_fail "Internal error parsing dnsmasq runtime info."; return 1; }
+
+	first=1 diff=''
+	if [ "${DMSQ_RUNNING_INST_CNT}" = 1 ]
+	then
+		force_instances="${DMSQ_RUNNING_INSTANCES%% *}"
+		reg_msg "" "Detected only 1 dnsmasq instance." "Skipping manual dnsmasq instance selection."
+	elif
 		{
 			# check if all instances share same conf-dirs
 			for instance in ${DMSQ_RUNNING_INSTANCES}
@@ -933,34 +932,44 @@ do_select_dnsmasq_instances() {
 				[ -n "${conf_dirs}" ] && conf_dirs_seen=1
 			done
 			[ -n "${conf_dirs_seen}" ] &&
-			[ -z "${diff}" ] &&
-			select_instances="${DMSQ_RUNNING_INSTANCES}" &&
-			select_skip_msg="Detected multiple dnsmasq instances which are using the same conf-dirs: ${_NL_}${blue}${conf_dirs// /" ${_NL_}"}${n_c}"
+			[ -z "${diff}" ]
 		}
+	then
+		force_instances="${DMSQ_RUNNING_INSTANCES}"
+		reg_msg "" "Detected multiple dnsmasq instances which are using the same conf-dirs: ${_NL_}${blue}${conf_dirs// /" ${_NL_}"}${n_c}" "Skipping manual dnsmasq instance selection."
+	elif [ -z "${conf_dirs_seen}" ]
+	then
+		reg_fail "Failed to detect dnsmasq conf-dir paths for dnsmasq instances '${DMSQ_RUNNING_INSTANCES}'."
+		return 1
+	else
+		reg_msg -blue "Multiple dnsmasq instances detected."
+		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			reg_msg "" "${select_skip_msg}." "Skipping manual dnsmasq instance selection."
-		elif [ -z "${conf_dirs_seen}" ]
+			reg_msg "" "Running dnsmasq instances and assigned network interfaces:"
+			index=1
+			for instance in ${DMSQ_RUNNING_INSTANCES}
+			do
+				local "instance_${index}=${instance}"
+				eval "ifaces=\"\${C_IFACES_${instance}}\""
+				reg_msg "${index}: Instance '${instance}': network interfaces '${ifaces// /, }'"
+				abl_append indexes "${index}"
+				index=$((index+1))
+			done
+		fi
+	fi
+
+	for set_id in ${set_ids}
+	do
+		select_instances='' select_ifaces='' select_conf_dirs=''
+		if [ -n "${force_instances}" ]
 		then
-			reg_fail "Failed to detect dnsmasq conf-dir paths for dnsmasq instances '${DMSQ_RUNNING_INSTANCES}'."
-			return 1
+			select_instances=${force_instances}
 		else
 			# Ask the user
-			reg_msg -blue "Multiple dnsmasq instances detected."
 			eval "luci_instances=\"\${luci_dmsq_instances_${set_id}}\""
 			REPLY=a
 			if [ "${DO_DIALOGS}" = 1 ]
 			then
-				reg_msg "" "Running dnsmasq instances and assigned network interfaces:"
-				index=1
-				for instance in ${DMSQ_RUNNING_INSTANCES}
-				do
-					local "instance_${index}=${instance}"
-					eval "ifaces=\"\${C_IFACES_${instance}}\""
-					ifaces="${ifaces//"${_NL_}"/, }"
-					reg_msg "${index}: Instance '${instance}': network interfaces '${ifaces}'"
-					abl_append indexes "${index}"
-					index=$((index+1))
-				done
 				print_msg -fb "${set_id}" "" "Please select which dnsmasq instance should have active adblocking{}, or 'a' to abort." \
 					"To adblock on multiple instances, enter multiple instances separated by spaces."
 				while :
@@ -989,7 +998,7 @@ do_select_dnsmasq_instances() {
 				done
 			elif [ -n "${luci_instances}" ]
 			then
-				REPLY="$(validate_input "${luci_instances}" "{DMSQ_RUNNING_INSTANCES}")" ||
+				REPLY="$(validate_input "${luci_instances}" "${DMSQ_RUNNING_INSTANCES}")" ||
 					{ reg_fail "Invalid dnsmasq instances '${luci_instances}' (running instances: '${DMSQ_RUNNING_INSTANCES}')."; return 1; }
 				add2list select_instances "${REPLY}"
 			else
@@ -1032,7 +1041,7 @@ do_select_dnsmasq_instances() {
 
 		[ -n "${select_conf_dirs}" ] || { reg_fail "Failed to detect conf-dirs for dnsmasq instances '${select_instances}'."; return 1; }
 
-		log_msg "Selected dnsmasq conf-dirs: '${select_conf_dirs//"${_NL_}"/"', '"/}'"
+		log_msg "Selected dnsmasq conf-dirs: '${select_conf_dirs//"${_NL_}"/"', '"}'"
 		set_params "${set_id}" dmsq_instances="${select_instances}" conf_dirs="${select_conf_dirs}"
 	done
 
@@ -1428,7 +1437,7 @@ get_run_state()
 			set_id="${1:?}" grs_active_ids="${2?}" \
 			state_out_var="${3:-_}" path_out_var="${4:-_}" single_inst_out_var="${5:-_}"
 
-	debug_msg -bf "${set_id}" "Checking state of blockset{}."
+	debug_msg -bf "${set_id}" "Checking state of{}."
 
 	unset_vars "${state_out_var}" "${path_out_var}" "${single_inst_out_var}"
 	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
@@ -1811,7 +1820,7 @@ set_blockset_env()
 
 	case "${CUR_CMD}" in start|resume)
 		[ -z "${FORCE_PERSIST_INSTALL}" ] || is_persist "${install_path}" "${set_id}" ||
-			{ reg_fail -b "${set_id}" "Can not generate persistent blockset file{}."; return 1; }
+			{ reg_fail -fb "${set_id}" "Can not generate persistent blockset file{}."; return 1; }
 	esac
 
 	[ -n "${install_path}" ] ||
@@ -2077,7 +2086,7 @@ try_install_blocksets()
 		get_params -f "${me}" "${set_id}" dmsq_instances conf_dirs final_extr_or_cat_stdout install_path install_cnt || { inst_failed "${set_id}"; continue; }
 		get_params "${set_id}" install_1_instance conf_script_log_avail
 
-		log_msg -bf "${set_id}" "Installing blockset{} at ${blue}${install_path}${n_c}"
+		log_msg -bf "${set_id}" "Installing{} at ${blue}${install_path}${n_c}"
 
 		get_md5 cur_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
 
