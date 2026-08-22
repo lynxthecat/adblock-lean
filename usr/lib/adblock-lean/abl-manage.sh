@@ -90,7 +90,7 @@ get_cfg_opt()
 
 
 # silence shellcheck warnings
-: "${blue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
+: "${blue:=}" "${lblue:=}" "${green:=}" "${red:=}" "${orange:=}" "${n_c:=}"
 
 
 # UTILITY FUNCTIONS
@@ -869,7 +869,7 @@ parse_dmsq_runtime()
 	export -n PRIMARY_NS="${PRIMARY_NS//"${_NL_}"/ }"
 	: "${PRIMARY_NS:="127.0.0.1 ::1"}"
 
-	export -n R_PROCESSED=1
+	R_PROCESSED=1
 }
 
 # analyze dnsmasq instances and set params for each blockset: dmsq_instances, conf_dirs
@@ -950,8 +950,8 @@ do_select_dnsmasq_instances() {
 			for instance in ${DMSQ_RUNNING_INSTANCES}
 			do
 				local "instance_${index}=${instance}"
-				eval "ifaces=\"\${C_IFACES_${instance}}\""
-				reg_msg "${index}: Instance '${instance}': network interfaces '${ifaces// /, }'"
+				eval "ifaces=\"\${R_IFACES_${instance}}\""
+				reg_msg "${index}: Instance '${orange}${instance}${n_c}': network interfaces '${blue}${ifaces// /${n_c}, ${blue}}${n_c}'"
 				abl_append indexes "${index}"
 				index=$((index+1))
 			done
@@ -974,7 +974,7 @@ do_select_dnsmasq_instances() {
 					"To adblock on multiple instances, enter multiple instances separated by spaces."
 				while :
 				do
-					printf %s "${indexes// /|}|a: " > "${MSGS_DEST}"
+					printf %s "${lblue}${indexes// /${n_c}|${lblue}}${n_c}|${lblue}a${n_c}: " > "${MSGS_DEST}"
 					read -r REPLY
 					if [ "${REPLY}" = a ]
 					then
