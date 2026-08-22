@@ -558,10 +558,7 @@ parse_dmsq_runtime()
 			[ -n "${ujail_pid}" ] ||
 				{ parse_fail "${instance}" B; return 1; }
 
-			is_included "${instance}" "${DMSQ_RUNNING_INSTANCES}" ||
-				DMSQ_RUNNING_INST_CNT=$((DMSQ_RUNNING_INST_CNT+1))
 			abl_append DMSQ_RUNNING_INSTANCES "${instance}"
-
 			abl_append instances_by_ujail_pid "${ujail_pid}=${instance}" "${_DELIM_}"
 
 			# look for '-C' in values, get next value which is instance's conf file
@@ -583,9 +580,9 @@ parse_dmsq_runtime()
 			IFS="${DEFAULT_IFS}"
 
 			# get ifaces for instance
-			ifaces="$( ${SED_CMD:?} -n '/^\s*interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}")"
+			ifaces="$( ${SED_CMD:?} -n '/^\s*interface=/{s/^.*=//;s/^\s*//;s/\s*$//;/^$/d;p}' "${@}")"
 			: "${ifaces:="${ALL_IFACES}"}"
-			not_ifaces="$( ${SED_CMD:?} -n '/^\s*except-interface=/{s/^.*=//;s/\s*$//;/^\s*$/d;p}' "${@}")"
+			not_ifaces="$( ${SED_CMD:?} -n '/^\s*except-interface=/{s/^.*=//;s/^\s*//;s/\s*$//;/^$/d;p}' "${@}")"
 			subtract_a_from_b "${not_ifaces//"${_NL_}"/ }" "${ifaces//"${_NL_}"/ }" ifaces
 			abl_append ifaces_by_instance "${instance}=${ifaces}" "${_DELIM_}"
 
@@ -595,19 +592,12 @@ parse_dmsq_runtime()
 			conf_dirs="$(
 				for f in "${@}"
 				do
-					${SED_CMD} -n '/^\s*conf-dir=/{s/.*=//;/[^\s]/p;}' "${f}"
+					${SED_CMD} -n '/^\s*conf-dir=/{s/.*=//;s/^\s*//;/^$/d;/[^\s]/p;}' "${f}"
 				done | ${SORT_CMD:?} -u
 			)"
 
-			IFS="${_NL_}"
-			set -- ${conf_dirs}
-			IFS="${DEFAULT_IFS}"
-			for dir in "${@}"
-			do
-				[ -n "${dir}" ] || continue
-				add2list R_CONF_DIRS "${dir}" "${_NL_}"
-				conf_dirs_cnt=$((conf_dirs_cnt + 1))
-			done
+			cnt_lines conf_dirs_cnt "${conf_dirs}"
+			add2list R_CONF_DIRS "${conf_dirs}" "${_NL_}"
 		}
 
 		json_select ..
@@ -619,6 +609,8 @@ parse_dmsq_runtime()
 			"R_CONF_DIRS_CNT_${instance}=${conf_dirs_cnt}"
 	done
 	json_cleanup
+
+	cnt_lines DMSQ_RUNNING_INST_CNT "${DMSQ_RUNNING_INSTANCES// /"${_NL_}"}"
 
 	# Get nameserver IP's
 
@@ -1009,11 +1001,11 @@ do_select_dnsmasq_instances() {
 
 		for instance in ${select_instances}
 		do
-			eval "ifaces=\"\${C_IFACES_${instance}}\""
+			eval "ifaces=\"\${R_IFACES_${instance}}\""
 			add2list select_ifaces "${ifaces}"
 		done
 
-		log_msg -fb "${set_id}" "Selected dnsmasq instances{}: '${select_instances}' (network intefaces: ${select_ifaces//" "/, })."
+		log_msg -fb "${set_id}" "Selected dnsmasq instances{}: '${select_instances}' (network interfaces: ${select_ifaces//" "/, })."
 
 		for instance in ${select_instances}
 		do
