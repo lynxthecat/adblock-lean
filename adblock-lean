@@ -2290,7 +2290,7 @@ do_rm_blockset_config()
 	persist_meta_file="${persist_dir}/${META_BASE_FNAME_PERSIST:?}-${set_id}" &&
 	read_blockset_metadata -persist "${persist_meta_file}" "${set_id}"
 
-	reg_action -purple -bf "${set_id}" "" "Removing blockset{}."
+	reg_action -purple -bf "${set_id}" "" "Removing{}."
 
 	KEEP_PERSIST=0 do_stop "${set_id}" || { FAIL_STOP_REQ=1; exit 1; }
 	unset_param_vars "${set_id}"
