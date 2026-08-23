@@ -594,7 +594,7 @@ do_setup()
 	then
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			print_msg -bf "${SET_IDS}" "" "Found existing blockset configs:{}." \
+			print_msg "" "Found existing blockset configs: ${lblue}${SET_IDS// /${n_c}, ${lblue}}${n_c}." \
 				"[${lblue}k${n_c}]eep existing blockset config files or remove them and create a [${lblue}n${n_c}]ew one, or [${lblue}a${n_c}]bort? (k|n|a)"
 			pick_opt 'k|n|a'
 			[ "${REPLY}" = a ] && return 0
@@ -1123,7 +1123,7 @@ do_gen_blockset_config()
 	do_select_dnsmasq_instances "${gbc_id}" || return 1
 
 	get_params -f gen_blockset_config "${gbc_id}" dmsq_instances conf_dirs &&
-	reg_action -purple -bf "${gbc_id}" "" "Generating new blockset config{} from preset '${preset}'." &&
+	reg_action -purple -fb "${gbc_id}" "" "Generating new config{} from preset '${preset}'." &&
 	new_cfg="$(print_def_cfg bl -i "${gbc_id}" -p "${preset}" -n "${dmsq_instances}" -c "${conf_dirs}")" &&
 	confirm_cfg_write "${gbc_id}" &&
 	write_config bl "${gbc_id}" "${new_cfg}" || return 1

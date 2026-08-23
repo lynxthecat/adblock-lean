@@ -234,6 +234,14 @@ has_f()
 	esac
 }
 
+assert_file_found()
+{
+	[ -f "${1}" ] && return 0
+	reg_fail "'${1}' not found."
+	[ -n "${ASSERT_NOEXIT}" ] || exit 1
+	return 1
+}
+
 # Env vars:
 #   ASSERT_NOEXIT: do not exit on error
 # Check that required vars are set
@@ -1236,13 +1244,13 @@ dmsq_stop_restart_shared()
 	do
 		reg_action -purple "" "${cmd_pr} dnsmasq instance ${lblue}${instance}${n_c}." || return 1
 
-		if /etc/init.d/dnsmasq "${cmd}" "${inst_name}" &> /dev/null
+		if /etc/init.d/dnsmasq "${cmd}" "${instance}" &> /dev/null
 		then
 			add2list "${instances_out_var}" "${instance}"
 		else
-			reg_fail "Command '/etc/init.d/dnsmasq ${cmd} \"${inst_name}\"' returned code ${?}."
+			reg_fail "Command '/etc/init.d/dnsmasq ${cmd} \"${instance}\"' returned code ${?}."
 			rv=1
-			if [ -n "${set_ids}" ] && [ -n "${inst_name}" ]
+			if [ -n "${set_ids}" ] && [ -n "${instance}" ]
 			then
 				for set_id in ${set_ids}
 				do
@@ -1255,7 +1263,7 @@ dmsq_stop_restart_shared()
 				[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" run_state=1
 			fi
 		fi
-		[ -n "${inst_name}" ] || break
+
 	done
 	subtract_a_from_b "${d_fail_ids}" "${set_ids}" "${d_ok_ids_out_var}"
 	return "${rv:-0}"
@@ -1499,11 +1507,9 @@ term_ppid() {
 			{ reg_fail "${me}: ignoring invalid PID '${pid}'."; continue; }
 		abl_append seed_pids "${pid}"
 	done
-	[ -n "${seed_pids}" ] ||
-	{
-		[ -n "${had_f}" ] || set +f
-		return 0
-	}
+	[ -n "${had_f}" ] || set +f
+
+	[ -n "${seed_pids}" ] || return 0
 
 	[ "${sig}" = KILL ] ||
 	{
@@ -1514,6 +1520,7 @@ term_ppid() {
 	# Freeze, re-scan to fixpoint, kill
 	all_pids="${seed_pids}"
 
+	set -f
 	for try in 1 2 3; do
 		kill -STOP ${all_pids} 2>/dev/null
 
@@ -2290,7 +2297,7 @@ do_rm_blockset_config()
 	persist_meta_file="${persist_dir}/${META_BASE_FNAME_PERSIST:?}-${set_id}" &&
 	read_blockset_metadata -persist "${persist_meta_file}" "${set_id}"
 
-	reg_action -purple -bf "${set_id}" "" "Removing blockset{}."
+	reg_action -purple -bf "${set_id}" "" "Removing{}."
 
 	KEEP_PERSIST=0 do_stop "${set_id}" || { FAIL_STOP_REQ=1; exit 1; }
 	unset_param_vars "${set_id}"
@@ -2409,15 +2416,16 @@ select_dnsmasq_instances()
 	local \
 		CUR_ACT="${me}" \
 		CUR_CMD="${me}" \
-		set_id \
+		set_id set_ids \
 		cfg_path \
 		upd_cfg \
-		dmsq_instances conf_dirs \
-		set_ids="${*:-"${SET_IDS}"}"
+		dmsq_instances conf_dirs
 
 	init_act "${CUR_ACT}" &&
+	set_ids="${*:-"${SET_IDS}"}" &&
 	set_all_env "${set_ids}" &&
-	do_select_dnsmasq_instances "${@}" || return 1
+	do_select_dnsmasq_instances "${set_ids}" || return 1
+
 	for set_id in ${set_ids}
 	do
 		get_cfg_path cfg_path "${set_id}" &&
@@ -2667,10 +2675,10 @@ do_stop()
 	[ -n "${IN_STOP}" ] && return 0 # prevent infinite loop
 
 	local \
+		IFS="${DEFAULT_IFS}" \
 		CUR_CMD=stop \
 		ASSERT_NOEXIT=1 \
 		FAIL_STOP_REQ \
-		IFS="${DEFAULT_IFS}" \
 		dir \
 		IN_STOP=1 \
 		force_stop_all="${FORCE_STOP_ALL:-}" \
@@ -2722,14 +2730,11 @@ do_stop()
 	parse_dmsq_cfg
 
 	set +f
-	IFS="${_NL_}"
-	for dir in ${C_CONF_DIRS}${_NL_}${R_CONF_DIRS}${_NL_}/tmp/dnsmasq.d${_NL_}/tmp/dnsmasq.cfg*.d
+	for dir in ${C_CONF_DIRS} ${R_CONF_DIRS} /tmp/dnsmasq.d /tmp/dnsmasq.cfg*.d
 	do
 		[ -n "${dir}" ] || continue
-		IFS="${DEFAULT_IFS}"
 		rm -f "${dir}/${CS_BASE_FNAME:-???}"* "${dir}/${BLOCKSET_BASE_FNAME:-???}"* "${dir}/.abl-extract_blocklist"
 	done
-	IFS="${DEFAULT_IFS}"
 	set -f
 
 	restart_dnsmasq 4 # all dnsmasq instances
