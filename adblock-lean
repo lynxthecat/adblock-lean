@@ -1244,13 +1244,13 @@ dmsq_stop_restart_shared()
 	do
 		reg_action -purple "" "${cmd_pr} dnsmasq instance ${lblue}${instance}${n_c}." || return 1
 
-		if /etc/init.d/dnsmasq "${cmd}" "${inst_name}" &> /dev/null
+		if /etc/init.d/dnsmasq "${cmd}" "${instance}" &> /dev/null
 		then
 			add2list "${instances_out_var}" "${instance}"
 		else
-			reg_fail "Command '/etc/init.d/dnsmasq ${cmd} \"${inst_name}\"' returned code ${?}."
+			reg_fail "Command '/etc/init.d/dnsmasq ${cmd} \"${instance}\"' returned code ${?}."
 			rv=1
-			if [ -n "${set_ids}" ] && [ -n "${inst_name}" ]
+			if [ -n "${set_ids}" ] && [ -n "${instance}" ]
 			then
 				for set_id in ${set_ids}
 				do
@@ -1263,7 +1263,7 @@ dmsq_stop_restart_shared()
 				[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" run_state=1
 			fi
 		fi
-		[ -n "${inst_name}" ] || break
+
 	done
 	subtract_a_from_b "${d_fail_ids}" "${set_ids}" "${d_ok_ids_out_var}"
 	return "${rv:-0}"
@@ -1507,11 +1507,9 @@ term_ppid() {
 			{ reg_fail "${me}: ignoring invalid PID '${pid}'."; continue; }
 		abl_append seed_pids "${pid}"
 	done
-	[ -n "${seed_pids}" ] ||
-	{
-		[ -n "${had_f}" ] || set +f
-		return 0
-	}
+	[ -n "${had_f}" ] || set +f
+
+	[ -n "${seed_pids}" ] || return 0
 
 	[ "${sig}" = KILL ] ||
 	{
@@ -1522,6 +1520,7 @@ term_ppid() {
 	# Freeze, re-scan to fixpoint, kill
 	all_pids="${seed_pids}"
 
+	set -f
 	for try in 1 2 3; do
 		kill -STOP ${all_pids} 2>/dev/null
 
