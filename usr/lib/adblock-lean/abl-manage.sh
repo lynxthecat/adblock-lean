@@ -238,14 +238,14 @@ try_extract()
 	}
 }
 
-detect_all_ifaces()
+detect_all_netdevs()
 {
-	[ -n "${ALL_IFACES}" ] && return 0
-	ALL_IFACES="$(${SED_CMD:?} -n '/^\s*[^\s]*:/{s/^\s*//;s/:.*//p}' < /proc/net/dev | tr '\n' ' ')" &&
-	trim_spaces ALL_IFACES &&
-	[ -n "${ALL_IFACES}" ] &&
+	[ -n "${ALL_NETDEVS}" ] && return 0
+	ALL_NETDEVS="$(${SED_CMD:?} -n '/^\s*[^\s]*:/{s/^\s*//;s/:.*//p}' < /proc/net/dev | tr '\n' ' ')" &&
+	trim_spaces ALL_NETDEVS &&
+	[ -n "${ALL_NETDEVS}" ] &&
 		return 0
-	reg_fail "Failed to detect network interfaces."
+	reg_fail "Failed to detect network devices."
 	return 1
 }
 
@@ -370,13 +370,11 @@ check_dmsq_instances()
 			eval "instance_conf_dirs=\"\${R_CONF_DIRS_${instance}}\""
 			[ -n "${instance_conf_dirs}" ] ||
 				{ cdi_fail "Failed to detect conf-dirs for ${inst_pr}."; return 1; }
-			abl_append all_bl_conf_dirs "${instance_conf_dirs}" "${_NL_}"
+			abl_append all_bl_conf_dirs "${instance_conf_dirs}"
 
 			conf_dir_reg=
-			local IFS="${_NL_}"
 			for dir in ${instance_conf_dirs}
 			do
-				IFS="${DEFAULT_IFS}"
 				dir="${dir%/}"
 				is_included "${dir}" "${conf_dirs}" ||
 				is_included "${dir}/" "${conf_dirs}" && conf_dir_reg=1
@@ -387,7 +385,6 @@ check_dmsq_instances()
 					return 1
 				}
 			done
-			IFS="${DEFAULT_IFS}"
 
 			[ -n "${conf_dir_reg}" ] ||
 			{
@@ -402,8 +399,8 @@ check_dmsq_instances()
 		for dir in ${conf_dirs}
 		do
 			dir="${dir%/}"
-			is_included "${dir}" "${all_bl_conf_dirs}" "${_NL_}" ||
-			is_included "${dir}/" "${all_bl_conf_dirs}" "${_NL_}" ||
+			is_included "${dir}" "${all_bl_conf_dirs}" ||
+			is_included "${dir}/" "${all_bl_conf_dirs}" ||
 			{
 				cdi_fail "conf-dir directory '${dir}' is set in config{} but not used by configured dnsmasq instances '${dmsq_instances}'." "${set_id}"
 				cdi_fatal "${set_id}"
@@ -419,8 +416,7 @@ check_dmsq_instances()
 # Sets vars:
 #   C_PROCESSED
 #   C_CONF_DIRS
-#   C_CONF_DIRS_${inst}
-#   C_IFACES_${inst}
+#   C_DEVICES_${inst}
 #   ADDNMOUNTS_${inst}
 # shellcheck disable=SC2329
 parse_dmsq_cfg()
@@ -435,43 +431,65 @@ parse_dmsq_cfg()
 		config_list_foreach "${2}" "${3}" accum_list_nl "${1}"
 	}
 
+	get_devices()
+	{
+		local dev iface
+		export -n "${1}="
+		for iface in ${2}
+		do
+			network_get_device dev "${iface}" || dev="${iface}"
+			add2list "${1}" "${dev}"
+		done
+	}
+
 	process_instance()
 	{
-		local confdirs ifaces notifaces
+		local conf_dirs_nl ifaces notifaces devs notdevs
 
-		unset "C_CONF_DIRS_${1}" "C_IFACES_${1}" "ADDNMOUNTS_${1}"
+		unset "C_DEVICES_${1}" "ADDNMOUNTS_${1}"
 
-		config_get_list_nl confdirs "${1}" confdir
-		add2list C_CONF_DIRS "${confdirs}" "${_NL_}"
-		export -n "C_CONF_DIRS_${1}=${confdirs}"
+		config_get_list_nl conf_dirs_nl "${1}" confdir
+		case "${conf_dirs_nl}" in *" "*)
+			reg_fail "dnsmasq instance '${1}' in /etc/config/dhcp specifies conf-dirs which have a space in their path - this is not supported."
+			parse_fail=1
+			return 1
+		esac
+		add2list C_CONF_DIRS "${conf_dirs_nl//"${_NL_}"/ }"
 
 		config_get_list_nl "ADDNMOUNTS_${1}" "${1}" addnmount
 
 		config_get ifaces "${1}" interface
+		: "${ifaces:="${ALL_NETDEVS}"}"
 		config_get notifaces "${1}" notinterface
 
-		: "${ifaces:="${ALL_IFACES}"}"
-		subtract_a_from_b "${notifaces}" "${ifaces}" ifaces
-		export -n "C_IFACES_${1}=${ifaces}"
-	}
+		get_devices devs "${ifaces}"
+		get_devices notdevs "${notifaces}"
 
+		subtract_a_from_b "${notdevs}" "${devs}" devs
+		export -n "C_DEVICES_${1}=${devs}"
+	}
 
 	[ -n "${C_PROCESSED}" ] && return 0
 
+	local parse_fail \
+		net_sh=/lib/functions/network.sh
 	unset C_CONF_DIRS C_PROCESSED
 
 	debug_msg "" "Parsing dnsmasq config."
 
-	detect_all_ifaces || return 1
+	detect_all_netdevs || return 1
 
 	dbg_off
-
-	# gather conf dirs from /etc/config/dhcp
+	# gather conf dirs from /etc/config/dhcp, assemble C_DEVICES_${inst}
 	config_load_a dhcp || return 2
+	assert_file_found "${net_sh}" || return 1
+	. "${net_sh}"
+
+	dbg_on
 	config_foreach process_instance dnsmasq
+	[ -n "${parse_fail}" ] && return 1
 
 	C_PROCESSED=1
-	dbg_on
 	:
 }
 
@@ -479,7 +497,7 @@ parse_dmsq_cfg()
 #
 # Populates global vars:
 #   R_CONF_DIRS, DMSQ_RUNNING_INSTANCES, DMSQ_RUNNING_INST_CNT
-#   R_IFACES_${instance}, R_CONF_DIRS_${instance}, R_CONF_DIRS_CNT_${instance}, RUNNING_${instance}
+#   R_DEVICES_${instance}, R_CONF_DIRS_${instance}, R_CONF_DIRS_CNT_${instance}, RUNNING_${instance}
 #   R_PROCESSED
 #
 # return codes:
@@ -500,9 +518,10 @@ parse_dmsq_runtime()
 
 	local me=parse_dmsq_runtime \
 		IFS="${DEFAULT_IFS}" \
-		nonempty instance instances running l1_conf_file l1_conf_files conf_dirs_cnt conf_dirs i s f dir ujail_pid line \
+		nonempty instance instances running l1_conf_file l1_conf_files conf_dirs_cnt conf_dirs_nl i s f dir ujail_pid line \
 		ns_parse_res \
-		ifaces not_ifaces ifaces_by_instance instances_by_ujail_pid
+		devs not_devs devs_by_instance instances_by_ujail_pid \
+		jshn_sh=/usr/share/libubox/jshn.sh
 
 	assert_set "F_${me}" C_PROCESSED || exit 1
 
@@ -516,13 +535,14 @@ parse_dmsq_runtime()
 	do
 		set -f
 		case "${dir}" in ''|*".cfg*") continue; esac
-		add2list R_CONF_DIRS "${dir}" "${_NL_}"
+		add2list R_CONF_DIRS "${dir}"
 	done
 	set -f
 
 	# gather info from: ubus call service list
 
-	. /usr/share/libubox/jshn.sh &&
+	assert_file_found "${jshn_sh}" || return 1
+	. "${jshn_sh}"
 	json_load "$(ubus call service list '{"name":"dnsmasq"}')" &&
 	json_get_keys nonempty &&
 	[ -n "${nonempty}" ] &&
@@ -533,18 +553,18 @@ parse_dmsq_runtime()
 	json_get_keys instances &&
 	[ -n "${instances}" ] || { no_running_inst 1; return 2; }
 
-	detect_all_ifaces || return 1
+	detect_all_netdevs || return 1
 
 	for instance in ${instances}
 	do
 		json_is_a "${instance}" object &&
 		is_alphanum "${instance}" ||
 			continue
-		unset "RUNNING_${instance}" "R_IFACES_${instance}" "R_CONF_DIRS_${instance}" "R_CONF_DIRS_CNT_${instance}"
-		conf_dirs=
+		unset "RUNNING_${instance}" "R_DEVICES_${instance}" "R_CONF_DIRS_${instance}" "R_CONF_DIRS_CNT_${instance}"
+		conf_dirs_nl=
 		conf_dirs_cnt=0
-		ifaces=
-		not_ifaces=
+		devs=
+		not_devs=
 
 		json_select "${instance}" &&
 		json_get_var running running ||
@@ -579,33 +599,37 @@ parse_dmsq_runtime()
 			set -- ${l1_conf_files}
 			IFS="${DEFAULT_IFS}"
 
-			# get ifaces for instance
-			ifaces="$( ${SED_CMD:?} -n '/^\s*interface=/{s/^.*=//;s/^\s*//;s/\s*$//;/^$/d;p}' "${@}")"
-			: "${ifaces:="${ALL_IFACES}"}"
-			not_ifaces="$( ${SED_CMD:?} -n '/^\s*except-interface=/{s/^.*=//;s/^\s*//;s/\s*$//;/^$/d;p}' "${@}")"
-			subtract_a_from_b "${not_ifaces//"${_NL_}"/ }" "${ifaces//"${_NL_}"/ }" ifaces
-			abl_append ifaces_by_instance "${instance}=${ifaces}" "${_DELIM_}"
+			# get devices for instance
+			devs="$( ${SED_CMD:?} -n '/^\s*interface=/{s/^.*=//;s/^\s*//;s/\s*$//;/^$/d;p}' "${@}")"
+			: "${devs:="${ALL_NETDEVS}"}"
+			not_devs="$( ${SED_CMD:?} -n '/^\s*except-interface=/{s/^.*=//;s/^\s*//;s/\s*$//;/^$/d;p}' "${@}")"
+			subtract_a_from_b "${not_devs//"${_NL_}"/ }" "${devs//"${_NL_}"/ }" devs
+			abl_append devs_by_instance "${instance}=${devs}" "${_DELIM_}"
 
-			debug_msg "${me}: ${instance} ifaces: '${ifaces}'"
+			debug_msg "${me}: ${instance} devs: '${devs}'"
 
 			# get conf-dirs for instance
-			conf_dirs="$(
+			conf_dirs_nl="$(
 				for f in "${@}"
 				do
 					${SED_CMD} -n '/^\s*conf-dir=/{s/.*=//;s/^\s*//;/^$/d;/[^\s]/p;}' "${f}"
 				done | ${SORT_CMD:?} -u
 			)"
 
-			cnt_lines conf_dirs_cnt "${conf_dirs}"
-			add2list R_CONF_DIRS "${conf_dirs}" "${_NL_}"
+			case "${conf_dirs_nl}" in *" "*)
+				reg_fail "Runtime info for dnsmasq instance '${instance}' specifies conf-dirs which have a space in their path - this is not supported."
+				return 1
+			esac
+			cnt_lines conf_dirs_cnt "${conf_dirs_nl}"
+			add2list R_CONF_DIRS "${conf_dirs_nl//"${_NL_}"/ }"
 		}
 
 		json_select ..
 
 		export -n \
 			"RUNNING_${instance}=${running}" \
-			"R_CONF_DIRS_${instance}=${conf_dirs}" \
-			"R_IFACES_${instance}=${ifaces}" \
+			"R_CONF_DIRS_${instance}=${conf_dirs_nl//"${_NL_}"/ }" \
+			"R_DEVICES_${instance}=${devs}" \
 			"R_CONF_DIRS_CNT_${instance}=${conf_dirs_cnt}"
 	done
 	json_cleanup
@@ -628,7 +652,7 @@ parse_dmsq_runtime()
 	    ${AWK_CMD:?} \
 			-v delim="${_DELIM_}" \
 			-v instances_by_ujail_pid_str="${instances_by_ujail_pid}" \
-			-v ifaces_by_instance_str="${ifaces_by_instance}" \
+			-v devs_by_instance_str="${devs_by_instance}" \
 			-v netstat_output="${netstat_output}" \
 			-v ip_output="${ip_output//"\ "/ }" \
 			-v regex_4="^${IP_REGEX_4}(%[^:]+){0,1}#[0-9]+$" -v regex_6="^${IP_REGEX_6}(%[^:]+){0,1}#[0-9]+$" '
@@ -639,7 +663,7 @@ parse_dmsq_runtime()
 			return cur " " new
 		}
 
-		function rank_ip(ip, inst_name,     iface, port) {
+		function rank_ip(ip, inst_name,     dev, port) {
 			# rank:
 			# 0 = lo
 			# 1 = RFC1918 ipv4
@@ -651,14 +675,14 @@ parse_dmsq_runtime()
 
 			ip=tolower(ip)
 
-			# Use <ip%iface> syntax for ipv6 link-local unicast
+			# Use <ip%dev> syntax for ipv6 link-local unicast
 			if (ip ~ /^fe[89ab]/) {
 				match (ip, /#.*$/)
 				port=substr(ip, RSTART, RLENGTH)
 				sub(/#.*/, "", ip)
-				iface = iface_by_ip[ip]
-				if (iface) iface = "%" iface
-				ip = ip iface port
+				dev = dev_by_ip[ip]
+				if (dev) dev = "%" dev
+				ip = ip dev port
 			}
 
 			if (ip ~ regex_4)
@@ -716,35 +740,35 @@ parse_dmsq_runtime()
 				instances_by_ujail_pid[p_el[1]] = p_el[2]
 			}
 
-			# map [iface] to [IP]
+			# map [dev] to [IP]
 			split( ip_output, I, "\n" )
 			for (e in I) {
 				line = I[e]
 				if (! line) continue
 				split( line, l_el, " ")
-				iface=l_el[2]
+				dev=l_el[2]
 				ip = tolower( l_el[4] )
 				sub(/\/.*/, "", ip)
 				if (! ip) continue
-				iface_by_ip[ip] = iface
+				dev_by_ip[ip] = dev
 				if (i2i_seen[ip]++) continue
-				ips_by_iface[iface] = append( ips_by_iface[iface], ip )
+				ips_by_dev[dev] = append( ips_by_dev[dev], ip )
 			}
 
 			# map [instance name] to <[IP] [IP] ...>
-			split( ifaces_by_instance_str, f, delim )
+			split( devs_by_instance_str, f, delim )
 			for (e in f) {
 				pair = f[e]
 				if (! pair) continue
 				split( pair, f_el, "=" )
 				inst_name=f_el[1]
-				ifaces_str=f_el[2]
-				if (! inst_name || ! ifaces_str) continue
-				split( ifaces_str, ifaces_arr, " ")
-				for (i in ifaces_arr) {
-					iface=ifaces_arr[i]
-					if (! iface) continue
-					ips_by_instance[inst_name] = append( ips_by_instance[inst_name], ips_by_iface[iface] )
+				devs_str=f_el[2]
+				if (! inst_name || ! devs_str) continue
+				split( devs_str, devs_arr, " ")
+				for (i in devs_arr) {
+					dev=devs_arr[i]
+					if (! dev) continue
+					ips_by_instance[inst_name] = append( ips_by_instance[inst_name], ips_by_dev[dev] )
 				}
 			}
 		}
@@ -796,7 +820,7 @@ parse_dmsq_runtime()
 				}
 
 				# wildcard listeners
-				# uses port of the wildcard listener, per-instance IPs of ifaces gathered from l1_conf_files
+				# uses port of the wildcard listener, per-instance IPs of devs gathered from l1_conf_files
 				split( ips_by_instance[inst_name], ips_tmp_arr, " " )
 				for (j in ips_tmp_arr) {
 					ip=ips_tmp_arr[j] "#" port
@@ -821,7 +845,7 @@ parse_dmsq_runtime()
 		reg_fail "" "Failed to get nameserver IPs for dnsmasq instances."
 		reg_msg \
 			"For diagnostics:" \
-			"" "ifaces_by_instance:" "'${ifaces_by_instance//"${_DELIM_}"/"${_NL_}"}'" \
+			"" "devs_by_instance:" "'${devs_by_instance//"${_DELIM_}"/"${_NL_}"}'" \
 			"" "netstat output:" "'${netstat_output}'" \
 			"" "ip output:" "'${ip_output}'"
 		return 1
@@ -867,6 +891,26 @@ parse_dmsq_runtime()
 # analyze dnsmasq instances and set params for each blockset: dmsq_instances, conf_dirs
 # 1 (optional): blockset ID's (defaults to all)
 do_select_dnsmasq_instances() {
+	get_pr_devs()
+	{
+		local devs r_devs c_devs instance instances="${2}"
+		for instance in ${instances}
+		do
+			eval "devs=\"\${R_DEVICES_${instance}}\""
+			add2list r_devs "${devs}"
+			eval "devs=\"\${C_DEVICES_${instance}}\""
+			add2list c_devs "${devs}"
+		done
+		if \
+			subtract_a_from_b "${r_devs}" "${c_devs}" &&
+			subtract_a_from_b "${c_devs}" "${r_devs}"
+		then
+			export -n "${1}=network devices: '${blue}${c_devs// /${n_c}, ${blue}}${n_c}'"
+		else
+			export -n "${1}=config network devices: '${blue}${c_devs// /${n_c}, ${blue}}${n_c}', runtime network devices: '${blue}${r_devs// /${n_c}, ${blue}}${n_c}'"
+		fi
+	}
+
 	validate_input()
 	{
 		printf '%s\n' "${1}" |
@@ -878,11 +922,11 @@ do_select_dnsmasq_instances() {
 		index indexes \
 		conf_dirs conf_dirs_instance conf_dirs_seen conf_dirs_cnt \
 		select_conf_dirs \
+		instance luci_instances \
 		force_instances \
 		select_instances \
-		select_ifaces \
-		instance luci_instances \
-		ifaces \
+		select_devs_pr \
+		devs_pr \
 		REPLY \
 		first diff \
 		add_dir \
@@ -937,13 +981,13 @@ do_select_dnsmasq_instances() {
 		reg_msg -blue "Multiple dnsmasq instances detected."
 		if [ "${DO_DIALOGS}" = 1 ]
 		then
-			reg_msg "" "Running dnsmasq instances and assigned network interfaces:"
+			reg_msg "" "Running dnsmasq instances and assigned network devices:"
 			index=1
 			for instance in ${DMSQ_RUNNING_INSTANCES}
 			do
 				local "instance_${index}=${instance}"
-				eval "ifaces=\"\${R_IFACES_${instance}}\""
-				reg_msg "${index}: Instance '${orange}${instance}${n_c}': network interfaces '${blue}${ifaces// /${n_c}, ${blue}}${n_c}'"
+				get_pr_devs devs_pr "${instance}"
+				reg_msg "${index}: Instance '${orange}${instance}${n_c}', ${devs_pr}"
 				abl_append indexes "${index}"
 				index=$((index+1))
 			done
@@ -952,7 +996,7 @@ do_select_dnsmasq_instances() {
 
 	for set_id in ${set_ids}
 	do
-		select_instances='' select_ifaces='' select_conf_dirs=''
+		select_instances='' select_devs_pr='' select_conf_dirs=''
 		if [ -n "${force_instances}" ]
 		then
 			select_instances=${force_instances}
@@ -999,13 +1043,8 @@ do_select_dnsmasq_instances() {
 			fi
 		fi
 
-		for instance in ${select_instances}
-		do
-			eval "ifaces=\"\${R_IFACES_${instance}}\""
-			add2list select_ifaces "${ifaces}"
-		done
-
-		log_msg -fb "${set_id}" "Selected dnsmasq instances{}: '${select_instances}' (network interfaces: ${select_ifaces//" "/, })."
+		get_pr_devs select_devs_pr "${select_instances}"
+		log_msg -fb "${set_id}" "Selected dnsmasq instances{}: '${select_instances}', ${select_devs_pr}."
 
 		for instance in ${select_instances}
 		do
@@ -1017,23 +1056,23 @@ do_select_dnsmasq_instances() {
 			then
 				add_dir="${conf_dirs}"
 			else
-				if is_included "/tmp/dnsmasq.d" "${conf_dirs}" "${_NL_}"
+				if is_included "/tmp/dnsmasq.d" "${conf_dirs}"
 				then
 					add_dir="/tmp/dnsmasq.d"
-				elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}" "${_NL_}"
+				elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}"
 				then
 					add_dir="/tmp/dnsmasq.cfg01411c.d"
 				else
 					# fall back to first conf-dir
-					add_dir="${conf_dirs%%"${_NL_}"*}"
+					add_dir="${conf_dirs%% *}"
 				fi
 			fi
-			[ -n "${add_dir}" ] && add2list select_conf_dirs "${add_dir}" "${_NL_}"
+			[ -n "${add_dir}" ] && add2list select_conf_dirs "${add_dir}"
 		done
 
 		[ -n "${select_conf_dirs}" ] || { reg_fail "Failed to detect conf-dirs for dnsmasq instances '${select_instances}'."; return 1; }
 
-		log_msg "Selected dnsmasq conf-dirs: '${select_conf_dirs//"${_NL_}"/"', '"}'"
+		log_msg "Selected dnsmasq conf-dirs: '${blue}${select_conf_dirs// /"${n_c}', '${blue}"}${n_c}'"
 		set_params "${set_id}" dmsq_instances="${select_instances}" conf_dirs="${select_conf_dirs}"
 	done
 
@@ -1462,7 +1501,7 @@ get_run_state()
 	: "${cs_res:=0}"
 
 	local all_conf_dirs
-	add2list all_conf_dirs "${R_CONF_DIRS}${_NL_}${C_CONF_DIRS}" "${_NL_}"
+	add2list all_conf_dirs "${R_CONF_DIRS} ${C_CONF_DIRS}"
 
 	[ -n "${grs_cur_path}" ] ||
 		# Look for blockset file in all conf-dirs

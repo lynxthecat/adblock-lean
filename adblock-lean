@@ -234,6 +234,14 @@ has_f()
 	esac
 }
 
+assert_file_found()
+{
+	[ -f "${1}" ] && return 0
+	reg_fail "'${1}' not found."
+	[ -n "${ASSERT_NOEXIT}" ] || exit 1
+	return 1
+}
+
 # Env vars:
 #   ASSERT_NOEXIT: do not exit on error
 # Check that required vars are set
@@ -2668,10 +2676,10 @@ do_stop()
 	[ -n "${IN_STOP}" ] && return 0 # prevent infinite loop
 
 	local \
+		IFS="${DEFAULT_IFS}" \
 		CUR_CMD=stop \
 		ASSERT_NOEXIT=1 \
 		FAIL_STOP_REQ \
-		IFS="${DEFAULT_IFS}" \
 		dir \
 		IN_STOP=1 \
 		force_stop_all="${FORCE_STOP_ALL:-}" \
@@ -2723,14 +2731,11 @@ do_stop()
 	parse_dmsq_cfg
 
 	set +f
-	IFS="${_NL_}"
-	for dir in ${C_CONF_DIRS}${_NL_}${R_CONF_DIRS}${_NL_}/tmp/dnsmasq.d${_NL_}/tmp/dnsmasq.cfg*.d
+	for dir in ${C_CONF_DIRS} ${R_CONF_DIRS} /tmp/dnsmasq.d /tmp/dnsmasq.cfg*.d
 	do
 		[ -n "${dir}" ] || continue
-		IFS="${DEFAULT_IFS}"
 		rm -f "${dir}/${CS_BASE_FNAME:-???}"* "${dir}/${BLOCKSET_BASE_FNAME:-???}"* "${dir}/.abl-extract_blocklist"
 	done
-	IFS="${DEFAULT_IFS}"
 	set -f
 
 	restart_dnsmasq 4 # all dnsmasq instances
