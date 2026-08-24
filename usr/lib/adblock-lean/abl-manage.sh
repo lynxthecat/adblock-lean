@@ -519,7 +519,7 @@ parse_dmsq_runtime()
 	local me=parse_dmsq_runtime \
 		IFS="${DEFAULT_IFS}" \
 		nonempty instance instances running l1_conf_file l1_conf_files conf_dirs_cnt conf_dirs_nl i s f dir ujail_pid line \
-		ns_parse_res \
+		ns ns_parse_res \
 		devs not_devs devs_by_instance instances_by_ujail_pid \
 		jshn_sh=/usr/share/libubox/jshn.sh
 
@@ -1164,7 +1164,8 @@ mv_blockset()
 # If src dir is protected, copy file instead of moving
 try_mv_blockset()
 {
-	local transfer_cmd="try_mv -q" \
+	local me=try_mv_blockset \
+		transfer_cmd="try_mv -q" \
 		md5_changed \
 		cur_md5 \
 		mv_src_d mv_src_ext \
@@ -1250,19 +1251,21 @@ check_persist_blockset()
 {
 	local max_set_size min_entries min_entries_human \
 		persist_check_rv \
-		persist_ext persist_mode cur_persist_path cur_persist_cnt cur_persist_cnt_human cur_persist_size_b \
+		persist_ext persist_mode persist_dir \
+		cur_persist_path cur_persist_cnt cur_persist_cnt_human cur_persist_size_b \
 		run_state \
 		cur_cnt \
 		set_id="${1}" final_compr_ext="${2}"
 
-	get_params -f "check_persist_blockset" "${set_id}" persist_mode min_entries=min_blockset_entries max_set_size run_state || return 1
+	get_params -f "check_persist_blockset" "${set_id}" persist_mode persist_dir min_entries=min_blockset_entries max_set_size run_state || return 1
 	get_params "${set_id}" cur_persist_path
 	debug_msg "Checking persistent blockset file: ${blue}${cur_persist_path}${n_c}"
 
 	{
 		[ -n "${cur_persist_path}" ] ||
 			{
-				[ "${run_state}" != 4 ] || [ "${persist_mode}" = manual ] && [ "${CUR_ACT}" != gen_persist_blockset ] &&
+				[ "${CUR_ACT}" != gen_persist_blockset ] &&
+				{ [ "${run_state}" != 4 ] || [ "${persist_mode}" = manual ]; } &&
 					reg_fail -fb "${set_id}" "Persistent blockset file{} not found in directory '${persist_dir}'."
 				false
 			}
@@ -1321,8 +1324,8 @@ check_addnmounts()
 try_check_addnmounts()
 {
 	local me=check_addnmounts \
-		IFS="${DEFAULT_IFS}" \
-		ca_instance ca_path ca_addnmounts \
+		IFS="${DEFAULT_IFS}" i \
+		ca_instance ca_path ca_path_tmp ca_addnmounts \
 		ca_missing_var="${1}" ca_instances="${2}" ca_req_addnm="${3}"
 
 	unset_vars "${ca_missing_var}"
@@ -1445,7 +1448,7 @@ set_global_env()
 # Run states:
 # 0 - running
 # 1 - error
-# 2 - (reserved)
+# 2 - transitional
 # 3 - paused
 # 4 - stopped
 #
@@ -1749,7 +1752,7 @@ set_blockset_env()
 		0|3|4) ;;
 		*)
 			case "${CUR_CMD}" in start|pause|resume)
-				KEEP_PERSIST=1 stop_blocksets "${set_id}"
+				KEEP_PERSIST=1 stop_blocksets "${set_id}" || exit 1
 				# stopping the blockset invalidated the earlier result
 				CA_NOERR=1 get_run_state "${set_id}" '?' run_state cur_path cur_1_instance || return 1
 				set_params "${set_id}" run_state cur_path cur_1_instance
@@ -1857,7 +1860,6 @@ set_blockset_env()
 	[ -n "${install_path}" ] ||
 		{ reg_fail -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
 
-	[ -n "${install_path}" ] &&
 	case "${start_action}" in
 		load) add2list BLOCKSETS_TO_INSTALL "${set_id}" ;;
 		gen) add2list BLOCKSETS_TO_GEN "${set_id}" ;;
@@ -2022,18 +2024,20 @@ inst_failed()
 	subtract_a_from_b "${inst_fail_reported_ids}" "${fail_ids}" fail_report_ids
 	[ -n "${fail_report_ids}" ] &&
 	{
+		set_params "${fail_report_ids}" run_state=1
 		local set_pr=blockset
 		case "${fail_report_ids}" in *" "*) set_pr=blocksets; esac
 		reg_fail "Failed to install ${set_pr}: ${fail_ids}"
 		add2list inst_fail_reported_ids "${fail_report_ids}"
 	}
-	KEEP_BK=1 stop_blocksets "${fail_ids}"
+	KEEP_BK=1 stop_blocksets "${fail_ids}" || exit 1
 }
 
 install_blocksets()
 {
-	local inst_ok_ids inst_fail_ids INST_PERM_FAIL_IDS inst_rv \
+	local set_id inst_ok_ids inst_fail_ids INST_PERM_FAIL_IDS inst_rv \
 		inst_fail_reported_ids \
+		install_path install_path_ram install_1_instance_ram persist_mode \
 		ok_ids_out_var="${1:-_}" perm_fail_ids_out_var="${2:-_}" set_ids="${3:?}"
 
 	unset_vars "${ok_ids_out_var}" "${perm_fail_ids_out_var}"
@@ -2146,7 +2150,7 @@ try_install_blocksets()
 		add2list installed_ids "${set_id}"
 	done
 
-	[ -n "${installed_ids}" ] && restart_dnsmasq 5 dmsq_ok_ids "${installed_ids}"
+	[ -n "${installed_ids}" ] && restart_dnsmasq 2 dmsq_ok_ids "${installed_ids}"
 	subtract_a_from_b "${dmsq_ok_ids}" "${installed_ids}" dmsq_fail_ids
 	[ -n "${dmsq_fail_ids}" ] && inst_failed "${dmsq_fail_ids}"
 	[ -n "${dmsq_ok_ids}" ] || return 1
