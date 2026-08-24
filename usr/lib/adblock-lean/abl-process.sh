@@ -337,7 +337,7 @@ process_set_part()
 		val_entry_regex='^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])\.){3}(25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])$'
 	fi
 
-	local prev_mirror attempt=1
+	local prev_mirror next_mirror attempt=1
 	while :
 	do
 		feed_path="${print_id}"
@@ -640,6 +640,7 @@ gen_blocksets()
 		file_to_bk \
 		bk_file \
 		bk_ext \
+		bk_cnt \
 		final_compr_ext \
 		blocksets_to_stop \
 		force_unload_bl \
@@ -659,7 +660,7 @@ gen_blocksets()
 		set_indexes \
 		blocksets_out_var="${1:?}" set_ids="${2:?}"
 
-	: "${skip_load_stop}" "${bk_cnt}"
+	: "${skip_load_stop}"
 
 	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file(s){}."
 
@@ -746,6 +747,7 @@ gen_blocksets()
 		max_part_size_prev \
 		min_part_entries \
 		min_part_entries_prev \
+		dest_file \
 		is_ipv4 \
 		is_ipv4_prev
 
@@ -775,7 +777,7 @@ gen_blocksets()
 				"format=${format}" \
 				"origin=${origin}" \
 				"print_id=${part#"local="}" \
-				"dest_file=${PROCESSED_PARTS_DIR}/part_${index}${INTERM_COMPR_EXT}" \
+				"dest_file=${dest_file}" \
 				"part_stats_file=${PROCESSED_PARTS_DIR}/${index}_stats"
 
 			for part_type in ${ALL_PART_TYPES:?}
@@ -875,6 +877,7 @@ gen_blocksets()
 
 		set_params "${set_id}" skip_load_stop
 
+		bk_cnt=
 		bk_file=
 		file_to_bk=
 		if [ -n "${cur_path}" ]
@@ -1075,7 +1078,7 @@ gen_blockset()
 
 	# shellcheck disable=SC2034
 	# Process results
-	local part_file part_cnt part_size_B list_cnt_raw part_size_B index part_type print_id index_refs \
+	local part_file part_cnt part_size_B part_size_B_human list_cnt_raw list_cnt_raw_human part_size_B index part_type print_id index_refs \
 		set_cnt_raw=0 set_size_B_raw=0 allow_cnt_raw=0 block_cnt_raw=0 ipv4_block_cnt_raw=0 \
 		set_cnt_raw_human set_size_B_raw_human set_size_B set_size_B_human \
 		block_indexes allow_indexes ipv4_block_indexes
@@ -1140,7 +1143,6 @@ gen_blockset()
 
 	try_mkdir -p "${proc_dir}" || return 1
 
-	local list_cnt_raw_human part_size_B_human
 	for part_type in ${ALL_PART_TYPES}
 	do
 		# count entries for current list type
@@ -1152,7 +1154,7 @@ gen_blockset()
 			[ "${part_type}" = block ] &&
 			{
 				[ "${whitelist_mode}" = 1 ] || {
-					bytes2human part_size_B_raw_human "${part_size_B_raw:-0}"
+					bytes2human part_size_B_human "${part_size_B:-0}"
 					int2human list_cnt_raw_human "${list_cnt_raw:-0}"
 					reg_fail "Total entries count and size of block-entries: ${list_cnt_raw_human}, ${part_size_B_human}."
 					return 1

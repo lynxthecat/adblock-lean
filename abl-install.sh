@@ -263,11 +263,9 @@ try_mkdir_install()
 	:
 }
 
-print_msg_install()
-{ reg_msg_install -4 "${@}"; }
+print_msg_install() { reg_msg_install -4 "${@}"; }
 
-log_msg_install()
-{ reg_msg_install -1 "${@}"; }
+log_msg_install() { reg_msg_install -1 "${@}"; }
 
 # Depending on msg-specific log level, on global ${ABL_LOG_LEVEL} and on ${ABL_DEBUG}:
 # Prints each msg separately to console [ and to log file ] [ and sends to system log ]
@@ -354,7 +352,7 @@ write_log_file_install()
 
 reg_fail_install()
 {
-	log_msg_install -err "" "${1}"
+	log_msg_install -err "" "${@}"
 	luci_errors="${luci_errors}${1}${_NL_}"
 }
 
@@ -768,13 +766,19 @@ get_cur_main_cfg_path()
 install_abl_files()
 {
 	local IFS="${DEFAULT_IFS:?}" \
-		file preinst_path old_files='' exec_files='' \
+		file preinst_path old_files exec_files \
 		preinst_reg_file="${dist_dir}/preinst_reg.md5" \
-		cfg_fname \
+		cfg_file cfg_fname \
+		cfg_id cfg_id_orig \
 		cfg_files_to_rm \
 		cur_main_cfg_path \
-		cur_cfg_format='' upd_cfg_format='' \
+		cur_cfg_format upd_cfg_format \
 		cur_blockset_cfg_files \
+		new_cfg_path \
+		prev_cfg_files \
+		bk_cfg_f bk_f_prefix \
+		var_suffix \
+		migr_fail migrate_opts \
 		dist_dir="${1}" version="${2}" upd_channel="${3}" new_file_list="${4}"
 
 	[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] || inst_failed "install_abl_files: Missing arguments."
@@ -1091,6 +1095,7 @@ install_abl_files()
 				do
 					IFS="${DEFAULT_IFS}"
 					cfg_id_orig=
+					var_suffix=
 					get_cfg_id_install cfg_id_orig "${cfg_file}" || { migr_fail=1; break; }
 					cfg_id="${cfg_id_orig}"
 
@@ -1231,7 +1236,7 @@ fetch_and_install()
 
 	set -o pipefail
 
-	local OPTIND file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
+	local opt OPTIND file req_ver='' ver_str_arg='' ver_type='' dist_dir='' upd_ver='' tarball_url='' \
 		upd_channel='' req_upd_channel='' force_upd_channel=''
 
 	IGNORE_CACHE=

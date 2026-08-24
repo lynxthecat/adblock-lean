@@ -272,6 +272,7 @@ do_create_addnmounts()
 		IFS="${DEFAULT_IFS}" \
 		REPLY \
 		conf_dirs \
+		first_conf_dir \
 		instance dmsq_instances all_dmsq_instances \
 		req_addnm_instance \
 		\
@@ -941,7 +942,7 @@ print_def_cfg_blockset()
 # (optional) -d to print with allowed value types (otherwise print without)
 print_def_cfg_global()
 {
-	local me=print_def_cfg_global print_types preset OPTIND
+	local me=print_def_cfg_global print_types preset OPTIND opt
 	while getopts ":i:n:c:p:d" opt; do
 		case "${opt}" in
 			i|n|c) : ;; # ignore these options
@@ -1707,6 +1708,7 @@ fix_config()
 		fixed_cfg \
 		bk_prefix \
 		cfg_type \
+		cfg_path \
 			cfg_id="${1:?}" replace_keys="${2}"
 
 	get_cfg_type cfg_type "${cfg_id}" &&
