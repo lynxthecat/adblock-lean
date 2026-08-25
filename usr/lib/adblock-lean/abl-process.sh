@@ -89,7 +89,9 @@ test_fetch_doms()
 		for format in ${ALL_PART_FORMATS:?}
 		do
 			local list_cat="${format}_${type}_lists"
-			get_bl_param_gl_var _ "${list_cat}" || continue # ignore invalid combinations
+			dbg_off
+			get_bl_param_gl_var _ "${list_cat}" || { dbg_on; continue; } # ignore invalid combinations
+			dbg_on
 			local "${list_cat}="
 			get_params "${set_id}" lists="${list_cat}"
 

@@ -1139,9 +1139,9 @@ get_cfg_path()
 	local g_path
 	unset_vars "${1}"
 	case "${2}" in
+		''|*[!a-zA-Z0-9_]*) reg_fail "Invalid config name '${2}'."; return 1 ;;
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
-		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
-		*) reg_fail "Invalid config name '${2}'."; return 1 ;;
+		*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
 	esac
 	export -n "${1}=${g_path}"
 }
@@ -1775,16 +1775,15 @@ fix_config()
 # 3: new config contents
 write_config()
 {
-	dbg_off
 	local me=write_config \
 		cfg_file tmp_cfg_file \
 		cfg_type="${1:?}" cfg_id="${2:?}" cfg_cont="${3:?}"
 
 	get_cfg_path cfg_file "${cfg_id}" &&
-
 	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
+	dbg_off
 	tmp_cfg_file="${ABL_CFG_STAGING_DIR:?}/write-config_${cfg_id}.tmp"
-	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_fail "Failed to write to file '${tmp_cfg_file}'."; return 1; }
+	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_fail "Failed to write to file '${tmp_cfg_file}'."; dbg_on; return 1; }
 
 	parse_config "${cfg_type}" "${cfg_id}" "${tmp_cfg_file}" ||
 		{ rm -f "${tmp_cfg_file}"; reg_fail "Failed to validate config file '${tmp_cfg_file}'."; dbg_on; return 1; }

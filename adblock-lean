@@ -1028,8 +1028,6 @@ reg_msg()
 		[ -n "${msgs_prefix}" ] && msgs_prefix=
 	}
 
-	dbg_off
-
 	local m c msgs msgs_nc msgs_prefix debug_prefix _arg err_l=info color _n_c \
 		print_req sys_log_req log_file_req action_req report_req noprint \
 		set_ids ids_pr_prefix fetch_ids set_ids_pr \
@@ -1058,7 +1056,7 @@ reg_msg()
 					do
 						[ "${msg_level}" -le "${thresh}" ] && { reg_req=1; break; }
 					done
-					[ -n "${reg_req}" ] || { dbg_on; return 0; } # short path for no action required
+					[ -n "${reg_req}" ] || return 0 # short path for no action required
 				else
 					append_msg "${_arg}"
 				fi ;;
@@ -1079,6 +1077,8 @@ reg_msg()
 			*) append_msg "${_arg}"
 		esac
 	done
+
+	dbg_off
 	msgs="${msgs%"${_DELIM_}"}"
 
 	[ -n "${set_ids}" ] && { [ -n "${force_ids}" ] || [ -z "${SET_IDS}" ] || ! subtract_a_from_b "${set_ids}" "${SET_IDS}"; } &&
@@ -1143,7 +1143,7 @@ reg_msg()
 		done
 		IFS="${DEFAULT_IFS}"
 		[ -n "${report_req}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_success && report_success "${msgs_nc//"${_DELIM_}"/"${_NL_}"}"
-		[ -n "${action_req}" ] && { update_action_file "${msgs_nc//"${_DELIM_}"/" "}" || return 1; }
+		[ -n "${action_req}" ] && { update_action_file "${msgs_nc//"${_DELIM_}"/" "}" || { dbg_on; return 1; }; }
 	fi
 
 	dbg_on
@@ -2419,13 +2419,15 @@ select_dnsmasq_instances()
 	local \
 		CUR_ACT="${me}" \
 		CUR_CMD="${me}" \
-		set_id set_ids \
+		set_id set_ids set_ids_arg \
 		cfg_path \
 		upd_cfg \
 		dmsq_instances conf_dirs
 
+	# SET_IDS only available after init_act()
 	init_act "${CUR_ACT}" &&
-	set_ids="${*:-"${SET_IDS}"}" &&
+	set_ids_arg="${*:-"${SET_IDS}"}" &&
+	get_valid_set_ids set_ids "${set_ids_arg}" "${me}" &&
 	set_all_env "${set_ids}" &&
 	do_select_dnsmasq_instances "${set_ids}" || return 1
 
@@ -2519,8 +2521,7 @@ do_start()
 		set_id set_ids \
 		set_ids_arg="${*:-"${SET_IDS}"}"
 
-	get_valid_set_ids set_ids "${set_ids_arg}" || return 1
-	[ -n "${set_ids}" ] || exit 0
+	get_valid_set_ids set_ids "${set_ids_arg}" "do_start" || return 1
 
 	fail_ids="${set_ids}"
 
@@ -2626,14 +2627,14 @@ do_start()
 
 gen_persist_blockset()
 {
-	local CUR_ACT=gen_persist_blockset
-	local CUR_CMD=${CUR_ACT}
+	local me=gen_persist_blockset
+	local CUR_ACT="${me}" CUR_CMD="${me}"
 	init_act "${CUR_ACT}" || exit 1
 
 	local err_msg set_ids set_id ok_set_ids persist_mode persist_dir \
 		set_ids_arg="${*:-"${SET_IDS}"}"
 
-	get_valid_set_ids set_ids "${set_ids_arg}" || return 1
+	get_valid_set_ids set_ids "${set_ids_arg}" "${me}" || return 1
 
 	for set_id in ${set_ids}
 	do
@@ -2699,8 +2700,7 @@ do_stop()
 
 	[ -z "${force_stop_all}" ] &&
 	{
-		get_valid_set_ids set_ids "${set_ids}" || return 1
-		[ -z "${set_ids}" ] && return 0
+		get_valid_set_ids set_ids "${set_ids}" "do_stop" || return 1
 
 		[ -n "${CONFIG_LOADED}" ] &&
 		{
@@ -2844,7 +2844,7 @@ status()
 		set_ids \
 		set_ids_arg="${*:-"${SET_IDS}"}"
 
-	[ -n "${set_ids_arg}" ] && get_valid_set_ids set_ids "${set_ids_arg}" || return 1
+	get_valid_set_ids set_ids "${set_ids_arg}" "status" || return 1
 
 	if ! set_global_env
 	then
@@ -2954,10 +2954,8 @@ pause_resume()
 		final_compr_to_file \
 		set_ids_arg="${*:-"${SET_IDS?}"}"
 
-	[ -n "${set_ids_arg}" ] && get_valid_set_ids set_ids "${set_ids_arg}" || return 1
-	[ -n "${set_ids}" ] || exit 0
-
-	set_all_env "${set_ids}" || exit 1
+	get_valid_set_ids set_ids "${set_ids_arg}" "${cmd}" &&
+	set_all_env "${set_ids}" || return 1
 
 	case "${cmd}" in
 		pause)

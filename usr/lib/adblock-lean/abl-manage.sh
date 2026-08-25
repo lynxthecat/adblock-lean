@@ -481,11 +481,11 @@ parse_dmsq_cfg()
 
 	dbg_off
 	# gather conf dirs from /etc/config/dhcp, assemble C_DEVICES_${inst}
-	config_load_a dhcp || return 2
+	config_load_a dhcp || { dbg_on; return 2; }
+	dbg_on
 	assert_file_found "${net_sh}" || return 1
 	. "${net_sh}"
 
-	dbg_on
 	config_foreach process_instance dnsmasq
 	[ -n "${parse_fail}" ] && return 1
 
@@ -542,6 +542,7 @@ parse_dmsq_runtime()
 	# gather info from: ubus call service list
 
 	assert_file_found "${jshn_sh}" || return 1
+	dbg_off
 	. "${jshn_sh}"
 	json_load "$(ubus call service list '{"name":"dnsmasq"}')" &&
 	json_get_keys nonempty &&
@@ -551,9 +552,11 @@ parse_dmsq_runtime()
 	json_is_a instances object &&
 	json_select instances &&
 	json_get_keys instances &&
-	[ -n "${instances}" ] || { no_running_inst 1; return 2; }
+	[ -n "${instances}" ] || { no_running_inst 1; dbg_on; return 2; }
 
+	dbg_on
 	detect_all_netdevs || return 1
+	dbg_off
 
 	for instance in ${instances}
 	do
@@ -568,7 +571,7 @@ parse_dmsq_runtime()
 
 		json_select "${instance}" &&
 		json_get_var running running ||
-			{ parse_fail "${instance}" A; return 1; }
+			{ parse_fail "${instance}" A; dbg_on; return 1; }
 
 		[ "${running}" = 1 ] &&
 		{
@@ -576,7 +579,7 @@ parse_dmsq_runtime()
 			json_is_a command array &&
 			json_select command &&
 			[ -n "${ujail_pid}" ] ||
-				{ parse_fail "${instance}" B; return 1; }
+				{ parse_fail "${instance}" B; dbg_on; return 1; }
 
 			abl_append DMSQ_RUNNING_INSTANCES "${instance}"
 			abl_append instances_by_ujail_pid "${ujail_pid}=${instance}" "${_DELIM_}"
@@ -589,7 +592,7 @@ parse_dmsq_runtime()
 				i=$((i+1))
 				json_get_var s ${i}
 				[ "${s}" = '-C' ] || continue
-				json_get_var l1_conf_file $((i+1)) || return 1
+				json_get_var l1_conf_file $((i+1)) || { dbg_on; return 1; }
 				add2list l1_conf_files "${l1_conf_file}" "${_NL_}"
 			done
 
@@ -618,6 +621,7 @@ parse_dmsq_runtime()
 
 			case "${conf_dirs_nl}" in *" "*)
 				reg_fail "Runtime info for dnsmasq instance '${instance}' specifies conf-dirs which have a space in their path - this is not supported."
+				dbg_on
 				return 1
 			esac
 			cnt_lines conf_dirs_cnt "${conf_dirs_nl}"
@@ -634,6 +638,7 @@ parse_dmsq_runtime()
 	done
 	json_cleanup
 
+	dbg_on
 	cnt_lines DMSQ_RUNNING_INST_CNT "${DMSQ_RUNNING_INSTANCES// /"${_NL_}"}"
 
 	# Get nameserver IP's
@@ -648,6 +653,7 @@ parse_dmsq_runtime()
 
 	ns_parse_res="$(
 		set +f
+		set +x
 		{ cat /proc/[0-9]*/stat 2>/dev/null || true; } |
 	    ${AWK_CMD:?} \
 			-v delim="${_DELIM_}" \
@@ -879,8 +885,6 @@ parse_dmsq_runtime()
 	done
 	IFS="${DEFAULT_IFS}"
 
-	dbg_on
-
 	PRIMARY_NS=$( ${SED_CMD:?} -En '/^\s*nameserver/{s/\s*nameserver\s+//;s/\s+$//;/^$/d;p}' /etc/resolv.conf )
 	export -n PRIMARY_NS="${PRIMARY_NS//"${_NL_}"/ }"
 	: "${PRIMARY_NS:="127.0.0.1 ::1"}"
@@ -888,8 +892,8 @@ parse_dmsq_runtime()
 	R_PROCESSED=1
 }
 
-# analyze dnsmasq instances and set params for each blockset: dmsq_instances, conf_dirs
-# 1 (optional): blockset ID's (defaults to all)
+# Analyze dnsmasq instances and set params for each blockset: dmsq_instances, conf_dirs
+# 1 (optional): blockset ID's (defaults to all), validity checked by caller
 do_select_dnsmasq_instances() {
 	get_pr_devs()
 	{
@@ -930,14 +934,12 @@ do_select_dnsmasq_instances() {
 		REPLY \
 		first diff \
 		add_dir \
-		set_id set_ids \
-		set_ids_arg="${1:-"${SET_IDS}"}"
+		set_id \
+		set_ids="${1:-"${SET_IDS}"}"
 
 	local CUR_CMD="${me}"
 
 	assert_set "F_${me}" SET_IDS &&
-	get_valid_set_ids set_ids "${set_ids_arg}" &&
-	[ -n "${set_ids}" ] &&
 	parse_dmsq_cfg &&
 	parse_dmsq_runtime || return 1
 
@@ -1566,14 +1568,13 @@ set_blocksets_env()
 
 	debug_msg "" "${me} start, set_ids '${set_ids}'"
 
-	get_valid_set_ids valid_ids "${set_ids}"
+	[ -z "${set_ids}" ] && return 0
 
-	[ -n "${valid_ids}" ] || {
-		[ -z "${set_ids}" ] && return 0
-		reg_msg -yellow "No known blockset IDs specified."
-		[ -n "${ASSERT_NOEXIT}" ] || exit 1
-		return 1
-	}
+	get_valid_set_ids valid_ids "${set_ids}" "${me}" ||
+		{
+			[ -n "${ASSERT_NOEXIT}" ] || exit 1
+			return 1
+		}
 
 	get_compr_util_spec compr_util_path compr_ext "${compression_util:?}" || return 1
 
@@ -1898,17 +1899,20 @@ set_blockset_env()
 
 get_valid_set_ids()
 {
-	local gvi_id gvi_out_var="${1}" gvi_ids="${2}"
+	local gvi_id gvi_ok gvi_out_var="${1}" gvi_ids="${2}" gvi_caller="${3}"
 	[ -n "${gvi_out_var}" ] || bad_args get_valid_set_ids "${@}"
 	unset_vars "${gvi_out_var}"
-	shift
+	[ -n "${gvi_ids}" ] || return 0
 
 	for gvi_id in ${gvi_ids}
 	do
 		is_known_set_id "${gvi_id}" || continue
 		add2list "${gvi_out_var}" "${gvi_id}"
+		gvi_ok=1
 	done
-	:
+	[ -n "${gvi_ok}" ] && return 0
+	reg_msg -yellow "${gvi_caller:+"${gvi_caller}: "}No known blockset IDs specified."
+	return 1
 }
 
 # Env vars: ACCEPT_UNKNOWN_SET_IDS
@@ -1931,7 +1935,6 @@ is_known_set_id()
 # Env vars: GBP_PREFIX
 get_bl_param_gl_var()
 {
-	dbg_off
 	local _gl_var
 	eval "
 		case \"${2:?}\" in
@@ -1941,7 +1944,6 @@ get_bl_param_gl_var()
 	"
 
 	export -n "${1:?}=${GBP_PREFIX}${_gl_var}"
-	dbg_on
 }
 
 # 0 (optional): '-f <func_name>' to error out if value is not set
@@ -1976,6 +1978,7 @@ get_params()
 			{ export -n "${var_name}=${val}"; continue; }
 
 		reg_fail "${err_func}: Value not set for \${${gl_var}_${set_id}}."
+		dbg_on
 		return 1
 	done
 	:
@@ -1986,6 +1989,7 @@ get_params()
 # other args: any number of: 'param' to use current value, or 'param=value'
 set_params()
 {
+	dbg_off
 	local me=set_params \
 		gl_var val param pair \
 		set_id \
@@ -1999,7 +2003,6 @@ set_params()
 		for pair in "${@}"
 		do
 			case "${pair}" in
-				*=*=*) false ;;
 				*=*)
 					param="${pair%%=*}"
 					val="${pair#*=}"
@@ -2014,6 +2017,7 @@ set_params()
 			export -n "${gl_var}_${set_id}=${val}"
 		done
 	done
+	dbg_on
 	:
 }
 
@@ -2618,7 +2622,7 @@ unset_metadata()
 {
 	local meta_param set_id \
 		unset_dbg \
-		set_ids="${*-"${SET_IDS}"}"
+		set_ids="${*:-"${SET_IDS}"}"
 
 	for set_id in ${set_ids}
 	do
@@ -2850,7 +2854,7 @@ try_read_blockset_metadata()
 	UNSET_PREFIX="${rbm_prefix}" unset_metadata "${req_ids}"
 
 	dbg_off
-	UCI_CONFIG_DIR="${meta_file%/*}" config_load_a "${meta_file##*/}" || return 1
+	UCI_CONFIG_DIR="${meta_file%/*}" config_load_a "${meta_file##*/}" || { dbg_on; return 1; }
 	dbg_on
 
 	config_foreach populate_vars blockset_id
