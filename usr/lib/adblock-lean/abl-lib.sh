@@ -1004,7 +1004,7 @@ print_def_cfg_global()
 	# Start delay in seconds when service is started from system boot
 	boot_start_delay_s="30" @ uint
 
-	# Crontab schedule expression for periodic list updates
+	# Crontab schedule expression for periodic list updates, or 'disable'
 	upd_schedule="${upd_schedule:-"0 5 * * *"}" @ string
 
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores

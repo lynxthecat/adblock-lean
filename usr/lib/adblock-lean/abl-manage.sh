@@ -270,18 +270,22 @@ check_dmsq_instances()
 
 	what_failed()
 	{
-		local set_id instance dmsq_instances cfg_opt _fail_ind _fail_sets
+		local set_id instance dmsq_instances conf_dirs param cfg_opt cfg_val _fail_ind _fail_sets
 		unset_vars "${1}" "${2}"
 		for set_id in ${SET_IDS}
 		do
-			get_params "${set_id}" dmsq_instances
-			[ -n "${dmsq_instances}" ] ||
-				{
-					get_cfg_opt cfg_opt dmsq_instances
-					cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"
-					cdi_fatal "${set_id}"
-					return 1
-				}
+			for param in dmsq_instances conf_dirs
+			do
+				get_params "${set_id}" "${param}"
+				get_params "${set_id}" "cfg_val=${param}"
+				[ -n "${cfg_val}" ] ||
+					{
+						get_cfg_opt cfg_opt "${param}"
+						cdi_fail "'${cfg_opt}' config option is not set{}." "${set_id}"
+						cdi_fatal "${set_id}"
+						return 1
+					}
+			done
 
 			for instance in ${dmsq_instances}
 			do
@@ -1256,11 +1260,10 @@ check_persist_blockset()
 		persist_ext persist_mode persist_dir \
 		cur_persist_path cur_persist_cnt cur_persist_cnt_human cur_persist_size_b \
 		run_state \
-		cur_cnt \
 		set_id="${1}" final_compr_ext="${2}"
 
-	get_params -f "check_persist_blockset" "${set_id}" persist_mode persist_dir min_entries=min_blockset_entries max_set_size run_state || return 1
-	get_params "${set_id}" cur_persist_path
+	get_params -f "check_persist_blockset" "${set_id}" persist_mode persist_dir min_entries=min_blockset_entries max_set_size || return 1
+	get_params "${set_id}" run_state cur_persist_path
 	debug_msg "Checking persistent blockset file: ${blue}${cur_persist_path}${n_c}"
 
 	{
@@ -1293,7 +1296,7 @@ check_persist_blockset()
 	} &&
 
 	{
-		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}" "${set_id}" &&
+		read_blockset_metadata -persist "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}" "${set_id}" "${cur_persist_path}" &&
 		get_params "${set_id}" cur_persist_cnt &&
 		[ -n "${cur_persist_cnt}" ] ||
 		{ reg_fail "Failed to process metadata for persistent blockset file '${cur_persist_path}'."; false; }
@@ -1373,9 +1376,6 @@ set_all_env()
 }
 
 # Populates global vars required for processing, status and cleanup
-# Env vars:
-#   SBE_STATUS: do not exit on non-critical errors
-#
 # 1 (optional): blockset IDs (defaults to all)
 set_global_env()
 {
@@ -1447,124 +1447,26 @@ set_global_env()
 	:
 }
 
-# Run states:
+# Blockset run states:
 # 0 - running
 # 1 - error
 # 2 - transitional
 # 3 - paused
 # 4 - stopped
 #
-# 1: blockset ID
-# 2: IDs of blocksets known to be active, or '?' to check now
-# 3-5 (optional): var names for output of run state, path, single-instance flag
-get_run_state()
-{
-	local me=get_run_state \
-		grs_cur_path grs_single_inst \
-		cur_md5 bk_file \
-		bl_check_res \
-		grs_state \
-		bl_in_conf_dir \
-		cs_res \
-		cd_state \
-		bl_file_exists=0 \
-		dns_check_res=0 \
-		conf_dir conf_dirs \
-			set_id="${1:?}" grs_active_ids="${2?}" \
-			state_out_var="${3:-_}" path_out_var="${4:-_}" single_inst_out_var="${5:-_}"
-
-	debug_msg -bf "${set_id}" "Checking state of{}."
-
-	unset_vars "${state_out_var}" "${path_out_var}" "${single_inst_out_var}"
-	assert_set "F_${me}" GLOBAL_ENV_SET || return 1
-
-	get_params "${set_id}" grs_cur_path=cur_path grs_single_inst=cur_1_instance cur_md5 conf_dirs bk_file
-
-	# only the install record describes how the blockset was installed - config says nothing about it
-	: "${grs_single_inst:=0}"
-
-	debug_msg "${me}: grs_single_inst=${grs_single_inst};cur_md5=${cur_md5}"
-
-	# Test adblocking. '?' means the caller has no up-to-date result to share
-	[ "${grs_active_ids}" = '?' ] &&
-		{ check_active_blocksets grs_active_ids "${set_id}" 0 || return 1; }
-	is_included "${set_id}" "${grs_active_ids}" && dns_check_res=1
-
-	[ -n "${grs_cur_path}" ] && [ -f "${grs_cur_path}" ] || grs_cur_path=
-
-	# conf-scripts codes:
-	# 0: all conf-scripts not found
-	# 1: all conf-scripts found
-	# 2: inconsistent state
-	for conf_dir in ${conf_dirs}
-	do
-		[ -f "${conf_dir}/${CS_BASE_FNAME}-${set_id}" ] && cd_state=1 || cd_state=0
-		[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
-
-		[ "${cs_res}" = "${cd_state}" ] || cs_res=2
-	done
-	: "${cs_res:=0}"
-
-	local all_conf_dirs
-	add2list all_conf_dirs "${R_CONF_DIRS} ${C_CONF_DIRS}"
-
-	[ -n "${grs_cur_path}" ] ||
-		# Look for blockset file in all conf-dirs
-		{
-			for conf_dir in ${all_conf_dirs}
-			do
-				FF_FIRST=1 find_files grs_cur_path "${conf_dir}" "${BLOCKSET_BASE_FNAME}-${set_id}" ||
-				FF_FIRST=1 find_files grs_cur_path "${conf_dir}" "${BLOCKSET_BASE_FNAME}-${set_id}." "*" ||
-					continue
-				[ -n "${bl_in_conf_dir}" ] && grs_state=1 # blockset in conf-dir should only be found once, otherwise contradicts single-instance
-				bl_in_conf_dir=1
-				grs_single_inst=1
-			done
-		}
-
-	[ -n "${grs_cur_path}" ] && bl_file_exists=1
-
-	# Summarize
-	bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${grs_single_inst}"
-
-	[ "${grs_state}" = 1 ] ||
-		case "${bl_check_res}" in
-			1110|1101) grs_state=0 ;; # running
-			0100|0101)
-				if [ -n "${bl_in_conf_dir}" ]
-				then
-					grs_state=1
-				elif [ "${grs_cur_path}" = "${bk_file}" ]
-				then
-					grs_state=4 # stopped
-				else
-					grs_state=3  # paused
-				fi ;;
-			0000|0001) grs_state=4 ;; # stopped
-			*) grs_state=1 ;;
-		esac
-
-	[ "${grs_state}" = 1 ] &&
-		reg_fail "Unexpected state for blockset '${set_id}' (path '${grs_cur_path}')." \
-			"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${grs_single_inst};"
-
-	export -n "${state_out_var}=${grs_state}" "${path_out_var}=${grs_cur_path}" "${single_inst_out_var}=${grs_single_inst}"
-
-	debug_msg "${me}: set_id:${set_id}; run_state:${grs_state}; check res:${bl_check_res};"
-
-	:
-}
-
 set_blocksets_env()
 {
+	[ -n "${IN_SBE}" ] && return 1
 	local \
 		me=set_blocksets_env \
+		IN_SBE \
 		valid_ids active_ids \
 		set_id \
 		rv cur_rv \
-		run_state cur_path cur_1_instance \
 		compr_util_path compr_ext compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout \
 		set_ids="${*:-"${SET_IDS}"}"
+
+	export -n IN_SBE=1
 
 	debug_msg "" "${me} start, set_ids '${set_ids}'"
 
@@ -1594,7 +1496,95 @@ set_blocksets_env()
 
 	for set_id in ${SET_IDS}
 	do
-		CA_NOERR=1 get_run_state "${set_id}" "${active_ids}" run_state cur_path cur_1_instance || return 1
+		local \
+			run_state='' \
+			bl_check_res='' \
+			bl_in_conf_dir='' \
+			bk_file='' \
+			cs_res='' \
+			cd_state='' \
+			bl_file_exists=0 \
+			dns_check_res=0 \
+			conf_dir \
+			conf_dirs='' \
+			cur_path='' \
+			cur_1_instance='' \
+			cur_md5='' \
+			all_conf_dirs=''
+
+		debug_msg -bf "${set_id}" "Checking state of{}."
+
+		assert_set "F_${me}" GLOBAL_ENV_SET || return 1
+
+		get_params "${set_id}" cur_path cur_1_instance cur_md5 conf_dirs bk_file
+
+		# only the install record describes how the blockset was installed - config says nothing about it
+		: "${cur_1_instance:=0}"
+
+		debug_msg "${me}: cur_1_instance=${cur_1_instance};cur_md5=${cur_md5}"
+
+		# Test adblocking
+		is_included "${set_id}" "${active_ids}" && dns_check_res=1
+
+		[ -n "${cur_path}" ] && [ -f "${cur_path}" ] || cur_path=
+
+		# conf-scripts codes:
+		# 0: all conf-scripts not found
+		# 1: all conf-scripts found
+		# 2: inconsistent state
+		for conf_dir in ${conf_dirs}
+		do
+			[ -f "${conf_dir}/${CS_BASE_FNAME:?}-${set_id}" ] && cd_state=1 || cd_state=0
+			[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
+
+			[ "${cs_res}" = "${cd_state}" ] || cs_res=2
+		done
+		: "${cs_res:=0}"
+
+		add2list all_conf_dirs "${R_CONF_DIRS} ${C_CONF_DIRS}"
+
+		[ -n "${cur_path}" ] ||
+			# Look for blockset file in all conf-dirs
+			{
+				for conf_dir in ${all_conf_dirs}
+				do
+					FF_FIRST=1 find_files cur_path "${conf_dir}" "${BLOCKSET_BASE_FNAME}-${set_id}" ||
+					FF_FIRST=1 find_files cur_path "${conf_dir}" "${BLOCKSET_BASE_FNAME}-${set_id}." "*" ||
+						continue
+					[ -n "${bl_in_conf_dir}" ] && run_state=1 # blockset in conf-dir should only be found once, otherwise contradicts single-instance
+					bl_in_conf_dir=1
+					cur_1_instance=1
+				done
+			}
+
+		[ -n "${cur_path}" ] && bl_file_exists=1
+
+		# Summarize
+		bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${cur_1_instance}"
+
+		[ "${run_state}" = 1 ] ||
+			case "${bl_check_res}" in
+				1110|1101) run_state=0 ;; # running
+				0100|0101)
+					if [ -n "${bl_in_conf_dir}" ]
+					then
+						run_state=1
+					elif [ "${cur_path}" = "${bk_file}" ]
+					then
+						run_state=4 # stopped
+					else
+						run_state=3  # paused
+					fi ;;
+				0000|0001) run_state=4 ;; # stopped
+				*) run_state=1 ;;
+			esac
+
+		[ "${run_state}" = 1 ] &&
+			reg_fail "Unexpected state for blockset '${set_id}' (path '${cur_path}')." \
+				"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};single_inst:${cur_1_instance};"
+
+		debug_msg "${me}: set_id:${set_id}; run_state:${run_state}; check res:${bl_check_res};"
+
 		set_params "${set_id}" run_state cur_path cur_1_instance
 	done
 
@@ -1635,8 +1625,11 @@ set_blockset_env()
 		conf_script_log_avail \
 		\
 		first_conf_dir \
-		sbe_missing_addnm \
-		addnm_ignore_paths \
+		\
+		c_s_missing_addnm \
+		compr_missing_addnm \
+		m_i_missing_addnm \
+		persist_missing_addnm \
 		\
 		set_base_fname \
 		bl_full_fname_check \
@@ -1657,7 +1650,6 @@ set_blockset_env()
 		\
 		run_state \
 		cur_path \
-		cur_1_instance \
 		\
 		cur_persist_path \
 		cur_persist_cnt \
@@ -1688,8 +1680,8 @@ set_blockset_env()
 	set_base_fname=${BLOCKSET_BASE_FNAME:?}-${set_id}
 
 	# conf-script error logging
-	check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${LOG_CMD:?}" || return 1
-	[ -z "${sbe_missing_addnm}" ] && conf_script_log_avail=1
+	check_addnmounts c_s_missing_addnm "${dmsq_instances}" "${LOG_CMD:?}" || return 1
+	[ -z "${c_s_missing_addnm}" ] && conf_script_log_avail=1
 
 	# Compression
 	if [ -n "${compr_ext}" ]
@@ -1697,9 +1689,9 @@ set_blockset_env()
 		assert_set "F_${me}" compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout || return 1
 		bl_full_fname_check=${set_base_fname:?}${compr_ext}
 		install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname_check}
-		check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${extr_cmd_stdout%% *}${_NL_}${install_path_ram_check}" || return 1
+		check_addnmounts compr_missing_addnm "${dmsq_instances}" "${extr_cmd_stdout%% *}${_NL_}${install_path_ram_check}" || return 1
 
-		if [ -z "${sbe_missing_addnm}" ]
+		if [ -z "${compr_missing_addnm}" ]
 		then
 			bl_full_fname=${bl_full_fname_check}
 			install_path_ram=${install_path_ram_check}
@@ -1711,7 +1703,7 @@ set_blockset_env()
 			final_compr_or_cat_stdout=${compr_cmd_stdout}
 			final_extr_or_cat_stdout=${extr_cmd_stdout}
 		else
-			wont_work "Final blockset compression" "${sbe_missing_addnm}"
+			wont_work "Final blockset compression" "${compr_missing_addnm}"
 		fi
 	fi
 
@@ -1720,20 +1712,20 @@ set_blockset_env()
 
 	# Multiple dnsmasq instances
 	case "${dmsq_instances}" in
-		*[0-9]*" "*[0-9]*)
+		*[a-zA-Z0-9_]*" "*[a-zA-Z0-9_]*)
 			install_path_ram_check=${ABL_RUN_DIR:?}/${bl_full_fname:?}
-			check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${install_path_ram_check}" || return 1
-			if [ -z "${sbe_missing_addnm}" ]
+			check_addnmounts m_i_missing_addnm "${dmsq_instances}" "${install_path_ram_check}" || return 1
+			if [ -z "${m_i_missing_addnm}" ]
 			then
 				install_path_ram=${install_path_ram_check}
 				install_1_instance_ram=0
 			else
-				wont_work "Multiple dnsmasq instances" "${sbe_missing_addnm}"
+				wont_work "adblock-lean" "${m_i_missing_addnm}"
+				[ -n "${SBE_STATUS}" ] || return 1
 			fi ;;
 		*)
 			first_conf_dir="${conf_dirs%% *}"
 			is_valid_dir "${first_conf_dir}" || return 1
-			addnm_ignore_paths="${first_conf_dir}/${bl_full_fname}"
 
 			[ "${final_compress}" = 1 ] ||
 				{
@@ -1743,33 +1735,66 @@ set_blockset_env()
 	esac
 
 	# addnmount for blockset on ramdisk - required regardless of compr/persist/multi_inst availability
-	sbe_missing_addnm=
-	is_included "${install_path_ram}" "${addnm_ignore_paths}" "${_NL_}" ||
-		check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${install_path_ram}" || return 1
-	[ -z "${sbe_missing_addnm}" ] || { wont_work "adblock-lean" "${sbe_missing_addnm}"; [ -n "${SBE_STATUS}" ] || return 1; }
+	[ -n "${install_path_ram}" ] || [ -n "${SBE_STATUS}" ] || { reg_fail "Internal error: install_path_ram is not set."; return 1; }
 
-	get_params "${set_id}" run_state cur_path cur_1_instance
+	get_params "${set_id}" run_state cur_path
 	case "${run_state}" in
 		0|3|4) ;;
 		*)
 			case "${CUR_CMD}" in start|pause|resume)
 				KEEP_PERSIST=1 stop_blocksets "${set_id}" || exit 1
-				# stopping the blockset invalidated the earlier result
-				CA_NOERR=1 get_run_state "${set_id}" '?' run_state cur_path cur_1_instance || return 1
-				set_params "${set_id}" run_state cur_path cur_1_instance
+				run_state=4 cur_path='' # param-store already updated by stop_blocksets
 			esac
 	esac
 
 	# Persistent blockset
+	local persist_ok=0 cat_addnm rm_extra
 	case "${persist_mode}" in manual|managed)
-		case "${CUR_ACT}" in start|pause|resume|status|gen_persist_blockset)
+		case "${CUR_CMD}" in start|pause|resume|status|gen_persist_blockset)
 			if check_persist_dir "${set_id}"
 			then
-				local cat_addnm=''
 				[ "${final_compress}" = 1 ] || cat_addnm="${_NL_}${CAT_CMD}"
-				check_addnmounts sbe_missing_addnm "${dmsq_instances}" "${persist_dir}${cat_addnm}" || return 1
-				if [ -z "${sbe_missing_addnm}" ]
+				check_addnmounts persist_missing_addnm "${dmsq_instances}" "${persist_dir}${cat_addnm}" || return 1
+
+				if [ -z "${persist_missing_addnm}" ]
 				then
+					[ "${CUR_ACT}" != status ] && rm_extra=1
+					FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}." "*" "" "${set_id}" ||
+					FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}"  ""  "" "${set_id}"
+					set_params "${set_id}" cur_persist_path
+
+					check_persist_blockset "${set_id}" "${final_compr_ext}" &&
+						persist_ok=1
+					debug_msg "persist_ok: ${persist_ok}"
+
+					if [ "${persist_ok}" = 1 ]
+					then
+						get_params "${set_id}" cur_persist_path cur_persist_cnt
+					else
+						# Persistent blockset file not found or fails checks
+						[ "${persist_mode}" = manual ] &&
+							rebuild_req_notice "${set_id}" "gen_persist_blockset" "persistent"
+
+						[ "${CUR_ACT}" != status ] &&
+						{
+							[ -n "${cur_persist_path}" ] &&
+							{
+								if [ "${cur_path}" = "${cur_persist_path}" ]
+								then
+									KEEP_PERSIST=0 stop_blocksets "${set_id}" || exit 1
+									run_state=4 cur_path='' # param-store already updated by stop_blocksets
+								elif is_dir_writable "${set_id}" "${cur_persist_path%/*}"
+								then
+									reg_msg -fb "${set_id}" "Removing disqualified persistent blockset file{}."
+									rm -f "${cur_persist_path}" "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}"
+								fi
+							}
+
+							UNSET_PREFIX=PERSIST_ unset_metadata "${set_id}"
+							cur_persist_path='' cur_persist_cnt=''
+						}
+					fi
+
 					persist_req=1
 					[ "${persist_mode}" = managed ] &&
 					{
@@ -1778,7 +1803,7 @@ set_blockset_env()
 						install_1_instance=0
 					}
 				else
-					wont_work "Persistent blockset" "${sbe_missing_addnm}"
+					wont_work "Persistent blockset" "${persist_missing_addnm}"
 				fi
 			else
 				log_msg -warn -fb "${set_id}" "" "Persistent blockset file can not be used or updated{}."
@@ -1787,26 +1812,6 @@ set_blockset_env()
 	esac
 
 	debug_msg "persist_req: ${persist_req}"
-
-	local cpb_rv=1
-	[ "${persist_req}" = 1 ] ||
-	case "${CUR_ACT}" in
-		stop|pause) : ;;
-		*) false
-	esac &&
-		{
-			FF_RM_EXTRA=1 find_files cur_persist_path "${persist_dir}" "${set_base_fname}." "*" ||
-			FF_RM_EXTRA=1 find_files cur_persist_path "${persist_dir}" "${set_base_fname}"
-			set_params "${set_id}" cur_persist_path
-			[ "${persist_req}" = 1 ] &&
-			{
-				check_persist_blockset "${set_id}" "${final_compr_ext}"
-				cpb_rv=${?}
-				[ "${cpb_rv}" != 0 ] && [ "${persist_mode}" = manual ] &&
-					rebuild_req_notice "${set_id}" "gen_persist_blockset" "persistent"
-			}
-			debug_msg "check_persist_blockset rv: ${cpb_rv}"
-		}
 
 	if [ "${persist_req}" = 1 ]
 	then
@@ -1818,30 +1823,22 @@ set_blockset_env()
 				*) false
 			esac
 		then
-			if [ "${cpb_rv}" = 0 ]
+			if [ "${persist_ok}" = 1 ]
 			then
 				[ "${CUR_ACT}" = resume ] || [ "${ABL_INIT_ACT}" = boot ] &&
 				{
 					start_action=load
 					install_path=${cur_persist_path}
 					install_1_instance=0
-					get_params "${set_id}" cur_persist_cnt
 					set_params "${set_id}" install_cnt="${cur_persist_cnt}"
 				}
 			else
-				[ "${CUR_ACT}" = status ] ||
-				{
-					KEEP_PERSIST=0 rm_if_writable "${set_id}" "${cur_persist_path}" "${cur_persist_path%/*}/${META_BASE_FNAME_PERSIST}-${set_id}"
-					[ "${cur_path}" = "${cur_persist_path}" ] && unset_metadata "${set_id}"
-					set_params "${set_id}" cur_persist_path= cur_persist_cnt=
-				}
-
 				[ "${CUR_CMD}" = start ] &&
 				{
-					local start_act_msg="Will create a new blockset file on the ramdisk."
+					local start_act_msg="Will create a new blockset file on the ramdisk"
 					[ "${persist_mode}" = managed ] &&
-						start_act_msg="Will rebuild the persistent blockset file."
-					log_msg -fb "${set_id}" "${start_act_msg}{}"
+						start_act_msg="Will rebuild the persistent blockset file"
+					log_msg -fb "${set_id}" "${start_act_msg}{}."
 				}
 			fi
 		elif [ "${persist_mode}" = managed ] && [ "${CUR_CMD}" = start ]
@@ -1854,16 +1851,8 @@ set_blockset_env()
 	: "${install_1_instance:="${install_1_instance_ram}"}"
 
 	case "${CUR_CMD}" in start|resume)
-		[ -z "${FORCE_PERSIST_INSTALL}" ] || is_persist "${install_path}" "${set_id}" ||
+		[ -n "${FORCE_PERSIST_INSTALL}" ] && ! is_persist "${install_path}" "${set_id}" &&
 			{ reg_fail -fb "${set_id}" "Can not generate persistent blockset file{}."; return 1; }
-	esac
-
-	[ -n "${install_path}" ] ||
-		{ reg_fail -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
-
-	case "${start_action}" in
-		load) add2list BLOCKSETS_TO_INSTALL "${set_id}" ;;
-		gen) add2list BLOCKSETS_TO_GEN "${set_id}" ;;
 	esac
 
 	pause_path="${install_path}"
@@ -1871,6 +1860,15 @@ set_blockset_env()
 		pause_path="${cur_persist_path}"
 	[ "${install_path}" = "${install_path_ram}" ] && [ "${install_1_instance}" = 1 ] &&
 		pause_path="${ABL_RUN_DIR}/${bl_full_fname}"
+
+	[ -n "${install_path}" ] ||
+		{ reg_fail -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
+
+	[ "${CUR_CMD}" = start ] &&
+	case "${start_action}" in
+		load) add2list BLOCKSETS_TO_INSTALL "${set_id}" ;;
+		gen) add2list BLOCKSETS_TO_GEN "${set_id}" ;;
+	esac
 
 	set_params "${set_id}" \
 		install_path \
@@ -2742,6 +2740,7 @@ try_commit_metadata()
 # 0 (optional): '-persist'
 # 1: path to the meta file
 # 2 (optional): required blockset IDs (errors with other read ID's will be ignored)
+# 3 (optional): known blockset path to validate vs metadata record (for persist blockset files)
 read_blockset_metadata()
 {
 	local me=read_blockset_metadata \
@@ -2778,6 +2777,10 @@ try_read_blockset_metadata()
 		for pv_param in ${meta_params}
 		do
 			config_get meta_val "${set_id}" "${pv_param}" # accept empty values
+			[ "${pv_param}" = PATH ] && [ -n "${rbm_known_path}" ] &&
+			{
+				[ "${rbm_known_path}" = "${meta_val}" ] || { append_err "Unexpected PATH '${meta_val}' in ${sp_f_pr} (expecting '${rbm_known_path}')."; return 1; }
+			}
 			export -n "${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
 			debug_msg "${blue}set metadata${n_c}: ${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
 		done
@@ -2826,7 +2829,7 @@ try_read_blockset_metadata()
 	shift 2
 	[ "${1}" = '-persist' ] && { rbm_type=PERSIST; shift; }
 
-	local meta_file="${1}" meta_ids="${2:-"${SET_IDS}"}"
+	local meta_file="${1}" meta_ids="${2:-"${SET_IDS}"}" rbm_known_path="${3}"
 	local sp_f_pr="metadata file '${meta_file}'" \
 		ACCEPT_UNKNOWN_SET_IDS=1
 
@@ -2868,8 +2871,18 @@ try_read_blockset_metadata()
 	IFS="${DEFAULT_IFS}"
 
 	[ -n "${stale_ids}" ] &&
-		COMMIT_META_LOCATIONS=RAM FORCE_STOP_ALL=1 do_stop
-
+	case "${rbm_type}" in
+		PERSIST)
+			unset_metadata "${meta_ids}"
+			set +f
+			for set_id in ${meta_ids}
+			do
+				rm_if_writable "${set_id}" "${meta_file}" "${meta_file%/*}/${BLOCKSET_BASE_FNAME:?}"*
+			done
+			set -f ;;
+		*) COMMIT_META_LOCATIONS=RAM FORCE_STOP_ALL=1 do_stop ;;
+	esac
+		
 	return ${rbm_rv}
 }
 

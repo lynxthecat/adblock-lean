@@ -882,11 +882,11 @@ gen_blocksets()
 		bk_cnt=
 		bk_file=
 		file_to_bk=
-		if [ -n "${cur_path}" ]
+		if [ -n "${cur_path}" ] && [ -n "${cur_cnt}" ]
 		then
 			file_to_bk=${cur_path}
 			bk_cnt=${cur_cnt}
-		elif [ -n "${cur_persist_path}" ]
+		elif [ -n "${cur_persist_path}" ] && [ -n "${cur_persist_cnt}" ]
 		then
 			file_to_bk=${cur_persist_path}
 			bk_cnt=${cur_persist_cnt}
