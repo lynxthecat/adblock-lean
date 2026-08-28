@@ -807,7 +807,9 @@ rm_conf_scripts()
 		do
 			rm -f "${dir}/${CS_BASE_FNAME}-${set_id}"
 			# Leftover legacy files
+			set +f
 			rm -f "${dir}/${CS_BASE_FNAME}" "${dir}/${BLOCKSET_BASE_FNAME:-???}"* "${dir}/.abl-extract_blocklist"
+			set -f
 		done
 	done
 
@@ -2692,7 +2694,6 @@ do_stop()
 		dir \
 		IN_STOP=1 \
 		force_stop_all="${FORCE_STOP_ALL:-}" \
-		set_env_ids \
 		set_id \
 		set_ids
 
@@ -2711,14 +2712,6 @@ do_stop()
 		{
 			[ -n "${GLOBAL_ENV_SET}" ] ||
 			set_global_env
-		} &&
-		for set_id in ${set_ids}
-		do
-			[ -n "${IN_SBE}" ] || eval "[ -n \"\${BL_ENV_SET_${set_id}}\" ]" || abl_append set_env_ids "${set_id}"
-		done &&
-		{
-			[ -z "${set_env_ids}" ] ||
-			set_blocksets_env "${set_env_ids}"
 		} &&
 		stop_blocksets "${set_ids}" &&
 			return 0
