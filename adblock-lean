@@ -393,6 +393,7 @@ set_ansi()
 abl_append()
 {
 	check_var_names "${1}" || exit 1
+	case "${2}" in '') return 0; esac
 	eval "${1}=\"\${${1}}\${${1}:+\"\${3:-" "}\"}${2}\""
 }
 
@@ -805,7 +806,7 @@ rm_conf_scripts()
 		get_params "${set_id}" conf_dirs
 		for dir in ${conf_dirs}
 		do
-			rm -f "${dir}/${CS_BASE_FNAME}-${set_id}"
+			rm -f "${dir}/${CS_BASE_FNAME}.${set_id}"
 			# Leftover legacy files
 			set +f
 			rm -f "${dir}/${CS_BASE_FNAME}" "${dir}/${BLOCKSET_BASE_FNAME:-???}"* "${dir}/.abl-extract_blocklist"

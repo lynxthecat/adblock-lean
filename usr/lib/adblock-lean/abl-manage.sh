@@ -50,7 +50,6 @@ BL_PARAMS_MAP="
 	cur_md5=MD5
 	cur_cnt=CNT
 	cur_1_instance=SINGLE_INSTANCE
-	cur_path_meta=PATH_META
 	install_path=INSTALL_PATH
 	install_cnt=INSTALL_CNT
 	install_path_ram=INSTALL_PATH_RAM
@@ -379,9 +378,7 @@ check_dmsq_instances()
 			conf_dir_reg=
 			for dir in ${instance_conf_dirs}
 			do
-				dir="${dir%/}"
-				is_included "${dir}" "${conf_dirs}" ||
-				is_included "${dir}/" "${conf_dirs}" && conf_dir_reg=1
+				is_included "${dir}" "${conf_dirs}" && conf_dir_reg=1
 				[ -d "${dir}" ] ||
 				{
 					cdi_fail "Conf-dir '${dir}' does not exist. ${inst_pr} is misconfigured."
@@ -401,9 +398,7 @@ check_dmsq_instances()
 
 		for dir in ${conf_dirs}
 		do
-			dir="${dir%/}"
 			is_included "${dir}" "${all_bl_conf_dirs}" ||
-			is_included "${dir}/" "${all_bl_conf_dirs}" ||
 			{
 				cdi_fatal "conf-dir directory '${dir}' is set in config{} but not used by configured dnsmasq instances '${dmsq_instances}'." "${set_id}"
 				return 1
@@ -1109,7 +1104,7 @@ do_select_dnsmasq_instances() {
 		set_params "${set_id}" dmsq_instances="${select_instances}" conf_dirs="${select_conf_dirs}"
 	done
 
-	check_dmsq_instances "${set_ids}" || return 1
+	check_dmsq_instances || return 1
 
 	:
 }
@@ -1490,11 +1485,14 @@ set_blocksets_env()
 {
 	local \
 		me=set_blocksets_env \
+		IFS="${DEFAULT_IFS}" \
 		some_ok \
 		valid_ids active_ids \
 		set_id \
 		compr_util_path compr_ext compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout \
-		all_conf_dirs \
+		rm_extra \
+		cs_res \
+		conf_dir conf_dirs all_conf_dirs cs_file \
 		set_ids="${*:-"${SET_IDS}"}"
 
 	debug_msg "" "${me} start, set_ids '${set_ids}'"
@@ -1521,7 +1519,7 @@ set_blocksets_env()
 	[ -n "${METADATA_BAD}" ] && [ "${CUR_ACT}" != status ] &&
 	{
 		COMMIT_META_LOCATIONS=RAM FORCE_STOP_ALL=1 do_stop
-		[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" "run_state=" "cur_path_meta="
+		[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" "run_state="
 		METADATA_BAD=
 	}
 
@@ -1529,6 +1527,48 @@ set_blocksets_env()
 	CA_NOERR=1 check_active_blocksets active_ids "${SET_IDS}" 0
 
 	add2list all_conf_dirs "${R_CONF_DIRS} ${C_CONF_DIRS}"
+
+	[ "${CUR_ACT}" != status ] && rm_extra=1
+
+	for set_id in ${SET_IDS}
+	do
+		local "cs_res_${set_id}="
+	done
+
+	# Register existing conf-scripts and check for stray ones
+	local cs_files cd_index=0 cs_fatal=
+	for conf_dir in ${all_conf_dirs}
+	do
+		cd_index=$((cd_index+1))
+		cs_files=
+		for set_id in ${SET_IDS}
+		do
+			local "cs_found_${set_id}_${cd_index}="
+		done
+		find_files cs_files "${conf_dir}" "${CS_BASE_FNAME:?}" "*"
+		IFS="${_NL_}"
+		for cs_file in ${cs_files}
+		do
+			conf_dirs=
+			IFS="${DEFAULT_IFS}"
+			split_path _ _ set_id "${cs_file}"
+			if [ -n "${set_id}" ] && is_included "${set_id}" "${SET_IDS}"
+			then
+				get_params "${set_id}" conf_dirs
+			else
+				set_id=
+			fi
+			[ -n "${conf_dirs}" ] &&
+			is_included "${conf_dir}" "${conf_dirs}" &&
+				{ export -n "cs_found_${set_id}_${cd_index}=1"; continue; }
+
+			reg_fail "Found conf-script '${cs_file}' in ${conf_dir} where it doesn't belong. This may cause dnsmasq to crash loop or to load the wrong blockset."
+			[ -n "${set_id}" ] && export -n "cs_res_${set_id}=2"
+			[ "${CUR_ACT}" = status ] || { rm -f "${cs_file}"; cs_fatal=1; }
+		done
+		IFS="${DEFAULT_IFS}"
+	done
+	[ -n "${cs_fatal}" ] && { export -n FAIL_STOP_REQ=1; exit 1; }
 
 	for set_id in ${SET_IDS}
 	do
@@ -1539,19 +1579,14 @@ set_blocksets_env()
 			bl_check_res='' \
 			bl_in_conf_dir='' \
 			cur_persist_path='' \
-			cur_path_meta='' \
 			bl_1_inst='' \
-			cs_res='' \
 			cd_state='' \
 			bl_file_exists=0 \
 			dns_check_res=0 \
 			path_1 path_2 s_i_cnt=0 \
-			conf_dir \
-			conf_dirs='' \
 			cur_path='' \
 			cur_1_instance='' \
 			cur_md5='' \
-			rm_extra='' \
 			persist_mode='' \
 			persist_dir='' \
 			set_base_fname="${BLOCKSET_BASE_FNAME:?}-${set_id}"
@@ -1560,13 +1595,13 @@ set_blocksets_env()
 
 		assert_set "F_${me}" GLOBAL_ENV_SET || return 1
 
-		get_params "${set_id}" run_state cur_path cur_1_instance cur_md5 conf_dirs cur_path_meta persist_mode persist_dir
+		get_params "${set_id}" run_state cur_path cur_1_instance cur_md5 conf_dirs persist_mode persist_dir
+		eval "cs_res=\"\${cs_res_${set_id}}\""
 
 		# Check persistent files
 		case "${persist_mode}" in manual|managed)
 			if check_persist_dir "${set_id}"
 			then
-				[ "${CUR_ACT}" != status ] && rm_extra=1
 				FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}." "*" "" "${set_id}" ||
 				FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}"  ""  "" "${set_id}"
 				set_params "${set_id}" cur_persist_path
@@ -1588,11 +1623,13 @@ set_blocksets_env()
 		# 0: all conf-scripts not found
 		# 1: all conf-scripts found
 		# 2: inconsistent state
-		for conf_dir in ${conf_dirs}
+		cd_index=0
+		for conf_dir in ${all_conf_dirs}
 		do
-			[ -f "${conf_dir}/${CS_BASE_FNAME:?}-${set_id}" ] && cd_state=1 || cd_state=0
+			cd_index=$((cd_index+1))
+			is_included "${conf_dir}" "${conf_dirs}" || continue
+			eval "[ -n \"\${cs_found_${set_id}_${cd_index}}\" ]" && cd_state=1 || cd_state=0
 			[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
-
 			[ "${cs_res}" = "${cd_state}" ] || cs_res=2
 		done
 		: "${cs_res:=0}"
@@ -1647,7 +1684,7 @@ set_blocksets_env()
 					if [ -n "${bl_in_conf_dir}" ]
 					then
 						sbe_state=1
-					elif [ -n "${sbe_path}" ] && [ "${sbe_path}" = "${cur_path_meta}" ]
+					elif [ -n "${sbe_path}" ] && [ "${sbe_path}" = "${cur_path}" ]
 					then
 						sbe_state=3 # paused
 					else
@@ -2202,12 +2239,12 @@ try_install_blocksets()
 		do
 			is_valid_dir "${conf_dir}" || { inst_failed "${set_id}"; continue 2; }
 
-			cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}-${set_id}" || { reg_fail "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
+			cat <<-EOF | ${SED_CMD} -E 's/\t+//g' > "${conf_dir}/${CS_BASE_FNAME}.${set_id}" || { reg_fail "Failed to create conf-script in directory '${conf_dir}'."; return 1; }
 				conf-script="\
 				${final_extr_or_cat_stdout} \"${install_path}\" && \
 				printf '%s\\n' \"address=/${cur_md5}-${ABL_TEST_DOM_BASE}/#\" && \
 				exit 0; \
-				${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err \\\"conf-script at '${conf_dir}/${CS_BASE_FNAME}-${set_id}' failed.\\\";"} \
+				${conf_script_log_avail:+"${LOG_CMD} -t adblock-lean-conf-script -p user.err \\\"conf-script at '${conf_dir}/${CS_BASE_FNAME}.${set_id}' failed.\\\";"} \
 				exit 0"
 			EOF
 		done
@@ -2844,6 +2881,7 @@ try_read_blockset_metadata()
 			pv_param \
 			meta_val \
 			bl_md5 \
+			missing_val \
 			cur_path cur_cnt cur_md5 \
 			set_id="${1}"
 		local set_id_pr="blockset '${set_id}'"
@@ -2861,6 +2899,7 @@ try_read_blockset_metadata()
 				some_seen=1
 				[ "${known_path}" = "${meta_val}" ] || { append_err "Unexpected PATH '${meta_val}' in ${sp_f_pr} (expecting '${known_path}')."; return 1; }
 			}
+			[ -n "${meta_val}" ] || missing_val=1
 			export -n "${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
 			debug_msg "${blue}set metadata${n_c}: ${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
 		done
@@ -2869,14 +2908,15 @@ try_read_blockset_metadata()
 		[ -n "${cur_path}" ] || return 0
 		some_seen=1
 
-		[ "${meta_type}" = RAM ] && set_params "${set_id}" cur_path_meta="${cur_path}"
-
 		is_included "${set_id}" "${req_ids}" ||
 		{
 			log_msg -warn "${sp_f_pr} contains stale entry for non-existing ${set_id_pr}."
 			add2list stale_ids "${set_id}"
 			return 1
 		}
+
+		[ -n "${missing_val}" ] &&
+			{ append_err "Missing info in ${sp_f_pr} for ${set_id_pr}."; return 1; }
 
 		# check md5
 		get_md5 bl_md5 "${cur_path}" ||

@@ -1498,12 +1498,18 @@ parse_config()
 	done
 	IFS="${DEFAULT_IFS}"
 
-	# remove trailing '/' from dir path
+	# remove trailing '/' from dir paths
 	[ "${cfg_id}" = global ] ||
 	{
-		local persist_dir
+		local dir persist_dir c_dirs conf_dirs
 		get_params "${cfg_id}" persist_dir
 		set_params "${cfg_id}" persist_dir="${persist_dir%/}"
+		get_params "${cfg_id}" c_dirs=conf_dirs
+		for dir in ${c_dirs}
+		do
+			abl_append conf_dirs "${dir%/}"
+		done
+		set_params "${cfg_id}" conf_dirs
 	}
 
 	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0
