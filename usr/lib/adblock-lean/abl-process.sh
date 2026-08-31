@@ -89,7 +89,9 @@ test_fetch_doms()
 		for format in ${ALL_PART_FORMATS:?}
 		do
 			local list_cat="${format}_${type}_lists"
-			get_bl_param_gl_var _ "${list_cat}" || continue # ignore invalid combinations
+			dbg_off
+			get_bl_param_gl_var _ "${list_cat}" || { dbg_on; continue; } # ignore invalid combinations
+			dbg_on
 			local "${list_cat}="
 			get_params "${set_id}" lists="${list_cat}"
 
@@ -880,11 +882,11 @@ gen_blocksets()
 		bk_cnt=
 		bk_file=
 		file_to_bk=
-		if [ -n "${cur_path}" ]
+		if [ -n "${cur_path}" ] && [ -n "${cur_cnt}" ]
 		then
 			file_to_bk=${cur_path}
 			bk_cnt=${cur_cnt}
-		elif [ -n "${cur_persist_path}" ]
+		elif [ -n "${cur_persist_path}" ] && [ -n "${cur_persist_cnt}" ]
 		then
 			file_to_bk=${cur_persist_path}
 			bk_cnt=${cur_persist_cnt}

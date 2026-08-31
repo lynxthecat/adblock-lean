@@ -1004,7 +1004,7 @@ print_def_cfg_global()
 	# Start delay in seconds when service is started from system boot
 	boot_start_delay_s="30" @ uint
 
-	# Crontab schedule expression for periodic list updates
+	# Crontab schedule expression for periodic list updates, or 'disable'
 	upd_schedule="${upd_schedule:-"0 5 * * *"}" @ string
 
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
@@ -1139,9 +1139,9 @@ get_cfg_path()
 	local g_path
 	unset_vars "${1}"
 	case "${2}" in
+		''|*[!a-zA-Z0-9_]*) reg_fail "Invalid config name '${2}'."; return 1 ;;
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
-		*[a-zA-Z0-9_]*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
-		*) reg_fail "Invalid config name '${2}'."; return 1 ;;
+		*) g_path="${ABL_CFG_DIR:?}/blockset-${2}.conf" ;;
 	esac
 	export -n "${1}=${g_path}"
 }
@@ -1498,12 +1498,18 @@ parse_config()
 	done
 	IFS="${DEFAULT_IFS}"
 
-	# remove trailing '/' from dir path
+	# remove trailing '/' from dir paths
 	[ "${cfg_id}" = global ] ||
 	{
-		local persist_dir
+		local dir persist_dir c_dirs conf_dirs
 		get_params "${cfg_id}" persist_dir
 		set_params "${cfg_id}" persist_dir="${persist_dir%/}"
+		get_params "${cfg_id}" c_dirs=conf_dirs
+		for dir in ${c_dirs}
+		do
+			abl_append conf_dirs "${dir%/}"
+		done
+		set_params "${cfg_id}" conf_dirs
 	}
 
 	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0
@@ -1775,16 +1781,15 @@ fix_config()
 # 3: new config contents
 write_config()
 {
-	dbg_off
 	local me=write_config \
 		cfg_file tmp_cfg_file \
 		cfg_type="${1:?}" cfg_id="${2:?}" cfg_cont="${3:?}"
 
 	get_cfg_path cfg_file "${cfg_id}" &&
-
 	try_mkdir -p "${ABL_CFG_STAGING_DIR}" || return 1
+	dbg_off
 	tmp_cfg_file="${ABL_CFG_STAGING_DIR:?}/write-config_${cfg_id}.tmp"
-	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_fail "Failed to write to file '${tmp_cfg_file}'."; return 1; }
+	printf '%s\n' "${cfg_cont}" > "${tmp_cfg_file}" || { reg_fail "Failed to write to file '${tmp_cfg_file}'."; dbg_on; return 1; }
 
 	parse_config "${cfg_type}" "${cfg_id}" "${tmp_cfg_file}" ||
 		{ rm -f "${tmp_cfg_file}"; reg_fail "Failed to validate config file '${tmp_cfg_file}'."; dbg_on; return 1; }
