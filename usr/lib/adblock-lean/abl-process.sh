@@ -1034,7 +1034,7 @@ gen_blockset()
 		allow_filter_or_cat="${CAT_CMD:?}" \
 		pack_cmd="pack_entries_sed" \
 		final_compr_or_cat_stdout \
-		install_1_instance \
+		install_in_confdir \
 		use_allowlist use_ipv4_blocklist \
 		merged_allow_f \
 		proc_dir \
@@ -1060,11 +1060,11 @@ gen_blockset()
 		final_compr_or_cat_stdout || return 1
 
 	get_params "${set_id}" \
-		install_1_instance \
+		install_in_confdir \
 		test_domains \
 		whitelist_mode
 
-	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f}; install_1_instance: ${install_1_instance};"
+	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f}; install_in_confdir: ${install_in_confdir};"
 
 	case "${PART_EXTR_OR_CAT_STDOUT:?}" in
 		"${CAT_CMD:?}") ;;
@@ -1244,8 +1244,8 @@ gen_blockset()
 				printf '\n'
 			fi
 
-			# add the test domain in single-instance mode
-			[ "${install_1_instance}" = 1 ] &&
+			# add the test domain in confdir mode
+			[ "${install_in_confdir}" = 1 ] &&
 				printf '%s\n' "address=/${set_id}-${ABL_TEST_DOM_BASE}/#"
 			:
 		} |
