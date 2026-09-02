@@ -572,7 +572,7 @@ try_mkdir()
 pick_opt()
 {
 	unset REPLY
-	update_action_file "Waiting for user input in console" || exit 1
+	update_action_file "Waiting for user input in console"
 	while :
 	do
 		printf %s "${lblue}${1//"|"/"${n_c}|${lblue}"}${n_c}: " > "${MSGS_DEST}"
@@ -1166,7 +1166,7 @@ reg_msg()
 		done
 		IFS="${DEFAULT_IFS}"
 		[ -n "${report_req}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_success && report_success "${msgs_nc//"${_DELIM_}"/"${_NL_}"}"
-		[ -n "${action_req}" ] && { update_action_file "${msgs_nc//"${_DELIM_}"/" "}" || { dbg_on; return 1; }; }
+		[ -n "${action_req}" ] && update_action_file "${msgs_nc//"${_DELIM_}"/" "}"
 	fi
 
 	dbg_on
@@ -1253,7 +1253,7 @@ dmsq_stop_restart_shared()
 		:
 	else
 		# fall back to all instances
-		reg_action -purple "" "${cmd_pr} all dnsmasq instances." || return 1
+		reg_action -purple "" "${cmd_pr} all dnsmasq instances."
 		[ -n "${set_ids}" ] && rv=1
 		/etc/init.d/dnsmasq "${cmd}" &> /dev/null ||
 		{
@@ -1266,7 +1266,7 @@ dmsq_stop_restart_shared()
 
 	for instance in ${d_instances}
 	do
-		reg_action -purple "" "${cmd_pr} dnsmasq instance ${lblue}${instance}${n_c}." || return 1
+		reg_action -purple "" "${cmd_pr} dnsmasq instance ${lblue}${instance}${n_c}."
 
 		if /etc/init.d/dnsmasq "${cmd}" "${instance}" &> /dev/null
 		then
@@ -1960,7 +1960,7 @@ init_act()
 
 	if [ -n "${act_pr}" ]
 	then
-		reg_action -1 -purple "" "${act_pr}" || exit 1
+		reg_action -1 -purple "" "${act_pr}"
 	elif [ -n "${act_pr_short}" ]
 	then
 		update_action_file "${act_pr_short}"
@@ -2344,7 +2344,7 @@ gen_global_config()
 	local CUR_ACT=gen_global_config
 	local CUR_CMD=${CUR_ACT}
 	init_act "${CUR_ACT}" &&
-	reg_action -purple "" "Generating new default global config for adblock-lean." || return 1
+	reg_action -purple "" "Generating new default global config for adblock-lean."
 
 	# create cron job
 	upd_schedule=
@@ -2528,7 +2528,7 @@ do_start()
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
 		random_delay_mins=$(( ${RANDOM:-0} % 61))
-		reg_action -1 -purple "Delaying automatic lists update by ${random_delay_mins} minutes (thundering herd prevention)." || return 1
+		reg_action -1 -purple "Delaying automatic lists update by ${random_delay_mins} minutes (thundering herd prevention)."
 		sleep "${random_delay_mins}m" &
 		wait ${!}
 	fi
@@ -2970,8 +2970,6 @@ pause_resume()
 		cur_path \
 		cur_cnt \
 		install_path \
-		in_confdir \
-		install_in_confdir \
 		pause_path \
 		state_ok_pr \
 		state_changed_pr \
@@ -3026,19 +3024,16 @@ pause_resume()
 
 		log_msg -fb "${set_id}" "Preparing to ${cmd} adblocking{}."
 
-		get_params "${set_id}" final_compr_to_file install_in_confdir
+		get_params "${set_id}" final_compr_to_file
 
 		case "${cmd}" in
 			pause)
 				rm_conf_scripts "${set_id}"
-				mv_blockset "${cur_path}" "${pause_path}" "${final_compr_to_file}" "${set_id}"
-				in_confdir=0 ;;
+				mv_blockset "${cur_path}" "${pause_path}" "${final_compr_to_file}" "${set_id}" ;;
 			resume)
 				mv_blockset "${cur_path}" "${install_path}" "${final_compr_to_file}" "${set_id}" &&
-				set_params "${set_id}" "install_cnt=${cur_cnt}"
-				in_confdir="${install_in_confdir}" ;;
-		esac &&
-		set_params "${set_id}" cur_in_confdir="${in_confdir}" ||
+				set_params "${set_id}" "install_cnt=${cur_cnt}" ;;
+		esac ||
 			{ add2list prep_fail_ids "${set_id}"; continue; }
 
 		add2list prep_ok_ids "${set_id}"

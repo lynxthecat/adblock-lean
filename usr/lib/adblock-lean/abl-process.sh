@@ -115,7 +115,7 @@ test_fetch_doms()
 
 	[ -n "${all_urls}" ] || return 0
 
-	reg_action "Testing connectivity." || exit 1
+	reg_action "Testing connectivity."
 	debug_msg "URLs:${_NL_}${all_urls}"
 
 	doms="$(
@@ -899,7 +899,7 @@ gen_blocksets()
 		is_dir_writable "${set_id}" "${file_to_bk%/*}"
 		then
 			bk_file="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
-			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}." &&
+			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}."
 			mv_blockset "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${set_id}" ||
 			{
 				reg_fail "Failed to create backup of current blockset file '${file_to_bk}'."
@@ -1034,7 +1034,6 @@ gen_blockset()
 		allow_filter_or_cat="${CAT_CMD:?}" \
 		pack_cmd="pack_entries_sed" \
 		final_compr_or_cat_stdout \
-		install_in_confdir \
 		use_allowlist use_ipv4_blocklist \
 		merged_allow_f \
 		proc_dir \
@@ -1060,11 +1059,10 @@ gen_blockset()
 		final_compr_or_cat_stdout || return 1
 
 	get_params "${set_id}" \
-		install_in_confdir \
 		test_domains \
 		whitelist_mode
 
-	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f}; install_in_confdir: ${install_in_confdir};"
+	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f};"
 
 	case "${PART_EXTR_OR_CAT_STDOUT:?}" in
 		"${CAT_CMD:?}") ;;
@@ -1244,10 +1242,8 @@ gen_blockset()
 				printf '\n'
 			fi
 
-			# add the test domain in confdir mode
-			[ "${install_in_confdir}" = 1 ] &&
-				printf '%s\n' "address=/${set_id}-${ABL_TEST_DOM_BASE}/#"
-			:
+			# add the test domain, keyed on the blockset ID
+			printf '%s\n' "address=/${set_id}-${ABL_TEST_DOM_BASE}/#"
 		} |
 
 		# limit size
@@ -1300,7 +1296,7 @@ gen_blockset()
 	fi
 
 	# check the final blockset with dnsmasq --test
-	reg_action "Checking the processed blockset file with '${DMSQ_CMD:?} --test'." || return 1
+	reg_action "Checking the processed blockset file with '${DMSQ_CMD:?} --test'."
 
 	rm -f "${ERR_F}"
 
