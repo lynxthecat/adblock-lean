@@ -1323,20 +1323,8 @@ restart_dnsmasq()
 	then
 		cnt_lines instances_cnt "${instances// /"${_NL_}"}"
 		# 30 <= res_attempts <= 90, each extra instance after first adds 15 attempts
-		res_attempts=$(seq 1 $((30 + (instances_cnt-1)*15*( (instances_cnt-1)*15 <= 60 ) + 60*( (instances_cnt-1)*15 > 60 ) )) )
-		for i in ${res_attempts:-1 2 3 4 5}
-		do
-			export -n R_PROCESSED=
-			PDR_QUIET=1 parse_dmsq_runtime
-			[ ${?} = 1 ] && break
-			for instance in ${instances}
-			do
-				eval "[ \"\${RUNNING_${instance}}\" = 1 ]" &&
-					subtract_a_from_b "${instance}" "${instances}" instances
-			done
-			[ -z "${instances}" ] && break
-			sleep 1
-		done
+		res_attempts=$((30 + (instances_cnt-1)*15*( (instances_cnt-1)*15 <= 60 ) + 60*( (instances_cnt-1)*15 > 60 ) ))
+		parse_dmsq_runtime "${res_attempts}" instances "${instances}"
 
 		for instance in ${instances}
 		do
@@ -2385,7 +2373,7 @@ setup()
 	# set luci feedback vars to failed, unset later upon success
 	luci_pkgs_install_failed=1 luci_cron_job_creation_failed=1
 
-	local CUR_ACT=setup
+	local CUR_ACT=setup CUR_CMD=setup
 	init_act "${CUR_ACT}" || return 1
 	do_setup
 }
@@ -2695,8 +2683,7 @@ gen_persist_blockset()
 stop()
 {
 	local stop_rv ASSERT_NOEXIT=1 \
-		CUR_ACT=stop
-	local CUR_CMD=${CUR_ACT}
+		CUR_ACT=stop CUR_CMD=stop
 	init_act "${CUR_ACT}" &&
 	do_stop "${@}"
 	stop_rv=${?}
@@ -2734,7 +2721,7 @@ do_stop()
 		[ -n "${CONFIG_LOADED}" ] &&
 		{ [ -n "${C_PROCESSED}" ] || parse_dmsq_cfg; } &&
 		{
-			[ -n "${R_PROCESSED}" ] || parse_dmsq_runtime
+			[ -n "${R_PROCESSED}" ] || parse_dmsq_runtime 3
 			[ -n "${METADATA_READ}" ] || read_blockset_metadata "${META_FILE:?}" "${SET_IDS}"
 			stop_blocksets "${set_ids}" &&
 				return 0
@@ -2964,6 +2951,8 @@ pause_resume()
 		act_ok_ids \
 		act_fail_ids \
 		extra_ids \
+		extra_ok_ids \
+		extra_fail_ids \
 		\
 		set_id \
 		run_state \
@@ -3042,7 +3031,7 @@ pause_resume()
 	[ -n "${prep_fail_ids}" ] &&
 	{
 		reg_fail -fb "${prep_fail_ids}" "Failed to ${cmd} adblocking{}."
-		ASSERT_NOEXIT=1 KEEP_BK=0 KEEP_PERSIST=0 stop_blocksets "${prep_fail_ids}" || exit 1
+		ASSERT_NOEXIT=1 KEEP_BK=0 stop_blocksets "${prep_fail_ids}" || exit 1
 	}
 
 	[ -n "${prep_ok_ids}" ] &&
@@ -3054,7 +3043,7 @@ pause_resume()
 			pause)
 				restart_dnsmasq 3 act_ok_ids "${prep_ok_ids}"
 				get_affected_set_ids extra_ids "${act_ok_ids}"
-				[ -z "${extra_ids}" ] || check_active_blocksets _ "${extra_ids}" 25 || return 1
+				[ -z "${extra_ids}" ] || check_active_blocksets extra_ok_ids "${extra_ids}" 25
 				;;
 		esac
 
@@ -3064,10 +3053,12 @@ pause_resume()
 		add2list ok_ids "${act_ok_ids}"
 
 		subtract_a_from_b "${act_ok_ids}" "${prep_ok_ids}" act_fail_ids
-		[ -n "${act_fail_ids}" ] &&
+		subtract_a_from_b "${extra_ok_ids}" "${extra_ids}" extra_fail_ids
+		[ -n "${act_fail_ids}${extra_fail_ids}" ] &&
 		{
-			reg_fail -fb "${act_fail_ids}" "Failed to ${cmd} adblocking{}."
-			ASSERT_NOEXIT=1 KEEP_BK=0 KEEP_PERSIST=0 do_bail "${cmd}" "${act_fail_ids}"
+			[ -n "${act_fail_ids}" ] && reg_fail -fb "${act_fail_ids}" "Failed to ${cmd} adblocking{}."
+			[ -n "${extra_fail_ids}" ] && reg_fail -fb "${extra_fail_ids}" "Active blockset check failed{}."
+			ASSERT_NOEXIT=1 KEEP_BK=0 do_bail "${cmd}" "${act_fail_ids} ${extra_fail_ids}"
 		}
 	}
 
@@ -3359,7 +3350,7 @@ disable()
 		rm_cron_job
 		rc_disable && ! rc_enabled ||
 			{ reg_fail "Failed to disable the adblock-lean service"; local rv=1; }
-		stop
+		STOP_NOEXIT=1 stop
 	else
 		reg_msg "The adblock-lean service is already disabled."
 	fi

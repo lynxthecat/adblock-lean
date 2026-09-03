@@ -318,8 +318,10 @@ check_dmsq_instances()
 
 	[ "${1:-??}" = '-q' ] && quiet=1
 
+	debug_msg "${me} start"
+
 	parse_dmsq_cfg || return 1
-	parse_dmsq_runtime
+	parse_dmsq_runtime 1
 	[ ${?} = 1 ] && return 1
 
 	what_failed failed_instances failed_set_ids || return 1
@@ -333,7 +335,7 @@ check_dmsq_instances()
 		DMSQ_RESTART_TRIED=1
 
 		do_stop "${failed_set_ids}" || exit 1
-		parse_dmsq_runtime
+		parse_dmsq_runtime 1
 		[ ${?} = 1 ] && return 1
 
 		what_failed failed_instances failed_set_ids || return 1
@@ -493,6 +495,7 @@ parse_dmsq_cfg()
 	:
 }
 
+
 # Env vars: PDR_QUIET
 #
 # Populates global vars:
@@ -500,11 +503,47 @@ parse_dmsq_cfg()
 #   R_DEVICES_${instance}, R_CONF_DIRS_${instance}, R_CONF_DIRS_CNT_${instance}, RUNNING_${instance}
 #   R_PROCESSED
 #
+# 1: attempts
+# 2: failed instances out-var
+# 3: instances
+#
 # return codes:
 # 0: OK
 # 1: Fatal error
 # 2: No running instances
 parse_dmsq_runtime()
+{
+	local i=1 pdr_inst pdr_quiet pdr_rv=1 \
+		n="${1:-5}" pdr_instances_arg="${3}" pdr_instances="${3}"
+	unset_vars "${2}"
+	while :
+	do
+		i=$((i+1))
+		pdr_quiet=
+		[ "${i}" -le "${n}" ] || [ -n "${PDR_QUIET}" ] && pdr_quiet=1
+		export -n R_PROCESSED=
+		PDR_QUIET="${pdr_quiet}" try_parse_dmsq_runtime
+		pdr_rv=${?}
+		[ ${pdr_rv} = 1 ] && break
+		if [ -n "${pdr_instances_arg}" ]
+		then
+			for pdr_inst in ${pdr_instances}
+			do
+				eval "[ \"\${RUNNING_${pdr_inst}}\" = 1 ]" &&
+					subtract_a_from_b "${pdr_inst}" "${pdr_instances}" pdr_instances
+			done
+			[ -z "${pdr_instances}" ] && { pdr_rv=0; break; }
+		else
+			[ ${pdr_rv} = 0 ] && break
+		fi
+		[ "${i}" -le "${n}" ] || break
+		sleep 1
+	done
+	[ -n "${2}" ] && export -n "${2}=${pdr_instances}"
+	return ${pdr_rv}
+}
+
+try_parse_dmsq_runtime()
 {
 	j_unwind()
 	{
@@ -539,10 +578,16 @@ parse_dmsq_runtime()
 		nonempty instance instances running l1_conf_file l1_conf_files conf_dirs_cnt conf_dirs_nl i s f dir ujail_pid line \
 		ns ns_parse_res \
 		devs not_devs devs_by_instance instances_by_ujail_pid \
+		running_inst \
 		j_level=0 \
 		jshn_sh=/usr/share/libubox/jshn.sh
 
 	assert_set "F_${me}" C_PROCESSED || return 1
+
+	for instance in ${DMSQ_RUNNING_INSTANCES}
+	do
+		unset "RUNNING_${instance}" "R_DEVICES_${instance}" "R_CONF_DIRS_${instance}" "R_CONF_DIRS_CNT_${instance}"
+	done
 
 	unset DMSQ_RUNNING_INSTANCES R_CONF_DIRS R_PROCESSED
 	DMSQ_RUNNING_INST_CNT=0
@@ -603,7 +648,6 @@ parse_dmsq_runtime()
 			[ -n "${ujail_pid}" ] ||
 				{ parse_fail "${instance}" B; j_unwind; continue; }
 
-			abl_append DMSQ_RUNNING_INSTANCES "${instance}"
 			abl_append instances_by_ujail_pid "${ujail_pid}=${instance}" "${_DELIM_}"
 
 			# look for '-C' in values, get next value which is instance's conf file
@@ -618,6 +662,8 @@ parse_dmsq_runtime()
 					{ parse_fail "${instance}" C; j_unwind; continue 2; }
 				add2list l1_conf_files "${l1_conf_file}" "${_NL_}"
 			done
+
+			abl_append running_inst "${instance}"
 
 			j_sel_obj ..
 
@@ -655,7 +701,6 @@ parse_dmsq_runtime()
 		j_unwind
 
 		export -n \
-			"RUNNING_${instance}=${running}" \
 			"R_CONF_DIRS_${instance}=${conf_dirs_nl//"${_NL_}"/ }" \
 			"R_DEVICES_${instance}=${devs}" \
 			"R_CONF_DIRS_CNT_${instance}=${conf_dirs_cnt}"
@@ -663,7 +708,6 @@ parse_dmsq_runtime()
 	json_cleanup
 
 	dbg_on
-	cnt_lines DMSQ_RUNNING_INST_CNT "${DMSQ_RUNNING_INSTANCES// /"${_NL_}"}"
 
 	# Get nameserver IP's
 
@@ -672,7 +716,7 @@ parse_dmsq_runtime()
 		ip_output="$(${IP_CMD:?} -o addr show)" \
 		netstat_output="$(${NETSTAT_CMD:?} -plnt 2>/dev/null)"
 
-	[ "${DMSQ_RUNNING_INST_CNT}" -gt 0 ] || { no_running_inst 2; return 2; }
+	[ -n "${running_inst}" ] || { no_running_inst 2; return 2; }
 
 
 	ns_parse_res="$(
@@ -887,6 +931,13 @@ parse_dmsq_runtime()
 	[ -n "${ns_parse_res}" ] ||
 		{ no_running_inst 3; return 2; }
 
+	DMSQ_RUNNING_INSTANCES=${running_inst}
+	for instance in ${running_inst}
+	do
+		export -n "RUNNING_${instance}=1"
+	done
+	cnt_lines DMSQ_RUNNING_INST_CNT "${running_inst// /"${_NL_}"}"
+
 	IFS="${_NL_}"
 	for line in ${ns_parse_res}
 	do
@@ -965,7 +1016,7 @@ do_select_dnsmasq_instances() {
 
 	assert_set "F_${me}" SET_IDS &&
 	parse_dmsq_cfg &&
-	parse_dmsq_runtime || return 1
+	parse_dmsq_runtime 5 || return 1
 
 	[ -n "${DMSQ_RUNNING_INSTANCES}" ] && [ "${DMSQ_RUNNING_INST_CNT}" -gt 0 ] ||
 		{ reg_fail "Internal error parsing dnsmasq runtime info."; return 1; }
@@ -2767,15 +2818,25 @@ try_commit_metadata()
 	# Persist metadata
 	for set_id in ${SET_IDS}
 	do
-		meta_fname="${META_BASE_FNAME_PERSIST}-${set_id}"
 		local persist_dir
 		get_params "${set_id}" persist_dir cur_path
-		is_persist "${cur_path}" "${set_id}" || continue
-
-		[ -d "${persist_dir}" ] || { reg_fail -fb "${set_id}" "Can not update persistent metadata file{} because directory '${persist_dir}' is not found."; continue; }
-
+		meta_fname="${META_BASE_FNAME_PERSIST}-${set_id}"
 		uci_fail=
 		meta_file="${persist_dir%/}/${meta_fname:?}"
+		local pmdf="persistent metadata file{} '${meta_file}'"
+		is_persist "${cur_path}" "${set_id}" || continue
+
+		[ -d "${persist_dir}" ] || { reg_fail -fb "${set_id}" "Can not update ${pmdf} because directory '${persist_dir}' is not found."; continue; }
+
+		is_dir_writable "${set_id}" "${persist_dir}" ||
+		{
+			[ -f "${meta_file}" ] && continue
+			reg_fail -fb "${set_id}" \
+				"${pmdf} doesn't exist, should be created, but the directory is protected." \
+				"Please run 'service adblock-lean gen_persist_blockset ${set_id}'."
+			continue
+		}
+
 		rm -f "${meta_file}"
 
 		touch "${meta_file}" &&
@@ -2790,7 +2851,7 @@ try_commit_metadata()
 		[ -z "${uci_fail}" ] &&
 		uci_tmp commit "${meta_fname}" && [ -s "${meta_file}" ] ||
 			{
-				reg_fail -fb "${set_id}" "Failed to create/update persistent metadata file '${meta_file}'{}."
+				reg_fail -fb "${set_id}" "Failed to create/update ${pmdf}."
 				uci_tmp revert "${meta_fname}"
 				rm -f "${meta_file}"
 			}
