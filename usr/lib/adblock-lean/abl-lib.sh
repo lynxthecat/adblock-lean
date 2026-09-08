@@ -608,7 +608,7 @@ do_setup()
 
 	if [ "${REPLY}" = n ]
 	then
-		FORCE_STOP_ALL=1 do_stop
+		KEEP_PERSIST=0 FORCE_STOP_ALL=1 do_stop
 		[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" "run_state=4"
 		# Remove and forget old configs
 		rm -f "${META_FILE}"

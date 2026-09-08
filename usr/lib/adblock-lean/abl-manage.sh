@@ -39,12 +39,13 @@ BL_PARAMS_MAP="
 	${VAR2CFG_MAP}
 	run_state=RUN_STATE
 	skip_load_stop=SKIP_LOAD_STOP
-	bk_file=BK_FILE
+	bk_path=BK_PATH
 	bk_cnt=BK_CNT
 	bk_ext=BK_EXT
 	cur_persist_path=PERSIST_PATH
 	cur_persist_cnt=PERSIST_CNT
 	cur_persist_md5=PERSIST_MD5
+	cur_path_meta=PATH_META
 	cur_path=PATH
 	cur_md5=MD5
 	cur_cnt=CNT
@@ -204,7 +205,7 @@ try_extract()
 
 	split_path te_dir te_fname te_ext "${te_file}" && [ -n "${te_fname}" ] && is_valid_dir "${te_dir}" &&
 	{
-		[ -n "${stdout}" ] || is_dir_writable "${te_set_id}" "${te_dir}" ||
+		[ -n "${stdout}" ] || is_dir_writable "${te_set_id:?}" "${te_dir}" ||
 			{ te_err="Logic bug: attempted to extract file '${te_file}' to protected dir '${te_dir}'."; false; }
 	} &&
 	get_compr_spec _ cmd "${te_file}" &&
@@ -230,7 +231,7 @@ try_extract()
 	${cmd} ${opts} "${te_file}" ||
 
 	{
-		[ -n "${stdout}" ] || rm_if_writable "${te_file}" # removes src and dest files
+		[ -n "${stdout}" ] || rm_if_writable "${te_set_id}" "${te_file}" # removes src and dest files
 		reg_fail "try_extract: ${te_err}${te_err:+ }Failed to extract '${te_file}'."
 		return 1
 	}
@@ -1315,11 +1316,12 @@ check_persist_dir()
 	[ -d "${mnt_point}" ] ||
 		{ [ -n "${quiet}" ] || reg_fail "Failed to get the mount point for partition where the persistent blockset is stored (got '${mnt_point}')."; return 1; }
 
-	[ "${persist_dir}" = "${mnt_point}" ] &&
-		{  [ -n "${quiet}" ] || reg_fail "${p_d_pr} is the same as the mount point. Please use a subdirectory."; return 1; }
-
+	case "${persist_dir}" in
+		"${mnt_point}"|"${ABL_RUN_DIR}"|"${ABL_RUN_DIR}/"*|"${ABL_TMP_DIR}"|"${ABL_TMP_DIR}/"*) ;;
+		*) false
+	esac ||
 	is_included "${persist_dir}" "${all_conf_dirs}" &&
-		{  [ -n "${quiet}" ] || reg_fail "${p_d_pr} is the same as a dnsmasq conf-dir. Please use another directory."; return 1; }
+		{  [ -n "${quiet}" ] || reg_fail "${p_d_pr} is the same as a mount point or a dnsmasq conf-dir or an adblock-lean reserved directory. Please use another directory."; return 1; }
 
 	:
 }
@@ -1466,16 +1468,34 @@ set_global_env()
 # 4 - stopped
 set_blocksets_env()
 {
+	incr_bl_found()
+	{
+		set_int "bl_found_cnt_${1} = bl_found_cnt_${1} + 1"
+		test_exp "bl_found_cnt_${1} > 1" &&
+			{ sbe_fatal "${1}"; add2list cd_fail_ids "${1}"; }
+	}
+
+	sbe_fatal()
+	{
+		[ -n "${1}" ] && is_included "${1}" "${SET_IDS}" &&
+			set_int "sbe_state_${1} = 1"
+		[ "${CUR_ACT}" = status ] && return
+		cd_fatal=1
+		[ -n "${2}" ] && { log_msg "Removing file '${2}'."; rm -f "${2}"; }
+	}
+
 	local \
 		me=set_blocksets_env \
 		IFS="${DEFAULT_IFS}" \
 		sbe_ok sbe_should_stop \
 		valid_ids active_ids \
-		sbe_id \
+		sbe_type sbe_id base_fname desc \
 		compr_util_path compr_ext compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout \
 		rm_extra \
 		cs_res \
-		conf_dir conf_dirs all_conf_dirs cs_file \
+		rd_file rd_files \
+		conf_dir conf_dirs all_conf_dirs cd_file \
+		cd_files cd_index cd_fatal cd_fail_ids \
 		sbe_ids_out_var="${1}" sbe_ids="${2:-"${SET_IDS}"}"
 
 	debug_msg "" "${me} start, sbe_ids '${sbe_ids}'"
@@ -1517,68 +1537,118 @@ set_blocksets_env()
 
 	for sbe_id in ${SET_IDS}
 	do
-		local "cs_res_${sbe_id}="
+		local \
+			"bl_found_cnt_${sbe_id}=0" \
+			"sbe_state_${sbe_id}" \
+			"rd_found_${sbe_id}"
 	done
 
-	# Register existing conf-scripts and check for stray ones
-	local cs_files cd_index=0 cs_fatal=
+	# Register conf-scripts and blockset files in run-dir and all conf-dirs and check for stray ones
+
+	find_files rd_files "${ABL_RUN_DIR:?}" "${BLOCKSET_BASE_FNAME:?}" "*"
+	IFS="${_NL_}"
+	for rd_file in ${rd_files}
+	do
+		IFS="${DEFAULT_IFS}"
+		get_id_from_file sbe_id "${rd_file}" bl ||
+		{
+			log_msg "Removing the file '${rd_file}'."
+			rm -f "${rd_file}"
+			continue
+		}
+
+		debug_msg "Found ${rd_file}"
+		[ -n "${sbe_id}" ] &&
+		is_included "${sbe_id}" "${SET_IDS}" ||
+		{
+			reg_fail "Found unexpected blockset file '${rd_file}'."
+			sbe_fatal "" "${rd_file}"
+			continue
+		}
+		export -n "rd_found_${sbe_id}=${rd_file}"
+		incr_bl_found "${sbe_id}"
+	done
+	IFS="${DEFAULT_IFS}"
+
+	cd_index=0
 	for conf_dir in ${all_conf_dirs}
 	do
 		cd_index=$((cd_index+1))
-		cs_files=
 		for sbe_id in ${SET_IDS}
 		do
-			local "cs_found_${sbe_id}_${cd_index}="
+			local \
+				"cs_found_${sbe_id}_${cd_index}=" \
+				"bl_found_${sbe_id}_${cd_index}="
 		done
-		find_files cs_files "${conf_dir}" "${CS_BASE_FNAME:?}" "*"
-		IFS="${_NL_}"
-		for cs_file in ${cs_files}
-		do
-			conf_dirs=
-			IFS="${DEFAULT_IFS}"
-			split_path _ _ sbe_id "${cs_file}"
-			if [ -n "${sbe_id}" ] && is_included "${sbe_id}" "${SET_IDS}"
-			then
-				get_params "${sbe_id}" conf_dirs
-			else
-				sbe_id=
-			fi
-			[ -n "${conf_dirs}" ] &&
-			is_included "${conf_dir}" "${conf_dirs}" &&
-				{ export -n "cs_found_${sbe_id}_${cd_index}=1"; continue; }
 
-			reg_fail "Found conf-script '${cs_file}' in ${conf_dir} where it doesn't belong. This may cause dnsmasq to crash loop or to load the wrong blockset."
-			[ -n "${sbe_id}" ] && export -n "cs_res_${sbe_id}=2"
-			[ "${CUR_ACT}" = status ] || { rm -f "${cs_file}"; cs_fatal=1; }
+		for sbe_type in cs bl
+		do
+			case "${sbe_type}" in
+				cs) base_fname="${CS_BASE_FNAME:?}" desc=conf-script ;;
+				bl) base_fname="${BLOCKSET_BASE_FNAME:?}" desc=blockset
+			esac
+			find_files cd_files "${conf_dir}" "${base_fname}" "*" || continue
+
+			IFS="${_NL_}"
+			for cd_file in ${cd_files}
+			do
+				IFS="${DEFAULT_IFS}"
+				get_id_from_file sbe_id "${cd_file}" "${sbe_type}" &&
+				[ -n "${sbe_id}" ] &&
+				is_included "${sbe_id}" "${SET_IDS}" ||
+				{
+					reg_fail "Found unexpected ${desc} file '${cd_file}'."
+					sbe_fatal "" "${cd_file}"
+					continue
+				}
+
+				export -n "${sbe_type}_found_${sbe_id}_${cd_index}=${cd_file}"
+
+				[ "${sbe_type}" = bl ] &&
+				{
+					debug_msg "Found ${cd_file}"
+					incr_bl_found "${sbe_id}"
+				}
+
+				get_params "${sbe_id}" conf_dirs
+				is_included "${conf_dir}" "${conf_dirs}" &&
+					continue
+
+				reg_fail -fb "${sbe_id}" "Found ${desc} file{} in conf-dir '${conf_dir}' where it doesn't belong."
+				sbe_fatal "${sbe_id}" "${cd_file}"
+			done
+			IFS="${DEFAULT_IFS}"
 		done
-		IFS="${DEFAULT_IFS}"
 	done
-	[ -n "${cs_fatal}" ] && { export -n FAIL_STOP_REQ=1; exit 1; }
+	[ -n "${cd_fail_ids}" ] && reg_fail -fb "${cd_fail_ids}" "Found multiple blockset files{}."
+	[ -n "${cd_fatal}" ] && { export -n FAIL_STOP_REQ=1; exit 1; }
 
 	for sbe_id in ${SET_IDS}
 	do
 		local \
 			run_state='' \
 			sbe_state='' \
-			sbe_path='' \
 			bl_check_res='' \
 			cur_persist_path='' \
 			bl_in_cd=0 \
 			cd_state='' \
+			bl_cd_path='' \
 			bl_file_exists=0 \
+			meta_path_set=0 \
 			dns_check_res=0 \
-			path_1 path_2 s_i_cnt=0 \
 			cur_path='' \
+			cur_path_meta='' \
 			persist_mode='' \
 			persist_dir='' \
+			cs_res='' \
 			set_base_fname="${BLOCKSET_BASE_FNAME:?}-${sbe_id}"
 
 		debug_msg -bf "${sbe_id}" "Checking state of{}."
 
 		assert_set "F_${me}" GLOBAL_ENV_SET || return 1
 
-		get_params "${sbe_id}" run_state cur_path conf_dirs persist_mode persist_dir
-		eval "cs_res=\"\${cs_res_${sbe_id}}\""
+		get_params "${sbe_id}" run_state cur_path cur_path_meta conf_dirs persist_mode persist_dir
+		[ -n "${cur_path_meta}" ] && meta_path_set=1
 
 		# Check persistent files
 		case "${persist_mode}" in manual|managed)
@@ -1587,6 +1657,7 @@ set_blocksets_env()
 				FF_FIRST=1 FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}." "*" "" "${sbe_id}" ||
 				FF_FIRST=1 FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}"  ""  "" "${sbe_id}"
 				set_params "${sbe_id}" cur_persist_path
+				[ -n "${cur_persist_path}" ] && debug_msg "Found ${cur_persist_path}"
 			else
 				log_msg -warn -fb "${sbe_id}" "" "Persistent blockset file can not be used or updated{}."
 			fi
@@ -1595,6 +1666,8 @@ set_blocksets_env()
 		is_included "${sbe_id}" "${active_ids}" && dns_check_res=1
 
 		[ -n "${cur_path}" ] && [ -f "${cur_path}" ] || cur_path=
+		[ -n "${cur_path}" ] ||
+			eval "cur_path=\"\${rd_found_${sbe_id}}\""
 
 		# conf-scripts codes:
 		# 0: all conf-scripts not found
@@ -1606,33 +1679,21 @@ set_blocksets_env()
 			cd_index=$((cd_index+1))
 			is_included "${conf_dir}" "${conf_dirs}" || continue
 			eval "[ -n \"\${cs_found_${sbe_id}_${cd_index}}\" ]" && cd_state=1 || cd_state=0
+			[ -n "${cur_path}" ] ||
+			{
+				eval "bl_cd_path=\"\${bl_found_${sbe_id}_${cd_index}}\""
+				cur_path="${bl_cd_path}"
+			}
 			[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
 			[ "${cs_res}" = "${cd_state}" ] || cs_res=2
 		done
 		: "${cs_res:=0}"
 
-		[ -n "${cur_path}" ] ||
-			# Look for blockset file in all conf-dirs
-			{
-				for conf_dir in ${all_conf_dirs}
-				do
-					FF_FIRST=1 find_files path_1 "${conf_dir}" "${BLOCKSET_BASE_FNAME:?}-${sbe_id}" && s_i_cnt=$((s_i_cnt+1)) && cur_path="${path_1}"
-					FF_FIRST=1 find_files path_2 "${conf_dir}" "${BLOCKSET_BASE_FNAME}-${sbe_id}." "*" && s_i_cnt=$((s_i_cnt+1)) && cur_path="${path_2}"
-				done
-
-				# blockset in conf-dir should only be found once
-				[ "${s_i_cnt}" -gt 1 ] &&
-				{
-					reg_fail -fb "${sbe_id}" "Found ${s_i_cnt} blockset files{} in dnsmasq conf-dirs, expected to find one."
-					sbe_state=1
-				}
-			}
-
-		sbe_path=${cur_path}
+		set_params "${sbe_id}" cur_path
+		local sbe_path="${cur_path}"
 
 		# Check persist blockset
-		[ -z "${sbe_path}" ] && [ -n "${cur_persist_path}" ] &&
-			sbe_path="${cur_persist_path}"
+		: "${sbe_path:="${cur_persist_path}"}"
 
 		# dnsmasq does not read conf-dirs recursively, so only the immediate parent counts
 		[ -n "${sbe_path}" ] &&
@@ -1642,15 +1703,17 @@ set_blocksets_env()
 		}
 
 		# Summarize
-		bl_check_res="${dns_check_res}${bl_file_exists}${cs_res}${bl_in_cd}"
+		bl_check_res="${dns_check_res}${bl_file_exists}${meta_path_set}${cs_res}${bl_in_cd}"
 
 		# 0: running; 3: paused; 4: stopped
+		eval "sbe_state=\"\${sbe_state_${sbe_id}}\""
 		[ "${sbe_state}" = 1 ] ||
 		is_included "${run_state}" "1 2" ||
 			case "${bl_check_res}" in
-				1110|1101) sbe_state=0 ;; # running
-				0100) [ "${sbe_path}" = "${cur_path}" ] && sbe_state=3 || sbe_state=4 ;; # paused / stopped
-				0000) sbe_state=4 ;; # stopped
+				11110|11101) sbe_state=0 ;; # running
+				01100) [ "${sbe_path}" = "${cur_path_meta}" ] && sbe_state=3 || sbe_state=1 ;; # paused / stopped
+				01000) [ "${sbe_path}" = "${cur_persist_path}" ] && sbe_state=4 || sbe_state=1 ;;
+				00000) sbe_state=4 ;; # stopped
 				*) sbe_state=1 ;;
 			esac
 
@@ -1659,14 +1722,14 @@ set_blocksets_env()
 			*)
 				[ "${run_state}" = 1 ] ||
 					reg_fail "Unexpected state '${sbe_state}' for blockset '${sbe_id}' (path '${sbe_path}')." \
-						"DNS:${dns_check_res};file_exists:${bl_file_exists};conf-scripts:${cs_res};in_confdir:${bl_in_cd};"
+						"DNS:${dns_check_res};file_exists:${bl_file_exists};meta_path_set:${meta_path_set};conf-scripts:${cs_res};in_confdir:${bl_in_cd};"
 		esac
 
 		run_state="${sbe_state:-"${run_state}"}"
 
 		debug_msg "${me}: sbe_id:${sbe_id}; run_state:${run_state}; check res:${bl_check_res};"
 
-		set_params "${sbe_id}" run_state cur_path
+		set_params "${sbe_id}" run_state
 	done
 
 	for sbe_id in ${valid_ids}
@@ -1695,7 +1758,7 @@ set_blocksets_env()
 # Env vars:
 #   SBE_STATUS: do not exit on non-critical errors
 #
-# Error codes: 1 - blocksest should be force-stopped; 2 - can not perform the action but should not be force-stopped
+# Error codes: 1 - blockset should be force-stopped; 2 - can not perform the action but should not be force-stopped
 set_blockset_env()
 {
 	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${2} ${1}' to rebuild the ${3}${3:+ }blockset file."; }
@@ -2225,6 +2288,8 @@ try_install_blocksets()
 		cur_path \
 		cur_md5 \
 		\
+		bk_path \
+		\
 		install_path \
 		install_path_ram \
 		install_cnt \
@@ -2253,11 +2318,16 @@ try_install_blocksets()
 	for set_id in ${set_ids}
 	do
 		get_params -f "${me}" "${set_id}" dmsq_instances conf_dirs final_extr_or_cat_stdout install_path install_cnt || { inst_failed "${set_id}"; continue; }
-		get_params "${set_id}" install_in_cd conf_script_log_avail
+		get_params "${set_id}" install_in_cd conf_script_log_avail cur_path bk_path
 
 		log_msg -bf "${set_id}" "Installing{} at ${blue}${install_path}${n_c}"
 
 		get_md5 cur_md5 "${install_path}" || { inst_failed "${set_id}"; continue; }
+
+		case "${cur_path}" in
+			''|"${install_path}"|"${bk_path}") ;;
+			*) rm_if_writable "${set_id}" "${cur_path}"
+		esac
 
 		[ "${install_in_cd}" = 1 ] ||
 		# Make conf-script
@@ -2743,7 +2813,7 @@ unset_metadata()
 
 	for set_id in ${set_ids}
 	do
-		for meta_param in ${META_PARAMS:?}
+		for meta_param in ${META_PARAMS:?} PATH_META
 		do
 			unset "${UNSET_PREFIX}${meta_param}_${set_id}"
 			abl_append unset_dbg "unset ${UNSET_PREFIX}${meta_param}_${set_id}" "${_NL_}"
@@ -2935,6 +3005,7 @@ try_read_blockset_metadata()
 		GBP_PREFIX="${rbm_prefix}" get_params "${set_id}" cur_cnt cur_md5 cur_path
 		[ -n "${cur_path}" ] || return 0
 		some_seen=1
+		[ "${meta_type}" = RAM ] && set_params "${set_id}" cur_path_meta="${cur_path}"
 
 		is_included "${set_id}" "${req_ids}" ||
 		{
@@ -3027,12 +3098,10 @@ try_read_blockset_metadata()
 		[ "${CUR_ACT}" != status ] &&
 		case "${meta_type}" in
 			PERSIST)
-				set +f
 				for set_id in ${meta_ids}
 				do
-					rm_if_writable "${set_id}" "${meta_file}" "${meta_file%/*}/${BLOCKSET_BASE_FNAME:?}"*
-				done
-				set -f ;;
+					rm_if_writable "${set_id}" "${meta_file}" "${meta_file%/*}/${BLOCKSET_BASE_FNAME:?}-${set_id}"
+				done ;;
 			*) rm -f "${meta_file}"
 		esac
 	}
