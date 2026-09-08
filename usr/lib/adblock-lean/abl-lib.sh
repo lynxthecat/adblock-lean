@@ -327,7 +327,7 @@ do_create_addnmounts()
 				path_ram=${ABL_RUN_DIR:?}/${bl_full_fname}
 				process_addnm "${dmsq_instances}" "${path_ram}" "final blockset compression or blockset loading by multiple dnsmasq instances" || return 1 ;;
 			*)
-				first_conf_dir="${conf_dirs%% *}"
+				first_conf_dir="${conf_dirs%%[ 	]*}"
 				is_valid_dir "${first_conf_dir}" || return 1
 				ignore_paths="${first_conf_dir}/${bl_full_fname}"
 
@@ -608,7 +608,8 @@ do_setup()
 
 	if [ "${REPLY}" = n ]
 	then
-		FORCE_STOP_ALL=1 do_stop
+		KEEP_PERSIST=0 FORCE_STOP_ALL=1 do_stop
+		[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" "run_state=4"
 		# Remove and forget old configs
 		rm -f "${META_FILE}"
 		local set_id
@@ -622,8 +623,10 @@ do_setup()
 		do_gen_blockset_config _ || return 2
 	fi
 
+	local ok_ids
 	load_config &&
-	set_all_env || return 3
+	set_all_env ok_ids "${SET_IDS}" &&
+	subtract_a_from_b "${ok_ids}" "${SET_IDS}" || return 3
 
 	# enable the service, update the cron job
 	if rc_enabled
@@ -1498,18 +1501,24 @@ parse_config()
 	done
 	IFS="${DEFAULT_IFS}"
 
-	# remove trailing '/' from dir paths
+	# remove trailing '/' from dir paths; normalize conf_dirs spaces
 	[ "${cfg_id}" = global ] ||
 	{
-		local dir persist_dir c_dirs conf_dirs
+		local dir persist_dir c_dirs conf_dirs inst dmsq_i dmsq_instances
 		get_params "${cfg_id}" persist_dir
 		set_params "${cfg_id}" persist_dir="${persist_dir%/}"
 		get_params "${cfg_id}" c_dirs=conf_dirs
 		for dir in ${c_dirs}
 		do
-			abl_append conf_dirs "${dir%/}"
+			add2list conf_dirs "${dir%/}"
 		done
-		set_params "${cfg_id}" conf_dirs
+		get_params "${cfg_id}" dmsq_i=dmsq_instances
+		for inst in ${dmsq_i}
+		do
+			add2list dmsq_instances "${inst}"
+		done
+
+		set_params "${cfg_id}" conf_dirs dmsq_instances
 	}
 
 	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0

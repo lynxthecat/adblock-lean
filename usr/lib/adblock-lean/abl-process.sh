@@ -115,7 +115,7 @@ test_fetch_doms()
 
 	[ -n "${all_urls}" ] || return 0
 
-	reg_action "Testing connectivity." || exit 1
+	reg_action "Testing connectivity."
 	debug_msg "URLs:${_NL_}${all_urls}"
 
 	doms="$(
@@ -640,7 +640,7 @@ gen_blocksets()
 		conn_check_req \
 		skip_load_stop \
 		file_to_bk \
-		bk_file \
+		bk_path \
 		bk_ext \
 		bk_cnt \
 		final_compr_ext \
@@ -880,7 +880,7 @@ gen_blocksets()
 		set_params "${set_id}" skip_load_stop
 
 		bk_cnt=
-		bk_file=
+		bk_path=
 		file_to_bk=
 		if [ -n "${cur_path}" ] && [ -n "${cur_cnt}" ]
 		then
@@ -898,23 +898,23 @@ gen_blocksets()
 		} &&
 		is_dir_writable "${set_id}" "${file_to_bk%/*}"
 		then
-			bk_file="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
-			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}." &&
-			mv_blockset "${file_to_bk}" "${bk_file}" "${INTERM_COMPR_TO_FILE}" "${set_id}" ||
+			bk_path="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
+			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}."
+			mv_blockset "${file_to_bk}" "${bk_path}" "${INTERM_COMPR_TO_FILE}" "${set_id}" ||
 			{
 				reg_fail "Failed to create backup of current blockset file '${file_to_bk}'."
 				rm_if_writable "${set_id}" "${file_to_bk}"
-				bk_file=
+				bk_path=
 				bk_cnt=
 			}
 		elif [ -n "${file_to_bk}" ]
 		then
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
-			bk_file="${file_to_bk}"
+			bk_path="${file_to_bk}"
 		else
 			reg_msg -2 -fb "${set_id}" "No existing blockset file found{}."
 		fi
-		set_params "${set_id}" bk_file bk_cnt
+		set_params "${set_id}" bk_path bk_cnt
 	done
 
 	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${PROC_SET_IDS}"
@@ -1007,10 +1007,24 @@ gen_blockset()
 			END {print A "\n"}'
 	}
 
+	rm_indexed_part()
+	{
+		local index part_file index_refs
+		for index in ${2}
+		do
+			eval "index_refs=\"\${INDEX_REFS_${index}}\""
+			subtract_a_from_b "${1}" "${index_refs}" index_refs
+			export -n "INDEX_REFS_${index}=${index_refs}"
+			[ -n "${index_refs}" ] && continue
+			get_part_process_path part_file "${index}"
+			rm -f "${part_file}"
+		done
+	}
+
 	# 1 - part indexes
 	print_set_parts()
 	{
-		local index index_refs part_file \
+		local index index_refs part_file rv \
 			indexes="${1:?}"
 
 		for index in ${indexes}
@@ -1019,7 +1033,7 @@ gen_blockset()
 			${PART_EXTR_OR_CAT_STDOUT:?} "${part_file}"
 			rv=${?}
 			eval "index_refs=\"\${INDEX_REFS_${index}}\""
-			[ -z "${index_refs}" ] && rm -f "${1}"
+			[ -z "${index_refs}" ] && rm -f "${part_file}"
 			[ ${rv} = 0 ] || { printf ''; reg_fail "Failed command: '${PART_EXTR_OR_CAT_STDOUT:?} ${part_file}'."; return 1; }
 		done
 	}
@@ -1034,7 +1048,6 @@ gen_blockset()
 		allow_filter_or_cat="${CAT_CMD:?}" \
 		pack_cmd="pack_entries_sed" \
 		final_compr_or_cat_stdout \
-		install_1_instance \
 		use_allowlist use_ipv4_blocklist \
 		merged_allow_f \
 		proc_dir \
@@ -1060,11 +1073,10 @@ gen_blockset()
 		final_compr_or_cat_stdout || return 1
 
 	get_params "${set_id}" \
-		install_1_instance \
 		test_domains \
 		whitelist_mode
 
-	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f}; install_1_instance: ${install_1_instance};"
+	debug_msg "${me}: ${set_id}: set_indexes:${set_indexes}; out_f:${out_f};"
 
 	case "${PART_EXTR_OR_CAT_STDOUT:?}" in
 		"${CAT_CMD:?}") ;;
@@ -1080,7 +1092,7 @@ gen_blockset()
 
 	# shellcheck disable=SC2034
 	# Process results
-	local part_file part_cnt part_size_B part_size_B_human list_cnt_raw list_cnt_raw_human part_size_B index part_type print_id index_refs \
+	local part_cnt part_size_B part_size_B_human list_cnt_raw list_cnt_raw_human part_size_B index part_type print_id index_refs \
 		set_cnt_raw=0 set_size_B_raw=0 allow_cnt_raw=0 block_cnt_raw=0 ipv4_block_cnt_raw=0 \
 		set_cnt_raw_human set_size_B_raw_human set_size_B set_size_B_human \
 		block_indexes allow_indexes ipv4_block_indexes
@@ -1104,17 +1116,12 @@ gen_blockset()
 		# This second part size check is necessary because download-time limit is against max of all sets
 		[ $(( part_size_B <= max_part_size*1024)) = 1 ] ||
 		{
-			get_part_process_path part_file "${index}"
-			rm -f "${part_file}"
+			rm_indexed_part "${set_id}" "${index}"
 			part_size_exceeded "${print_id}" "${max_part_size}"
 			if [ "${blockset_part_failed_action}" = STOP ]
 			then
 				log_msg -ob "${set_id}" "blockset_part_failed_action is set to 'STOP'. Stopping processing{}."
-				for index in ${set_indexes}
-				do
-					get_part_process_path part_file "${index}"
-					rm -f "${part_file}"
-				done
+				rm_indexed_part "${set_id}" "${set_indexes}"
 				return 1
 			elif [ "${set_indexes}" = "${index}" ]
 			then
@@ -1244,10 +1251,8 @@ gen_blockset()
 				printf '\n'
 			fi
 
-			# add the test domain in single-instance mode
-			[ "${install_1_instance}" = 1 ] &&
-				printf '%s\n' "address=/${set_id}-${ABL_TEST_DOM_BASE}/#"
-			:
+			# add the test domain, keyed on the blockset ID
+			printf '%s\n' "address=/${set_id}-${ABL_TEST_DOM_BASE}/#"
 		} |
 
 		# limit size
@@ -1300,7 +1305,7 @@ gen_blockset()
 	fi
 
 	# check the final blockset with dnsmasq --test
-	reg_action "Checking the processed blockset file with '${DMSQ_CMD:?} --test'." || return 1
+	reg_action "Checking the processed blockset file with '${DMSQ_CMD:?} --test'."
 
 	rm -f "${ERR_F}"
 

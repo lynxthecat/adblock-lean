@@ -572,7 +572,7 @@ try_mkdir()
 pick_opt()
 {
 	unset REPLY
-	update_action_file "Waiting for user input in console" || exit 1
+	update_action_file "Waiting for user input in console"
 	while :
 	do
 		printf %s "${lblue}${1//"|"/"${n_c}|${lblue}"}${n_c}: " > "${MSGS_DEST}"
@@ -635,6 +635,32 @@ config_load_a()
 		{ reg_fail "Failed to load '${1}' config."; return 1; }
 }
 
+get_id_from_file()
+{
+	local gif_fname gif_id gif_prefix gif_ext gif_desc
+	[ -n "${2}" ] || return 0
+	unset_vars "${1}"
+	split_path _ gif_fname gif_ext "${2}"
+	case "${3}" in
+		cfg|bl)
+			case "${3}" in
+				cfg) gif_desc=config gif_prefix=blockset ;;
+				bl) gif_desc=blockset gif_prefix="${BLOCKSET_BASE_FNAME:?}" ;;
+			esac
+			gif_id="${gif_fname#"${gif_prefix}"}"
+			gif_id="${gif_id#"-"}"
+			;;
+		cs) gif_desc=conf-script gif_id="${gif_ext}" ;;
+		*) bad_args get_id_from_file "${@}"
+	esac
+	is_alphanum "${gif_id}" ||
+	{
+		reg_fail "Invalid blockset name '${gif_id}' in ${gif_desc} file '${2}'. Only English letters, numbers and underlines are allowed."
+		return 1
+	}
+	export -n "${1}=${gif_id}"
+}
+
 # Looks for blockset-*.conf files and populates ${SET_IDS}
 # 1 (optional): var name to output found paths (newline-separated)
 find_set_configs()
@@ -643,11 +669,9 @@ find_set_configs()
 	append_set_id()
 	{
 		local cfg_id
-		split_path _ cfg_id _  "${1}"
-		cfg_id="${cfg_id#"blockset-"}"
-		is_alphanum "${cfg_id}" ||
+		get_id_from_file cfg_id "${1}" cfg ||
 		{
-			reg_fail "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
+			log_msg "Ignoring the file."
 			return 0
 		}
 		add2list SET_IDS "${cfg_id}"
@@ -698,6 +722,20 @@ split_path()
 	export -n "${sp_dir_out_var}=${sp_dir}" "${sp_fname_out_var}=${sp_fname}" "${sp_ext_out_var}=${sp_ext}"
 }
 
+is_persist()
+{
+	local persist_dir
+	get_params "${2}" persist_dir
+	[ -n "${persist_dir}" ] &&
+	[ -n "${1%/*}" ] &&
+	[ "${1%/*}" = "${persist_dir}" ] &&
+	case "${persist_dir}/" in
+		"${ABL_RUN_DIR}/"*|"${ABL_TMP_DIR}/"*) false ;;
+		*) :
+	esac &&
+	! is_included "${persist_dir}" "${R_CONF_DIRS} ${C_CONF_DIRS}"
+}
+
 is_valid_dir()
 {
 	local fail_cmd="reg_fail"
@@ -710,18 +748,25 @@ is_valid_dir()
 
 is_dir_writable()
 {
-	local persist_dir persist_mode
+	local persist_mode conf_dirs dir_is_persist
 	is_valid_dir -q "${2}" || return 1
-	get_params "${1}" persist_dir persist_mode
+	get_params "${1}" persist_mode conf_dirs
+	is_persist "${2}/dummy" "${1}" && dir_is_persist=1
 
-	{ [ -n "${persist_dir}" ] && [ "${2}" != "${persist_dir}" ]; } ||
-	{ [ "${persist_mode}" = managed ] && [ "${KEEP_PERSIST}" != 1 ]; } ||
 	{
-		[ -z "${persist_dir}" ] &&
-		case "${2}" in
-			/tmp|/tmp/*|"${ABL_RUN_DIR:?}"*) : ;;
-			*) false
-		esac
+		[ -n "${dir_is_persist}" ] &&
+		[ "${persist_mode}" = managed ] &&
+		[ "${KEEP_PERSIST}" != 1 ]
+	} ||
+	{
+		[ -z "${dir_is_persist}" ] &&
+		{
+			is_included "${2}" "/tmp ${ABL_RUN_DIR:?} ${conf_dirs}" ||
+			case "${2}" in
+				/tmp/*|"${ABL_RUN_DIR:?}/"*) : ;;
+				*) false
+			esac
+		}
 	}
 }
 
@@ -746,13 +791,13 @@ rm_if_writable()
 
 rm_bk()
 {
-	local set_id bk_file set_ids="${*:-"${SET_IDS}"}"
+	local set_id bk_path set_ids="${*:-"${SET_IDS}"}"
 	for set_id in ${set_ids}
 	do
-		get_params "${set_id}" bk_file
-		[ -n "${bk_file}" ] &&
-		rm_if_writable "${set_id}" "${bk_file}" &&
-		set_params "${set_id}" "bk_file="
+		get_params "${set_id}" bk_path
+		[ -n "${bk_path}" ] &&
+		rm_if_writable "${set_id}" "${bk_path}" &&
+		set_params "${set_id}" "bk_path="
 	done
 }
 
@@ -760,13 +805,13 @@ rm_bk()
 # KEEP_PERSIST, KEEP_BK
 rm_blocksets()
 {
-	local set_id install_path cur_path cur_persist_path persist_mode rm_enum rm_path rm_pr bk_file \
+	local set_id install_path cur_path cur_persist_path persist_mode persist_dir rm_enum rm_path rm_pr bk_path dir \
 		rm_rv=0 \
 		set_ids="${*:-"${SET_IDS}"}"
 
 	for set_id in ${set_ids}
 	do
-		get_params "${set_id}" install_path cur_path bk_file persist_mode cur_persist_path
+		get_params "${set_id}" install_path cur_path bk_path persist_mode persist_dir cur_persist_path
 
 		[ "${KEEP_PERSIST}" = 1 ] &&
 		{
@@ -775,21 +820,36 @@ rm_blocksets()
 			cur_persist_path=
 		}
 
-		[ -n "${KEEP_BK}" ] &&
+		[ "${KEEP_BK}" = 1 ] &&
 		{
-			[ "${cur_path}" = "${bk_file}" ] && cur_path=
-			[ "${cur_persist_path}" = "${bk_file}" ] && cur_persist_path=
+			[ "${cur_path}" = "${bk_path}" ] && cur_path=
+			[ "${cur_persist_path}" = "${bk_path}" ] && cur_persist_path=
 		}
 
-		[ -n "${install_path}${cur_path}${cur_persist_path}" ] || continue
+		[ -n "${install_path}${cur_path}${cur_persist_path}${persist_dir}" ] || continue
 		[ -n "${cur_path}${cur_persist_path}" ] && reg_msg -fb "${set_id}" "Removing any existing blockset files${rm_pr}{}."
 		for rm_enum in cur install cur_persist
 		do
 			eval "rm_path=\"\${${rm_enum}_path}\""
 			[ -n "${rm_path}" ] || continue
 			[ "${rm_enum}" = install ] || set_params "${set_id}" "${rm_enum}_path"=
-			rm_if_writable "${set_id}" "${rm_path}" "${rm_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}"
+
+			# the persistent metadata file only ever sits next to the persistent blockset
+			local persist_meta=
+			is_persist "${rm_path}" "${set_id}" &&
+				persist_meta="${rm_path%/*}/${META_BASE_FNAME_PERSIST:?}-${set_id}"
+
+			rm_if_writable "${set_id}" "${rm_path}" "${persist_meta}" "${rm_path%/*}/${BLOCKSET_BASE_FNAME:-???}" # removes legacy file as well
 		done
+		[ -n "${persist_dir}" ] && rm_if_writable "${set_id}" "${persist_dir}/${META_BASE_FNAME_PERSIST:?}-${set_id}" "${persist_dir}/${BLOCKSET_BASE_FNAME:-???}-${set_id}"
+
+		set +f
+		for dir in ${ABL_RUN_DIR:?} ${C_CONF_DIRS} ${R_CONF_DIRS} /tmp/dnsmasq.d /tmp/dnsmasq.cfg*.d
+		do
+			[ -n "${dir}" ] || continue
+			rm -f "${dir}/${BLOCKSET_BASE_FNAME:?}-${set_id}" "${dir}/${BLOCKSET_BASE_FNAME:?}-${set_id}."*
+		done
+		set -f
 	done
 
 	return ${rm_rv}
@@ -808,9 +868,7 @@ rm_conf_scripts()
 		do
 			rm -f "${dir}/${CS_BASE_FNAME}.${set_id}"
 			# Leftover legacy files
-			set +f
-			rm -f "${dir}/${CS_BASE_FNAME}" "${dir}/${BLOCKSET_BASE_FNAME:-???}"* "${dir}/.abl-extract_blocklist"
-			set -f
+			rm -f "${dir}/${CS_BASE_FNAME}" "${dir}/.abl-extract_blocklist"
 		done
 	done
 
@@ -1146,7 +1204,7 @@ reg_msg()
 		done
 		IFS="${DEFAULT_IFS}"
 		[ -n "${report_req}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_success && report_success "${msgs_nc//"${_DELIM_}"/"${_NL_}"}"
-		[ -n "${action_req}" ] && { update_action_file "${msgs_nc//"${_DELIM_}"/" "}" || { dbg_on; return 1; }; }
+		[ -n "${action_req}" ] && update_action_file "${msgs_nc//"${_DELIM_}"/" "}"
 	fi
 
 	dbg_on
@@ -1233,7 +1291,7 @@ dmsq_stop_restart_shared()
 		:
 	else
 		# fall back to all instances
-		reg_action -purple "" "${cmd_pr} all dnsmasq instances." || return 1
+		reg_action -purple "" "${cmd_pr} all dnsmasq instances."
 		[ -n "${set_ids}" ] && rv=1
 		/etc/init.d/dnsmasq "${cmd}" &> /dev/null ||
 		{
@@ -1246,7 +1304,7 @@ dmsq_stop_restart_shared()
 
 	for instance in ${d_instances}
 	do
-		reg_action -purple "" "${cmd_pr} dnsmasq instance ${lblue}${instance}${n_c}." || return 1
+		reg_action -purple "" "${cmd_pr} dnsmasq instance ${lblue}${instance}${n_c}."
 
 		if /etc/init.d/dnsmasq "${cmd}" "${instance}" &> /dev/null
 		then
@@ -1303,20 +1361,8 @@ restart_dnsmasq()
 	then
 		cnt_lines instances_cnt "${instances// /"${_NL_}"}"
 		# 30 <= res_attempts <= 90, each extra instance after first adds 15 attempts
-		res_attempts=$(seq 1 $((30 + (instances_cnt-1)*15*( (instances_cnt-1)*15 <= 60 ) + 60*( (instances_cnt-1)*15 > 60 ) )) )
-		for i in ${res_attempts:-1 2 3 4 5}
-		do
-			export -n R_PROCESSED=
-			PDR_QUIET=1 parse_dmsq_runtime
-			[ ${?} = 1 ] && break
-			for instance in ${instances}
-			do
-				eval "[ \"\${RUNNING_${instance}}\" = 1 ]" &&
-					subtract_a_from_b "${instance}" "${instances}" instances
-			done
-			[ -z "${instances}" ] && break
-			sleep 1
-		done
+		res_attempts=$((30 + (instances_cnt-1)*15*( (instances_cnt-1)*15 <= 60 ) + 60*( (instances_cnt-1)*15 > 60 ) ))
+		parse_dmsq_runtime "${res_attempts}" instances "${instances}"
 
 		for instance in ${instances}
 		do
@@ -1940,7 +1986,7 @@ init_act()
 
 	if [ -n "${act_pr}" ]
 	then
-		reg_action -1 -purple "" "${act_pr}" || exit 1
+		reg_action -1 -purple "" "${act_pr}"
 	elif [ -n "${act_pr_short}" ]
 	then
 		update_action_file "${act_pr_short}"
@@ -2300,7 +2346,8 @@ do_rm_blockset_config()
 
 	is_known_set_id "${set_id}" rm_blockset_config &&
 	get_cfg_path cfg_path "${set_id}" &&
-	read_blockset_metadata "${META_FILE:?}" "${set_id}" || return 1
+	read_blockset_metadata "${META_FILE:?}" "${set_id}"
+	case ${?} in 0|2) ;; *) return 1; esac
 
 	get_params "${set_id}" persist_dir
 	[ -n "${persist_dir}" ] &&
@@ -2323,7 +2370,7 @@ gen_global_config()
 	local CUR_ACT=gen_global_config
 	local CUR_CMD=${CUR_ACT}
 	init_act "${CUR_ACT}" &&
-	reg_action -purple "" "Generating new default global config for adblock-lean." || return 1
+	reg_action -purple "" "Generating new default global config for adblock-lean."
 
 	# create cron job
 	upd_schedule=
@@ -2364,7 +2411,7 @@ setup()
 	# set luci feedback vars to failed, unset later upon success
 	luci_pkgs_install_failed=1 luci_cron_job_creation_failed=1
 
-	local CUR_ACT=setup
+	local CUR_ACT=setup CUR_CMD=setup
 	init_act "${CUR_ACT}" || return 1
 	do_setup
 }
@@ -2415,8 +2462,9 @@ upd_cron_job()
 create_addnmounts()
 {
 	local CUR_ACT=create_addnmounts
+	local CUR_CMD="${CUR_ACT}"
 	init_act "${CUR_ACT}" &&
-	set_all_env &&
+	set_global_env &&
 	do_create_addnmounts
 }
 
@@ -2426,7 +2474,7 @@ select_dnsmasq_instances()
 	local \
 		CUR_ACT="${me}" \
 		CUR_CMD="${me}" \
-		set_id set_ids set_ids_arg \
+		set_id set_ids set_ids_arg ok_ids \
 		cfg_path \
 		upd_cfg \
 		dmsq_instances conf_dirs
@@ -2435,10 +2483,11 @@ select_dnsmasq_instances()
 	init_act "${CUR_ACT}" &&
 	set_ids_arg="${*:-"${SET_IDS}"}" &&
 	get_valid_set_ids set_ids "${set_ids_arg}" "${me}" &&
-	set_all_env "${set_ids}" &&
-	do_select_dnsmasq_instances "${set_ids}" || return 1
+	set_all_env ok_ids "${set_ids}" &&
+	subtract_a_from_b "${ok_ids}" "${set_ids}" &&
+	do_select_dnsmasq_instances "${ok_ids}" || return 1
 
-	for set_id in ${set_ids}
+	for set_id in ${ok_ids}
 	do
 		get_cfg_path cfg_path "${set_id}" &&
 		get_params -f "${me}" "${set_id}" dmsq_instances conf_dirs &&
@@ -2505,7 +2554,7 @@ do_start()
 	if [ "${RANDOM_DELAY}" = "1" ]
 	then
 		random_delay_mins=$(( ${RANDOM:-0} % 61))
-		reg_action -1 -purple "Delaying automatic lists update by ${random_delay_mins} minutes (thundering herd prevention)." || return 1
+		reg_action -1 -purple "Delaying automatic lists update by ${random_delay_mins} minutes (thundering herd prevention)."
 		sleep "${random_delay_mins}m" &
 		wait ${!}
 	fi
@@ -2523,7 +2572,7 @@ do_start()
 		cur_cnt \
 		install_path \
 		final_compr_to_file \
-		bk_file \
+		bk_path \
 		bk_cnt \
 		set_id set_ids \
 		set_ids_arg="${*:-"${SET_IDS}"}"
@@ -2534,7 +2583,7 @@ do_start()
 
 	get_uptime_cs initial_uptime_cs
 
-	set_all_env "${set_ids}" || exit 1
+	set_all_env set_ids "${set_ids}" || exit 1
 
 	debug_msg "BLOCKSETS_TO_GEN:${BLOCKSETS_TO_GEN};BLOCKSETS_TO_INSTALL:${BLOCKSETS_TO_INSTALL};"
 
@@ -2570,13 +2619,13 @@ do_start()
 		for set_id in ${fail_ids}
 		do
 			local bl_pr="blockset file from backup{}"
-			get_params "${set_id}" bk_file bk_cnt final_compr_to_file install_path
-			if [ -f "${bk_file}" ] && [ -n "${bk_cnt}" ]
+			get_params "${set_id}" bk_path bk_cnt final_compr_to_file install_path
+			if [ -f "${bk_path}" ] && [ -n "${bk_cnt}" ]
 			then
 				log_msg -fb "${set_id}" "" "Preparing to restore ${bl_pr}."
 
 				set_params "${set_id}" "install_cnt=${bk_cnt}"
-				if mv_blockset "${bk_file}" "${install_path}" "${final_compr_to_file}" "${set_id}"
+				if mv_blockset "${bk_path}" "${install_path}" "${final_compr_to_file}" "${set_id}"
 				then
 					add2list BLOCKSETS_TO_INSTALL "${set_id}"
 				else
@@ -2662,7 +2711,8 @@ gen_persist_blockset()
 	done
 
 	[ -n "${ok_set_ids}" ] &&
-	create_addnmounts &&
+	set_all_env ok_set_ids "${ok_set_ids}" &&
+	do_create_addnmounts &&
 		FORCE_PERSIST_INSTALL=1 do_start "${ok_set_ids}"
 }
 
@@ -2671,8 +2721,7 @@ gen_persist_blockset()
 stop()
 {
 	local stop_rv ASSERT_NOEXIT=1 \
-		CUR_ACT=stop
-	local CUR_CMD=${CUR_ACT}
+		CUR_ACT=stop CUR_CMD=stop
 	init_act "${CUR_ACT}" &&
 	do_stop "${@}"
 	stop_rv=${?}
@@ -2702,37 +2751,28 @@ do_stop()
 
 	[ -n "${CONFIG_LOADED}" ] || load_config
 
+	parse_dmsq_cfg
+
 	set_ids="${*:-"${SET_IDS}"}"
 	[ -n "${set_ids}" ] || force_stop_all=1
 
-	[ -z "${force_stop_all}" ] &&
-	{
-		get_valid_set_ids set_ids "${set_ids}" "do_stop" || return 1
+	[ -n "${SET_IDS}" ] && [ -z "${METADATA_READ}" ] && read_blockset_metadata "${META_FILE:?}" "${SET_IDS}"
 
+	[ -z "${force_stop_all}" ] &&
+		{ get_valid_set_ids set_ids "${set_ids}" "do_stop" || return 1; } &&
 		[ -n "${CONFIG_LOADED}" ] &&
+		[ -n "${C_PROCESSED}" ] &&
 		{
-			[ -n "${GLOBAL_ENV_SET}" ] ||
-			set_global_env
-		} &&
-		stop_blocksets "${set_ids}" &&
-			return 0
-	}
+			[ -n "${R_PROCESSED}" ] || parse_dmsq_runtime 3
+			stop_blocksets "${set_ids}" &&
+				return 0
+		}
 
 	reg_action -1 -purple "" "Stopping adblocking for any adblock-lean blocksets."
 
+	[ -n "${R_PROCESSED}" ] || parse_dmsq_runtime 1
 	set +f
-	rm -f "${META_FILE}" "${ABL_RUN_DIR:?}/${BLOCKSET_BASE_FNAME:-???}"*
-	set -f
-
-	[ -n "${SET_IDS}" ] && [ -n "${CONFIG_LOADED}" ] &&
-	{
-		rm_conf_scripts
-		rm_bk
-	}
-
-	parse_dmsq_cfg
-
-	set +f
+	rm -f "${ABL_RUN_DIR:?}/${BLOCKSET_BASE_FNAME:-???}"*
 	for dir in ${C_CONF_DIRS} ${R_CONF_DIRS} /tmp/dnsmasq.d /tmp/dnsmasq.cfg*.d
 	do
 		[ -n "${dir}" ] || continue
@@ -2740,11 +2780,21 @@ do_stop()
 	done
 	set -f
 
+	[ -n "${SET_IDS}" ] && KEEP_PERSIST="${KEEP_PERSIST:-1}" rm_blocksets "${SET_IDS}"
+
+	rm -f "${META_FILE}"
+
+	[ -n "${SET_IDS}" ] && [ -n "${CONFIG_LOADED}" ] &&
+	{
+		rm_conf_scripts
+		rm_bk
+	}
+
 	restart_dnsmasq "" # all dnsmasq instances
 
 	[ -n "${SET_IDS}" ] &&
 	{
-		unset_metadata "${set_ids}"
+		unset_metadata "${SET_IDS}"
 		commit_metadata
 	}
 
@@ -2760,18 +2810,20 @@ stop_blocksets()
 		stop_rv \
 		cur_path \
 		run_state \
+		conf_dirs \
 		set_ids="${1}"
 
 	[ -n "${set_ids}" ] || return 0
 
 	for set_id in ${set_ids}
 	do
-		get_params "${set_id}" run_state
+		get_params "${set_id}" run_state conf_dirs
 		[ "${run_state}" = 4 ] &&
 		{
 			[ "${CUR_ACT}" = stop ] && reg_msg -fb "${set_id}" "Adblocking is already stopped{}."
 			continue
 		}
+		[ -n "${conf_dirs}" ] || { reg_fail -fb "${set_id}" "No conf-dirs registered{}."; return 1; }
 		add2list stop_ids "${set_id}"
 	done
 
@@ -2858,7 +2910,7 @@ status()
 	then
 		reg_fail "No valid blockset IDs specified."
 		status_rv=1
-	elif ! set_blocksets_env "${set_ids}"
+	elif ! set_blocksets_env _ "${set_ids}"
 	then
 		status_rv=1
 	else
@@ -2922,7 +2974,7 @@ pause_resume()
 				stop_blocksets "${2}" || exit 1 ;;
 			resume)
 				rm_conf_scripts "${2}"
-				rm_blocksets "${2}"
+				KEEP_PERSIST=1 rm_blocksets "${2}"
 				unset_param_vars "${2}"
 		esac
 	}
@@ -2940,13 +2992,14 @@ pause_resume()
 		act_ok_ids \
 		act_fail_ids \
 		extra_ids \
+		extra_ok_ids \
+		extra_fail_ids \
 		\
 		set_id \
 		run_state \
 		cur_path \
 		cur_cnt \
 		install_path \
-		install_1_instance \
 		pause_path \
 		state_ok_pr \
 		state_changed_pr \
@@ -2956,7 +3009,7 @@ pause_resume()
 		set_ids_arg="${*:-"${SET_IDS?}"}"
 
 	get_valid_set_ids set_ids "${set_ids_arg}" "${cmd}" &&
-	set_all_env "${set_ids}" || return 1
+	set_all_env set_ids "${set_ids}" || return 1
 
 	case "${cmd}" in
 		pause)
@@ -3001,7 +3054,7 @@ pause_resume()
 
 		log_msg -fb "${set_id}" "Preparing to ${cmd} adblocking{}."
 
-		get_params "${set_id}" final_compr_to_file install_1_instance
+		get_params "${set_id}" final_compr_to_file
 
 		case "${cmd}" in
 			pause)
@@ -3010,8 +3063,7 @@ pause_resume()
 			resume)
 				mv_blockset "${cur_path}" "${install_path}" "${final_compr_to_file}" "${set_id}" &&
 				set_params "${set_id}" "install_cnt=${cur_cnt}" ;;
-		esac &&
-		set_params "${set_id}" cur_1_instance="${install_1_instance}" ||
+		esac ||
 			{ add2list prep_fail_ids "${set_id}"; continue; }
 
 		add2list prep_ok_ids "${set_id}"
@@ -3020,7 +3072,7 @@ pause_resume()
 	[ -n "${prep_fail_ids}" ] &&
 	{
 		reg_fail -fb "${prep_fail_ids}" "Failed to ${cmd} adblocking{}."
-		ASSERT_NOEXIT=1 KEEP_BK=0 KEEP_PERSIST=0 stop_blocksets "${prep_fail_ids}" || exit 1
+		ASSERT_NOEXIT=1 KEEP_BK=0 stop_blocksets "${prep_fail_ids}" || exit 1
 	}
 
 	[ -n "${prep_ok_ids}" ] &&
@@ -3032,7 +3084,7 @@ pause_resume()
 			pause)
 				restart_dnsmasq 3 act_ok_ids "${prep_ok_ids}"
 				get_affected_set_ids extra_ids "${act_ok_ids}"
-				[ -z "${extra_ids}" ] || check_active_blocksets _ "${extra_ids}" 25 || return 1
+				[ -z "${extra_ids}" ] || check_active_blocksets extra_ok_ids "${extra_ids}" 25
 				;;
 		esac
 
@@ -3042,10 +3094,12 @@ pause_resume()
 		add2list ok_ids "${act_ok_ids}"
 
 		subtract_a_from_b "${act_ok_ids}" "${prep_ok_ids}" act_fail_ids
-		[ -n "${act_fail_ids}" ] &&
+		subtract_a_from_b "${extra_ok_ids}" "${extra_ids}" extra_fail_ids
+		[ -n "${act_fail_ids}${extra_fail_ids}" ] &&
 		{
-			reg_fail -fb "${act_fail_ids}" "Failed to ${cmd} adblocking{}."
-			ASSERT_NOEXIT=1 KEEP_BK=0 KEEP_PERSIST=0 do_bail "${cmd}" "${act_fail_ids}"
+			[ -n "${act_fail_ids}" ] && reg_fail -fb "${act_fail_ids}" "Failed to ${cmd} adblocking{}."
+			[ -n "${extra_fail_ids}" ] && reg_fail -fb "${extra_fail_ids}" "Active blockset check failed{}."
+			ASSERT_NOEXIT=1 KEEP_BK=0 do_bail "${cmd}" "${act_fail_ids} ${extra_fail_ids}"
 		}
 	}
 
@@ -3337,7 +3391,7 @@ disable()
 		rm_cron_job
 		rc_disable && ! rc_enabled ||
 			{ reg_fail "Failed to disable the adblock-lean service"; local rv=1; }
-		stop
+		STOP_NOEXIT=1 stop
 	else
 		reg_msg "The adblock-lean service is already disabled."
 	fi
