@@ -176,6 +176,8 @@ test_exp() { [ "$(( ${1} ))" = 1 ];  }
 
 set_int() { : "$(( ${1} ))"; }
 
+incr() { : "$(( ${1} = ${1} + ${2:-1} ))"; }
+
 trim_spaces()
 {
 	local tr_in tr_out
@@ -499,7 +501,7 @@ read_str_from_file()
 	while :
 	do
 		rs_probe='' rs_too_big='' rs_read_failed=''
-		rs_attempt=$((rs_attempt+1))
+		incr rs_attempt
 		[ "${rs_attempt}" -le "${rs_attempts}" ] || { rs_read_failed=1; break; }
 		[ "${rs_attempt}" = 1 ] || sleep 1
 
@@ -1501,7 +1503,7 @@ wait_on_pids() {
 		pids=${pids_tmp}
 		sleep 1 &
 		wait ${!}
-		i=$((i+1))
+		incr i
 	done
 	return 1
 }

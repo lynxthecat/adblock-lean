@@ -519,7 +519,7 @@ parse_dmsq_runtime()
 	unset_vars "${2}"
 	while :
 	do
-		i=$((i+1))
+		incr i
 		pdr_quiet=
 		[ "${i}" -le "${n}" ] || [ -n "${PDR_QUIET}" ] && pdr_quiet=1
 		export -n R_PROCESSED=
@@ -1067,7 +1067,7 @@ do_select_dnsmasq_instances() {
 				get_pr_devs devs_pr "${instance}"
 				reg_msg "${index}: Instance '${orange}${instance}${n_c}', ${devs_pr}"
 				abl_append indexes "${index}"
-				index=$((index+1))
+				incr index
 			done
 		fi
 	fi
@@ -1470,7 +1470,7 @@ set_blocksets_env()
 {
 	incr_bl_found()
 	{
-		set_int "bl_found_cnt_${1} = bl_found_cnt_${1} + 1"
+		incr "bl_found_cnt_${1}"
 		test_exp "bl_found_cnt_${1} > 1" &&
 			{ sbe_fatal "${1}"; add2list cd_fail_ids "${1}"; }
 	}
@@ -1573,7 +1573,7 @@ set_blocksets_env()
 	cd_index=0
 	for conf_dir in ${all_conf_dirs}
 	do
-		cd_index=$((cd_index+1))
+		incr cd_index
 		for sbe_id in ${SET_IDS}
 		do
 			local \
@@ -1676,7 +1676,7 @@ set_blocksets_env()
 		cd_index=0
 		for conf_dir in ${all_conf_dirs}
 		do
-			cd_index=$((cd_index+1))
+			incr cd_index
 			is_included "${conf_dir}" "${conf_dirs}" || continue
 			eval "[ -n \"\${cs_found_${sbe_id}_${cd_index}}\" ]" && cd_state=1 || cd_state=0
 			[ -n "${cur_path}" ] ||
@@ -2536,14 +2536,14 @@ lookup_test_doms()
 		ok=0 cnt=0 failed_insts=
 		for instance in ${set_insts}
 		do
-			cnt=$((cnt+1))
+			incr cnt
 			# for each blockset, require at least one domain resolving
 			hit=
 			for dom in ${set_doms}
 			do
 				is_included "${instance}__${dom}" "${resolved_ids}" && { hit=1; break; }
 			done
-			[ -n "${hit}" ] && { ok=$((ok+1)); continue; }
+			[ -n "${hit}" ] && { incr ok; continue; }
 			add2list failed_insts "${instance}"
 		done
 
@@ -2596,7 +2596,7 @@ lookup_targets()
 			ASSERT_NOEXIT=1 assert_set "F_lookup_done_cb" dom job_tgt_index || return 1
 			# target may resolve on multiple nameservers - only count it once
 			test_exp "resolved_${job_tgt_index} == 0" &&
-				resolved_cnt=$((resolved_cnt+1))
+				incr resolved_cnt
 			set_int "resolved_${job_tgt_index}=1"
 			add2list RESOLVED_IDXS "${job_tgt_index}"
 			# rv 80 = terminate on early success
@@ -2605,7 +2605,7 @@ lookup_targets()
 		fi
 
 		# target only counts as failed once every one of its nameservers failed
-		set_int "failed_ns_${job_tgt_index} = failed_ns_${job_tgt_index} + 1"
+		incr "failed_ns_${job_tgt_index}"
 		# this target can no longer resolve, so neither can all of them
 		test_exp "failed_ns_${job_tgt_index} >= tgt_ns_cnt_${job_tgt_index}" &&
 			[ -n "${LOOKUP_FAIL_EARLY}" ] && [ -n "${is_last_round}" ] &&
@@ -2652,7 +2652,7 @@ lookup_targets()
 		tgt_id='' dom='' tgt_ns='' fld_index=0
 		for fld in ${rec}
 		do
-			fld_index=$((fld_index+1))
+			incr fld_index
 			case "${fld_index}" in
 				1) tgt_id="${fld}" ;;
 				2) dom="${fld}" ;;
@@ -2669,8 +2669,8 @@ lookup_targets()
 		is_included "${tgt_id}" "${tgt_ids}" && continue
 
 		cnt_lines tgt_ns_cnt "${tgt_ns//[ $'\t']/$'\n'}"
-		tgt_cnt=$((tgt_cnt+1))
-		job_cnt=$((job_cnt+tgt_ns_cnt))
+		incr tgt_cnt
+		incr job_cnt tgt_ns_cnt
 		abl_append tgt_ids "${tgt_id}"
 		add2list all_doms "${dom}"
 		add2list all_ns "${tgt_ns}"
@@ -2709,13 +2709,13 @@ lookup_targets()
 		tgt_index=0
 		while [ "${tgt_index}" -lt "${tgt_cnt}" ]
 		do
-			tgt_index=$((tgt_index+1))
+			incr tgt_index
 			test_exp "resolved_${tgt_index} == 1" && continue # Ignore targets resolved earlier
 			set_int "failed_ns_${tgt_index} = 0"
 			eval "dom=\"\${tgt_dom_${tgt_index}}\" tgt_ns=\"\${tgt_ns_${tgt_index}}\""
 			for ns in ${tgt_ns}
 			do
-				id=$((id+1))
+				incr id
 				jobs_init "${id}"
 				abl_append ids "${id}"
 				job_set_params "${id}" \
@@ -2754,9 +2754,9 @@ lookup_targets()
 		tgt_index=0
 		while [ "${tgt_index}" -lt "${tgt_cnt}" ]
 		do
-			tgt_index=$((tgt_index+1))
+			incr tgt_index
 			test_exp "resolved_${tgt_index} == 1" &&
-				resolved_cnt=$((resolved_cnt+1))
+				incr resolved_cnt
 		done
 
 		case "${lookup_rv}" in
@@ -2781,7 +2781,7 @@ lookup_targets()
 	tgt_index=0
 	while [ "${tgt_index}" -lt "${tgt_cnt}" ]
 	do
-		tgt_index=$((tgt_index+1))
+		incr tgt_index
 		eval "tgt_id=\"\${tgt_id_${tgt_index}}\" dom=\"\${tgt_dom_${tgt_index}}\""
 
 		if test_exp "resolved_${tgt_index} == 1"
@@ -2842,18 +2842,20 @@ try_commit_metadata()
 		set_id \
 		cur_path \
 		meta_fname \
-		meta_locations="${COMMIT_META_LOCATIONS:-"RAM PERSIST"}" \
-		meta_file="${META_FILE}"
+		meta_file \
+		persist_dir pmdf \
+		meta_locations="${COMMIT_META_LOCATIONS:-"RAM PERSIST"}"
 
 	debug_msg "Creating metadata, blocksets: '${SET_IDS}'."
 
-	rm -f "${meta_file}"
+	is_included RAM "${meta_locations}" && rm -f "${META_FILE}"
 
 	[ -n "${SET_IDS}" ] || return 0
 
 	# Common metadata
 	is_included RAM "${meta_locations}" &&
 	{
+		meta_file="${META_FILE}"
 		try_mkdir -p "${meta_file%/*}" &&
 		touch "${meta_file}" || return 1
 
@@ -2888,12 +2890,11 @@ try_commit_metadata()
 	# Persist metadata
 	for set_id in ${SET_IDS}
 	do
-		local persist_dir
 		get_params "${set_id}" persist_dir cur_path
 		meta_fname="${META_BASE_FNAME_PERSIST}-${set_id}"
 		uci_fail=
 		meta_file="${persist_dir%/}/${meta_fname:?}"
-		local pmdf="persistent metadata file{} '${meta_file}'"
+		pmdf="persistent metadata file{} '${meta_file}'"
 		is_persist "${cur_path}" "${set_id}" || continue
 
 		[ -d "${persist_dir}" ] || { reg_fail -fb "${set_id}" "Can not update ${pmdf} because directory '${persist_dir}' is not found."; continue; }

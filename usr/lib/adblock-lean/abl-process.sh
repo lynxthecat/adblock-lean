@@ -468,7 +468,7 @@ process_set_part()
 			return 0
 		fi
 
-		attempt=$((attempt + 1))
+		incr attempt
 		if [ ! "${attempt}" -le "${max_download_attempts}" ]
 		then
 			reg_fail "${max_download_attempts} download attempts failed for list '${print_id}'."
@@ -766,7 +766,7 @@ gen_blocksets()
 			[ -n "${part}" ] || continue
 
 			IFS="${DEFAULT_IFS}"
-			index=$((index+1))
+			incr index
 			export -n "INDEX_REFS_${index}="
 
 			origin=DL
@@ -1133,12 +1133,10 @@ gen_blockset()
 			fi
 		}
 
-		set_cnt_raw=$((set_cnt_raw + part_cnt)) &&
-		set_size_B_raw=$((set_size_B_raw + part_size_B)) &&
-		{
-			set_int "${part_type}_cnt_raw = ${part_type}_cnt_raw + part_cnt"
-			set_int "${part_type}_size_B = ${part_type}_size_B + part_size_B"
-		}
+		incr set_cnt_raw part_cnt
+		incr set_size_B_raw part_size_B
+		incr "${part_type}_cnt_raw" part_cnt
+		incr "${part_type}_size_B" part_size_B
 		abl_append "${part_type}_indexes" "${index}"
 	done
 

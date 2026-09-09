@@ -52,7 +52,7 @@ cnt_lines()
 	for line in ${2}; do
 		case "${line}" in
 			'') ;;
-			*) cnt=$((cnt+1))
+			*) incr cnt
 		esac
 	done
 	export -n "${1}=${cnt}"
@@ -515,7 +515,7 @@ do_setup()
 				then
 					get_pkg_name pkg_name "${util}" || return 1
 					pkgs2install="${pkgs2install}${pkg_name} "
-					utils_size_B=$((utils_size_B+util_size_B))
+					incr utils_size_B util_size_B
 				fi
 			done
 		fi
@@ -1620,7 +1620,7 @@ try_load_config()
 			do
 				IFS="${DEFAULT_IFS}"
 				[ -n "${fix}" ] || continue
-				cnt=$((cnt+1))
+				incr cnt
 				print_msg "${cnt}. ${fix}"
 			done
 			IFS="${DEFAULT_IFS}"
