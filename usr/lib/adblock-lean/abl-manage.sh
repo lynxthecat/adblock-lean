@@ -289,7 +289,7 @@ check_dmsq_instances()
 
 			for instance in ${dmsq_instances}
 			do
-				eval "[ \"\${RUNNING_${instance}}\" = 1 ]" && continue
+				eval "[ \"\${RUNNING__${instance}}\" = 1 ]" && continue
 				add2list _fail_ind "${instance}"
 				add2list _fail_sets "${set_id}"
 				set_params "${set_id}" run_state=1
@@ -371,7 +371,7 @@ check_dmsq_instances()
 
 			[ -n "${skip_conf_dir_check}" ] && continue
 
-			eval "instance_conf_dirs=\"\${R_CONF_DIRS_${instance}}\""
+			eval "instance_conf_dirs=\"\${R_CONF_DIRS__${instance}}\""
 			[ -n "${instance_conf_dirs}" ] ||
 				{ cdi_fail "Failed to detect conf-dirs for ${inst_pr}."; set_params "${set_id}" run_state=1; continue 2; }
 			abl_append all_bl_conf_dirs "${instance_conf_dirs}"
@@ -414,8 +414,8 @@ check_dmsq_instances()
 # Sets vars:
 #   C_PROCESSED
 #   C_CONF_DIRS
-#   C_DEVICES_${inst}
-#   ADDNMOUNTS_${inst}
+#   C_DEVICES__${inst}
+#   ADDNMOUNTS__${inst}
 # shellcheck disable=SC2329
 parse_dmsq_cfg()
 {
@@ -444,7 +444,7 @@ parse_dmsq_cfg()
 	{
 		local dir conf_dirs_nl ifaces notifaces devs notdevs
 
-		unset "C_DEVICES_${1}" "ADDNMOUNTS_${1}"
+		unset "C_DEVICES__${1}" "ADDNMOUNTS__${1}"
 
 		config_get_list_nl conf_dirs_nl "${1}" confdir
 		case "${conf_dirs_nl}" in *" "*)
@@ -457,7 +457,7 @@ parse_dmsq_cfg()
 			add2list C_CONF_DIRS "${dir%/}"
 		done
 
-		config_get_list_nl "ADDNMOUNTS_${1}" "${1}" addnmount
+		config_get_list_nl "ADDNMOUNTS__${1}" "${1}" addnmount
 
 		config_get ifaces "${1}" interface
 		: "${ifaces:="${ALL_NETDEVS}"}"
@@ -467,7 +467,7 @@ parse_dmsq_cfg()
 		get_devices notdevs "${notifaces}"
 
 		subtract_a_from_b "${notdevs}" "${devs}" devs
-		export -n "C_DEVICES_${1}=${devs}"
+		export -n "C_DEVICES__${1}=${devs}"
 		ok_seen=1
 	}
 
@@ -482,7 +482,7 @@ parse_dmsq_cfg()
 	detect_all_netdevs || return 1
 
 	dbg_off
-	# gather conf dirs from /etc/config/dhcp, assemble C_DEVICES_${inst}
+	# gather conf dirs from /etc/config/dhcp, assemble C_DEVICES__${inst}
 	config_load_a dhcp || { dbg_on; return 2; }
 	dbg_on
 	assert_file_found "${net_sh}" || return 1
@@ -501,7 +501,7 @@ parse_dmsq_cfg()
 #
 # Populates global vars:
 #   R_CONF_DIRS, DMSQ_RUNNING_INSTANCES, DMSQ_RUNNING_INST_CNT
-#   R_DEVICES_${instance}, R_CONF_DIRS_${instance}, R_CONF_DIRS_CNT_${instance}, RUNNING_${instance}
+#   R_DEVICES__${instance}, R_CONF_DIRS__${instance}, R_CONF_DIRS_CNT__${instance}, RUNNING__${instance}
 #   R_PROCESSED
 #
 # 1: attempts
@@ -530,7 +530,7 @@ parse_dmsq_runtime()
 		then
 			for pdr_inst in ${pdr_instances}
 			do
-				eval "[ \"\${RUNNING_${pdr_inst}}\" = 1 ]" &&
+				eval "[ \"\${RUNNING__${pdr_inst}}\" = 1 ]" &&
 					subtract_a_from_b "${pdr_inst}" "${pdr_instances}" pdr_instances
 			done
 			[ -z "${pdr_instances}" ] && { pdr_rv=0; break; }
@@ -587,7 +587,7 @@ try_parse_dmsq_runtime()
 
 	for instance in ${DMSQ_RUNNING_INSTANCES}
 	do
-		unset "RUNNING_${instance}" "R_DEVICES_${instance}" "R_CONF_DIRS_${instance}" "R_CONF_DIRS_CNT_${instance}"
+		unset "RUNNING__${instance}" "R_DEVICES__${instance}" "R_CONF_DIRS__${instance}" "R_CONF_DIRS_CNT__${instance}"
 	done
 
 	unset DMSQ_RUNNING_INSTANCES R_CONF_DIRS R_PROCESSED
@@ -628,9 +628,9 @@ try_parse_dmsq_runtime()
 	for instance in ${instances}
 	do
 		json_is_a "${instance}" object &&
-		is_alphanum "${instance}" ||
+		check_name "${instance}" ||
 			continue
-		unset "RUNNING_${instance}" "R_DEVICES_${instance}" "R_CONF_DIRS_${instance}" "R_CONF_DIRS_CNT_${instance}"
+		unset "RUNNING__${instance}" "R_DEVICES__${instance}" "R_CONF_DIRS__${instance}" "R_CONF_DIRS_CNT__${instance}"
 		conf_dirs_nl=
 		conf_dirs_cnt=0
 		devs=
@@ -702,9 +702,9 @@ try_parse_dmsq_runtime()
 		j_unwind
 
 		export -n \
-			"R_CONF_DIRS_${instance}=${conf_dirs_nl//"${_NL_}"/ }" \
-			"R_DEVICES_${instance}=${devs}" \
-			"R_CONF_DIRS_CNT_${instance}=${conf_dirs_cnt}"
+			"R_CONF_DIRS__${instance}=${conf_dirs_nl//"${_NL_}"/ }" \
+			"R_DEVICES__${instance}=${devs}" \
+			"R_CONF_DIRS_CNT__${instance}=${conf_dirs_cnt}"
 	done
 	json_cleanup
 
@@ -935,7 +935,7 @@ try_parse_dmsq_runtime()
 	DMSQ_RUNNING_INSTANCES=${running_inst}
 	for instance in ${running_inst}
 	do
-		export -n "RUNNING_${instance}=1"
+		export -n "RUNNING__${instance}=1"
 	done
 	cnt_lines DMSQ_RUNNING_INST_CNT "${running_inst// /"${_NL_}"}"
 
@@ -957,7 +957,7 @@ try_parse_dmsq_runtime()
 			{ reg_fail "${me}: invalid line in parser output: '${line}'."; return 1; }
 		[ -n "${ns}" ] ||
 			{ reg_fail "${me}: failed to detect active nameserver IP's for dnsmasq instance '${instance}'"; return 1; }
-		export -n "NS_${instance}=${ns}"
+		export -n "NS__${instance}=${ns}"
 	done
 	IFS="${DEFAULT_IFS}"
 
@@ -976,9 +976,9 @@ do_select_dnsmasq_instances() {
 		local devs r_devs c_devs instance instances="${2}"
 		for instance in ${instances}
 		do
-			eval "devs=\"\${R_DEVICES_${instance}}\""
+			eval "devs=\"\${R_DEVICES__${instance}}\""
 			add2list r_devs "${devs}"
-			eval "devs=\"\${C_DEVICES_${instance}}\""
+			eval "devs=\"\${C_DEVICES__${instance}}\""
 			add2list c_devs "${devs}"
 		done
 		if \
@@ -1032,7 +1032,7 @@ do_select_dnsmasq_instances() {
 			# check if all instances share same conf-dirs
 			for instance in ${DMSQ_RUNNING_INSTANCES}
 			do
-				eval "conf_dirs_instance=\"\${R_CONF_DIRS_${instance}}\""
+				eval "conf_dirs_instance=\"\${R_CONF_DIRS__${instance}}\""
 				case "${first}" in
 					1)
 						first=
@@ -1127,8 +1127,8 @@ do_select_dnsmasq_instances() {
 		for instance in ${select_instances}
 		do
 			add_dir=
-			eval "conf_dirs=\"\${R_CONF_DIRS_${instance}}\"
-				conf_dirs_cnt=\"\${R_CONF_DIRS_CNT_${instance}}\""
+			eval "conf_dirs=\"\${R_CONF_DIRS__${instance}}\"
+				conf_dirs_cnt=\"\${R_CONF_DIRS_CNT__${instance}}\""
 
 			if [ "${conf_dirs_cnt}" = 1 ]
 			then
@@ -1204,7 +1204,7 @@ unset_param_vars()
 					sub(/^.*=/,"",param_var)
 					sub(/[ \t]+$/,"",param_var)
 					if (!param_var) continue
-					for (id in ids_arr) {if (id) printf "%s ", param_var "_" id}
+					for (id in ids_arr) {if (id) printf "%s ", param_var "__" id}
 				}
 			}
 		'
@@ -1349,14 +1349,14 @@ try_check_addnmounts()
 
 	for ca_instance in ${ca_instances}
 	do
-		is_alphanum "${ca_instance}" || { reg_fail "${me}: Invalid dnsmasq instance name '${ca_instance}'."; return 1; }
+		check_name "${ca_instance}" || { reg_fail "${me}: Invalid dnsmasq instance name '${ca_instance}'."; return 1; }
 		IFS="${_NL_}"
 		for ca_path in ${ca_req_addnm}
 		do
 			[ -n "${ca_path}" ] || continue
 			IFS="${DEFAULT_IFS}"
 
-			eval "ca_addnmounts=\"\${ADDNMOUNTS_${ca_instance}}\""
+			eval "ca_addnmounts=\"\${ADDNMOUNTS__${ca_instance}}\""
 			case "${ca_path}" in
 				/*) ;;
 				*) reg_fail "${me}: invalid path '${ca_path}'."; return 1
@@ -1470,15 +1470,15 @@ set_blocksets_env()
 {
 	incr_bl_found()
 	{
-		incr "bl_found_cnt_${1}"
-		test_exp "bl_found_cnt_${1} > 1" &&
+		incr "bl_found_cnt__${1}"
+		test_exp "bl_found_cnt__${1} > 1" &&
 			{ sbe_fatal "${1}"; add2list cd_fail_ids "${1}"; }
 	}
 
 	sbe_fatal()
 	{
 		[ -n "${1}" ] && is_included "${1}" "${SET_IDS}" &&
-			set_int "sbe_state_${1} = 1"
+			set_int "sbe_state__${1} = 1"
 		[ "${CUR_ACT}" = status ] && return
 		cd_fatal=1
 		[ -n "${2}" ] && { log_msg "Removing file '${2}'."; rm -f "${2}"; }
@@ -1538,9 +1538,9 @@ set_blocksets_env()
 	for sbe_id in ${SET_IDS}
 	do
 		local \
-			"bl_found_cnt_${sbe_id}=0" \
-			"sbe_state_${sbe_id}" \
-			"rd_found_${sbe_id}"
+			"bl_found_cnt__${sbe_id}=0" \
+			"sbe_state__${sbe_id}" \
+			"rd_found__${sbe_id}"
 	done
 
 	# Register conf-scripts and blockset files in run-dir and all conf-dirs and check for stray ones
@@ -1565,7 +1565,7 @@ set_blocksets_env()
 			sbe_fatal "" "${rd_file}"
 			continue
 		}
-		export -n "rd_found_${sbe_id}=${rd_file}"
+		export -n "rd_found__${sbe_id}=${rd_file}"
 		incr_bl_found "${sbe_id}"
 	done
 	IFS="${DEFAULT_IFS}"
@@ -1577,8 +1577,8 @@ set_blocksets_env()
 		for sbe_id in ${SET_IDS}
 		do
 			local \
-				"cs_found_${sbe_id}_${cd_index}=" \
-				"bl_found_${sbe_id}_${cd_index}="
+				"cs_found__${sbe_id}__${cd_index}=" \
+				"bl_found__${sbe_id}__${cd_index}="
 		done
 
 		for sbe_type in cs bl
@@ -1602,7 +1602,7 @@ set_blocksets_env()
 					continue
 				}
 
-				export -n "${sbe_type}_found_${sbe_id}_${cd_index}=${cd_file}"
+				export -n "${sbe_type}_found__${sbe_id}__${cd_index}=${cd_file}"
 
 				[ "${sbe_type}" = bl ] &&
 				{
@@ -1667,7 +1667,7 @@ set_blocksets_env()
 
 		[ -n "${cur_path}" ] && [ -f "${cur_path}" ] || cur_path=
 		[ -n "${cur_path}" ] ||
-			eval "cur_path=\"\${rd_found_${sbe_id}}\""
+			eval "cur_path=\"\${rd_found__${sbe_id}}\""
 
 		# conf-scripts codes:
 		# 0: all conf-scripts not found
@@ -1678,10 +1678,10 @@ set_blocksets_env()
 		do
 			incr cd_index
 			is_included "${conf_dir}" "${conf_dirs}" || continue
-			eval "[ -n \"\${cs_found_${sbe_id}_${cd_index}}\" ]" && cd_state=1 || cd_state=0
+			eval "[ -n \"\${cs_found__${sbe_id}__${cd_index}}\" ]" && cd_state=1 || cd_state=0
 			[ -n "${cur_path}" ] ||
 			{
-				eval "bl_cd_path=\"\${bl_found_${sbe_id}_${cd_index}}\""
+				eval "bl_cd_path=\"\${bl_found__${sbe_id}__${cd_index}}\""
 				cur_path="${bl_cd_path}"
 			}
 			[ -n "${cs_res}" ] || { cs_res="${cd_state}"; continue; }
@@ -1706,7 +1706,7 @@ set_blocksets_env()
 		bl_check_res="${dns_check_res}${bl_file_exists}${meta_path_set}${cs_res}${bl_in_cd}"
 
 		# 0: running; 3: paused; 4: stopped
-		eval "sbe_state=\"\${sbe_state_${sbe_id}}\""
+		eval "sbe_state=\"\${sbe_state__${sbe_id}}\""
 		[ "${sbe_state}" = 1 ] ||
 		is_included "${run_state}" "1 2" ||
 			case "${bl_check_res}" in
@@ -1743,7 +1743,7 @@ set_blocksets_env()
 		abl_append sbe_ok "${sbe_id}"
 	done
 	[ -n "${sbe_should_stop}" ] && [ -z "${SBE_STATUS}" ] &&
-		{ KEEP_PERSIST=1 stop_blocksets "${sbe_should_stop}" || { FAIL_STOP_REQ=1; exit 1; }; }
+		{ KEEP_MNGD_PERSIST=1 stop_blocksets "${sbe_should_stop}" || { FAIL_STOP_REQ=1; exit 1; }; }
 
 	debug_msg "${me} end, sbe_ok: '${sbe_ok}'" ""
 
@@ -1896,7 +1896,7 @@ set_blockset_env()
 		0|3|4) ;;
 		*)
 			case "${CUR_CMD}" in start|pause|resume)
-				KEEP_PERSIST=1 stop_blocksets "${set_id}" || exit 1
+				KEEP_MNGD_PERSIST=1 stop_blocksets "${set_id}" || exit 1
 				run_state=4 cur_path='' # param-store already updated by stop_blocksets
 			esac
 	esac
@@ -1976,7 +1976,7 @@ set_blockset_env()
 					{
 						if [ "${cur_path}" = "${cur_persist_path}" ]
 						then
-							KEEP_PERSIST=0 stop_blocksets "${set_id}" || exit 1
+							KEEP_MNGD_PERSIST=0 stop_blocksets "${set_id}" || exit 1
 							run_state=4 cur_path='' # param-store already updated by stop_blocksets
 						elif is_dir_writable "${set_id}" "${cur_persist_path%/*}"
 						then
@@ -2113,7 +2113,7 @@ is_known_set_id()
 {
 	local akb_err
 	{
-		is_alphanum "${1}" ||
+		check_name "${1}" ||
 			{ akb_err="Invalid blockset ID '${1}'."; false; }
 	} &&
 	{
@@ -2166,11 +2166,11 @@ get_params()
 		get_bl_param_gl_var gl_var "${bl_param}" ||
 			bad_args "${me}" "${err_func_pr}${set_id} ${*}"
 
-		eval "val=\"\${${gl_var}_${set_id}}\""
+		eval "val=\"\${${gl_var}__${set_id}}\""
 		[ -n "${val}" ] || [ -z "${force_err}" ] &&
 			{ export -n "${var_name}=${val}"; continue; }
 
-		reg_fail "${err_func}: Value not set for \${${gl_var}_${set_id}}."
+		reg_fail "${err_func}: Value not set for \${${gl_var}__${set_id}}."
 		dbg_on
 		return 1
 	done
@@ -2206,8 +2206,8 @@ set_params()
 					eval "val=\"\${${param}}\"" ;;
 			esac &&
 			get_bl_param_gl_var gl_var "${param}" || bad_args "${me}" "${set_id} ${*}"
-			debug_msg "${blue}set_params${n_c}: ${gl_var}_${set_id}=${val}"
-			export -n "${gl_var}_${set_id}=${val}"
+			debug_msg "${blue}set_params${n_c}: ${gl_var}__${set_id}=${val}"
+			export -n "${gl_var}__${set_id}=${val}"
 		done
 	done
 	dbg_on
@@ -2291,7 +2291,6 @@ try_install_blocksets()
 		bk_path \
 		\
 		install_path \
-		install_path_ram \
 		install_cnt \
 		install_in_cd \
 		\
@@ -2503,7 +2502,7 @@ lookup_test_doms()
 		check_var_names ${instances}
 		for instance in ${instances}
 		do
-			eval "ns_ips=\"\${NS_${instance}}\""
+			eval "ns_ips=\"\${NS__${instance}}\""
 			: "${ns_ips:="127.0.0.1 ::1"}"
 
 			debug_msg "Testing blockset '${set_id}' on dnsmasq instance '${instance}'." \
@@ -2815,8 +2814,8 @@ unset_metadata()
 	do
 		for meta_param in ${META_PARAMS:?} PATH_META
 		do
-			unset "${UNSET_PREFIX}${meta_param}_${set_id}"
-			abl_append unset_dbg "unset ${UNSET_PREFIX}${meta_param}_${set_id}" "${_NL_}"
+			unset "${UNSET_PREFIX}${meta_param}__${set_id}"
+			abl_append unset_dbg "unset ${UNSET_PREFIX}${meta_param}__${set_id}" "${_NL_}"
 		done
 	done
 	[ -n "${unset_dbg}" ] && debug_msg "${_NL_}${unset_dbg}"
@@ -2867,7 +2866,7 @@ try_commit_metadata()
 			uci_tmp set "${META_FNAME}.${set_id}=blockset_id" || { uci_fail=1; break; }
 			for param in ${META_PARAMS}
 			do
-				eval "param_val=\"\${${param}_${set_id}}\""
+				eval "param_val=\"\${${param}__${set_id}}\""
 				[ -n "${param_val}" ] || continue
 				uci_tmp set "${META_FNAME}.${set_id}.${param}"="${param_val}" || { uci_fail=1; break 2; }
 				param_set=1
@@ -2914,7 +2913,7 @@ try_commit_metadata()
 		uci_tmp set "${meta_fname}.${set_id}=blockset_id" &&
 		for param in ${META_PARAMS}
 		do
-			eval "param_val=\"\${${param}_${set_id}}\""
+			eval "param_val=\"\${${param}__${set_id}}\""
 			[ -n "${param_val}" ] || continue
 			uci_tmp set "${meta_fname}.${set_id}.${param}"="${param_val}" || { uci_fail=1; break; }
 		done &&
@@ -2932,7 +2931,7 @@ try_commit_metadata()
 }
 
 # Reads the metadata file and assigns global vars:
-#   IS_PAUSED_${id}, [PERSIST_]PATH_${id}, [PERSIST_]MD5_${id}, [PERSIST_]CNT_${id}
+#   [PERSIST_]PATH__${id}, [PERSIST_]MD5__${id}, [PERSIST_]CNT__${id}
 #
 # Values are only assigned for files which actually exist, and reflect last known state
 #   (updated at the end of each run of start/stop/pause/resume)
@@ -2987,7 +2986,7 @@ try_read_blockset_metadata()
 
 		debug_msg "Processing ${meta_type} metadata for ${set_id_pr}."
 
-		is_alphanum "${set_id}" ||
+		check_name "${set_id}" ||
 			{ abl_append rbm_errors "${sp_f_pr} contains invalid blockset ID '${1}'." "${_NL_}"; rbm_force_rv=1; return 1; }
 
 		for pv_param in ${META_PARAMS}
@@ -2999,8 +2998,8 @@ try_read_blockset_metadata()
 				[ "${known_path}" = "${meta_val}" ] || { append_err "Unexpected PATH '${meta_val}' in ${sp_f_pr} (expecting '${known_path}')."; return 1; }
 			}
 			[ -n "${meta_val}" ] || missing_val=1
-			export -n "${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
-			debug_msg "${blue}set metadata${n_c}: ${rbm_prefix}${pv_param}_${set_id}=${meta_val}"
+			export -n "${rbm_prefix}${pv_param}__${set_id}=${meta_val}"
+			debug_msg "${blue}set metadata${n_c}: ${rbm_prefix}${pv_param}__${set_id}=${meta_val}"
 		done
 
 		GBP_PREFIX="${rbm_prefix}" get_params "${set_id}" cur_cnt cur_md5 cur_path

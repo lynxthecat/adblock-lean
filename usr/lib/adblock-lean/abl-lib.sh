@@ -261,7 +261,7 @@ do_create_addnmounts()
 		check_addnmounts missing_addnm "${instances}" "${req_addnm}" || return 1
 		for instance in ${instances}
 		do
-			add2list "req_addnm_${instance}" "${req_addnm}" "${_NL_}"
+			add2list "req_addnm__${instance}" "${req_addnm}" "${_NL_}"
 		done
 		[ -z "${missing_addnm}" ] || is_included "${missing_addnm}" "${all_missing_addnm}" "${_NL_}" && return 0
 		add2list all_missing_addnm "${missing_addnm}" "${_NL_}"
@@ -290,13 +290,13 @@ do_create_addnmounts()
 		add_list_failed \
 		path
 
-	# reset req_addnm_${instance} vars, compile list of instances
+	# reset req_addnm__${instance} vars, compile list of instances
 	for set_id in ${SET_IDS:?}
 	do
 		get_params -f "${me}" "${set_id}" dmsq_instances || return 1
 		for instance in ${dmsq_instances}
 		do
-			local "req_addnm_${instance}=" &&
+			local "req_addnm__${instance}=" &&
 			add2list all_dmsq_instances "${instance}"
 		done
 	done
@@ -375,7 +375,7 @@ do_create_addnmounts()
 	## Create addnmounts
 	for instance in ${all_dmsq_instances}
 	do
-		eval "req_addnm_instance=\"\${req_addnm_${instance}}\""
+		eval "req_addnm_instance=\"\${req_addnm__${instance}}\""
 		[ -n "${req_addnm_instance}" ] || continue
 
 		log_msg "" "Creating addnmount entries for dnsmasq instance '${instance}':${_NL_}${blue}${req_addnm_instance}${n_c}"
@@ -608,7 +608,7 @@ do_setup()
 
 	if [ "${REPLY}" = n ]
 	then
-		KEEP_PERSIST=0 FORCE_STOP_ALL=1 do_stop
+		KEEP_MNGD_PERSIST=0 FORCE_STOP_ALL=1 do_stop
 		[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" "run_state=4"
 		# Remove and forget old configs
 		rm -f "${META_FILE}"
@@ -1068,7 +1068,7 @@ do_gen_blockset_config()
 
 	while :
 	do
-		is_alphanum "${gbc_id}" && break
+		check_name "${gbc_id}" && break
 
 		[ -z "${gbc_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
 			print_msg "Invalid blockset name '${gbc_id}'. Use English letters and/or numbers and/or underlines."
@@ -1295,7 +1295,7 @@ parse_config()
 		{
 			if (!opt) {intern_err("get_var_name: empty opt."); exit}
 			if (ID == "global") return opt
-			return opt "_" ID
+			return opt "__" ID
 		}
 
 		BEGIN{

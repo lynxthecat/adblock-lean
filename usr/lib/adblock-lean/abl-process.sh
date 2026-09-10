@@ -917,8 +917,8 @@ gen_blocksets()
 		set_params "${set_id}" bk_path bk_cnt
 	done
 
-	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${PROC_SET_IDS}"
-	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_PERSIST=0 do_stop "${blocksets_to_stop}" || exit 1
+	KEEP_BK=1 KEEP_MNGD_PERSIST=0 rm_blocksets "${PROC_SET_IDS}"
+	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_MNGD_PERSIST=0 do_stop "${blocksets_to_stop}" || exit 1
 
 	gen_set_parts "${set_ids}" ||
 	{
@@ -1039,7 +1039,6 @@ gen_blockset()
 	}
 
 	local me=gen_blockset \
-		install_path \
 		min_entries min_entries_human \
 		max_part_size \
 		max_set_size \
@@ -1066,7 +1065,6 @@ gen_blockset()
 	reg_action -purple -fb "${set_id}" "" "Generating blockset file{}."
 
 	get_params -f "${me}" "${set_id}" \
-		install_path \
 		max_part_size \
 		max_set_size \
 		min_entries=min_blockset_entries \
