@@ -1736,13 +1736,14 @@ set_blocksets_env()
 	do
 		set_blockset_env "${sbe_id}" "${compr_ext}" "${extr_cmd_stdout}" "${compr_cmd_stdout}" "${compr_cmd_to_file}" ||
 		{
-			[ ${?} = 1 ] && { set_params "${sbe_id}" run_state=1; abl_append sbe_should_stop "${sbe_id}"; }
+			set_params "${sbe_id}" run_state=1
+			[ -n "${DMSQ_RESTART_REQ}" ] && abl_append sbe_should_stop "${sbe_id}"
 			reg_fail -fb "${sbe_id}" "Failed to load environment{}."
 			continue
 		}
 		abl_append sbe_ok "${sbe_id}"
 	done
-	[ -n "${sbe_should_stop}" ] && [ -z "${SBE_STATUS}" ] &&
+	[ -n "${sbe_should_stop}" ] &&
 		{ KEEP_MNGD_PERSIST=1 stop_blocksets "${sbe_should_stop}" || { FAIL_STOP_REQ=1; exit 1; }; }
 
 	debug_msg "${me} end, sbe_ok: '${sbe_ok}'" ""
@@ -1756,9 +1757,7 @@ set_blocksets_env()
 # Sets blockset-specific dnsmasq context
 # Populates global vars for individual blockset IDs
 # Env vars:
-#   SBE_STATUS: do not exit on non-critical errors
-#
-# Error codes: 1 - blockset should be force-stopped; 2 - can not perform the action but should not be force-stopped
+#   DMSQ_RESTART_REQ
 set_blockset_env()
 {
 	rebuild_req_notice() { log_msg -warn "Please run 'service adblock-lean ${2} ${1}' to rebuild the ${3}${3:+ }blockset file."; }
@@ -1876,7 +1875,7 @@ set_blockset_env()
 				install_in_cd_fallback=0
 			else
 				wont_work "adblock-lean" "${m_i_missing_addnm}"
-				[ -n "${SBE_STATUS}" ] || return 2
+				[ -n "${DMSQ_RESTART_REQ}" ] && return 1
 			fi ;;
 		*)
 			first_conf_dir="${conf_dirs%%[ 	]*}"
@@ -1889,8 +1888,8 @@ set_blockset_env()
 				}
 	esac
 
-	# addnmount for blockset on ramdisk - required regardless of compr/persist/multi_inst availability
-	[ -n "${install_path_ram}" ] || [ -n "${SBE_STATUS}" ] || { reg_fail "Internal error: install_path_ram is not set."; return 1; }
+	# addnmount for blockset on ramdisk - required for commands restarting dnsmasq regardless of compr/persist/multi_inst availability
+	[ -n "${install_path_ram}" ] || [ -z "${DMSQ_RESTART_REQ}" ] || { reg_fail "Internal error: install_path_ram is not set."; return 1; }
 
 	case "${run_state}" in
 		0|3|4) ;;
@@ -2039,10 +2038,9 @@ set_blockset_env()
 	: "${install_path:="${install_path_ram}"}"
 	: "${install_in_cd:="${install_in_cd_fallback}"}"
 
-	case "${CUR_CMD}" in start|resume)
-		[ -n "${FORCE_PERSIST_INSTALL}" ] && ! is_persist "${install_path}" "${set_id}" &&
-			{ reg_fail -fb "${set_id}" "Can not generate persistent blockset file{}."; return 2; }
-	esac
+	[ -n "${DMSQ_RESTART_REQ}" ] && [ -n "${FORCE_PERSIST_INSTALL}" ] &&
+		! is_persist "${install_path}" "${set_id}" &&
+			{ reg_fail -fb "${set_id}" "Can not generate persistent blockset file{}."; return 1; }
 
 	if [ "${persist_possible}" = 1 ] && [ "${persist_mode}" = manual ] &&
 		[ -n "${cur_path}" ] && [ "${cur_path}" = "${cur_persist_path}" ]
@@ -2058,8 +2056,8 @@ set_blockset_env()
 		pause_path="${install_path}"
 	fi
 
-	[ -n "${install_path}" ] ||
-		{ reg_fail -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; [ -n "${SBE_STATUS}" ] || return 1; }
+	[ -n "${install_path}" ] || [ -z "${DMSQ_RESTART_REQ}" ] ||
+		{ reg_fail -fb "${set_id}" "No usable path to install or load the blockset file{}."; rebuild_req_notice "${set_id}" "restart"; return 1; }
 
 	[ "${CUR_CMD}" = start ] &&
 	case "${start_action}" in
