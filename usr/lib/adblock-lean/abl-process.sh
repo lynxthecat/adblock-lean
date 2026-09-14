@@ -640,9 +640,8 @@ gen_blocksets()
 		conn_check_req \
 		skip_load_stop \
 		file_to_bk \
-		bk_path \
-		bk_ext \
-		bk_cnt \
+		bk_path bk_cnt bk_ext \
+		bk_path_prev bk_cnt_prev \
 		final_compr_ext \
 		blocksets_to_stop \
 		force_unload_bl \
@@ -852,6 +851,8 @@ gen_blocksets()
 			cur_cnt \
 			cur_persist_path \
 			cur_persist_cnt \
+			bk_path_prev=bk_path \
+			bk_cnt_prev=bk_cnt \
 			bk_ext \
 			raw_block_lists \
 			hosts_block_lists
@@ -882,21 +883,25 @@ gen_blocksets()
 		bk_cnt=
 		bk_path=
 		file_to_bk=
-		if [ -n "${cur_path}" ] && [ -n "${cur_cnt}" ]
+
+		if [ -n "${bk_path_prev}" ] && [ -n "${bk_cnt_prev}" ] && [ -f "${bk_path_prev}" ]
+		then
+			bk_path=${bk_path_prev}
+			bk_cnt=${bk_cnt_prev}
+		elif [ -n "${cur_path}" ] && [ -n "${cur_cnt}" ] && [ -f "${cur_path}" ]
 		then
 			file_to_bk=${cur_path}
 			bk_cnt=${cur_cnt}
-		elif [ -n "${cur_persist_path}" ] && [ -n "${cur_persist_cnt}" ]
+		elif [ -n "${cur_persist_path}" ] && [ -n "${cur_persist_cnt}" ] && [ -f "${cur_persist_path}" ]
 		then
 			file_to_bk=${cur_persist_path}
 			bk_cnt=${cur_persist_cnt}
 		fi
 
+		[ -n "${file_to_bk}" ] && [ -f "${file_to_bk}" ] || file_to_bk=
+
 		if [ -n "${file_to_bk}" ] &&
-		{
-			[ -f "${file_to_bk}" ] || { file_to_bk=''; false; }
-		} &&
-		is_dir_writable "${set_id}" "${file_to_bk%/*}"
+			is_dir_writable "${set_id}" "${file_to_bk%/*}"
 		then
 			bk_path="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
 			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}."
@@ -911,7 +916,8 @@ gen_blocksets()
 		then
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
 			bk_path="${file_to_bk}"
-		else
+		elif [ -z "${bk_path}" ]
+		then
 			reg_msg -2 -fb "${set_id}" "No existing blockset file found{}."
 		fi
 		set_params "${set_id}" bk_path bk_cnt

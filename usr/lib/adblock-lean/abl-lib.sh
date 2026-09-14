@@ -617,7 +617,7 @@ do_setup()
 		do
 			do_rm_blockset_config "${set_id}"
 		done
-		unset SET_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
+		unset SET_IDS GLOBAL_ENV_SET CONFIG_LOADED
 
 		# generate blockset config
 		do_gen_blockset_config _ || return 2

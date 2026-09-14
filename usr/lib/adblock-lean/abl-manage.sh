@@ -329,10 +329,7 @@ check_dmsq_instances()
 	[ -n "${failed_instances}" ] &&
 	{
 		[ -n "${DMSQ_RESTART_TRIED}" ] && return 1
-		case "${CUR_CMD}" in
-			start|pause|resume|setup) ;;
-			*) return 1
-		esac
+		is_included "${CUR_CMD}" "start pause resume setup gen_persist_blockset create_addnmounts" || return 1
 		DMSQ_RESTART_TRIED=1
 
 		do_stop "${failed_set_ids}" || exit 1
@@ -342,14 +339,7 @@ check_dmsq_instances()
 		what_failed failed_instances failed_set_ids || return 1
 	}
 
-	case "${CUR_ACT}" in
-		start|stop|pause|resume|status|create_addnmounts|gen_persist_blockset) : ;;
-		*) false
-	esac ||
-	case "${CUR_CMD}" in
-		start|stop|pause|resume|create_addnmounts) : ;;
-		*) false
-	esac ||
+	is_included "${CUR_CMD}" "start pause resume create_addnmounts status gen_persist_blockset" ||
 		skip_conf_dir_check=1
 
 	for set_id in ${SET_IDS}
@@ -1388,8 +1378,6 @@ set_all_env()
 # 1 (optional): blockset IDs (defaults to all)
 set_global_env()
 {
-	[ -n "${SKIP_SET_ENV}" ] && return 0
-
 	local \
 		me=set_global_env \
 		set_id \
@@ -1453,7 +1441,6 @@ set_global_env()
 	debug_msg "compr_util_path: '${compr_util_path}', compr_ext: '${compr_ext}'"
 
 	export -n GLOBAL_ENV_SET=1
-	[ "${CUR_ACT}" = start ] && export -n SKIP_SET_ENV=1
 
 	debug_msg "" "End ${me}()"
 
@@ -1903,7 +1890,7 @@ set_blockset_env()
 	# Persistent blockset
 	persist_ok=0 persist_bad=''
 	is_included "${persist_mode}" "manual managed" &&
-	is_included "${CUR_CMD}" "start pause resume status gen_persist_blockset" &&
+	is_included "${CUR_CMD}" "start pause resume status" &&
 	check_persist_dir -q "${set_id}" &&
 	get_params -f "${me}" "${set_id}" min_entries=min_blockset_entries max_set_size &&
 	{
@@ -2230,7 +2217,8 @@ inst_failed()
 
 install_blocksets()
 {
-	local set_id inst_ok_ids inst_fail_ids INST_PERM_FAIL_IDS inst_rv \
+	local set_id inst_ok_ids inst_rv \
+		inst_fail_ids inst_perm_fail_ids \
 		inst_fail_reported_ids \
 		install_path install_path_ram install_in_cd_fallback persist_mode \
 		ok_ids_out_var="${1:-_}" perm_fail_ids_out_var="${2:-_}" set_ids="${3:?}"
@@ -2243,8 +2231,7 @@ install_blocksets()
 	export -n "${ok_ids_out_var}=${inst_ok_ids}"
 	subtract_a_from_b "${inst_ok_ids}" "${set_ids}" inst_fail_ids
 	[ -n "${inst_fail_ids}" ] && inst_failed "${inst_fail_ids}"
-	[ "${inst_rv}" = 1 ] && add2list INST_PERM_FAIL_IDS "${inst_fail_ids}"
-	export -n "${perm_fail_ids_out_var}=${INST_PERM_FAIL_IDS}"
+	[ "${inst_rv}" = 1 ] && add2list inst_perm_fail_ids "${inst_fail_ids}"
 
 	for set_id in ${inst_fail_ids}
 	do
@@ -2258,9 +2245,10 @@ install_blocksets()
 		then
 			set_params "${set_id}" install_path="${install_path_ram}" install_in_cd="${install_in_cd_fallback}"
 		else
-			add2list INST_PERM_FAIL_IDS "${set_id}"
+			add2list inst_perm_fail_ids "${set_id}"
 		fi
 	done
+	export -n "${perm_fail_ids_out_var}=${inst_perm_fail_ids}"
 
 	[ -n "${inst_ok_ids}" ]
 }
