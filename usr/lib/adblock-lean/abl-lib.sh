@@ -926,14 +926,6 @@ print_def_cfg_blockset()
 	# Minimum number of entries in final postprocessed blockset
 	min_blockset_entries="${pdc_min_entries}" @ uint
 
-	# If a path to custom script is specified and that script defines functions
-	# 'report_success()', 'report_failure()' or 'report_update()',
-	# one of these functions will be executed when adblock-lean completes the execution of some commands,
-	# with corresponding message passed in first argument
-	# report_success() and report_update() are only executed upon completion of the 'start' command
-	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
-	custom_script="" @ string
-
 	# dnsmasq instance names and config directories
 	# normally this should be set automatically by the 'setup' command
 	dnsmasq_instances="${dmsq_instances}" @ string
@@ -1012,6 +1004,14 @@ print_def_cfg_global()
 
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
 	MAX_PARALLEL_JOBS="auto" @ auto|uint
+
+	# If a path to custom script is specified and that script defines functions
+	# 'report_success()', 'report_failure()' or 'report_update()',
+	# one of these functions will be executed when adblock-lean completes the execution of some commands,
+	# with corresponding message passed in first argument.
+	# report_success() and report_update() are only executed upon completion of the 'start' command
+	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
+	custom_script="" @ string
 
 	# Log verbosity (0-5). Higher values send more messages to the syslog. Default is 1.
 	LOG_VERBOSITY="1" @ 0|1|2|3|4|5
@@ -1729,7 +1729,7 @@ fix_config()
 	get_cfg_type cfg_type "${cfg_id}" &&
 	get_cfg_path cfg_path "${cfg_id}" || return 1
 
-	[ "${cfg_type}" = global ] || var_suffix="_${cfg_id}"
+	[ "${cfg_type}" = global ] || var_suffix="__${cfg_id}"
 
 	if is_included dnsmasq_instances "${replace_keys}" || is_included dnsmasq_conf_dirs "${replace_keys}"
 	then

@@ -27,7 +27,6 @@ VAR2CFG_MAP="$(
 		max_part_size=max_part_size_KB
 		max_set_size=max_blockset_size_KB
 		min_blockset_entries
-		custom_script
 		dmsq_instances=dnsmasq_instances
 		conf_dirs=dnsmasq_conf_dirs
 	" |
@@ -38,13 +37,11 @@ VAR2CFG_MAP="$(
 BL_PARAMS_MAP="
 	${VAR2CFG_MAP}
 	run_state=RUN_STATE
-	skip_load_stop=SKIP_LOAD_STOP
 	bk_path=BK_PATH
 	bk_cnt=BK_CNT
 	bk_ext=BK_EXT
 	cur_persist_path=PERSIST_PATH
 	cur_persist_cnt=PERSIST_CNT
-	cur_persist_md5=PERSIST_MD5
 	cur_path_meta=PATH_META
 	cur_path=PATH
 	cur_md5=MD5
@@ -55,13 +52,12 @@ BL_PARAMS_MAP="
 	install_in_cd=INSTALL_IN_CONFDIR
 	install_in_cd_fallback=INSTALL_IN_CONFDIR_FALLBACK
 	pause_path=PAUSE_PATH
-	final_compress=FINAL_COMPRESS
 	final_compr_ext=FINAL_COMPR_EXT
 	final_extr_or_cat_stdout=FINAL_EXTR_OR_CAT_STDOUT
 	final_compr_or_cat_stdout=FINAL_COMPR_OR_CAT_STDOUT
 	final_compr_to_file=FINAL_COMPR_TO_FILE
 	conf_script_log_avail=CONF_SCRIPT_LOG_AVAIL
-"
+" &&
 
 # 'case' clauses for translating param name to global var name
 BL_PARAMS_CLAUSES="$(
@@ -2059,7 +2055,6 @@ set_blockset_env()
 		install_in_cd_fallback \
 		pause_path \
 		bk_ext="${INTERM_COMPR_EXT}" \
-		final_compress \
 		final_compr_ext \
 		final_extr_or_cat_stdout \
 		final_compr_or_cat_stdout \
@@ -2269,7 +2264,6 @@ try_install_blocksets()
 		run_state \
 		dmsq_instances \
 		persist_mode \
-		skip_load_stop \
 		\
 		cur_path \
 		cur_md5 \
@@ -2292,8 +2286,11 @@ try_install_blocksets()
 
 	for set_id in ${set_ids}
 	do
-		get_params "${set_id}" skip_load_stop
-		[ -n "${skip_load_stop}" ] || add2list dmsq_stop_ids "${set_id}"
+			get_params "${set_id}" run_state
+			case "${run_state}" in
+				3|4) ;;
+				*) add2list dmsq_stop_ids "${set_id}" ;;
+			esac
 	done
 
 	[ -z "${dmsq_stop_ids}" ] || stop_dnsmasq "${dmsq_stop_ids}" || return 1
@@ -3022,7 +3019,7 @@ try_read_blockset_metadata()
 				append_err "Persistent blockset dir not matching in ${sp_f_pr} for ${set_id_pr}. Metadata file has: '${cur_path%/*}', metadata is at: '${meta_file%/*}'."
 				return 1
 			}
-			set_params "${set_id}" cur_persist_md5="${cur_md5}" cur_persist_cnt="${cur_cnt}"
+			set_params "${set_id}" cur_persist_cnt="${cur_cnt}"
 		}
 
 		is_included "${set_id}" "${req_ids}" && some_ok=1

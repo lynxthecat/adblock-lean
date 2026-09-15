@@ -1114,7 +1114,7 @@ install_abl_files()
 							var_suffix=
 							bk_f_prefix='' ;;
 						bl)
-							var_suffix="_${cfg_id}"
+							var_suffix="__${cfg_id}"
 							new_cfg_path="${ABL_CFG_DIR}/blockset-${cfg_id}.conf"
 							bk_f_prefix="blockset-"
 					esac

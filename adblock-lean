@@ -1800,7 +1800,7 @@ rm_cron_job()
 del_addnmounts()
 {
 	local set_id rv path paths entry_deleted=0 entry_failed=0 instance persist_dir dir fname persist_dirs
-	[ -n "${SET_IDS}" ] ||
+	[ -n "${CONFIG_LOADED}" ] ||
 		ASSERT_NOEXIT=1 load_config
 
 	for set_id in ${SET_IDS}
@@ -2786,12 +2786,11 @@ do_stop()
 	done
 	set -f
 
-	[ -n "${SET_IDS}" ] && KEEP_MNGD_PERSIST="${KEEP_MNGD_PERSIST:-1}" rm_blocksets "${SET_IDS}"
-
 	rm -f "${META_FILE}"
 
 	[ -n "${SET_IDS}" ] && [ -n "${CONFIG_LOADED}" ] &&
 	{
+		KEEP_MNGD_PERSIST="${KEEP_MNGD_PERSIST:-1}" rm_blocksets "${SET_IDS}"
 		rm_conf_scripts
 		[ "${KEEP_BK}" = 1 ] || rm_bk
 	}

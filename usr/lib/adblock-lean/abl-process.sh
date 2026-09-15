@@ -638,7 +638,6 @@ gen_blocksets()
 		cur_persist_path \
 		cur_persist_cnt \
 		conn_check_req \
-		skip_load_stop \
 		file_to_bk \
 		bk_path bk_cnt bk_ext \
 		bk_path_prev bk_cnt_prev \
@@ -660,8 +659,6 @@ gen_blocksets()
 		index=0 \
 		set_indexes \
 		blocksets_out_var="${1:?}" set_ids="${2:?}"
-
-	: "${skip_load_stop}"
 
 	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file(s){}."
 
@@ -860,13 +857,12 @@ gen_blocksets()
 		[ -n "${raw_block_lists}${hosts_block_lists}" ] ||
 			log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
-		skip_load_stop=
 		conn_check_req=1
 		force_unload_bl=${force_unload}
 
 		case "${run_state}" in
 			0) ;;
-			3|4) force_unload_bl=0 conn_check_req='' skip_load_stop=1 ;;
+			3|4) force_unload_bl=0 conn_check_req='' ;;
 			*) reg_fail -fb "${set_id}" "${me}: unexpected run state '${run_state}'{}."; exit 1
 		esac
 
@@ -876,9 +872,7 @@ gen_blocksets()
 			force_unload_bl=1
 
 		[ "${force_unload_bl}" = 1 ] &&
-			{ add2list blocksets_to_stop "${set_id}"; skip_load_stop=1; }
-
-		set_params "${set_id}" skip_load_stop
+			add2list blocksets_to_stop "${set_id}"
 
 		bk_cnt=
 		bk_path=
