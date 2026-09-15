@@ -967,9 +967,7 @@ do_select_dnsmasq_instances() {
 			eval "devs=\"\${C_DEVICES__${instance}}\""
 			add2list c_devs "${devs}"
 		done
-		if \
-			subtract_a_from_b "${r_devs}" "${c_devs}" &&
-			subtract_a_from_b "${c_devs}" "${r_devs}"
+		if is_list_eq "${r_devs}" "${c_devs}"
 		then
 			export -n "${1}=network devices: '${blue}${c_devs// /${n_c}, ${blue}}${n_c}'"
 		else
@@ -997,6 +995,7 @@ do_select_dnsmasq_instances() {
 		first diff \
 		add_dir \
 		set_id \
+		to_stop_ids \
 		set_ids="${1:-"${SET_IDS}"}"
 
 	local CUR_CMD="${me}"
@@ -1022,21 +1021,20 @@ do_select_dnsmasq_instances() {
 				case "${first}" in
 					1)
 						first=
-						conf_dirs="${conf_dirs_instance}" ;;
+						conf_dirs_seen="${conf_dirs_instance}" ;;
 					'')
 						# conf-dirs are sorted, so we can directly compare
-						[ "${conf_dirs_instance}" = "${conf_dirs}" ] && continue
+						[ "${conf_dirs_instance}" = "${conf_dirs_seen}" ] && continue
 						diff=1
 						break
 				esac
-				[ -n "${conf_dirs}" ] && conf_dirs_seen=1
 			done
 			[ -n "${conf_dirs_seen}" ] &&
 			[ -z "${diff}" ]
 		}
 	then
 		force_instances="${DMSQ_RUNNING_INSTANCES}"
-		reg_msg "" "Detected multiple dnsmasq instances which are using the same conf-dirs: ${_NL_}${blue}${conf_dirs// /" ${_NL_}"}${n_c}" "Skipping manual dnsmasq instance selection."
+		reg_msg "" "Detected multiple dnsmasq instances which are using the same conf-dirs: ${_NL_}${blue}${conf_dirs_seen// /" ${_NL_}"}${n_c}" "Skipping manual dnsmasq instance selection."
 	elif [ -z "${conf_dirs_seen}" ]
 	then
 		reg_fail "Failed to detect dnsmasq conf-dir paths for dnsmasq instances '${DMSQ_RUNNING_INSTANCES}'."
@@ -1113,22 +1111,22 @@ do_select_dnsmasq_instances() {
 		for instance in ${select_instances}
 		do
 			add_dir=
-			eval "conf_dirs=\"\${R_CONF_DIRS__${instance}}\"
+			eval "conf_dirs_instance=\"\${R_CONF_DIRS__${instance}}\"
 				conf_dirs_cnt=\"\${R_CONF_DIRS_CNT__${instance}}\""
 
 			if [ "${conf_dirs_cnt}" = 1 ]
 			then
-				add_dir="${conf_dirs}"
+				add_dir="${conf_dirs_instance}"
 			else
-				if is_included "/tmp/dnsmasq.d" "${conf_dirs}"
+				if is_included "/tmp/dnsmasq.d" "${conf_dirs_instance}"
 				then
 					add_dir="/tmp/dnsmasq.d"
-				elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs}"
+				elif is_included "/tmp/dnsmasq.cfg01411c.d" "${conf_dirs_instance}"
 				then
 					add_dir="/tmp/dnsmasq.cfg01411c.d"
 				else
 					# fall back to first conf-dir
-					add_dir="${conf_dirs%%[ 	]*}"
+					add_dir="${conf_dirs_instance%%[ 	]*}"
 				fi
 			fi
 			[ -n "${add_dir}" ] && add2list select_conf_dirs "${add_dir}"
@@ -1137,6 +1135,17 @@ do_select_dnsmasq_instances() {
 		[ -n "${select_conf_dirs}" ] || { reg_fail "Failed to detect conf-dirs for dnsmasq instances '${select_instances}'."; return 1; }
 
 		log_msg "Selected dnsmasq conf-dirs: '${blue}${select_conf_dirs// /"${n_c}', '${blue}"}${n_c}'"
+		get_params "${set_id}" conf_dirs
+		[ -z "${conf_dirs}" ] ||
+		is_list_eq "${conf_dirs}" "${select_conf_dirs}" ||
+			abl_append to_stop_ids "${set_id}"
+		local "new_cds__${set_id}=${select_conf_dirs}" "new_dis__${set_id}=${select_instances}"
+	done
+
+	[ -n "${to_stop_ids}" ] && { stop_blocksets "${to_stop_ids}" || return 1; }
+	for set_id in ${set_ids}
+	do
+		eval "select_instances=\"\${new_dis__${set_id}}\"" "select_conf_dirs=\"\${new_cds__${set_id}}\""
 		set_params "${set_id}" dmsq_instances="${select_instances}" conf_dirs="${select_conf_dirs}"
 	done
 
