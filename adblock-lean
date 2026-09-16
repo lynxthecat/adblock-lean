@@ -1301,6 +1301,7 @@ dmsq_stop_restart_shared()
 	local rv instance d_instances dmsq_instances cmd_pr cmd_fail set_id d_fail_ids \
 		cmd="${1}" set_ids="${2}" d_ok_ids_out_var="${3:-_}" instances_out_var="${4:-_}"
 
+	export -n R_PROCESSED=
 	unset_vars "${instances_out_var}" "${d_ok_ids_out_var}"
 
 	case "${cmd}" in
@@ -1362,7 +1363,6 @@ dmsq_stop_restart_shared()
 
 stop_dnsmasq()
 {
-	export -n R_PROCESSED=
 	dmsq_stop_restart_shared stop "${*}"
 }
 
@@ -1383,8 +1383,6 @@ restart_dnsmasq()
 	unset_vars "${restart_ok_ids_out_var}"
 	dmsq_stop_restart_shared restart "${set_ids}" p1_ok_ids instances || rv=1
 	subtract_a_from_b "${p1_ok_ids}" "${set_ids}" restart_fail_ids
-
-	export -n R_PROCESSED=
 
 	if [ -n "${instances}" ]
 	then
@@ -2797,14 +2795,14 @@ do_stop()
 		[ -n "${CONFIG_LOADED}" ] &&
 		[ -n "${C_PROCESSED}" ] &&
 		{
-			[ -n "${R_PROCESSED}" ] || parse_dmsq_runtime 3
+			parse_dmsq_runtime 3
 			stop_blocksets "${set_ids}" &&
 				return 0
 		}
 
 	reg_action -1 -purple "" "Stopping adblocking for any adblock-lean blocksets."
 
-	[ -n "${R_PROCESSED}" ] || parse_dmsq_runtime 1
+	parse_dmsq_runtime 1
 	set +f
 	rm -f "${ABL_RUN_DIR:?}/${BLOCKSET_BASE_FNAME:-???}"*
 	for dir in ${C_CONF_DIRS} ${R_CONF_DIRS} /tmp/dnsmasq.d /tmp/dnsmasq.cfg*.d

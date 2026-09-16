@@ -329,6 +329,7 @@ check_dmsq_instances()
 		DMSQ_RESTART_TRIED=1
 
 		do_stop "${failed_set_ids}" || exit 1
+		R_PROCESSED=
 		parse_dmsq_runtime 1
 		[ ${?} = 1 ] && return 1
 
@@ -502,7 +503,12 @@ parse_dmsq_runtime()
 {
 	local i=1 pdr_inst pdr_quiet pdr_rv=1 \
 		n="${1:-5}" pdr_instances_arg="${3}" pdr_instances="${3}"
+
+	[ -z "${2}${3}" ] && [ -n "${R_PROCESSED}" ] &&
+		is_gr_eq 1 "${DMSQ_RUNNING_INST_CNT}" && return 0
+
 	unset_vars "${2}"
+
 	while :
 	do
 		incr i
@@ -557,9 +563,6 @@ try_parse_dmsq_runtime()
 		reg_msg "netstat output:" "'${netstat_output}'"
 	}
 
-	[ -n "${R_PROCESSED}" ] &&
-		is_gr_eq 1 "${DMSQ_RUNNING_INST_CNT}" && return 0
-
 	local me=parse_dmsq_runtime \
 		IFS="${DEFAULT_IFS}" \
 		nonempty instance instances running l1_conf_file l1_conf_files conf_dirs_cnt conf_dirs_nl i s f dir ujail_pid line \
@@ -576,7 +579,7 @@ try_parse_dmsq_runtime()
 		unset "RUNNING__${instance}" "R_DEVICES__${instance}" "R_CONF_DIRS__${instance}" "R_CONF_DIRS_CNT__${instance}"
 	done
 
-	unset DMSQ_RUNNING_INSTANCES R_CONF_DIRS R_PROCESSED
+	unset DMSQ_RUNNING_INSTANCES R_CONF_DIRS
 	DMSQ_RUNNING_INST_CNT=0
 	debug_msg "" "Parsing dnsmasq runtime info."
 
@@ -1495,7 +1498,7 @@ set_blocksets_env()
 	unset_vars "${sbe_ids_out_var}"
 	[ -z "${sbe_ids}" ] && return 0
 
-	assert_set "F_${me}" C_PROCESSED R_PROCESSED || return 1
+	assert_set "F_${me}" C_PROCESSED || return 1
 	get_valid_set_ids valid_ids "${sbe_ids}" "${me}" ||
 		{
 			[ -n "${ASSERT_NOEXIT}" ] || exit 1
@@ -1522,6 +1525,8 @@ set_blocksets_env()
 
 	# Test adblocking: whether abl_test_domain is resolved, for all blocksets at once
 	CA_NOERR=1 check_active_blocksets active_ids "${SET_IDS}" 0
+
+	[ "${CUR_ACT}" = status ] || [ -n "${R_PROCESSED}" ] || return 1
 
 	add2list all_conf_dirs "${R_CONF_DIRS} ${C_CONF_DIRS}"
 
