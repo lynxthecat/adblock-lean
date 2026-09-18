@@ -1386,7 +1386,7 @@ fetch_and_install()
 		start
 		exit ${?}
 	elif \
-		[ -n "${DO_DIALOGS}" ] &&
+		[ "${DO_DIALOGS}" = 1 ] &&
 		print_msg_install -blue "" "Set up adblock-lean now? (y|n)" &&
 		pick_opt_install "y|n" &&
 		[ "$REPLY" = y ]
