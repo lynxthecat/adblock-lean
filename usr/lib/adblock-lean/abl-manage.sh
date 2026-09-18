@@ -249,7 +249,8 @@ detect_all_netdevs()
 
 # Verifies that configured dnsmasq instances are running and that their names and conf-dirs match the config
 #
-# 1 - (optional) '-q' to quiet
+# 0 (optional): '-q' to quiet
+# 1 (optional): dnsmasq runtime parse attempts
 check_dmsq_instances()
 {
 	cdi_fatal()
@@ -313,19 +314,20 @@ check_dmsq_instances()
 		ok_seen \
 		inst_pr
 
-	[ "${1:-??}" = '-q' ] && quiet=1
+	[ "${1:-??}" = '-q' ] && { quiet=1; shift; }
+	local r_parse_attempts="${1}"
 
 	debug_msg "${me} start"
 
 	parse_dmsq_cfg || return 1
-	parse_dmsq_runtime 1
+	parse_dmsq_runtime "${r_parse_attempts:-1}"
 	[ ${?} = 1 ] && return 1
 
 	what_failed failed_instances failed_set_ids || return 1
 	[ -n "${failed_instances}" ] &&
 	{
 		[ -n "${DMSQ_RESTART_TRIED}" ] && return 1
-		is_included "${CUR_CMD}" "start pause resume setup gen_persist_blockset create_addnmounts" || return 1
+		is_included "${CUR_CMD}" "start pause resume setup gen_persist_blockset create_addnmounts select_dnsmasq_instances gen_blockset_config" || return 1
 		DMSQ_RESTART_TRIED=1
 
 		do_stop "${failed_set_ids}" || exit 1
@@ -1485,6 +1487,7 @@ set_blocksets_env()
 		sbe_ok sbe_should_stop \
 		valid_ids active_ids \
 		sbe_type sbe_id base_fname desc \
+		r_parse_attempts=1 \
 		compr_util_path compr_ext compr_cmd_to_file compr_cmd_stdout extr_cmd_stdout \
 		rm_extra \
 		cs_res \
@@ -1521,10 +1524,12 @@ set_blocksets_env()
 		COMMIT_META_LOCATIONS=RAM FORCE_STOP_ALL=1 do_stop
 		[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" "run_state="
 		METADATA_BAD=
+		r_parse_attempts=5
+		sleep 1
 	}
 
 	# Test adblocking: whether abl_test_domain is resolved, for all blocksets at once
-	CA_NOERR=1 check_active_blocksets active_ids "${SET_IDS}" 0
+	CA_NOERR=1 check_active_blocksets active_ids "${SET_IDS}" 0 "${r_parse_attempts}"
 
 	[ "${CUR_ACT}" = status ] || [ -n "${R_PROCESSED}" ] || return 1
 
@@ -2425,6 +2430,7 @@ validate_doms()
 # 1: out-var for active blockset IDs
 # 2: input blockset IDs
 # 3 (optional): lookup timeout in seconds
+# 4 (optional): dnsmasq runtime parse attempts
 #
 # return values:
 # 0: All blocksets tested OK
@@ -2432,15 +2438,14 @@ validate_doms()
 check_active_blocksets()
 {
 	local set_id recs \
-		ab_active_out_var="${1:?}"
-
-	shift
-
-	local ab_set_ids="${1:?}" timeout_s="${2}"
+		ab_active_out_var="${1:?}" \
+		ab_set_ids="${2:?}" \
+		timeout_s="${3}" \
+		r_parse_attempts="${4}"
 
 	unset_vars "${ab_active_out_var}"
 
-	check_dmsq_instances || return 1
+	check_dmsq_instances "${r_parse_attempts:-1}" || return 1
 
 	for set_id in ${ab_set_ids}
 	do
