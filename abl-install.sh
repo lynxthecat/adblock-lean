@@ -767,7 +767,6 @@ install_abl_files()
 {
 	local IFS="${DEFAULT_IFS:?}" \
 		file preinst_path old_files exec_files \
-		preinst_reg_file="${dist_dir}/preinst_reg.md5" \
 		cfg_file cfg_fname \
 		cfg_id cfg_id_orig \
 		cfg_files_to_rm \
@@ -780,6 +779,8 @@ install_abl_files()
 		var_suffix \
 		migr_fail migrate_opts \
 		dist_dir="${1}" version="${2}" upd_channel="${3}" new_file_list="${4}"
+
+	local preinst_reg_file="${dist_dir}/preinst_reg.md5"
 
 	[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] || inst_failed "install_abl_files: Missing arguments."
 

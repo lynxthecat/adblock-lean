@@ -2272,9 +2272,9 @@ abl_post_update_2()
 # 2 - distribution directory
 fetch_abl_dist()
 {
+	local tarball_url_fetch="${1}" dist_dir_fetch="${2}"
 	local fetch_rv extract_dir fetch_dir="${dist_dir_fetch}/fetch"
-	local  tarball="${fetch_dir}/remote_abl.tar.gz" ucl_err_file="${fetch_dir}/ucl_err" \
-		tarball_url_fetch="${1}" dist_dir_fetch="${2}"
+	local tarball="${fetch_dir}/remote_abl.tar.gz" ucl_err_file="${fetch_dir}/ucl_err"
 
 	assert_set F_fetch_abl_dist tarball_url_fetch dist_dir_fetch || return 1
 
