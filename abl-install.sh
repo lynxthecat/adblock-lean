@@ -371,7 +371,7 @@ get_cfg_id_install()
 	_cfg_id="${_cfg_fname#"blockset-"}"
 	_cfg_id="${_cfg_id%".conf"}"
 	case "${_cfg_id}" in
-		''|*[!a-zA-Z0-9_]*)
+		''|*_|*[!a-zA-Z0-9_]*)
 			reg_fail_install "Invalid config name '${_cfg_id}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 1 ;;
 	esac
@@ -654,7 +654,7 @@ find_set_configs_install()
 		local cfg_id
 		split_path_install _ cfg_id _  "${1}"
 		cfg_id="${cfg_id#"blockset-"}"
-		case "${cfg_id}" in ''|*[!a-zA-Z0-9_]*)
+		case "${cfg_id}" in ''|*_|*[!a-zA-Z0-9_]*)
 			reg_fail_install "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 0
 		esac
@@ -684,7 +684,7 @@ clean_env_install()
 	do
 		unset "BL_ENV_SET_${set_id}"
 	done
-	unset action ABL_INIT_ACT ABL_CMD CUR_CMD CUR_ACT ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED BL_PARAMS_MAP VAR2CFG_MAP SET_IDS GLOBAL_ENV_SET SKIP_SET_ENV MAIN_UTILS_DETECTED
+	unset action ABL_INIT_ACT ABL_CMD CUR_CMD CUR_ACT ABL_LIB_FILES ABL_EXTRA_FILES ABL_EXEC_FILES LIBS_SOURCED CONFIG_FORMAT CONFIG_LOADED C_PROCESSED R_PROCESSED BL_PARAMS_MAP VAR2CFG_MAP SET_IDS GLOBAL_ENV_SET MAIN_UTILS_DETECTED
 	unset -f abl_post_update_1 abl_post_update_2 load_config update source_libs check_libs install_abl_files cleanup_and_exit
 }
 
@@ -1114,7 +1114,7 @@ install_abl_files()
 							var_suffix=
 							bk_f_prefix='' ;;
 						bl)
-							var_suffix="_${cfg_id}"
+							var_suffix="__${cfg_id}"
 							new_cfg_path="${ABL_CFG_DIR}/blockset-${cfg_id}.conf"
 							bk_f_prefix="blockset-"
 					esac

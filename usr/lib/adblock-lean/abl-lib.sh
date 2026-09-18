@@ -52,7 +52,7 @@ cnt_lines()
 	for line in ${2}; do
 		case "${line}" in
 			'') ;;
-			*) cnt=$((cnt+1))
+			*) incr cnt
 		esac
 	done
 	export -n "${1}=${cnt}"
@@ -261,7 +261,7 @@ do_create_addnmounts()
 		check_addnmounts missing_addnm "${instances}" "${req_addnm}" || return 1
 		for instance in ${instances}
 		do
-			add2list "req_addnm_${instance}" "${req_addnm}" "${_NL_}"
+			add2list "req_addnm__${instance}" "${req_addnm}" "${_NL_}"
 		done
 		[ -z "${missing_addnm}" ] || is_included "${missing_addnm}" "${all_missing_addnm}" "${_NL_}" && return 0
 		add2list all_missing_addnm "${missing_addnm}" "${_NL_}"
@@ -290,13 +290,13 @@ do_create_addnmounts()
 		add_list_failed \
 		path
 
-	# reset req_addnm_${instance} vars, compile list of instances
+	# reset req_addnm__${instance} vars, compile list of instances
 	for set_id in ${SET_IDS:?}
 	do
 		get_params -f "${me}" "${set_id}" dmsq_instances || return 1
 		for instance in ${dmsq_instances}
 		do
-			local "req_addnm_${instance}=" &&
+			local "req_addnm__${instance}=" &&
 			add2list all_dmsq_instances "${instance}"
 		done
 	done
@@ -375,7 +375,7 @@ do_create_addnmounts()
 	## Create addnmounts
 	for instance in ${all_dmsq_instances}
 	do
-		eval "req_addnm_instance=\"\${req_addnm_${instance}}\""
+		eval "req_addnm_instance=\"\${req_addnm__${instance}}\""
 		[ -n "${req_addnm_instance}" ] || continue
 
 		log_msg "" "Creating addnmount entries for dnsmasq instance '${instance}':${_NL_}${blue}${req_addnm_instance}${n_c}"
@@ -515,7 +515,7 @@ do_setup()
 				then
 					get_pkg_name pkg_name "${util}" || return 1
 					pkgs2install="${pkgs2install}${pkg_name} "
-					utils_size_B=$((utils_size_B+util_size_B))
+					incr utils_size_B util_size_B
 				fi
 			done
 		fi
@@ -608,7 +608,7 @@ do_setup()
 
 	if [ "${REPLY}" = n ]
 	then
-		KEEP_PERSIST=0 FORCE_STOP_ALL=1 do_stop
+		KEEP_MNGD_PERSIST=0 FORCE_STOP_ALL=1 do_stop
 		[ -n "${SET_IDS}" ] && set_params "${SET_IDS}" "run_state=4"
 		# Remove and forget old configs
 		rm -f "${META_FILE}"
@@ -617,7 +617,7 @@ do_setup()
 		do
 			do_rm_blockset_config "${set_id}"
 		done
-		unset SET_IDS SKIP_SET_ENV GLOBAL_ENV_SET CONFIG_LOADED
+		unset SET_IDS GLOBAL_ENV_SET CONFIG_LOADED
 
 		# generate blockset config
 		do_gen_blockset_config _ || return 2
@@ -926,14 +926,6 @@ print_def_cfg_blockset()
 	# Minimum number of entries in final postprocessed blockset
 	min_blockset_entries="${pdc_min_entries}" @ uint
 
-	# If a path to custom script is specified and that script defines functions
-	# 'report_success()', 'report_failure()' or 'report_update()',
-	# one of these functions will be executed when adblock-lean completes the execution of some commands,
-	# with corresponding message passed in first argument
-	# report_success() and report_update() are only executed upon completion of the 'start' command
-	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
-	custom_script="" @ string
-
 	# dnsmasq instance names and config directories
 	# normally this should be set automatically by the 'setup' command
 	dnsmasq_instances="${dmsq_instances}" @ string
@@ -1013,6 +1005,14 @@ print_def_cfg_global()
 	# Maximal count of download and processing jobs run in parallel. 'auto' sets this value to the count of CPU cores
 	MAX_PARALLEL_JOBS="auto" @ auto|uint
 
+	# If a path to custom script is specified and that script defines functions
+	# 'report_success()', 'report_failure()' or 'report_update()',
+	# one of these functions will be executed when adblock-lean completes the execution of some commands,
+	# with corresponding message passed in first argument.
+	# report_success() and report_update() are only executed upon completion of the 'start' command
+	# Recommended path is '/usr/libexec/abl_custom-script.sh' which the luci app has permission to access
+	custom_script="" @ string
+
 	# Log verbosity (0-5). Higher values send more messages to the syslog. Default is 1.
 	LOG_VERBOSITY="1" @ 0|1|2|3|4|5
 
@@ -1068,7 +1068,7 @@ do_gen_blockset_config()
 
 	while :
 	do
-		is_alphanum "${gbc_id}" && break
+		check_name "${gbc_id}" && break
 
 		[ -z "${gbc_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
 			print_msg "Invalid blockset name '${gbc_id}'. Use English letters and/or numbers and/or underlines."
@@ -1295,7 +1295,7 @@ parse_config()
 		{
 			if (!opt) {intern_err("get_var_name: empty opt."); exit}
 			if (ID == "global") return opt
-			return opt "_" ID
+			return opt "__" ID
 		}
 
 		BEGIN{
@@ -1620,7 +1620,7 @@ try_load_config()
 			do
 				IFS="${DEFAULT_IFS}"
 				[ -n "${fix}" ] || continue
-				cnt=$((cnt+1))
+				incr cnt
 				print_msg "${cnt}. ${fix}"
 			done
 			IFS="${DEFAULT_IFS}"
@@ -1729,7 +1729,7 @@ fix_config()
 	get_cfg_type cfg_type "${cfg_id}" &&
 	get_cfg_path cfg_path "${cfg_id}" || return 1
 
-	[ "${cfg_type}" = global ] || var_suffix="_${cfg_id}"
+	[ "${cfg_type}" = global ] || var_suffix="__${cfg_id}"
 
 	if is_included dnsmasq_instances "${replace_keys}" || is_included dnsmasq_conf_dirs "${replace_keys}"
 	then

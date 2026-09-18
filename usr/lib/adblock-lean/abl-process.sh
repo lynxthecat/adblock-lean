@@ -468,7 +468,7 @@ process_set_part()
 			return 0
 		fi
 
-		attempt=$((attempt + 1))
+		incr attempt
 		if [ ! "${attempt}" -le "${max_download_attempts}" ]
 		then
 			reg_fail "${max_download_attempts} download attempts failed for list '${print_id}'."
@@ -638,11 +638,9 @@ gen_blocksets()
 		cur_persist_path \
 		cur_persist_cnt \
 		conn_check_req \
-		skip_load_stop \
 		file_to_bk \
-		bk_path \
-		bk_ext \
-		bk_cnt \
+		bk_path bk_cnt bk_ext \
+		bk_path_prev bk_cnt_prev \
 		final_compr_ext \
 		blocksets_to_stop \
 		force_unload_bl \
@@ -661,8 +659,6 @@ gen_blocksets()
 		index=0 \
 		set_indexes \
 		blocksets_out_var="${1:?}" set_ids="${2:?}"
-
-	: "${skip_load_stop}"
 
 	reg_msg -fb "${set_ids}" "" "Preparing to generate blockset file(s){}."
 
@@ -766,7 +762,7 @@ gen_blocksets()
 			[ -n "${part}" ] || continue
 
 			IFS="${DEFAULT_IFS}"
-			index=$((index+1))
+			incr index
 			export -n "INDEX_REFS_${index}="
 
 			origin=DL
@@ -852,6 +848,8 @@ gen_blocksets()
 			cur_cnt \
 			cur_persist_path \
 			cur_persist_cnt \
+			bk_path_prev=bk_path \
+			bk_cnt_prev=bk_cnt \
 			bk_ext \
 			raw_block_lists \
 			hosts_block_lists
@@ -859,13 +857,12 @@ gen_blocksets()
 		[ -n "${raw_block_lists}${hosts_block_lists}" ] ||
 			log_msg -yellow "" "NOTE: No URLs specified for blocklist download."
 
-		skip_load_stop=
 		conn_check_req=1
 		force_unload_bl=${force_unload}
 
 		case "${run_state}" in
 			0) ;;
-			3|4) force_unload_bl=0 conn_check_req='' skip_load_stop=1 ;;
+			3|4) force_unload_bl=0 conn_check_req='' ;;
 			*) reg_fail -fb "${set_id}" "${me}: unexpected run state '${run_state}'{}."; exit 1
 		esac
 
@@ -875,28 +872,30 @@ gen_blocksets()
 			force_unload_bl=1
 
 		[ "${force_unload_bl}" = 1 ] &&
-			{ add2list blocksets_to_stop "${set_id}"; skip_load_stop=1; }
-
-		set_params "${set_id}" skip_load_stop
+			add2list blocksets_to_stop "${set_id}"
 
 		bk_cnt=
 		bk_path=
 		file_to_bk=
-		if [ -n "${cur_path}" ] && [ -n "${cur_cnt}" ]
+
+		if [ -n "${bk_path_prev}" ] && [ -n "${bk_cnt_prev}" ] && [ -f "${bk_path_prev}" ]
+		then
+			bk_path=${bk_path_prev}
+			bk_cnt=${bk_cnt_prev}
+		elif [ -n "${cur_path}" ] && [ -n "${cur_cnt}" ] && [ -f "${cur_path}" ]
 		then
 			file_to_bk=${cur_path}
 			bk_cnt=${cur_cnt}
-		elif [ -n "${cur_persist_path}" ] && [ -n "${cur_persist_cnt}" ]
+		elif [ -n "${cur_persist_path}" ] && [ -n "${cur_persist_cnt}" ] && [ -f "${cur_persist_path}" ]
 		then
 			file_to_bk=${cur_persist_path}
 			bk_cnt=${cur_persist_cnt}
 		fi
 
+		[ -n "${file_to_bk}" ] && [ -f "${file_to_bk}" ] || file_to_bk=
+
 		if [ -n "${file_to_bk}" ] &&
-		{
-			[ -f "${file_to_bk}" ] || { file_to_bk=''; false; }
-		} &&
-		is_dir_writable "${set_id}" "${file_to_bk%/*}"
+			is_dir_writable "${set_id}" "${file_to_bk%/*}"
 		then
 			bk_path="${BK_SET_BASE_PATH:?}-${set_id}${bk_ext}"
 			reg_action -fb "${set_id}" "" "Creating backup of current blockset file{}."
@@ -911,14 +910,15 @@ gen_blocksets()
 		then
 			# for persistent blockset in 'manual' mode, the original file is used as a backup
 			bk_path="${file_to_bk}"
-		else
+		elif [ -z "${bk_path}" ]
+		then
 			reg_msg -2 -fb "${set_id}" "No existing blockset file found{}."
 		fi
 		set_params "${set_id}" bk_path bk_cnt
 	done
 
-	KEEP_BK=1 KEEP_PERSIST=0 rm_blocksets "${PROC_SET_IDS}"
-	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_PERSIST=0 do_stop "${blocksets_to_stop}" || exit 1
+	KEEP_BK=1 KEEP_MNGD_PERSIST=0 rm_blocksets "${PROC_SET_IDS}"
+	[ -z "${blocksets_to_stop}" ] || KEEP_BK=1 KEEP_MNGD_PERSIST=0 do_stop "${blocksets_to_stop}" || exit 1
 
 	gen_set_parts "${set_ids}" ||
 	{
@@ -1039,7 +1039,6 @@ gen_blockset()
 	}
 
 	local me=gen_blockset \
-		install_path \
 		min_entries min_entries_human \
 		max_part_size \
 		max_set_size \
@@ -1066,7 +1065,6 @@ gen_blockset()
 	reg_action -purple -fb "${set_id}" "" "Generating blockset file{}."
 
 	get_params -f "${me}" "${set_id}" \
-		install_path \
 		max_part_size \
 		max_set_size \
 		min_entries=min_blockset_entries \
@@ -1133,12 +1131,10 @@ gen_blockset()
 			fi
 		}
 
-		set_cnt_raw=$((set_cnt_raw + part_cnt)) &&
-		set_size_B_raw=$((set_size_B_raw + part_size_B)) &&
-		{
-			set_int "${part_type}_cnt_raw = ${part_type}_cnt_raw + part_cnt"
-			set_int "${part_type}_size_B = ${part_type}_size_B + part_size_B"
-		}
+		incr set_cnt_raw part_cnt
+		incr set_size_B_raw part_size_B
+		incr "${part_type}_cnt_raw" part_cnt
+		incr "${part_type}_size_B" part_size_B
 		abl_append "${part_type}_indexes" "${index}"
 	done
 
