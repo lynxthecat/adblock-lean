@@ -12,7 +12,6 @@ ABL_CFG_DIR=/etc/adblock-lean
 
 LEGACY_CFG_FILE=/etc/adblock-lean/config # unified config was used in adblock-lean v0.8.1 and earlier
 GLOBAL_CFG_FILE=${ABL_CFG_DIR}/global.conf
-UCL_ERR_FILE=${ABL_TMP_DIR}/uclient-fetch_err
 
 : "${ABL_REPO_AUTHOR:=lynxthecat}"
 ABL_GH_URL_API="https://api.github.com/repos/${ABL_REPO_AUTHOR}/adblock-lean"
@@ -379,12 +378,10 @@ get_cfg_id_install()
 	:
 }
 
-inst_failed()
+install_failed()
 {
-	local fail_msg="${1}"
-	[ -s "${UCL_ERR_FILE}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
-	rm -rf "${ABL_INST_DIR}" "${UCL_ERR_FILE}"
-	[ -n "${fail_msg}" ] && reg_fail_install "${fail_msg}"
+	rm -rf "${ABL_INST_DIR}"
+	[ -n "${1}" ] && reg_fail_install "${1}"
 	exit 1
 }
 
@@ -782,15 +779,15 @@ install_abl_files()
 
 	local preinst_reg_file="${dist_dir}/preinst_reg.md5"
 
-	[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] || inst_failed "install_abl_files: Missing arguments."
+	[ -n "${1}" ] && [ -n "${2}" ] && [ -n "${3}" ] || install_failed "install_abl_files: Missing arguments."
 
 
 
-	[ -f "${dist_dir}/adblock-lean" ] || inst_failed "Can not find ${dist_dir}/adblock-lean"
+	[ -f "${dist_dir}/adblock-lean" ] || install_failed "Can not find ${dist_dir}/adblock-lean"
 
 	log_msg_install "" "Installing new files..."
 
-	upd_cfg_format="$(get_cfg_format_install "${dist_dir}/adblock-lean")" || inst_failed
+	upd_cfg_format="$(get_cfg_format_install "${dist_dir}/adblock-lean")" || install_failed
 	get_cur_main_cfg_path cur_main_cfg_path
 
 	### Check for incompatible, broken or too old config on upgrade
@@ -808,14 +805,14 @@ install_abl_files()
 
 	# Normalize path
 	try_mkdir_install -p "${dist_dir}${ABL_SERVICE_PATH%/*}"
-	mv "${dist_dir}/adblock-lean" "${dist_dir}${ABL_SERVICE_PATH}" || inst_failed
+	mv "${dist_dir}/adblock-lean" "${dist_dir}${ABL_SERVICE_PATH}" || install_failed
 
 	# get new file list
 	if [ -z "${new_file_list}" ]
 	then
 		new_file_list="$(get_file_list_install "${dist_dir}${ABL_SERVICE_PATH}" ALL)" &&
 		[ -n "${new_file_list}" ] ||
-			inst_failed "Failed to get the file list from fetched adblock-lean version."
+			install_failed "Failed to get the file list from fetched adblock-lean version."
 	fi
 
 	printf '%s\n' "${new_file_list}" > "${dist_dir}/new_file_list"
@@ -824,7 +821,7 @@ install_abl_files()
 	for file in ${new_file_list}
 	do
 		[ -z "${file}" ] || [ -f "${dist_dir}${file}" ] && continue
-		inst_failed "Missing file: '${dist_dir}${file}'."
+		install_failed "Missing file: '${dist_dir}${file}'."
 	done
 
 	# get new exec file list
@@ -939,7 +936,7 @@ install_abl_files()
 		preinst_path="${dist_dir}${file}"
 		log_msg_install "Copying file '${file}'."
 		try_mkdir_install -p "${file%/*}" && cp "${preinst_path}" "${file}" ||
-			inst_failed "Failed to copy file '${preinst_path}' to '${file}'."
+			install_failed "Failed to copy file '${preinst_path}' to '${file}'."
 	done
 
 	# make files executable
@@ -948,7 +945,7 @@ install_abl_files()
 		for file in "${@}"
 		do
 			[ -n "${file}" ] || continue
-			chmod +x "${file}" || inst_failed "Failed to make file '$file' executable."
+			chmod +x "${file}" || install_failed "Failed to make file '$file' executable."
 		done
 	}
 
@@ -966,7 +963,7 @@ install_abl_files()
 		try_mkdir_install -p "${ABL_FILES_REG_PATH%/*}" &&
 		printf '%s\n' "${md5sums}" |
 			busybox sed "s~\s${dist_dir}~ ~" > "${ABL_FILES_REG_PATH}" ||
-				inst_failed "Failed to register new files."
+				install_failed "Failed to register new files."
 	fi
 	IFS="${DEFAULT_IFS}"
 
@@ -1201,11 +1198,9 @@ fetch_and_install()
 	# unset vars and functions from current version to have a clean slate with the new version
 	fetch_failed()
 	{
-		local fail_msg="${1}"
-		[ -s "${UCL_ERR_FILE:?}" ] && fail_msg="${fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
-		[ -n "${fail_msg}" ] && reg_fail_install "${fail_msg}"
+		[ -n "${1}" ] && reg_fail_install "${1}"
 		rm -rf "${ABL_PID_DIR:?}"
-		inst_failed
+		install_failed
 	}
 
 	unexp_arg() { fetch_failed "fetch_and_install: unexpected argument '${1}'."; }
@@ -1215,19 +1210,19 @@ fetch_and_install()
 	local util
 	for util in tar find uclient-fetch jsonfilter dnsmasq
 	do
-		is_cmd_install "${util}" || inst_failed "Utility '${util}' not found."
+		is_cmd_install "${util}" || install_failed "Utility '${util}' not found."
 	done
 
 	# Check dnsmasq
 	dnsmasq --help | grep -qe "--conf-script" ||
-		inst_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
+		install_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
 
 	# Test process substitution support
 	printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
 	/bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null ||
 	{
 		rm -f /tmp/abl-test
-		inst_failed "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
+		install_failed "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
 	}
 	rm -f /tmp/abl-test
 
@@ -1311,11 +1306,11 @@ fetch_and_install()
 	fi
 
 
-	[ -f "${dist_dir}/adblock-lean" ] || inst_failed "Can not find ${dist_dir}/adblock-lean"
+	[ -f "${dist_dir}/adblock-lean" ] || install_failed "Can not find ${dist_dir}/adblock-lean"
 
-	[ -f "${dist_dir}/abl-install.sh" ] || inst_failed "Can not find file ${dist_dir}/abl-install.sh"
+	[ -f "${dist_dir}/abl-install.sh" ] || install_failed "Can not find file ${dist_dir}/abl-install.sh"
 	grep -m1 -q '[ 	]*install_abl_files()' "${dist_dir}/abl-install.sh" ||
-		inst_failed "Downloaded adblock-lean install script does not define the function 'install_abl_files' - try a newer adblock-lean version."
+		install_failed "Downloaded adblock-lean install script does not define the function 'install_abl_files' - try a newer adblock-lean version."
 
 	# Refuse to install versions earlier than v0.7.2
 	${AWK_CMD:?} \
@@ -1325,11 +1320,11 @@ fetch_and_install()
 			/^[ 	]*ABL_UPD_CHANNEL=/ {u=1; next}
 			END{if (v==1 && u==1) exit 0; exit 1}
 		' "${dist_dir}/adblock-lean" ||
-	inst_failed "Fetched adblock-lean service script does not specify either ABL_VERSION or ABL_UPD_CHANNEL."
+	install_failed "Fetched adblock-lean service script does not specify either ABL_VERSION or ABL_UPD_CHANNEL."
 
 
 	local cur_cfg_format upd_cfg_format cur_main_cfg_path
-	upd_cfg_format="$(get_cfg_format_install "${dist_dir}/adblock-lean")" || inst_failed
+	upd_cfg_format="$(get_cfg_format_install "${dist_dir}/adblock-lean")" || install_failed
 	get_cur_main_cfg_path cur_main_cfg_path
 
 	### Remove incompatible newer config on downgrade from pre-0.9 to very old versions
@@ -1354,9 +1349,9 @@ fetch_and_install()
 		INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
 			{ reg_fail_install "Failed to source fetched install script."; exit 1; }
 		install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}"
-	) || inst_failed
+	) || install_failed
 
-	rm -rf "${ABL_INST_DIR}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
+	rm -rf "${ABL_INST_DIR}" "${ABL_PID_DIR:-???}"
 	trap - INT TERM EXIT
 	log_msg_install "" "adblock-lean (version '${upd_ver}') has been installed."
 

@@ -142,7 +142,6 @@ export \
 	\
 	ABL_UPDATE_LOG_FILE="/var/log/abl_update.log" \
 	ABL_SESSION_LOG_FILE="/var/log/abl_session.log" \
-	UCL_ERR_FILE="${ABL_TMP_DIR}/uclient-fetch_err" \
 	\
 	ABL_CRON_CMD="/etc/init.d/adblock-lean start"
 
@@ -3163,11 +3162,10 @@ update()
 
 	upd_failed()
 	{
-		local upd_fail_msg="${1}"
-		[ -s "${UCL_ERR_FILE}" ] && upd_fail_msg="${upd_fail_msg} uclient-fetch errors: '$(cat "${UCL_ERR_FILE}")'"
-		[ -n "${upd_fail_msg}" ] && reg_fail "${upd_fail_msg}"
+		[ -n "${1}" ] && reg_fail "${1}"
 		reg_fail "Failed to update adblock-lean."
-		rm -rf "${ABL_UPD_DIR:-???}" "${ABL_PID_DIR:-???}" "${UCL_ERR_FILE:-???}"
+		rm -rf "${ABL_UPD_DIR:-???}"
+		exit 1
 	}
 
 	unexp_arg() { upd_failed "update: unexpected argument '${1}'."; }
@@ -3190,13 +3188,13 @@ update()
 			f) upd_nostop=1 ;;
 			y) export APPROVE_UPD_CHANGES=1 DO_DIALOGS=0 ;;
 			i) IGNORE_CACHE=1 ;; # global var
-			*) unexp_arg "$OPTARG"; return 1
+			*) unexp_arg "$OPTARG"
 		esac
 	done
 	shift $((OPTIND-1))
-	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
+	[ -n "${*}" ] && unexp_arg "${*}"
 
-	init_act "${CUR_ACT}" || { upd_failed; return 1; }
+	init_act "${CUR_ACT}" || upd_failed
 
 	[ -n "${upd_nostop}" ] || STOP_NOEXIT=1 stop ||
 		{ log_msg "To force the update without calling the 'stop' command, use 'service adblock-lean update -f'."; return 1; }
@@ -3219,43 +3217,42 @@ update()
 			;;
 		*)
 			upd_failed "Invalid version string '${ver_str_arg}'."
-			return 1
 	esac
 
 	rm -rf "${ABL_UPD_DIR:-???}"
-	try_mkdir -p "${ABL_UPD_DIR}" || { upd_failed; return 1; }
+	try_mkdir -p "${ABL_UPD_DIR}" || upd_failed
 
 	upd_channel="${req_upd_channel:-"${ABL_UPD_CHANNEL}"}"
 	upd_channel="${force_upd_channel:-"${upd_channel}"}"
 	upd_channel="${upd_channel:-"release"}"
 
 	dist_dir="${ABL_UPD_DIR}/dist"
-	try_mkdir -p "${dist_dir}" || { upd_failed; return 1; }
+	try_mkdir -p "${dist_dir}" || upd_failed
 
 	if [ -n "${sim_path}" ]
 	then
 		print_msg -yellow "Updating in simulation mode."
-		[ -d "${sim_path}" ] || { upd_failed "Update simulation directory '${sim_path}' does not exist."; return 1; }
-		[ -n "${ver_str_arg}" ] || { upd_failed "Specify new version string."; return 1; }
+		[ -d "${sim_path}" ] || upd_failed "Update simulation directory '${sim_path}' does not exist."
+		[ -n "${ver_str_arg}" ] || upd_failed "Specify new version string."
 		upd_ver="${ver_str_arg}"
 
-		[ -d "${sim_path}" ] || { upd_failed "Simulation source directory doesn't exist."; return 1; }
+		[ -d "${sim_path}" ] || upd_failed "Simulation source directory doesn't exist."
 		cp -rT "${sim_path}" "${dist_dir}"
 		log_msg "" "Updating adblock-lean to version '${upd_ver}' (update channel: '${upd_channel}')."
 	else
-		get_gh_ref "${upd_channel}" "${req_ver}" upd_ver tarball_url ver_type || { upd_failed; return 1; }
+		get_gh_ref "${upd_channel}" "${req_ver}" upd_ver tarball_url ver_type || upd_failed
 		case "${upd_channel}" in
 			commit=*)
 				# set update channel to 'commit=<full_commit_hash>'
 				upd_channel="${upd_channel%=*}=${upd_ver}"
 		esac
 		log_msg "" "Downloading adblock-lean, ${ver_type} '${upd_ver}' (update channel: '${upd_channel}')."
-		fetch_abl_dist "${tarball_url}" "${dist_dir}" || { upd_failed; return 1; }
+		fetch_abl_dist "${tarball_url}" "${dist_dir}" || upd_failed
 	fi
 
 	# Call install_abl_files() from fetched installer
 	grep -m1 -q '[ 	]*install_abl_files()' "${dist_dir}/abl-install.sh" ||
-		inst_failed "Downloaded adblock-lean install script does not define the function 'install_abl_files' - try a newer adblock-lean version."
+		upd_failed "Downloaded adblock-lean install script does not define the function 'install_abl_files' - try a newer adblock-lean version."
 	(
 		clean_abl_env
 		INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
@@ -3263,7 +3260,7 @@ update()
 		check_func install_abl_files &&
 		install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}"
 	) ||
-		{ reg_fail "Failed to update adblock-lean."; exit 1; }
+		upd_failed
 
 	log_msg -green "" "adblock-lean has been updated to version '${upd_ver}'."
 
