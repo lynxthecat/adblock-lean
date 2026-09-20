@@ -26,20 +26,19 @@ IFS="${DEFAULT_IFS}"
 
 _DELIM_="$(printf '\35')"
 
-if [ -z "${MSGS_DEST}" ]
-then
+case "${MSGS_DEST}" in "/dev/tty"|"/dev/null") ;; *)
 	if [ -t 0 ]
 	then
 		export MSGS_DEST=/dev/tty
 	else
 		export MSGS_DEST=/dev/null
 	fi
-fi
+esac
 
 # $luci_skip_dialogs is set if sourced from external RPC script for luci
 [ -n "${luci_skip_dialogs}" ] && export -n ABL_LUCI_SOURCED=1
 
-[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
+[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -t 0 ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 	DO_DIALOGS=1
 
 if sed --version 2>/dev/null | grep -qe '(GNU sed)'
@@ -165,7 +164,7 @@ pick_opt_install()
 	while :
 	do
 		printf %s "${1}: " 1>"${MSGS_DEST}"
-		read -r REPLY
+		read -r REPLY || return 1
 		case "${REPLY}" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter ${1}" 1>"${MSGS_DEST}"; continue; esac
 		eval "case \"\${REPLY}\" in
 				${1}) return 0 ;;

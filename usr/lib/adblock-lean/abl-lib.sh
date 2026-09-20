@@ -574,13 +574,16 @@ do_setup()
 
 	if [ -s "${GLOBAL_CFG_FILE}" ]
 	then
-		if [ "${DO_DIALOGS}" = 1 ]
-		then
-			print_msg "" "Existing global config file found." "Generate [${lblue}n${n_c}]ew config or use [${lblue}e${n_c}]xisting config? (n|e)"
+		if [ "${DO_DIALOGS}" = 1 ] &&
+			print_msg "" "Existing global config file found." "Generate [${lblue}n${n_c}]ew config or use [${lblue}e${n_c}]xisting config? (n|e)" &&
 			pick_opt 'n|e'
+		then
+			:
 		elif [ -n "${luci_use_old_config}" ]
 		then
 			REPLY=e
+		else
+			REPLY=n
 		fi
 	fi
 
@@ -599,8 +602,6 @@ do_setup()
 				"[${lblue}k${n_c}]eep existing blockset config files or remove them and create a [${lblue}n${n_c}]ew one, or [${lblue}a${n_c}]bort? (k|n|a)"
 			pick_opt 'k|n|a'
 			[ "${REPLY}" = a ] && return 0
-		else
-			REPLY=k
 		fi
 	else
 		REPLY=n
@@ -657,7 +658,7 @@ do_setup()
 	then
 		print_msg "" "${purple}Setup is complete.${n_c}" "" "${blue}Start adblock-lean now?${n_c} (y|n)"
 		pick_opt "y|n"
-		[ "${REPLY}" != y ] && return 0
+		[ "${REPLY}" = y ] || return 0
 		start
 	fi
 	:
@@ -721,7 +722,6 @@ get_preset()
 
 # Env vars:
 #  CL_PRINT: print results
-#  CL_INTERACTIVE: use dialogs if needed
 # Input:
 #  1: target entries count
 #  2: lists count
@@ -754,30 +754,43 @@ do_calculate_limits()
 
 	local me=calculate_limits lists_cnt tgt_entries_cnt tgt_entries_cnt_human lim_coeff final_entry_size_B source_entry_size_B \
 		cl_min_entries cl_max_set_size_kb cl_max_part_size_kb \
+		enter_number='' \
 		tgt_entries_cnt="${1}" lists_cnt="${2}" lim_coeff="${3:-1}"
 
 	unset_vars "${4}" "${5}" "${6}"
 
-	[ -z "${tgt_entries_cnt}" ] && [ -n "${CL_INTERACTIVE}" ] &&
+	[ "${DO_DIALOGS}" = 1 ] && enter_number=" Please enter a number."
+
 	while :
 	do
-		print_msg "Enter target entries count for the final blockset:"
-		read -r tgt_entries_cnt
-		[ "${tgt_entries_cnt}" -gt 0 ] || { print_msg "Invalid input '${tgt_entries_cnt}'. Please enter a number."; continue; }
-		break
+		[ -z "${tgt_entries_cnt}" ] && [ "${DO_DIALOGS}" = 1 ] &&
+		{
+			print_msg "Enter target entries count for the final blockset:"
+			read -r tgt_entries_cnt || return 1
+		}
+		is_uint "${tgt_entries_cnt}" &&
+		[ "${tgt_entries_cnt}" -gt 0 ] &&
+			break
+		print_msg "Invalid input '${tgt_entries_cnt}'.${enter_number}"
+		[ "${DO_DIALOGS}" = 1 ] || return 1
+		tgt_entries_cnt=
 	done
 
-	[ -z "${lists_cnt}" ] && [ -n "${CL_INTERACTIVE}" ] &&
+
 	while :
 	do
-		print_msg "How many URLs are used?"
-		read -r lists_cnt
-		[ "${lists_cnt}" -gt 0 ] || { print_msg "Invalid input '${lists_cnt}'. Please enter a number."; continue; }
-		break
+		[ -z "${lists_cnt}" ] && [ "${DO_DIALOGS}" = 1 ] &&
+		{
+			print_msg "How many URLs are used?"
+			read -r lists_cnt || return 1
+		}
+		is_uint "${lists_cnt}" &&
+		[ "${lists_cnt}" -gt 0 ] &&
+			break
+		print_msg "Invalid input '${lists_cnt}'.${enter_number}"
+		[ "${DO_DIALOGS}" = 1 ] || return 1
+		lists_cnt=
 	done
-
-	[ "${tgt_entries_cnt}" -gt 0 ] || { reg_fail "${me}: Invalid entries count '${tgt_entries_cnt}'."; return 1; }
-	[ "${lists_cnt}" -gt 0 ] || { reg_fail "${me}: Invalid URLs count '${lists_cnt}'."; return 1; }
 
 	# Default values calculation:
 	# Values are rounded down to reasonable degree
@@ -1025,7 +1038,7 @@ confirm_cfg_write()
 	get_cfg_path cfg_file "${cfg_id}" || return 1
 	[ "${DO_DIALOGS}" = 1 ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -z "${APPROVE_CFG_WRITE}" ] && [ -f "${cfg_file}" ] || return 0
 	print_msg "" "This will overwrite existing config file '${cfg_file}'. Proceed? (y|n)"
-	pick_opt "y|n" && [ "${REPLY}" != n ]
+	pick_opt "y|n" && [ "${REPLY}" = y ]
 }
 
 # 1: out-var for new blockset ID
@@ -1082,7 +1095,7 @@ do_gen_blockset_config()
 		}
 
 		print_msg -blue "" "Name the new blockset:"
-		read -r gbc_id
+		read -r gbc_id || return 1
 	done
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${luci_preset}" ]
@@ -1094,7 +1107,7 @@ do_gen_blockset_config()
 			print_msg "" "Based on the total usable memory of this device (${totalmem_human}), the recommended preset is '${purple}${preset}${n_c}':"
 			GP_PRINT_DESC=1 GP_PRINT_VALS=1 get_preset "${preset}" || return 1
 			print_msg "" "[${lblue}C${n_c}]onfirm this preset or [${lblue}p${n_c}]ick another preset?"
-			pick_opt "c|p"
+			pick_opt "c|p" || REPLY=c
 		else
 			REPLY=p
 		fi
@@ -1109,7 +1122,7 @@ do_gen_blockset_config()
 				GP_PRINT_DESC=1 GP_PRINT_VALS=1 get_preset "${preset}" || return 1
 			done
 			print_msg -blue "" "Pick preset:"
-			pick_opt "${presets_case_opts}"
+			pick_opt "${presets_case_opts}" || return 1
 			preset="${REPLY}"
 		fi
 	else
@@ -1634,7 +1647,7 @@ try_load_config()
 
 	[ -n "${ABL_LUCI_SOURCED}" ] || [ -n "${APPROVE_UPD_CHANGES}" ] && force_fix=1
 
-	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] &&
+	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -t 0 ] && [ "${MSGS_DEST}" = "/dev/tty" ] &&
 		DO_DIALOGS=1
 
 	if [ ! -f "${GLOBAL_CFG_FILE:?}" ]
@@ -1751,7 +1764,7 @@ fix_config()
 			[ "${DO_DIALOGS}" = 1 ] || return 1
 			print_msg -blue "Proceed with suggested config changes? (y|n)"
 			pick_opt "y|n"
-			[ "${REPLY}" = n ] && return 1
+			[ "${REPLY}" = y ] || return 1
 		fi
 	else
 		reg_msg "" "Old config file was saved as ${old_cfg_f}."

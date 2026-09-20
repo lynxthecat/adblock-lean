@@ -85,15 +85,14 @@ IFS="${DEFAULT_IFS}"
 
 CONFIG_FORMAT=v12
 
-if [ -z "${MSGS_DEST}" ]
-then
+case "${MSGS_DEST}" in "/dev/tty"|"/dev/null") ;; *)
 	if [ -t 0 ]
 	then
 		export MSGS_DEST=/dev/tty
 	else
 		export MSGS_DEST=/dev/null
 	fi
-fi
+esac
 
 export -n ABL_RUN_DIR="/var/run/adblock-lean"
 export -n ABL_TMP_DIR="${ABL_RUN_DIR}/tmp"
@@ -583,7 +582,7 @@ pick_opt()
 	while :
 	do
 		printf %s "${lblue}${1//"|"/"${n_c}|${lblue}"}${n_c}: " > "${MSGS_DEST}"
-		read -r REPLY
+		read -r REPLY || return 1
 		case "${REPLY}" in *[!A-Za-z0-9_]*) printf '\n%s\n\n' "Please enter ${1}" > "${MSGS_DEST}"; continue; esac
 		eval "case \"${REPLY}\" in
 				${1}) return 0 ;;
@@ -1897,7 +1896,7 @@ init_act()
 		log_rotated \
 		cur_act="${1}"
 
-	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
+	[ -z "${DO_DIALOGS}" ] && [ -z "${ABL_LUCI_SOURCED}" ] && [ -z "${APPROVE_UPD_CHANGES}" ] && [ -t 0 ] && [ "${MSGS_DEST}" = "/dev/tty" ] && \
 		DO_DIALOGS=1
 
 	debug_msg "" "init_act '${cur_act}'${_NL_}"
@@ -2425,7 +2424,7 @@ gen_global_config()
 	then
 		reg_fail "Can not create cron job for luci because the \${luci_upd_schedule} var is empty."
 	fi
-	[ "${REPLY}" = n ] && upd_schedule=disable
+	[ "${REPLY}" = y ] || upd_schedule=disable
 
 	new_cfg="$(print_def_cfg global)" &&
 	confirm_cfg_write global &&
@@ -3433,7 +3432,7 @@ calculate_limits()
 	local CUR_ACT=calculate_limits
 	local CUR_CMD=${CUR_ACT}
 	init_act "${CUR_ACT}" || return 1
-	CL_PRINT=1 CL_INTERACTIVE=1 do_calculate_limits "${@}"
+	CL_PRINT=1 do_calculate_limits "${@}"
 	exit ${?}
 }
 
