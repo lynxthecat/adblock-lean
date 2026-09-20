@@ -403,6 +403,10 @@ abl_append()
 # result via return status
 is_included() {
 	local delim="${3:-" "}"
+	case "${1}!^@!${2}" in
+		*[!"${delim}"]*"!^@!"*[!"${delim}"]*) ;;
+		*) return 1
+	esac
 	case "${delim}${2}${delim}" in
 		*"${delim}${1}${delim}"*)
 			return 0 ;;
@@ -410,7 +414,6 @@ is_included() {
 			return 1
 	esac
 }
-
 
 # adds a string to a space-separated list if it's not included yet
 # 1 - name of var which contains the list
@@ -886,6 +889,7 @@ rm_conf_scripts()
 
 	for dir in ${rm_dirs}
 	do
+		set +f
 		if [ -n "${all}" ]
 		then
 			rm -f "${dir}/${CS_BASE_FNAME:-???}"*
@@ -897,6 +901,7 @@ rm_conf_scripts()
 		fi
 		# Leftover legacy files
 		rm -f "${dir}/${CS_BASE_FNAME:-???}" "${dir}/.abl-extract_blocklist"
+		set -f
 	done
 
 	:
@@ -1855,7 +1860,7 @@ del_addnmounts()
 				*) false # ignore addnmounts possibly created not by us
 			esac ||
 			{
-				split_path dir fname _ "${path}"
+				split_path dir fname _ "${path}" &&
 				is_included "${dir}/${fname}" "${persist_dirs}" "${_NL_}" ||
 				is_included "${dir}" "${persist_dirs}" "${_NL_}"
 			} ||

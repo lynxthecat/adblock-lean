@@ -585,10 +585,12 @@ gen_set_parts()
 
 	# shellcheck disable=SC2034
 	SCHEDULER_PID=
-	local part_type part_indexes index indexes \
+	local \
+		me=gen_set_parts \
+		part_type part_indexes indexes \
 		set_ids="${1:?}"
 
-	assert_set F_gen_set_parts ALL_PART_TYPES || return 1
+	assert_set "F_${me}" ALL_PART_TYPES || return 1
 
 	# clean up before processing
 	rm -rf "${PROCESSED_PARTS_DIR}"
@@ -604,6 +606,8 @@ gen_set_parts()
 		[ -n "${part_indexes}" ] || continue
 		add2list indexes "${part_indexes}"
 	done
+
+	assert_set "F_${me}" indexes || return 1
 
 	DO_JOB_CB=process_set_part \
 	JOB_DONE_CB=part_done_cb \

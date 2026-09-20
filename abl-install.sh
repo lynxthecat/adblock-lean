@@ -97,13 +97,17 @@ add2list_install() {
 	:
 }
 
-# checks if string $1 is included in newline-separated list $2
+# checks if string $1 is included in space-separated list $2
 # if $3 is specified, uses the value as list delimiter
 # result via return status
 is_included_install() {
-	local delim="${3:-"${_NL_}"}"
-	case "$2" in
-		"$1"|"$1${delim}"*|*"${delim}$1"|*"${delim}$1${delim}"*)
+	local delim="${3:-" "}"
+	case "${1}!^@!${2}" in
+		*[!"${delim}"]*"!^@!"*[!"${delim}"]*) ;;
+		*) return 1
+	esac
+	case "${delim}${2}${delim}" in
+		*"${delim}${1}${delim}"*)
 			return 0 ;;
 		*)
 			return 1
