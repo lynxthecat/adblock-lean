@@ -1078,8 +1078,9 @@ do_select_dnsmasq_instances() {
 				while :
 				do
 					printf %s "${lblue}${indexes// /${n_c}|${lblue}}${n_c}|${lblue}a${n_c}: " > "${MSGS_DEST}"
-					read -r REPLY
-					if [ "${REPLY}" = a ]
+					if
+						! read -r REPLY ||
+						[ "${REPLY}" = a ]
 					then
 						reg_msg "Aborted config generation."
 						exit 0
