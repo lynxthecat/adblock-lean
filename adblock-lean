@@ -297,23 +297,16 @@ bad_args()
 	exit 1
 }
 
-unset_vars()
-{
-	check_var_names "${@}"
-	local var
-	for var in "${@}"
-	do
-		[ -n "${var}" ] && export -n "${var}="
-	done
-	:
-}
+clear_vars() { CVN_CLEAR=1 check_var_names "${@}"; }
 
 # check if var names are safe to use with eval
+# Env vars: CVN_CLEAR
 check_var_names() {
-	local var_name
-	for var_name in "${@}"
+	local cvn_var
+	for cvn_var in "${@}"
 	do
-		case "${var_name}" in [!a-zA-Z_]*|*[!a-zA-Z0-9_]*) reg_fail "Invalid var name '${var_name}'."; exit 1; esac
+		case "${cvn_var}" in [!a-zA-Z_]*|*[!a-zA-Z0-9_]*) reg_fail "Invalid var name '${cvn_var}'."; exit 1; esac
+		[ -n "${cvn_var}" ] && [ -n "${CVN_CLEAR}" ] && export -n "${cvn_var}="
 	done
 	:
 }
@@ -334,7 +327,7 @@ find_files()
 	local me=find_files exec ff_file ff_found \
 		ff_path_out_var="${1}" ff_dir="${2}" ff_prefix="${3}" ff_mid="${4}" ff_suffix="${5}" set_id="${6}"
 
-	unset_vars "${ff_path_out_var}"
+	clear_vars "${ff_path_out_var}"
 
 	[ -n "${FF_EXEC}" ] && { is_cmd "${FF_EXEC%% *}" || { reg_fail "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
 
@@ -502,7 +495,7 @@ read_str_from_file()
 		esac
 	done
 
-	unset_vars ${rs_outvars:?}
+	clear_vars ${rs_outvars:?}
 
 	rs_attempt=0
 	while :
@@ -597,7 +590,7 @@ pick_opt()
 # 1 - var name for centiseconds output
 get_uptime_cs() {
 	local __uptime i_cs gu_cs gu_s
-	unset_vars "${1}"
+	clear_vars "${1}"
 
 	read -r __uptime _ < /proc/uptime &&
 	case "${__uptime}" in
@@ -648,7 +641,7 @@ get_id_from_file()
 {
 	local gif_fname gif_id gif_prefix gif_ext gif_desc
 	[ -n "${2}" ] || return 0
-	unset_vars "${1}"
+	clear_vars "${1}"
 	split_path _ gif_fname gif_ext "${2}"
 	case "${3}" in
 		cfg|bl)
@@ -689,7 +682,7 @@ find_set_configs()
 		:
 	}
 
-	unset_vars "${1:-_}"
+	clear_vars "${1:-_}"
 
 	SET_IDS=
 
@@ -710,7 +703,7 @@ split_path()
 	local sp_file sp_fname sp_ext sp_dir \
 		sp_dir_out_var="${1}" sp_fname_out_var="${2}" sp_ext_out_var="${3}" sp_path="${4}"
 
-	unset_vars "${sp_dir_out_var}" "${sp_fname_out_var}" "${sp_ext_out_var}"
+	clear_vars "${sp_dir_out_var}" "${sp_fname_out_var}" "${sp_ext_out_var}"
 
 	case "${sp_path}" in
 		# ignore files directly in /
@@ -1028,7 +1021,7 @@ detect_util()
 
 	[ ${#} -ge 4 ] || bad_args "${me}" "${@}"
 
-	unset_vars "${du_out_var}"
+	clear_vars "${du_out_var}"
 
 	try_detect_util &&
 	{
@@ -1068,7 +1061,7 @@ detect_main_utils()
 		"IP_CMD			ip				''		/sbin/ip					"
 	do
 		eval "set -- ${util_params}" && # eval needed because some fields are ''
-		unset_vars "${1}"
+		clear_vars "${1}"
 		detect_util "${1}" "${2}" "${3}" "${4}" ||
 			add2list failed_utils "${2}" ', '
 	done
@@ -1305,7 +1298,7 @@ dmsq_stop_restart_shared()
 		cmd="${1}" set_ids="${2}" d_ok_ids_out_var="${3:-_}" instances_out_var="${4:-_}"
 
 	export -n R_PROCESSED=
-	unset_vars "${instances_out_var}" "${d_ok_ids_out_var}"
+	clear_vars "${instances_out_var}" "${d_ok_ids_out_var}"
 
 	case "${cmd}" in
 		stop) cmd_pr=Stopping ;;
@@ -1383,7 +1376,7 @@ restart_dnsmasq()
 		i res_attempts \
 		new_run_state="${1}" restart_ok_ids_out_var="${2:-_}" set_ids="${3}"
 
-	unset_vars "${restart_ok_ids_out_var}"
+	clear_vars "${restart_ok_ids_out_var}"
 	dmsq_stop_restart_shared restart "${set_ids}" p1_ok_ids instances || rv=1
 	subtract_a_from_b "${p1_ok_ids}" "${set_ids}" restart_fail_ids
 
@@ -2067,7 +2060,7 @@ get_gh_ref()
 
 	set_res_vars()
 	{
-		unset_vars "${3}" "${4}" "${5}"
+		clear_vars "${3}" "${4}" "${5}"
 		# validate resulting ref
 		case "${gr_ref}" in
 			*[^"${_NL_}"]*"${_NL_}"*[^"${_NL_}"]*)
@@ -2129,7 +2122,7 @@ get_gh_ref()
 
 	[ "$gr_channel" = release ] && gr_version="${gr_version#v}"
 
-	unset_vars "${3}" "${4}" "${5}"
+	clear_vars "${3}" "${4}" "${5}"
 
 	# if commit hash is specified and it's 40-char long, use it directly without API query or cache check
 	case "${gr_channel}" in
@@ -3456,7 +3449,8 @@ unset \
 	ASSERT_NOEXIT \
 	FORCE_STOP_ALL \
 	FAIL_STOP_REQ \
-	ABL_FAIL_MSG
+	ABL_FAIL_MSG \
+	CVN_CLEAR
 
 set -f
 set -o pipefail

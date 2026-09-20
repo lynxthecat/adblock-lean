@@ -98,7 +98,7 @@ get_compr_spec()
 	local gcs_file gcs_ext gcs_util \
 		extn_out_var="${1}" util_out_var="${2}" gcs_path="${3}"
 
-	unset_vars "${extn_out_var}" "${util_out_var}"
+	clear_vars "${extn_out_var}" "${util_out_var}"
 	assert_set F_get_compr_spec extn_out_var util_out_var gcs_path || return 1
 
 	gcs_file="${gcs_path##*"/"}"
@@ -115,7 +115,7 @@ get_compr_util_spec()
 	local gcu_util_path gcu_ext \
 		util_path_out_var="${1}" ext_out_var="${2}" gcu_util_name="${3}"
 
-	unset_vars "${1}" "${2}"
+	clear_vars "${1}" "${2}"
 	assert_set F_get_compr_util_spec util_path_out_var ext_out_var gcu_util_name || return 1
 
 	case "${gcu_util_name}" in
@@ -159,7 +159,7 @@ try_compress()
 		tc_dir tc_fname tc_ext \
 		tc_set_id="${1:?}" tc_in_file="${2}" tc_cmd="${3}" out_file_var="${4}"
 
-	unset_vars "${out_file_var}"
+	clear_vars "${out_file_var}"
 	split_path tc_dir tc_fname _ "${tc_in_file}" && [ -n "${tc_fname}" ] && is_valid_dir "${tc_dir}" &&
 	{
 		is_dir_writable "${tc_set_id}" "${tc_dir}" ||
@@ -269,7 +269,7 @@ check_dmsq_instances()
 	what_failed()
 	{
 		local set_id instance dmsq_instances conf_dirs param cfg_opt cfg_val _fail_ind _fail_sets
-		unset_vars "${1}" "${2}"
+		clear_vars "${1}" "${2}"
 		for set_id in ${SET_IDS}
 		do
 			for param in dmsq_instances conf_dirs
@@ -509,7 +509,7 @@ parse_dmsq_runtime()
 	[ -z "${2}${3}" ] && [ -n "${R_PROCESSED}" ] &&
 		is_gr_eq 1 "${DMSQ_RUNNING_INST_CNT}" && return 0
 
-	unset_vars "${2}"
+	clear_vars "${2}"
 
 	while :
 	do
@@ -1166,7 +1166,7 @@ do_select_dnsmasq_instances() {
 get_affected_set_ids()
 {
 	local ges_id ges_all ges_inst ges_inst_tmp ges_state
-	unset_vars "${1}"
+	clear_vars "${1}"
 	for ges_id in ${2}
 	do
 		get_params "${ges_id}" ges_inst=dmsq_instances
@@ -1343,7 +1343,7 @@ try_check_addnmounts()
 		ca_instance ca_path ca_path_tmp ca_addnmounts \
 		ca_missing_var="${1}" ca_instances="${2}" ca_req_addnm="${3}"
 
-	unset_vars "${ca_missing_var}"
+	clear_vars "${ca_missing_var}"
 	assert_set "F_${me}" ca_instances C_PROCESSED || return 1
 
 	[ -n "${ca_req_addnm}" ] || return 0
@@ -1499,7 +1499,7 @@ set_blocksets_env()
 
 	debug_msg "" "${me} start, sbe_ids '${sbe_ids}'"
 
-	unset_vars "${sbe_ids_out_var}"
+	clear_vars "${sbe_ids_out_var}"
 	[ -z "${sbe_ids}" ] && return 0
 
 	assert_set "F_${me}" C_PROCESSED || return 1
@@ -2094,7 +2094,7 @@ get_valid_set_ids()
 {
 	local gvi_id gvi_ok gvi_out_var="${1}" gvi_ids="${2}" gvi_caller="${3}"
 	[ -n "${gvi_out_var}" ] || bad_args get_valid_set_ids "${@}"
-	unset_vars "${gvi_out_var}"
+	clear_vars "${gvi_out_var}"
 	[ -n "${gvi_ids}" ] || return 0
 
 	for gvi_id in ${gvi_ids}
@@ -2154,7 +2154,7 @@ get_params()
 
 	for var_exp in "${@}"
 	do
-		unset_vars "${var_exp%=*}"
+		clear_vars "${var_exp%=*}"
 	done
 
 	is_known_set_id "${set_id}" "${me}${err_func:+": ${err_func}():"}" || exit 1
@@ -2238,7 +2238,7 @@ install_blocksets()
 		install_path install_path_ram install_in_cd_fallback persist_mode \
 		ok_ids_out_var="${1:-_}" perm_fail_ids_out_var="${2:-_}" set_ids="${3:?}"
 
-	unset_vars "${ok_ids_out_var}" "${perm_fail_ids_out_var}"
+	clear_vars "${ok_ids_out_var}" "${perm_fail_ids_out_var}"
 
 	try_install_blocksets inst_ok_ids "${set_ids}"
 	inst_rv=${?}
@@ -2302,7 +2302,7 @@ try_install_blocksets()
 		\
 		try_inst_ok_ids_out_var="${1:?}" set_ids="${2:?}"
 
-	unset_vars "${try_inst_ok_ids_out_var}"
+	clear_vars "${try_inst_ok_ids_out_var}"
 
 	for set_id in ${set_ids}
 	do
@@ -2409,7 +2409,7 @@ validate_doms()
 	local dom invalid_doms \
 		vd_doms_var="${1:?}" vd_doms="${2}"
 
-	unset_vars "${vd_doms_var}"
+	clear_vars "${vd_doms_var}"
 
 	for dom in ${vd_doms}
 	do
@@ -2444,7 +2444,7 @@ check_active_blocksets()
 		timeout_s="${3}" \
 		r_parse_attempts="${4}"
 
-	unset_vars "${ab_active_out_var}"
+	clear_vars "${ab_active_out_var}"
 
 	check_dmsq_instances "${r_parse_attempts:-1}" || return 1
 
@@ -2487,7 +2487,7 @@ lookup_test_doms()
 		hit ok cnt fail_report \
 		lt_out_var="${1:?}" timeout_s="${2:-0}" recs="${3:?}"
 
-	unset_vars "${lt_out_var}"
+	clear_vars "${lt_out_var}"
 
 	for rec in ${recs}
 	do
@@ -2643,7 +2643,7 @@ lookup_targets()
 		lookup_start_cs lookup_elapsed_cs \
 			resolved_out_var="${1}" recs_in="${2}" lookup_timeout_s="${3:-0}"
 
-	[ -n "${resolved_out_var}" ] && unset_vars "${resolved_out_var}"
+	[ -n "${resolved_out_var}" ] && clear_vars "${resolved_out_var}"
 
 	[ -n "${recs_in}" ] || return 0
 

@@ -75,7 +75,7 @@ get_pad()
 # 3 - (optional) '-p' to add padding
 bytes2human()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	local i="${2:-0}" s=0 d=0 m=1024 fp S bh_res pad align
 	[ "${3}" = '-p' ] && align=1
 	is_uint "${i}" || { reg_fail "bytes2human: invalid uint '${i}'."; return 1; }
@@ -110,7 +110,7 @@ bytes2human()
 # 2 - uint
 int2human()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	is_uint "${2}" || { reg_fail "int2human: invalid uint '${2}'."; return 1; }
 
 	local in_num="${2#"${2%%[!0]*}"}" out_num=
@@ -128,7 +128,7 @@ int2human()
 
 get_md5()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	local IFS="${DEFAULT_IFS}" g_md5
 	g_md5="$(${MD5_CMD} "${2}")" &&
 	g_md5="${g_md5%% *}" &&
@@ -406,7 +406,7 @@ do_create_addnmounts()
 
 get_pkg_name()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	local _name
 	case "${2}" in
 		awk) _name="gawk" ;;
@@ -692,7 +692,7 @@ get_preset()
 
 	assert_set F_get_preset gp_mem gp_lists_cnt gp_entr_cnt gp_lim_coeff gp_lists || return 1
 
-	unset_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}"
+	clear_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}"
 
 	do_calculate_limits "${gp_entr_cnt}" "${gp_lists_cnt}" "${gp_lim_coeff}" gp_min_entries gp_max_set_size gp_max_part_size || return 1
 
@@ -757,7 +757,7 @@ do_calculate_limits()
 		enter_number='' \
 		tgt_entries_cnt="${1}" lists_cnt="${2}" lim_coeff="${3:-1}"
 
-	unset_vars "${4}" "${5}" "${6}"
+	clear_vars "${4}" "${5}" "${6}"
 
 	[ "${DO_DIALOGS}" = 1 ] && enter_number=" Please enter a number."
 
@@ -1048,7 +1048,7 @@ do_gen_blockset_config()
 	# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
 	get_def_preset()
 	{
-		unset_vars "${1}" "${2}"
+		clear_vars "${1}" "${2}"
 		assert_set F_get_def_preset ALL_PRESETS "${ALL_PRESETS%% *}_mem" || return 1
 
 		local _totalmem _mem _preset IFS="${DEFAULT_IFS}"
@@ -1153,7 +1153,7 @@ do_gen_blockset_config()
 get_cfg_path()
 {
 	local g_path
-	unset_vars "${1}"
+	clear_vars "${1}"
 	case "${2}" in
 		''|*[!a-zA-Z0-9_]*) reg_fail "Invalid config name '${2}'."; return 1 ;;
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
@@ -1219,7 +1219,7 @@ parse_config()
 
 	cfg_pr="config file '${cfg_path}'"
 
-	unset_vars "${fixes_out_var}" "${replace_keys_out_var}"
+	clear_vars "${fixes_out_var}" "${replace_keys_out_var}"
 
 	unset luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_cfg_format luci_cfg_fixes
@@ -1857,7 +1857,7 @@ get_abl_version()
 	get_ver_str()
 	{
 		[ -n "${3}" ] || return 1
-		unset_vars "${1}" "${2}"
+		clear_vars "${1}" "${2}"
 		local _par res_version res_upd_channel key_ptrn res
 		for _par in version upd_channel
 		do
@@ -1875,7 +1875,7 @@ get_abl_version()
 	}
 
 	local gv_ver gv_upd_ch gv_rv cfg_format
-	unset_vars "${2}" "${3}"
+	clear_vars "${2}" "${3}"
 
 	[ -s "${1}" ] || { reg_fail "Can not find '${1}'."; return 1; }
 

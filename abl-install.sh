@@ -53,7 +53,7 @@ AWK_CMD="/bin/busybox awk"
 
 is_cmd_install() { command -v "${1:?}" 1>/dev/null; }
 
-had_f_install()
+has_f_install()
 {
 	case "${-}" in
 		*f*) return 0 ;;
@@ -130,27 +130,20 @@ cleanup_and_exit_install()
 	trap - INT TERM EXIT
 	rm -rf "${ABL_TMP_DIR}" "${ABL_PID_DIR}"
 	[ "${1}" = 1 ] && reg_fail_install "Failed to install adblock-lean."
-	[ -n "${ABL_LUCI_SOURCED}" ] && abl_inst_luci_exit "${1}"
+	[ -n "${ABL_LUCI_SOURCED}" ] && abl_luci_exit "${1}"
 	exit "${1}"
 }
 
-unset_vars_install()
-{
-	are_var_names_safe_install "${@}" || return 1
-	local var
-	for var in "${@}"
-	do
-		[ -n "${var}" ] && export -n "${var}="
-	done
-	:
-}
+clear_vars_install() { CVN_CLEAR=1 check_var_names_install "${@}"; }
 
 # check if var names are safe to use with eval
-are_var_names_safe_install() {
-	local var_name
-	for var_name in "${@}"
+# Env vars: CVN_CLEAR
+check_var_names_install() {
+	local cvn_var
+	for cvn_var in "${@}"
 	do
-		case "${var_name}" in *[!a-zA-Z_]*) reg_fail_install "Invalid var name '${var_name}'."; return 1; esac
+		case "${cvn_var}" in [!a-zA-Z_]*|*[!a-zA-Z0-9_]*) reg_fail_install "Invalid var name '${cvn_var}'."; exit 1; esac
+		[ -n "${cvn_var}" ] && [ -n "${CVN_CLEAR}" ] && export -n "${cvn_var}="
 	done
 	:
 }
@@ -190,12 +183,12 @@ find_files_install()
 	local me=find_files_install exec ff_file ff_found ff_fail \
 		ff_path_out_var="${1}" ff_dir="${2}" ff_prefix="${3}" ff_mid="${4}" ff_suffix="${5}"
 
-	unset_vars_install "${ff_path_out_var}" || return 1
+	clear_vars_install "${ff_path_out_var}"
 
 	[ -n "${FF_EXEC}" ] && { is_cmd_install "${FF_EXEC%% *}" || { reg_fail_install "${me}: invalid exec cmd '${FF_EXEC}'"; return 1; }; }
 
 	local had_f
-	had_f_install && had_f=1
+	has_f_install && had_f=1
 	set +f
 
 	# shellcheck disable=SC2027
@@ -233,7 +226,7 @@ split_path_install()
 	local sp_file sp_fname sp_ext sp_dir \
 		sp_dir_out_var="${1}" sp_fname_out_var="${2}" sp_ext_out_var="${3}" sp_path="${4}"
 
-	unset_vars_install "${sp_dir_out_var}" "${sp_fname_out_var}" "${sp_ext_out_var}" || return 1
+	clear_vars_install "${sp_dir_out_var}" "${sp_fname_out_var}" "${sp_ext_out_var}"
 
 	case "${sp_path}" in
 		# ignore files directly in /
@@ -269,7 +262,7 @@ print_msg_install() { reg_msg_install -4 "${@}"; }
 
 log_msg_install() { reg_msg_install -1 "${@}"; }
 
-# Depending on msg-specific log level, on global ${ABL_LOG_LEVEL} and on ${ABL_DEBUG}:
+# Depending on msg-specific log level, on global ${LOG_VERBOSITY} and on ${ABL_DEBUG}:
 # Prints each msg separately to console [ and to log file ] [ and sends to system log ]
 # -[0|1|2|3|4|5] : specifies log level (default: 3)
 # Optional arguments: '-noprint', '-nolog', '-err', '-warn', '-[color]'
@@ -291,10 +284,10 @@ reg_msg_install()
 	# 4 - print to /dev/tty
 	# 5 - debug messages: print to /dev/stderr
 
-	# ${ABL_LOG_LEVEL} <n> modifies which levels are sent to syslog
+	# ${LOG_VERBOSITY} <n> modifies which levels are sent to syslog
 
 	local msgs_dest="${MSGS_DEST}" session_log_thresh=3 \
-		sys_log_thresh="${ABL_LOG_LEVEL:-"1"}" print_thresh=4
+		sys_log_thresh="${LOG_VERBOSITY:-"1"}" print_thresh=4
 
 	[ -n "${ABL_DEBUG}" ] && print_thresh=5
 
@@ -373,7 +366,7 @@ get_cfg_id_install()
 	_cfg_id="${_cfg_fname#"blockset-"}"
 	_cfg_id="${_cfg_id%".conf"}"
 	case "${_cfg_id}" in
-		''|*_|*[!a-zA-Z0-9_]*)
+		''|_*|*[!a-zA-Z0-9_]*)
 			reg_fail_install "Invalid config name '${_cfg_id}' in file '${2}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
 			return 1 ;;
 	esac
@@ -432,8 +425,8 @@ get_gh_ref_install()
 			*) gr_version="${gr_ref}"
 		esac
 
-		export -n "${3}=${gr_version}" "${4}=${ABL_GH_URL_API}/tarball/${gr_ref}" "${5}=${gr_ver_type}" \
-			"PREV_REF=${gr_ref}" "PREV_VER_TYPE=${gr_ver_type}" \
+		export -n "${3}=${gr_version}" "${4}=${ABL_GH_URL_API}/tarball/${gr_ref}" "${5}=${gr_ver_type}"
+		export "PREV_REF=${gr_ref}" "PREV_VER_TYPE=${gr_ver_type}" \
 			"PREV_UPD_CHANNEL=${gr_channel}" "PREV_VERSION=${gr_version}"
 	}
 
@@ -477,8 +470,7 @@ get_gh_ref_install()
 
 	local gr_ucl_err_file="${gr_fetch_tmp_dir}/ucl_err"
 
-	are_var_names_safe_install "${3}" "${4}" "${5}" || return 1
-	export -n "${3}=" "${4}=" "${5}="
+	clear_vars_install "${3}" "${4}" "${5}"
 
 	# if commit hash is specified and it's 40-char long, use it directly without API query or cache check
 	case "${gr_channel}" in
@@ -612,7 +604,7 @@ fetch_abl_dist_install()
 	local tarball="${fetch_dir}/remote_abl.tar.gz" ucl_err_file="${fetch_dir}/ucl_err"
 
 	local had_f
-	had_f_install && had_f=1
+	has_f_install && had_f=1
 
 	rm -f "${ucl_err_file}" "${tarball}"
 	set +f
@@ -651,18 +643,11 @@ find_set_configs_install()
 	# shellcheck disable=SC2329
 	add_cfg_file()
 	{
-		local cfg_id
-		split_path_install _ cfg_id _  "${1}"
-		cfg_id="${cfg_id#"blockset-"}"
-		case "${cfg_id}" in ''|*_|*[!a-zA-Z0-9_]*)
-			reg_fail_install "Invalid blockset name '${cfg_id}' in file '${1}'. Only English letters, numbers and underlines are allowed. Ignoring the file."
-			return 0
-		esac
-
+		get_cfg_id_install _ "${1}" || return 0
 		add2list_install "${2}" "${1}" "${_NL_}"
 	}
 
-	unset_vars_install "${1}" || return 1
+	clear_vars_install "${1}"
 
 	FF_EXEC="add_cfg_file {} ${1}" \
 		find_files_install _ "${ABL_CFG_DIR:?}" "blockset-" "*" ".conf"
@@ -675,6 +660,7 @@ find_set_configs_install()
 	:
 }
 
+# unset vars and functions from current version to have a clean slate with the new version
 clean_env_install()
 {
 	# blockset-specific context cleanup should not be needed but should stay as a bit of defensive code
@@ -1063,7 +1049,6 @@ install_abl_files()
 			ABL_SOURCE_PATH_PREFIX="${dist_dir}" source_libs &&
 			check_func_install parse_config &&
 			check_func_install print_def_cfg &&
-			check_func_install try_mkdir_install &&
 			cfg_staging_dir="/tmp/abl-conf-staging" &&
 			try_mkdir_install -p "${cfg_staging_dir}" || migr_fail=1
 
@@ -1198,7 +1183,6 @@ install_abl_files()
 
 fetch_and_install()
 {
-	# unset vars and functions from current version to have a clean slate with the new version
 	fetch_failed()
 	{
 		[ -n "${1}" ] && reg_fail_install "${1}"
@@ -1208,6 +1192,7 @@ fetch_and_install()
 
 	unexp_arg() { fetch_failed "fetch_and_install: unexpected argument '${1}'."; }
 
+	unset CVN_CLEAR
 
 	# Check dependencies
 	local util

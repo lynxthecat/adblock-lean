@@ -48,7 +48,7 @@ stevenblack_mirrors="github sbc_io" \
 # 2 - initial uptime in centiseconds
 get_elapsed_time_cs() {
 	local ge_uptime_cs
-	unset_vars "${1}"
+	clear_vars "${1}"
 	get_uptime_cs ge_uptime_cs &&
 	export -n "${1}=$(( ge_uptime_cs - ${2:-ge_uptime_cs} ))"
 }
@@ -57,7 +57,7 @@ get_elapsed_time_cs() {
 # 2: reference time in centiseconds
 get_elapsed_time_human() {
 	local _e_m _e_s _e_cs _e_elapsed _elapsed_human
-	unset_vars "${1}"
+	clear_vars "${1}"
 	get_elapsed_time_cs _e_elapsed "${2}" || return 1
 	_e_m=$(( _e_elapsed / 6000 ))
 	[ "$_e_m" -gt 0 ] || _e_m=
@@ -154,7 +154,7 @@ get_feed_url()
 		mirrors first_mirror \
 		gfu_out_var="${1}" list_id="${2}" format="${3}" mirror="${4}"
 
-	unset_vars "${gfu_out_var}"
+	clear_vars "${gfu_out_var}"
 
 	case "${format}" in raw|hosts) ;; *) reg_fail "Unexpected list format '${format}'."; return 1; esac
 
