@@ -1350,7 +1350,6 @@ try_check_addnmounts()
 
 	for ca_instance in ${ca_instances}
 	do
-		check_name "${ca_instance}" dmsq_inst "${me}" || return 1
 		IFS="${_NL_}"
 		for ca_path in ${ca_req_addnm}
 		do
@@ -2499,7 +2498,6 @@ lookup_test_doms()
 
 		for instance in ${instances}
 		do
-			check_name "${instance}" dmsq_inst "${me}" || continue
 			eval "ns_ips=\"\${NS__${instance}}\""
 			: "${ns_ips:="127.0.0.1 ::1"}"
 

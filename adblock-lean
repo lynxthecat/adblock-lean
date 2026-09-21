@@ -1079,10 +1079,11 @@ reg_fail()
 {
 	local arg
 	log_msg -err "${@}"
-	for arg in "${@}"; do
-		abl_append ABL_FAIL_MSG "${arg}" "${_NL_}"
-	done
 	luci_errors="${ABL_FAIL_MSG}"
+	for arg in "${@}"; do
+		[ -z "${FORCE_NO_REPORT}" ] && abl_append ABL_FAIL_MSG "${arg}" "${_NL_}"
+		abl_append luci_errors "${arg}" "${_NL_}"
+	done
 }
 
 reg_success() { log_msg -report "${@}"; }
@@ -1095,7 +1096,8 @@ log_msg() { reg_msg -1 "${@}"; }
 
 debug_msg() { reg_msg -5 -d "${@}"; }
 
-# Depending on msg-specific log level, on global ${LOG_VERBOSITY} and on ${ABL_DEBUG}:
+# Env vars: LOG_VERBOSITY, ABL_DEBUG, SESSION_LOG_THRESH, PRINT_THRESH, FORCE_MSG_LVL
+# Depending on values of env vars:
 # Prints each msg separately to console [ and to log file ] [ and sends to system log ] [ and registers action ]
 
 # Log/print thresholds:
@@ -1122,10 +1124,12 @@ reg_msg()
 		print_req sys_log_req log_file_req action_req report_req noprint \
 		set_ids ids_pr_prefix fetch_ids set_ids_pr \
 		set_id_hl_on set_id_hl_off force_ids \
-		msg_level msgs_dest="${MSGS_DEST}" \
+		msg_lvl_arg_seen \
+		msgs_dest="${MSGS_DEST}" \
 		\
 		reg_req \
 		thresh \
+		msg_level="${FORCE_MSG_LVL}" \
 		sys_log_thresh="${LOG_VERBOSITY:-"1"}"
 
 	local IFS="${DEFAULT_IFS}"
@@ -1147,9 +1151,12 @@ reg_msg()
 						[ "${msg_level}" -le "${thresh}" ] && { reg_req=1; break; }
 					done
 					[ -n "${reg_req}" ] || return 0 # short path for no action required
-				else
+				elif [ -n "${msg_lvl_arg_seen}" ]
+				then
 					append_msg "${_arg}"
-				fi ;;
+				fi
+				msg_lvl_arg_seen=1
+				;;
 			-b) fetch_ids=1 ;;
 			-bf) fetch_ids=1 force_ids=1 ;;
 			-d ) [ -n "${ABL_DEBUG}" ] || return 0; debug_prefix="${orange}debug:${n_c} " ;;
