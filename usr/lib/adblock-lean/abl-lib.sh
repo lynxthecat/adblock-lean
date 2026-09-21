@@ -1081,10 +1081,10 @@ do_gen_blockset_config()
 
 	while :
 	do
-		check_name "${gbc_id}" && break
+		check_name "${gbc_id}" set_id && break
 
 		[ -z "${gbc_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
-			print_msg "Invalid blockset name '${gbc_id}'. Use English letters and/or numbers and/or underlines."
+			print_msg "Use English letters and/or numbers and/or underlines."
 
 		[ -n "${luci_new_blockset_name}" ] && return 1
 

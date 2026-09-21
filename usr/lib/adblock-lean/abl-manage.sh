@@ -619,7 +619,7 @@ try_parse_dmsq_runtime()
 	for instance in ${instances}
 	do
 		json_is_a "${instance}" object &&
-		check_name "${instance}" ||
+		check_name "${instance}" dmsq_inst "${me}" "in dnsmasq runtime info" ||
 			continue
 		unset "RUNNING__${instance}" "R_DEVICES__${instance}" "R_CONF_DIRS__${instance}" "R_CONF_DIRS_CNT__${instance}"
 		conf_dirs_nl=
@@ -1350,7 +1350,7 @@ try_check_addnmounts()
 
 	for ca_instance in ${ca_instances}
 	do
-		check_name "${ca_instance}" || { reg_fail "${me}: Invalid dnsmasq instance name '${ca_instance}'."; return 1; }
+		check_name "${ca_instance}" dmsq_inst "${me}" || return 1
 		IFS="${_NL_}"
 		for ca_path in ${ca_req_addnm}
 		do
@@ -2111,18 +2111,13 @@ get_valid_set_ids()
 # Env vars: ACCEPT_UNKNOWN_SET_IDS
 is_known_set_id()
 {
-	local akb_err
-	{
-		check_name "${1}" ||
-			{ akb_err="Invalid blockset ID '${1}'."; false; }
-	} &&
-	{
-		[ -n "${ACCEPT_UNKNOWN_SET_IDS}" ] ||
-		is_included "${1}" "${SET_IDS}" ||
-			{ akb_err="Blockset '${1}' is not included in registered blockset IDs '${SET_IDS// /\', \'}'."; false; }
-	} ||
-		{ reg_fail "${2:+"${2}: "}${akb_err}"; return 1; }
-	:
+	check_name "${1}" set_id "${2}" || return 1
+
+	[ -n "${ACCEPT_UNKNOWN_SET_IDS}" ] ||
+	is_included "${1}" "${SET_IDS}" &&
+		return 0
+	reg_fail "${2:+"${2}: "}Blockset '${1}' is not included in registered blockset IDs '${SET_IDS// /\', \'}'."
+	return 1
 }
 
 # Env vars: GBP_PREFIX
@@ -2502,9 +2497,9 @@ lookup_test_doms()
 			"doms_${set_id}=${doms}" \
 			"insts_${set_id}=${instances}"
 
-		check_var_names ${instances}
 		for instance in ${instances}
 		do
+			check_name "${instance}" dmsq_inst "${me}" || continue
 			eval "ns_ips=\"\${NS__${instance}}\""
 			: "${ns_ips:="127.0.0.1 ::1"}"
 
@@ -2989,8 +2984,7 @@ try_read_blockset_metadata()
 
 		debug_msg "Processing ${meta_type} metadata for ${set_id_pr}."
 
-		check_name "${set_id}" ||
-			{ abl_append rbm_errors "${sp_f_pr} contains invalid blockset ID '${1}'." "${_NL_}"; rbm_force_rv=1; return 1; }
+		check_name "${set_id}" set_id "${me}" "in ${sp_f_pr}" || { rbm_force_rv=1; return 1; }
 
 		for pv_param in ${META_PARAMS}
 		do

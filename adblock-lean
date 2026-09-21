@@ -214,16 +214,20 @@ is_gr_eq()
 	done
 }
 
-# rejects leading underscore to enforce unique blockset ID and dnsmasq inst. names
+# Validates correct blockset ID or dnsmasq inst. name; rejects leading _
 check_name()
 {
-	local _v
-	for _v in "${@}"
-	do
-		case "${_v}" in
-			''|_*|*[!a-zA-Z0-9_]*) return 1
-		esac
-	done
+	local fail_pr
+	case "${2}" in
+		set_id) fail_pr="blockset ID" ;;
+		dmsq_inst) fail_pr="dnsmasq instance name" ;;
+		*) bad_args check_name "${@}"
+	esac
+	case "${1}" in
+		''|_*|*[!a-zA-Z0-9_]*)
+			reg_fail "${3:+"${3}: "}Invalid ${fail_pr} '${1}'${4}."
+			return 1
+	esac
 	:
 }
 
@@ -655,9 +659,9 @@ get_id_from_file()
 		cs) gif_desc=conf-script gif_id="${gif_ext}" ;;
 		*) bad_args get_id_from_file "${@}"
 	esac
-	check_name "${gif_id}" ||
+	check_name "${gif_id}" set_id "" "in ${gif_desc} file '${2}'" ||
 	{
-		reg_fail "Invalid blockset name '${gif_id}' in ${gif_desc} file '${2}'. Only English letters, numbers and underlines are allowed."
+		log_msg "Only English letters, numbers and underlines are allowed."
 		return 1
 	}
 	export -n "${1}=${gif_id}"
