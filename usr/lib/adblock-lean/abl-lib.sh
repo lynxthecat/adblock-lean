@@ -1264,7 +1264,8 @@ parse_config()
 
 	# parse config
 	local parse_line parse_lines entry_type \
-		valid_lines \
+		valid_key valid_line valid_lines \
+		var_suffix \
 		parser_err_file="${ABL_CFG_STAGING_DIR}/parser_err" \
 		awk_err_file="${ABL_CFG_STAGING_DIR}/awk_err" \
 		inval_entry_file="${ABL_CFG_STAGING_DIR}/inval_entry"
@@ -1507,6 +1508,18 @@ parse_config()
 
 	debug_msg "" "parse_lines:" "${parse_lines}" ""
 
+	# Unset previously set vars
+	[ "${cfg_type}" = global ] || var_suffix="__${cfg_id}"
+
+	IFS="${_DELIM_}"
+	for valid_line in ${valid_lines}
+	do
+		valid_key="${valid_line%%=*}"
+		[ -n "${valid_key}" ] || continue
+		IFS="${DEFAULT_IFS}"
+		unset "${valid_key}${var_suffix}"
+	done
+
 	# Parse config lines into vars
 	IFS="${_NL_}"
 	for parse_line in ${parse_lines}
@@ -1521,21 +1534,28 @@ parse_config()
 	[ "${cfg_id}" = global ] ||
 	{
 		local dir persist_dir c_dirs conf_dirs inst dmsq_i dmsq_instances
-		get_params "${cfg_id}" persist_dir
-		set_params "${cfg_id}" persist_dir="${persist_dir%/}"
-		get_params "${cfg_id}" c_dirs=conf_dirs
-		for dir in ${c_dirs}
-		do
-			add2list conf_dirs "${dir%/}"
-		done
-		get_params "${cfg_id}" dmsq_i=dmsq_instances
-		for inst in ${dmsq_i}
-		do
-			check_name "${inst}" dmsq_inst "${me}" "in ${cfg_pr} - ignoring" || continue
-			add2list dmsq_instances "${inst}"
-		done
+		get_params "${cfg_id}" persist_dir c_dirs=conf_dirs dmsq_i=dmsq_instances
+		[ -n "${persist_dir}" ] && set_params "${cfg_id}" persist_dir="${persist_dir%/}"
 
-		set_params "${cfg_id}" conf_dirs dmsq_instances
+		# Empty values for conf_dirs and dmsq_instances must leave corresponding param vars unset, since the install script's
+		# config migration drops keys with unset vars and the next config load then reports them as missing and runs select_dmsq_instances
+		[ -n "${c_dirs}" ] &&
+		{
+			for dir in ${c_dirs}
+			do
+				add2list conf_dirs "${dir%/}"
+			done
+			set_params "${cfg_id}" conf_dirs
+		}
+		[ -n "${dmsq_i}" ] &&
+		{
+			for inst in ${dmsq_i}
+			do
+				check_name "${inst}" dmsq_inst "${me}" "in ${cfg_pr} - ignoring" || continue
+				add2list dmsq_instances "${inst}"
+			done
+			set_params "${cfg_id}" dmsq_instances
+		}
 	}
 
 	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0
