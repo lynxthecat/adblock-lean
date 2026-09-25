@@ -75,7 +75,7 @@ get_pad()
 # 3 - (optional) '-p' to add padding
 bytes2human()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	local i="${2:-0}" s=0 d=0 m=1024 fp S bh_res pad align
 	[ "${3}" = '-p' ] && align=1
 	is_uint "${i}" || { reg_fail "bytes2human: invalid uint '${i}'."; return 1; }
@@ -110,7 +110,7 @@ bytes2human()
 # 2 - uint
 int2human()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	is_uint "${2}" || { reg_fail "int2human: invalid uint '${2}'."; return 1; }
 
 	local in_num="${2#"${2%%[!0]*}"}" out_num=
@@ -128,7 +128,7 @@ int2human()
 
 get_md5()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	local IFS="${DEFAULT_IFS}" g_md5
 	g_md5="$(${MD5_CMD} "${2}")" &&
 	g_md5="${g_md5%% *}" &&
@@ -406,7 +406,7 @@ do_create_addnmounts()
 
 get_pkg_name()
 {
-	unset_vars "${1}"
+	clear_vars "${1}"
 	local _name
 	case "${2}" in
 		awk) _name="gawk" ;;
@@ -692,7 +692,7 @@ get_preset()
 
 	assert_set F_get_preset gp_mem gp_lists_cnt gp_entr_cnt gp_lim_coeff gp_lists || return 1
 
-	unset_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}"
+	clear_vars "${2}" "${3}" "${4}" "${5}" "${6}" "${7}" "${8}" "${9}"
 
 	do_calculate_limits "${gp_entr_cnt}" "${gp_lists_cnt}" "${gp_lim_coeff}" gp_min_entries gp_max_set_size gp_max_part_size || return 1
 
@@ -757,7 +757,7 @@ do_calculate_limits()
 		enter_number='' \
 		tgt_entries_cnt="${1}" lists_cnt="${2}" lim_coeff="${3:-1}"
 
-	unset_vars "${4}" "${5}" "${6}"
+	clear_vars "${4}" "${5}" "${6}"
 
 	[ "${DO_DIALOGS}" = 1 ] && enter_number=" Please enter a number."
 
@@ -1048,7 +1048,7 @@ do_gen_blockset_config()
 	# sets ${1} to recommended preset, depending on system memory capacity; ${2} to detected totalmem
 	get_def_preset()
 	{
-		unset_vars "${1}" "${2}"
+		clear_vars "${1}" "${2}"
 		assert_set F_get_def_preset ALL_PRESETS "${ALL_PRESETS%% *}_mem" || return 1
 
 		local _totalmem _mem _preset IFS="${DEFAULT_IFS}"
@@ -1076,16 +1076,17 @@ do_gen_blockset_config()
 	local cnt totalmem totalmem_human preset \
 		dmsq_instances conf_dirs \
 		new_cfg \
+		force_msg_lvl_q=4 force_no_report=1 \
+		gbc_tip=". Use English letters and/or numbers and/or underlines" \
 		gbc_out_var="${1}" \
 		gbc_id="${2:-"${luci_new_blockset_name}"}"
 
+	[ "${DO_DIALOGS}" = 1 ] || force_msg_lvl_q=1 force_no_report=
+
+	[ -n "${gbc_id}" ] &&
+	FORCE_MSG_LVL="${force_msg_lvl_q}" FORCE_NO_REPORT="${force_no_report}" check_name "${gbc_id}" set_id "" "${gbc_tip}" ||
 	while :
 	do
-		check_name "${gbc_id}" && break
-
-		[ -z "${gbc_id}" ] && [ "${DO_DIALOGS}" = 1 ] ||
-			print_msg "Invalid blockset name '${gbc_id}'. Use English letters and/or numbers and/or underlines."
-
 		[ -n "${luci_new_blockset_name}" ] && return 1
 
 		[ "${DO_DIALOGS}" = 1 ] ||
@@ -1096,6 +1097,8 @@ do_gen_blockset_config()
 
 		print_msg -blue "" "Name the new blockset:"
 		read -r gbc_id || return 1
+
+		FORCE_MSG_LVL=4 FORCE_NO_REPORT=1 check_name "${gbc_id}" set_id "" "${gbc_tip}" && break
 	done
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${luci_preset}" ]
@@ -1153,7 +1156,7 @@ do_gen_blockset_config()
 get_cfg_path()
 {
 	local g_path
-	unset_vars "${1}"
+	clear_vars "${1}"
 	case "${2}" in
 		''|*[!a-zA-Z0-9_]*) reg_fail "Invalid config name '${2}'."; return 1 ;;
 		global) g_path=${GLOBAL_CFG_FILE:?} ;;
@@ -1219,7 +1222,7 @@ parse_config()
 
 	cfg_pr="config file '${cfg_path}'"
 
-	unset_vars "${fixes_out_var}" "${replace_keys_out_var}"
+	clear_vars "${fixes_out_var}" "${replace_keys_out_var}"
 
 	unset luci_unexp_keys luci_unexp_entries luci_missing_keys luci_missing_entries \
 		luci_bad_cfg_format luci_cfg_fixes
@@ -1261,7 +1264,8 @@ parse_config()
 
 	# parse config
 	local parse_line parse_lines entry_type \
-		valid_lines \
+		valid_key valid_line valid_lines \
+		var_suffix \
 		parser_err_file="${ABL_CFG_STAGING_DIR}/parser_err" \
 		awk_err_file="${ABL_CFG_STAGING_DIR}/awk_err" \
 		inval_entry_file="${ABL_CFG_STAGING_DIR}/inval_entry"
@@ -1504,6 +1508,18 @@ parse_config()
 
 	debug_msg "" "parse_lines:" "${parse_lines}" ""
 
+	# Unset previously set vars
+	[ "${cfg_type}" = global ] || var_suffix="__${cfg_id}"
+
+	IFS="${_DELIM_}"
+	for valid_line in ${valid_lines}
+	do
+		valid_key="${valid_line%%=*}"
+		[ -n "${valid_key}" ] || continue
+		IFS="${DEFAULT_IFS}"
+		unset "${valid_key}${var_suffix}"
+	done
+
 	# Parse config lines into vars
 	IFS="${_NL_}"
 	for parse_line in ${parse_lines}
@@ -1518,20 +1534,28 @@ parse_config()
 	[ "${cfg_id}" = global ] ||
 	{
 		local dir persist_dir c_dirs conf_dirs inst dmsq_i dmsq_instances
-		get_params "${cfg_id}" persist_dir
-		set_params "${cfg_id}" persist_dir="${persist_dir%/}"
-		get_params "${cfg_id}" c_dirs=conf_dirs
-		for dir in ${c_dirs}
-		do
-			add2list conf_dirs "${dir%/}"
-		done
-		get_params "${cfg_id}" dmsq_i=dmsq_instances
-		for inst in ${dmsq_i}
-		do
-			add2list dmsq_instances "${inst}"
-		done
+		get_params "${cfg_id}" persist_dir c_dirs=conf_dirs dmsq_i=dmsq_instances
+		[ -n "${persist_dir}" ] && set_params "${cfg_id}" persist_dir="${persist_dir%/}"
 
-		set_params "${cfg_id}" conf_dirs dmsq_instances
+		# Empty values for conf_dirs and dmsq_instances must leave corresponding param vars unset, since the install script's
+		# config migration drops keys with unset vars and the next config load then reports them as missing and runs select_dmsq_instances
+		[ -n "${c_dirs}" ] &&
+		{
+			for dir in ${c_dirs}
+			do
+				add2list conf_dirs "${dir%/}"
+			done
+			set_params "${cfg_id}" conf_dirs
+		}
+		[ -n "${dmsq_i}" ] &&
+		{
+			for inst in ${dmsq_i}
+			do
+				check_name "${inst}" dmsq_inst "${me}" "in ${cfg_pr} - ignoring" || continue
+				add2list dmsq_instances "${inst}"
+			done
+			set_params "${cfg_id}" dmsq_instances
+		}
 	}
 
 	[ -n "${CFG_IGNORE_NONCRIT}" ] && return 0
@@ -1857,7 +1881,7 @@ get_abl_version()
 	get_ver_str()
 	{
 		[ -n "${3}" ] || return 1
-		unset_vars "${1}" "${2}"
+		clear_vars "${1}" "${2}"
 		local _par res_version res_upd_channel key_ptrn res
 		for _par in version upd_channel
 		do
@@ -1875,7 +1899,7 @@ get_abl_version()
 	}
 
 	local gv_ver gv_upd_ch gv_rv cfg_format
-	unset_vars "${2}" "${3}"
+	clear_vars "${2}" "${3}"
 
 	[ -s "${1}" ] || { reg_fail "Can not find '${1}'."; return 1; }
 

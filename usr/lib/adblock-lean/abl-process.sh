@@ -48,7 +48,7 @@ stevenblack_mirrors="github sbc_io" \
 # 2 - initial uptime in centiseconds
 get_elapsed_time_cs() {
 	local ge_uptime_cs
-	unset_vars "${1}"
+	clear_vars "${1}"
 	get_uptime_cs ge_uptime_cs &&
 	export -n "${1}=$(( ge_uptime_cs - ${2:-ge_uptime_cs} ))"
 }
@@ -57,7 +57,7 @@ get_elapsed_time_cs() {
 # 2: reference time in centiseconds
 get_elapsed_time_human() {
 	local _e_m _e_s _e_cs _e_elapsed _elapsed_human
-	unset_vars "${1}"
+	clear_vars "${1}"
 	get_elapsed_time_cs _e_elapsed "${2}" || return 1
 	_e_m=$(( _e_elapsed / 6000 ))
 	[ "$_e_m" -gt 0 ] || _e_m=
@@ -154,7 +154,7 @@ get_feed_url()
 		mirrors first_mirror \
 		gfu_out_var="${1}" list_id="${2}" format="${3}" mirror="${4}"
 
-	unset_vars "${gfu_out_var}"
+	clear_vars "${gfu_out_var}"
 
 	case "${format}" in raw|hosts) ;; *) reg_fail "Unexpected list format '${format}'."; return 1; esac
 
@@ -585,10 +585,12 @@ gen_set_parts()
 
 	# shellcheck disable=SC2034
 	SCHEDULER_PID=
-	local part_type part_indexes index indexes \
+	local \
+		me=gen_set_parts \
+		part_type part_indexes indexes \
 		set_ids="${1:?}"
 
-	assert_set F_gen_set_parts ALL_PART_TYPES || return 1
+	assert_set "F_${me}" ALL_PART_TYPES || return 1
 
 	# clean up before processing
 	rm -rf "${PROCESSED_PARTS_DIR}"
@@ -604,6 +606,8 @@ gen_set_parts()
 		[ -n "${part_indexes}" ] || continue
 		add2list indexes "${part_indexes}"
 	done
+
+	assert_set "F_${me}" indexes || return 1
 
 	DO_JOB_CB=process_set_part \
 	JOB_DONE_CB=part_done_cb \
