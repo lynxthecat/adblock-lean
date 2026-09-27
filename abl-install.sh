@@ -745,6 +745,27 @@ get_cur_main_cfg_path()
 	export -n "${1}=${_cfg_path}"
 }
 
+# v0.7.2 - v0.8.1 skip their own stop in 'update' when called with options -f, -v, -U and -W.
+# Removes their files from the dnsmasq conf-dirs with their own code, before any of their files is replaced.
+# Runs the body of their 'stop' without 'init_command', which takes the lock, kills other instances and arms
+# a trap whose cleanup removes ${ABL_TMP_DIR}, where the incoming distribution is.
+# Skips when another live instance holds their lock: removing files under it can make it fail, with the same cleanup.
+unload_legacy_abl()
+{
+	grep -q '^[ 	]*init_command()' "${ABL_SERVICE_PATH}" || return 0
+	log_msg_install "" "Unloading the blocklist of the installed adblock-lean."
+	(
+		clean_env_install
+		set +o pipefail
+		set +f
+		# shellcheck source=/dev/null
+		. "${ABL_SERVICE_PATH}" || exit 1
+		check_lock
+		[ "${?}" != 2 ] || { log_msg_install -warn "" "Another adblock-lean instance is running."; exit 1; }
+		source_libs && clean_dnsmasq_dir && restart_dnsmasq -nostop
+	)
+}
+
 # 1 - path to distribution dir
 # 2 - version
 # 3 - update channel
@@ -819,6 +840,10 @@ install_abl_files()
 	# handle update
 	if [ -n "${ABL_IS_UPDATE}" ]
 	then
+		[ ! -f "${LEGACY_CFG_FILE}" ] ||
+		unload_legacy_abl ||
+			log_msg_install -warn "" "Failed to unload the blocklist of the installed adblock-lean. Continuing with the update."
+
 		# get currently installed file list
 		old_files="$(get_file_list_install "${ABL_SERVICE_PATH}" ALL)"
 
