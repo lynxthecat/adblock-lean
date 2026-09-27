@@ -619,7 +619,7 @@ try_parse_dmsq_runtime()
 	for instance in ${instances}
 	do
 		json_is_a "${instance}" object &&
-		check_name "${instance}" dmsq_inst "${me}" "in dnsmasq runtime info" ||
+		check_name "${instance}" dmsq_inst "${me}" "dnsmasq runtime info" ||
 			continue
 		unset "RUNNING__${instance}" "R_DEVICES__${instance}" "R_CONF_DIRS__${instance}" "R_CONF_DIRS_CNT__${instance}"
 		conf_dirs_nl=
@@ -2982,7 +2982,7 @@ try_read_blockset_metadata()
 
 		debug_msg "Processing ${meta_type} metadata for ${set_id_pr}."
 
-		check_name "${set_id}" set_id "${me}" "in ${sp_f_pr}" || { rbm_force_rv=1; return 1; }
+		check_name "${set_id}" set_id "${me}" "${sp_f_pr}" || { rbm_force_rv=1; return 1; }
 
 		for pv_param in ${META_PARAMS}
 		do

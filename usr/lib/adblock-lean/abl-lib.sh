@@ -1073,18 +1073,19 @@ do_gen_blockset_config()
 		:
 	}
 
-	local cnt totalmem totalmem_human preset \
+	local me=gen_blockset_config \
+		cnt totalmem totalmem_human preset \
 		dmsq_instances conf_dirs \
 		new_cfg \
 		force_msg_lvl_q=4 force_no_report=1 \
-		gbc_tip=". Use English letters and/or numbers and/or underlines" \
+		gbc_tip="Use English letters and/or numbers and/or underlines." \
 		gbc_out_var="${1}" \
 		gbc_id="${2:-"${luci_new_blockset_name}"}"
 
 	[ "${DO_DIALOGS}" = 1 ] || force_msg_lvl_q=1 force_no_report=
 
 	[ -n "${gbc_id}" ] &&
-	FORCE_MSG_LVL="${force_msg_lvl_q}" FORCE_NO_REPORT="${force_no_report}" check_name "${gbc_id}" set_id "" "${gbc_tip}" ||
+	FORCE_MSG_LVL="${force_msg_lvl_q}" FORCE_NO_REPORT="${force_no_report}" check_name "${gbc_id}" set_id "${me}" "" "${gbc_tip}" ||
 	while :
 	do
 		[ -n "${luci_new_blockset_name}" ] && return 1
@@ -1098,7 +1099,7 @@ do_gen_blockset_config()
 		print_msg -blue "" "Name the new blockset:"
 		read -r gbc_id || return 1
 
-		FORCE_MSG_LVL=4 FORCE_NO_REPORT=1 check_name "${gbc_id}" set_id "" "${gbc_tip}" && break
+		FORCE_MSG_LVL=4 FORCE_NO_REPORT=1 check_name "${gbc_id}" set_id "${me}" "" "${gbc_tip}" && break
 	done
 
 	if [ "${DO_DIALOGS}" = 1 ] && [ -z "${luci_preset}" ]
@@ -1551,7 +1552,7 @@ parse_config()
 		{
 			for inst in ${dmsq_i}
 			do
-				check_name "${inst}" dmsq_inst "${me}" "in ${cfg_pr} - ignoring" || continue
+				check_name "${inst}" dmsq_inst "${me}" "${cfg_pr}" "Ignoring." || continue
 				add2list dmsq_instances "${inst}"
 			done
 			set_params "${cfg_id}" dmsq_instances

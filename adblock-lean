@@ -215,6 +215,12 @@ is_gr_eq()
 }
 
 # Validates correct blockset ID or dnsmasq inst. name; rejects leading _
+# 1: name
+# 2: type: set_id|dmsq_inst
+# Optional:
+# 3: caller name
+# 4: location description
+# 5: extra tip
 check_name()
 {
 	local fail_pr
@@ -225,7 +231,7 @@ check_name()
 	esac
 	case "${1}" in
 		''|_*|*[!a-zA-Z0-9_]*)
-			reg_fail "${3:+"${3}: "}Invalid ${fail_pr} '${1}'${4}."
+			reg_fail "${3:+"${3}: "}Invalid ${fail_pr} '${1}'${4:+ in ${4}}.${5:+ ${5}}"
 			return 1
 	esac
 	:
@@ -659,7 +665,7 @@ get_id_from_file()
 		cs) gif_desc=conf-script gif_id="${gif_ext}" ;;
 		*) bad_args get_id_from_file "${@}"
 	esac
-	check_name "${gif_id}" set_id "" "in ${gif_desc} file '${2}'" ||
+	check_name "${gif_id}" set_id "" "${gif_desc} file '${2}'" ||
 	{
 		log_msg "Only English letters, numbers and underlines are allowed."
 		return 1
@@ -3476,7 +3482,7 @@ check_func failsafe_log && UPD_SOURCED=1
 ABL_INIT_ACT="${action}" # ${action} is set by procd
 
 # register 1st arg as ${ABL_INIT_ACT} when called by 'sh /etc/init.d/adblock-lean'
-if [ "${0}" = "${ABL_SERVICE_PATH}" ] &&
+if [ "${0}" = "${ABL_SERVICE_PATH}" ] && [ -n "${1}" ] && [ -z "${UPD_SOURCED}" ] &&
 	{
 		is_included "${1}" "${ABL_BUILTIN_CMDS} ${ABL_CUSTOM_CMDS}" || { print_msg -err "Unexpected command '${1}'"; exit 1; }
 	}
