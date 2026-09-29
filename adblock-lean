@@ -2741,6 +2741,11 @@ gen_persist_blockset()
 
 	get_valid_set_ids set_ids "${set_ids_arg}" "${me}" || return 1
 
+	# check_persist_dir needs the dnsmasq conf-dirs parsed by set_global_env. A directory it
+	# rejects must be caught here: inside do_start, it fails the blockset's environment setup,
+	# which stops that blockset, and all blocksets if no other one loaded
+	set_global_env || return 1
+
 	for set_id in ${set_ids}
 	do
 		err=
@@ -2762,7 +2767,6 @@ gen_persist_blockset()
 	done
 
 	[ -n "${ok_set_ids}" ] &&
-	set_global_env &&
 	do_create_addnmounts &&
 		do_start "${ok_set_ids}"
 }

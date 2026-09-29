@@ -1290,14 +1290,15 @@ try_mv_blockset()
 }
 
 # Validate persist_blockset_dir for given blockset ID
-# Env vars: CPD_CHECK_CONF_DIRS
 check_persist_dir()
 {
 	local mnt_point persist_dir all_conf_dirs \
 		p_d_pr \
 		set_id="${1}"
 
+	assert_set "F_check_persist_dir" C_PROCESSED R_PROCESSED || return 1
 	get_params "${set_id}" persist_dir
+	add2list all_conf_dirs "${R_CONF_DIRS} ${C_CONF_DIRS}"
 	p_d_pr="Persistent blockset directory '${persist_dir}' specified in config option 'persist_blockset_dir'"
 
 	[ -d "${persist_dir}" ] ||
@@ -1315,16 +1316,10 @@ check_persist_dir()
 		{ reg_fail "Failed to get the mount point for partition where the persistent blockset is stored (got '${mnt_point}')."; return 1; }
 
 	case "${persist_dir}" in
-		"${mnt_point}"|"${ABL_RUN_DIR}"|"${ABL_RUN_DIR}/"*|"${ABL_TMP_DIR}"|"${ABL_TMP_DIR}/"*) false
-	esac &&
-	{
-		[ -z "${CPD_CHECK_CONF_DIRS}" ] ||
-		{
-			assert_set "F_check_persist_dir" C_PROCESSED R_PROCESSED || return 1
-			add2list all_conf_dirs "${R_CONF_DIRS} ${C_CONF_DIRS}"
-			! is_included "${persist_dir}" "${all_conf_dirs}"
-		}
-	} ||
+		"${mnt_point}"|"${ABL_RUN_DIR}"|"${ABL_RUN_DIR}/"*|"${ABL_TMP_DIR}"|"${ABL_TMP_DIR}/"*) ;;
+		*) false
+	esac ||
+	is_included "${persist_dir}" "${all_conf_dirs}" &&
 		{ reg_fail "${p_d_pr} is the same as a mount point or a dnsmasq conf-dir or an adblock-lean reserved directory. Please use another directory."; return 1; }
 
 	:
@@ -1657,7 +1652,7 @@ set_blocksets_env()
 
 		# Check persistent files
 		case "${persist_mode}" in manual|managed)
-			if CPD_CHECK_CONF_DIRS=1 check_persist_dir "${sbe_id}"
+			if check_persist_dir "${sbe_id}"
 			then
 				FF_FIRST=1 FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}." "*" "" "${sbe_id}" ||
 				FF_FIRST=1 FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}"  ""  "" "${sbe_id}"
