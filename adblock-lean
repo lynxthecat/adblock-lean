@@ -1172,7 +1172,7 @@ reg_msg()
 			-wb) ids_pr_prefix="with " fetch_ids=1 ;;
 			-noprint) noprint=1 ;;
 			-report) report_req=1 ;;
-			-action) [ -n "${LOCK_REQ}" ] && action_req=1 ;;
+			-action) [ -n "${ABL_LOCK_ACQUIRED}" ] && action_req=1 ;;
 			-err) err_l=err color="${red}" msgs_prefix="Error: " ;;
 			-warn) err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-lblue|-red|-green|-purple|-yellow|-orange) eval "color=\"\$${_arg#"-"}\"" ;;
@@ -1287,7 +1287,7 @@ cleanup_and_exit()
 		rm -rf "${ABL_RUN_DIR}"
 	fi
 
-	[ -n "${LOCK_REQ}" ] && rm_lock
+	[ -n "${ABL_LOCK_ACQUIRED}" ] && rm_lock
 	local recent_log=
 	[ -n "${ABL_CURR_LOG_FILE}" ] && [ -s "${ABL_CURR_LOG_FILE}" ] && read -rd '' recent_log < "${ABL_CURR_LOG_FILE}"
 	luci_log="${recent_log}"
@@ -1451,7 +1451,7 @@ mk_lock()
 
 	try_mkdir -p "${ABL_PID_DIR}" || return 1
 	printf '%s\n' "${$}" > "${PID_FILE:?}" || { reg_fail "${me}: Failed to write to pid file '${PID_FILE}'."; return 1; }
-	:
+	ABL_LOCK_ACQUIRED=1
 }
 
 # assigns lock pid to $LOCK_PID
@@ -1485,6 +1485,7 @@ rm_lock()
 	rm -f "${PID_FILE:?}"
 	rm -rf "${ABL_PID_DIR:?}"
 	LOCK_PID=
+	ABL_LOCK_ACQUIRED=
 	:
 }
 
@@ -1493,7 +1494,8 @@ rm_lock()
 update_action_file()
 {
 	local me="update_action_file"
-	[ -z "${1%.}" ] && bad_args "${me}" "${@}"
+	[ -n "${1%.}" ] || bad_args "${me}" "${@}"
+	[ -n "${ABL_LOCK_ACQUIRED}" ] || return 0
 
 	{
 		try_mkdir -p "${ABL_PID_DIR}" &&
@@ -1901,6 +1903,7 @@ del_addnmounts()
 init_act()
 {
 	local \
+		lock_req \
 		cfg_req \
 		libs_req \
 		work_dir_req \
@@ -1926,13 +1929,13 @@ init_act()
 		reload|restart|enabled|enable|disable|uninstall) ;;
 		gen_stats|calculate_limits) 	libs_req=1 ;;
 		status)							work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 ;;
-		setup|gen_global_config) 		work_dir_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
-		gen_blockset_config) 			work_dir_req=1 cfg_req=1 find_set_configs_req=1 LOCK_REQ=1 ;;
+		setup|gen_global_config) 		work_dir_req=1 find_set_configs_req=1 lock_req=1 ;;
+		gen_blockset_config) 			work_dir_req=1 cfg_req=1 find_set_configs_req=1 lock_req=1 ;;
 		upd_cron_job) 					cfg_req=1 ;;
-		update) 						LOCK_REQ=1 ;;
+		update) 						lock_req=1 ;;
 
 		boot|start|pause|resume|create_addnmounts|gen_persist_blockset|rm_blockset_config|select_dnsmasq_instances)
-			work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 LOCK_REQ=1 ;;
+			work_dir_req=1 cfg_req=1 find_set_configs_req=1 set_ids_req=1 lock_req=1 ;;
 
 		stop)
 			check_lock
@@ -1949,7 +1952,7 @@ init_act()
 					2) reg_fail "Failed to kill running adblock-lean processes."; exit 1
 				esac
 			}
-			work_dir_req=1 find_set_configs_req=1 libs_req=1 LOCK_REQ=1 ;;
+			work_dir_req=1 find_set_configs_req=1 libs_req=1 lock_req=1 ;;
 
 		*) reg_fail "Invalid command '${cur_act}'."; exit 1
 	esac
@@ -1977,9 +1980,9 @@ init_act()
 	local init_lock_status=${?}
 
 	# make lock if needed
-	if [ -n "${LOCK_REQ}" ]
+	if [ -n "${lock_req}" ]
 	then
-		mk_lock || { local rv=${?}; unset LOCK_REQ; exit ${rv}; }
+		mk_lock || exit ${?}
 		act_pr_short="${cur_act}"
 	fi
 
@@ -3467,7 +3470,8 @@ unset \
 	FORCE_STOP_ALL \
 	FAIL_STOP_REQ \
 	ABL_FAIL_MSG \
-	CVN_CLEAR
+	CVN_CLEAR \
+	LOCK_PID
 
 set -f
 set -o pipefail
