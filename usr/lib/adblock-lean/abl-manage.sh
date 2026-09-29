@@ -327,16 +327,20 @@ check_dmsq_instances()
 	what_failed failed_instances failed_set_ids || return 1
 	[ -n "${failed_instances}" ] &&
 	{
-		[ -n "${DMSQ_RESTART_TRIED}" ] && return 1
 		is_included "${CUR_CMD}" "start pause resume setup gen_persist_blockset create_addnmounts select_dnsmasq_instances gen_blockset_config" || return 1
-		DMSQ_RESTART_TRIED=1
 
-		do_stop "${failed_set_ids}" || exit 1
-		R_PROCESSED=
-		parse_dmsq_runtime 1
-		[ ${?} = 1 ] && return 1
+		# The repair runs once per process. Once spent, blocksets of a still-failed instance are marked and skipped
+		[ -z "${DMSQ_RESTART_TRIED}" ] &&
+		{
+			DMSQ_RESTART_TRIED=1
 
-		what_failed failed_instances failed_set_ids || return 1
+			do_stop "${failed_set_ids}" || exit 1
+			R_PROCESSED=
+			parse_dmsq_runtime 1
+			[ ${?} = 1 ] && return 1
+
+			what_failed failed_instances failed_set_ids || return 1
+		}
 	}
 
 	is_included "${CUR_CMD}" "start pause resume create_addnmounts status gen_persist_blockset" ||
