@@ -348,7 +348,7 @@ find_files()
 		set -f
 		case "${ff_file}" in
 			''|*"*"*) continue ;;
-			[\$\(\)\{\}\"\`\'] ) reg_msg -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
+			*[\$\(\)\{\}\"\`\']* ) reg_msg -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
 		esac
 		[ -f "${ff_file}" ] || continue # ignore dirs and symlinks
 		[ -n "${ff_found}" ] && [ -n "${FF_RM_EXTRA}" ] &&

@@ -1804,7 +1804,7 @@ fix_config()
 			case "${def_line}" in
 				\#*|'') printf '%s\n' "${def_line}"; continue ;;
 				*=*)
-					key=${def_line%%=*}
+					local key="${def_line%%=*}"
 					if is_included "${key}" "${replace_keys}"
 					then
 						printf '%s\n' "${def_line}"

@@ -197,7 +197,7 @@ find_files_install()
 		set -f
 		case "${ff_file}" in
 			''|*"*"*) continue ;;
-			[\$\(\)\{\}\"\`\'] ) reg_msg_install -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
+			*[\$\(\)\{\}\"\`\']* ) reg_msg_install -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
 		esac
 		[ -f "${ff_file}" ] || continue # ignore dirs and symlinks
 
@@ -784,6 +784,7 @@ install_abl_files()
 		prev_cfg_files \
 		bk_cfg_f bk_f_prefix \
 		var_suffix \
+		md5sums \
 		migr_fail migrate_opts \
 		dist_dir="${1}" version="${2}" upd_channel="${3}" new_file_list="${4}"
 
@@ -1152,7 +1153,7 @@ install_abl_files()
 							case "${def_line}" in
 								\#*|'') printf '%s\n' "${def_line}"; continue ;;
 								*=*)
-									key=${def_line%%=*}
+									local key="${def_line%%=*}"
 									eval "[ -n \"\${${key}${var_suffix}+x}\" ]" || continue # ignore keys corresponding to unset variables
 									eval "curr_val=\"\${${key}${var_suffix}}\""
 									printf '%s\n' "${key}=\"${curr_val}\""
