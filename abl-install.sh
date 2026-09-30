@@ -123,17 +123,6 @@ set_ansi_install()
 	export -n red="${1}" green="${2}" blue="${3}" yellow="${4}" purple="${5}" orange="${6}" n_c="${7}" _DELIM_="${8}" TAB="${9}" CR="${10}" CR_LF="${10}${_NL_}"
 }
 
-# exit with code ${1}
-# if function 'abl_luci_exit' is defined, execute it before exit
-cleanup_and_exit_install()
-{
-	trap - INT TERM EXIT
-	rm -rf "${ABL_TMP_DIR}" "${ABL_PID_DIR}"
-	[ "${1}" = 1 ] && reg_fail_install "Failed to install adblock-lean."
-	[ -n "${ABL_LUCI_SOURCED}" ] && abl_luci_exit "${1}"
-	exit "${1}"
-}
-
 clear_vars_install() { CVN_CLEAR=1 check_var_names_install "${@}"; }
 
 # check if var names are safe to use with eval
@@ -1209,14 +1198,31 @@ install_abl_files()
 
 fetch_and_install()
 {
-	fetch_failed()
+	# exit with code ${1}
+	# if function 'abl_luci_exit' is defined, execute it before exit
+	cleanup_and_exit_install()
 	{
-		[ -n "${1}" ] && reg_fail_install "${1}"
-		rm -rf "${ABL_PID_DIR:?}"
-		install_failed
+		trap - INT TERM EXIT
+		rm -rf "${ABL_INST_DIR:?}" "${ABL_TMP_DIR:?}" "${ABL_PID_DIR:?}"
+		[ "${1}" = 1 ] && reg_fail_install "Failed to install adblock-lean."
+		[ -n "${ABL_LUCI_SOURCED}" ] && abl_luci_exit "${1:-0}"
+		exit "${1:-0}"
 	}
 
-	unexp_arg() { fetch_failed "fetch_and_install: unexpected argument '${1}'."; }
+	fai_preinst_failed() {
+		rm -rf "${ABL_INST_DIR}"
+		[ -n "${1}" ] && reg_fail_install "${1}" "Failed to install adblock-lean."
+		[ -n "${ABL_LUCI_SOURCED}" ] && abl_luci_exit 1
+		exit 1
+	}
+
+	fai_inst_failed()
+	{
+		[ -n "${1}" ] && reg_fail_install "${1}"
+		exit 1
+	}
+
+	unexp_arg() { fai_preinst_failed "fetch_and_install: unexpected argument '${1}'."; }
 
 	unset CVN_CLEAR
 
@@ -1224,25 +1230,21 @@ fetch_and_install()
 	local util
 	for util in tar find uclient-fetch jsonfilter dnsmasq
 	do
-		is_cmd_install "${util}" || install_failed "Utility '${util}' not found."
+		is_cmd_install "${util}" || fai_preinst_failed "Utility '${util}' not found."
 	done
 
 	# Check dnsmasq
 	dnsmasq --help | grep -qe "--conf-script" ||
-		install_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
+		fai_preinst_failed "The version of dnsmasq installed on this system is too old. To use adblock-lean, upgrade this system to OpenWrt 23.05 or later."
 
 	# Test process substitution support
 	printf '%s\n%s\n' "#!/bin/sh" "printf %s >(:)" > /tmp/abl-test
 	/bin/sh /tmp/abl-test 1>/dev/null 2>/dev/null ||
 	{
 		rm -f /tmp/abl-test
-		install_failed "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
+		fai_preinst_failed "/bin/sh does not support process substitution. To use adblock-lean, please update OpenWrt to 23.05 or later version."
 	}
 	rm -f /tmp/abl-test
-
-
-	trap 'cleanup_and_exit_install 1' INT TERM
-	trap 'cleanup_and_exit_install ${?}' EXIT
 
 	set -o pipefail
 
@@ -1280,7 +1282,7 @@ fetch_and_install()
 			req_ver="${ver_str_arg#*=}"
 			req_ver="${req_ver#v}"
 			;;
-		*) fetch_failed "Invalid version string '${ver_str_arg}'."
+		*) fai_preinst_failed "Invalid version string '${ver_str_arg}'."
 	esac
 
 	if ${ABL_SERVICE_PATH} enabled 2>/dev/null
@@ -1288,43 +1290,46 @@ fetch_and_install()
 		ABL_IN_INSTALL='' DO_DIALOGS=0 ${ABL_SERVICE_PATH} stop
 	fi
 
+	trap 'cleanup_and_exit_install 1' INT TERM
+	trap 'cleanup_and_exit_install ${?}' EXIT
+
 	rm -rf "${ABL_INST_DIR:-???}"
-	try_mkdir_install -p "${ABL_INST_DIR}" || fetch_failed
+	try_mkdir_install -p "${ABL_INST_DIR}" || fai_inst_failed
 
 	upd_channel="${req_upd_channel:-"${ABL_UPD_CHANNEL}"}"
 	upd_channel="${force_upd_channel:-"${upd_channel}"}"
 	upd_channel="${upd_channel:-"release"}"
 
 	dist_dir="${ABL_INST_DIR}/dist"
-	try_mkdir_install -p "${dist_dir}" || fetch_failed
+	try_mkdir_install -p "${dist_dir}" || fai_inst_failed
 
 	if [ -n "${sim_path}" ]
 	then
 		print_msg_install "Installing in simulation mode."
-		[ -d "${sim_path}" ] || fetch_failed "Update simulation directory '${sim_path}' does not exist."
-		[ -n "${ver_str_arg}" ] || fetch_failed "Specify new version string."
+		[ -d "${sim_path}" ] || fai_inst_failed "Update simulation directory '${sim_path}' does not exist."
+		[ -n "${ver_str_arg}" ] || fai_inst_failed "Specify new version string."
 		upd_ver="${ver_str_arg}"
 
-		[ -d "${sim_path}" ] || fetch_failed "Simulation source directory doesn't exist."
+		[ -d "${sim_path}" ] || fai_inst_failed "Simulation source directory doesn't exist."
 		cp -rT "${sim_path}" "${dist_dir}"
 		log_msg_install -purple "" "Installing adblock-lean version ${blue}${upd_ver}${n_c} (update channel: ${blue}${upd_channel}${n_c})."
 	else
-		get_gh_ref_install "${upd_channel}" "${req_ver}" upd_ver tarball_url ver_type || fetch_failed
+		get_gh_ref_install "${upd_channel}" "${req_ver}" upd_ver tarball_url ver_type || fai_inst_failed
 		case "${upd_channel}" in
 			commit=*)
 				# set update channel to 'commit=<full_commit_hash>'
 				upd_channel="${upd_channel%=*}=${upd_ver}"
 		esac
 		log_msg_install "" "Downloading adblock-lean, ${ver_type} '${upd_ver}' (update channel: '${upd_channel}')."
-		fetch_abl_dist_install "${tarball_url}" "${dist_dir}" || fetch_failed
+		fetch_abl_dist_install "${tarball_url}" "${dist_dir}" || fai_inst_failed
 	fi
 
 
-	[ -f "${dist_dir}/adblock-lean" ] || install_failed "Can not find ${dist_dir}/adblock-lean"
+	[ -f "${dist_dir}/adblock-lean" ] || fai_inst_failed "Can not find ${dist_dir}/adblock-lean"
 
-	[ -f "${dist_dir}/abl-install.sh" ] || install_failed "Can not find file ${dist_dir}/abl-install.sh"
+	[ -f "${dist_dir}/abl-install.sh" ] || fai_inst_failed "Can not find file ${dist_dir}/abl-install.sh"
 	grep -m1 -q '[ 	]*install_abl_files()' "${dist_dir}/abl-install.sh" ||
-		install_failed "Downloaded adblock-lean install script does not define the function 'install_abl_files' - try a newer adblock-lean version."
+		fai_inst_failed "Downloaded adblock-lean install script does not define the function 'install_abl_files' - try a newer adblock-lean version."
 
 	# Refuse to install versions earlier than v0.7.2
 	${AWK_CMD:?} \
@@ -1334,11 +1339,11 @@ fetch_and_install()
 			/^[ 	]*ABL_UPD_CHANNEL=/ {u=1; next}
 			END{if (v==1 && u==1) exit 0; exit 1}
 		' "${dist_dir}/adblock-lean" ||
-	install_failed "Fetched adblock-lean service script does not specify either ABL_VERSION or ABL_UPD_CHANNEL."
+	fai_inst_failed "Fetched adblock-lean service script does not specify either ABL_VERSION or ABL_UPD_CHANNEL."
 
 
 	local cur_cfg_format upd_cfg_format cur_main_cfg_path
-	upd_cfg_format="$(get_cfg_format_install "${dist_dir}/adblock-lean")" || install_failed
+	upd_cfg_format="$(get_cfg_format_install "${dist_dir}/adblock-lean")" || fai_inst_failed
 	get_cur_main_cfg_path cur_main_cfg_path
 
 	### Remove incompatible newer config on downgrade from pre-0.9 to very old versions
@@ -1363,7 +1368,7 @@ fetch_and_install()
 		INST_SOURCED=1 . "${dist_dir}/abl-install.sh" ||
 			{ reg_fail_install "Failed to source fetched install script."; exit 1; }
 		install_abl_files "${dist_dir}" "${upd_ver}" "${upd_channel}"
-	) || install_failed
+	) || fai_inst_failed
 
 	rm -rf "${ABL_INST_DIR}" "${ABL_PID_DIR:-???}"
 	trap - INT TERM EXIT

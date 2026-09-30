@@ -367,7 +367,7 @@ do_create_addnmounts()
 		log_msg -blue "Automatically creating missing addnmount entries."
 		REPLY=y
 	fi
-	[ "${REPLY}" = y ] || return 0
+	[ "${REPLY}" = y ] || return 2
 
 	del_addnmounts "${all_dmsq_instances}"
 	case ${?} in 0|3) : ;; *) false; esac &&
@@ -417,11 +417,11 @@ get_pkg_name()
 }
 
 
-# Error codes:
-# 1 - general error
-# 3 - set_all_env failed
-# 4 - service enable failed
-# 5 - creating addnmount entry failed
+# Error codes correspond to failures:
+# 1: general
+# 2: gen_global_config or do_gen_blockset_config
+# 3: set_all_env failed
+# 4: service enable failed - via enable()
 do_setup()
 {
 	# 1 - '|' - separated package names
@@ -652,7 +652,8 @@ do_setup()
 	esac
 
 	# create addnmount entries - enables blockset compression and adblocking on multiple instances
-	do_create_addnmounts || return 1
+	do_create_addnmounts
+	[ ${?} = 1 ] && return 1
 
 	if [ "${DO_DIALOGS}" = 1 ]
 	then

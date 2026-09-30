@@ -1081,16 +1081,7 @@ detect_main_utils()
 	:
 }
 
-reg_fail()
-{
-	local arg
-	log_msg -err "${@}"
-	luci_errors="${ABL_FAIL_MSG}"
-	for arg in "${@}"; do
-		[ -z "${FORCE_NO_REPORT}" ] && abl_append ABL_FAIL_MSG "${arg}" "${_NL_}"
-		abl_append luci_errors "${arg}" "${_NL_}"
-	done
-}
+reg_fail() { log_msg -fail "${@}"; }
 
 reg_success() { log_msg -report "${@}"; }
 
@@ -1102,7 +1093,7 @@ log_msg() { reg_msg -1 "${@}"; }
 
 debug_msg() { reg_msg -5 -d "${@}"; }
 
-# Env vars: LOG_VERBOSITY, ABL_DEBUG, SESSION_LOG_THRESH, PRINT_THRESH, FORCE_MSG_LVL
+# Env vars: LOG_VERBOSITY, ABL_DEBUG, SESSION_LOG_THRESH, PRINT_THRESH, FORCE_MSG_LVL, FORCE_NO_REPORT
 # Depending on values of env vars:
 # Prints each msg separately to console [ and to log file ] [ and sends to system log ] [ and registers action ]
 
@@ -1133,6 +1124,7 @@ reg_msg()
 		msg_lvl_arg_seen \
 		msgs_dest="${MSGS_DEST}" \
 		\
+		fail_req \
 		reg_req \
 		thresh \
 		msg_level="${FORCE_MSG_LVL}" \
@@ -1173,6 +1165,7 @@ reg_msg()
 			-noprint) noprint=1 ;;
 			-report) report_req=1 ;;
 			-action) [ -n "${ABL_LOCK_ACQUIRED}" ] && action_req=1 ;;
+			-fail) err_l=err color="${red}" msgs_prefix="Error: " fail_req=1 ;;
 			-err) err_l=err color="${red}" msgs_prefix="Error: " ;;
 			-warn) err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-lblue|-red|-green|-purple|-yellow|-orange) eval "color=\"\$${_arg#"-"}\"" ;;
@@ -1237,14 +1230,14 @@ reg_msg()
 		for m in ${msgs_nc//"${n_c}"/}
 		do
 			IFS="${DEFAULT_IFS}"
-			case "${m}" in
-				dummy|'') ;;
-				*)
-					[ -n "${sys_log_req}" ] && ${LOG_CMD:-logger} -t adblock-lean -p user."${err_l}" "${m}"
-					[ -n "${log_file_req}" ] && [ -n "${ABL_CURR_LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${err_l:-info}: ${m}" >> "${ABL_CURR_LOG_FILE}" &
-			esac
+			case "${m}" in dummy|'') continue; esac
+
+			[ -n "${sys_log_req}" ] && ${LOG_CMD:-logger} -t adblock-lean -p user."${err_l}" "${m}"
+			[ -n "${log_file_req}" ] && [ -n "${ABL_CURR_LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${err_l:-info}: ${m}" >> "${ABL_CURR_LOG_FILE}" &
+			[ -n "${fail_req}" ] && [ -z "${FORCE_NO_REPORT}" ] && abl_append ABL_FAIL_MSG "${m}" "${_NL_}"
 		done
 		IFS="${DEFAULT_IFS}"
+		luci_errors="${ABL_FAIL_MSG}"
 		[ -n "${report_req}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_success && report_success "${msgs_nc//"${_DELIM_}"/"${_NL_}"}"
 		[ -n "${action_req}" ] && update_action_file "${msgs_nc//"${_DELIM_}"/" "}"
 	fi
@@ -2364,7 +2357,8 @@ gen_blockset_config()
 	init_act "${CUR_ACT}" &&
 	set_all_env &&
 	do_gen_blockset_config set_id "${set_id}" &&
-	do_create_addnmounts || return 1
+	do_create_addnmounts
+	[ ${?} = 1 ] && return 1
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
 		print_msg -bf "${set_id}" "" "Start{} now? (y|n)"
@@ -2542,7 +2536,9 @@ select_dnsmasq_instances()
 		)" &&
 		write_config bl "${set_id}" "${upd_cfg}" || return 1
 	done
-	do_create_addnmounts || return 1
+	do_create_addnmounts
+	[ ${?} = 1 ] && return 1
+	:
 }
 
 # 1 - (optional) '-noexit' to return to the calling function

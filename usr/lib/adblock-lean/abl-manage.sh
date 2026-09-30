@@ -2431,9 +2431,9 @@ validate_doms()
 # 3 (optional): lookup timeout in seconds
 # 4 (optional): dnsmasq runtime parse attempts
 #
-# return values:
+# Return codes:
 # 0: All blocksets tested OK
-# 1: Some blockset tests failed
+# 1: Checks failed
 check_active_blocksets()
 {
 	local set_id recs \
