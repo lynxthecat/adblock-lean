@@ -348,7 +348,7 @@ find_files()
 		set -f
 		case "${ff_file}" in
 			''|*"*"*) continue ;;
-			[\$\(\)\{\}\"\`\'] ) reg_msg -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
+			*[\$\(\)\{\}\"\`\']* ) reg_msg -warn "${me}: path '${ff_file}' contains unsupported characters. Ignoring the file."; continue
 		esac
 		[ -f "${ff_file}" ] || continue # ignore dirs and symlinks
 		[ -n "${ff_found}" ] && [ -n "${FF_RM_EXTRA}" ] &&
@@ -1081,16 +1081,7 @@ detect_main_utils()
 	:
 }
 
-reg_fail()
-{
-	local arg
-	log_msg -err "${@}"
-	luci_errors="${ABL_FAIL_MSG}"
-	for arg in "${@}"; do
-		[ -z "${FORCE_NO_REPORT}" ] && abl_append ABL_FAIL_MSG "${arg}" "${_NL_}"
-		abl_append luci_errors "${arg}" "${_NL_}"
-	done
-}
+reg_fail() { log_msg -fail "${@}"; }
 
 reg_success() { log_msg -report "${@}"; }
 
@@ -1102,7 +1093,7 @@ log_msg() { reg_msg -1 "${@}"; }
 
 debug_msg() { reg_msg -5 -d "${@}"; }
 
-# Env vars: LOG_VERBOSITY, ABL_DEBUG, SESSION_LOG_THRESH, PRINT_THRESH, FORCE_MSG_LVL
+# Env vars: LOG_VERBOSITY, ABL_DEBUG, SESSION_LOG_THRESH, PRINT_THRESH, FORCE_MSG_LVL, FORCE_NO_REPORT
 # Depending on values of env vars:
 # Prints each msg separately to console [ and to log file ] [ and sends to system log ] [ and registers action ]
 
@@ -1133,6 +1124,7 @@ reg_msg()
 		msg_lvl_arg_seen \
 		msgs_dest="${MSGS_DEST}" \
 		\
+		fail_req \
 		reg_req \
 		thresh \
 		msg_level="${FORCE_MSG_LVL}" \
@@ -1173,6 +1165,7 @@ reg_msg()
 			-noprint) noprint=1 ;;
 			-report) report_req=1 ;;
 			-action) [ -n "${ABL_LOCK_ACQUIRED}" ] && action_req=1 ;;
+			-fail) err_l=err color="${red}" msgs_prefix="Error: " fail_req=1 ;;
 			-err) err_l=err color="${red}" msgs_prefix="Error: " ;;
 			-warn) err_l=warn color="${yellow}" msgs_prefix="Warning: " ;;
 			-blue|-lblue|-red|-green|-purple|-yellow|-orange) eval "color=\"\$${_arg#"-"}\"" ;;
@@ -1237,14 +1230,14 @@ reg_msg()
 		for m in ${msgs_nc//"${n_c}"/}
 		do
 			IFS="${DEFAULT_IFS}"
-			case "${m}" in
-				dummy|'') ;;
-				*)
-					[ -n "${sys_log_req}" ] && ${LOG_CMD:-logger} -t adblock-lean -p user."${err_l}" "${m}"
-					[ -n "${log_file_req}" ] && [ -n "${ABL_CURR_LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${err_l:-info}: ${m}" >> "${ABL_CURR_LOG_FILE}" &
-			esac
+			case "${m}" in dummy|'') continue; esac
+
+			[ -n "${sys_log_req}" ] && ${LOG_CMD:-logger} -t adblock-lean -p user."${err_l}" "${m}"
+			[ -n "${log_file_req}" ] && [ -n "${ABL_CURR_LOG_FILE}" ] && date +"[%b %d %Y, %H:%M:%S] ${err_l:-info}: ${m}" >> "${ABL_CURR_LOG_FILE}" &
+			[ -n "${fail_req}" ] && [ -z "${FORCE_NO_REPORT}" ] && abl_append ABL_FAIL_MSG "${m}" "${_NL_}"
 		done
 		IFS="${DEFAULT_IFS}"
+		luci_errors="${ABL_FAIL_MSG}"
 		[ -n "${report_req}" ] && [ -n "${custom_scr_sourced}" ] && check_func report_success && report_success "${msgs_nc//"${_DELIM_}"/"${_NL_}"}"
 		[ -n "${action_req}" ] && update_action_file "${msgs_nc//"${_DELIM_}"/" "}"
 	fi
@@ -2364,7 +2357,8 @@ gen_blockset_config()
 	init_act "${CUR_ACT}" &&
 	set_all_env &&
 	do_gen_blockset_config set_id "${set_id}" &&
-	do_create_addnmounts || return 1
+	do_create_addnmounts
+	[ ${?} = 1 ] && return 1
 	if [ "${DO_DIALOGS}" = 1 ]
 	then
 		print_msg -bf "${set_id}" "" "Start{} now? (y|n)"
@@ -2542,7 +2536,9 @@ select_dnsmasq_instances()
 		)" &&
 		write_config bl "${set_id}" "${upd_cfg}" || return 1
 	done
-	do_create_addnmounts || return 1
+	do_create_addnmounts
+	[ ${?} = 1 ] && return 1
+	:
 }
 
 # 1 - (optional) '-noexit' to return to the calling function
@@ -2736,30 +2732,36 @@ gen_persist_blockset()
 		FORCE_PERSIST_INSTALL=1
 	init_act "${CUR_ACT}" || exit 1
 
-	local err_msg set_ids set_id ok_set_ids persist_mode persist_dir \
+	local err set_ids set_id ok_set_ids persist_mode \
 		set_ids_arg="${*:-"${SET_IDS}"}"
 
 	get_valid_set_ids set_ids "${set_ids_arg}" "${me}" || return 1
 
+	# check_persist_dir() needs the dnsmasq parse. Intentionally not set_global_env() to avoid clearing METADATA_BAD
+	# Bad persist dir must be rejected here: inside do_start it stops the blockset(s)
+	check_dmsq_instances || return 1
+
 	for set_id in ${set_ids}
 	do
-		err_msg=
-		get_params "${set_id}" persist_mode persist_dir
+		err=
+		get_params "${set_id}" persist_mode
 		case "${persist_mode}" in
 			manual|managed) : ;;
-			*) err_msg="'persist_blockset_mode' config option is '${persist_mode}'{}"; false
-		esac &&
+			*) reg_fail -fb "${set_id}" "Config option 'persist_blockset_mode' is '${persist_mode}'{}."; err=1
+		esac
+
+		check_persist_dir "${set_id}" && [ -z "${err}" ] ||
 		{
-			[ -n "${persist_dir}" ] || { err_msg="'persist_blockset_dir' config option is not set{}"; false; }
-		} ||
-			{ reg_fail -fb "${set_id}" "${err_msg}${err_msg:+". "}Can not generate persistent blockset file{}."; continue; }
+			reg_fail -fb "${set_id}" "Can not generate persistent blockset file{}."
+			continue
+		}
+
 		# temporarily override the config value to enable updating the file
 		set_params "${set_id}" "persist_mode=managed"
 		add2list ok_set_ids "${set_id}"
 	done
 
 	[ -n "${ok_set_ids}" ] &&
-	set_global_env &&
 	do_create_addnmounts &&
 		do_start "${ok_set_ids}"
 }
@@ -3463,6 +3465,8 @@ unset \
 	LIBS_SOURCED \
 	MAIN_UTILS_DETECTED \
 	CDI_FATAL \
+	DMSQ_RESTART_TRIED \
+	METADATA_READ \
 	KEEP_MNGD_PERSIST \
 	PARAMS_RESET \
 	STOP_NOEXIT \

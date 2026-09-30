@@ -57,6 +57,7 @@ BL_PARAMS_MAP="
 	final_compr_or_cat_stdout=FINAL_COMPR_OR_CAT_STDOUT
 	final_compr_to_file=FINAL_COMPR_TO_FILE
 	conf_script_log_avail=CONF_SCRIPT_LOG_AVAIL
+	persist_dir_valid=PERSIST_DIR_VALID
 " &&
 
 # 'case' clauses for translating param name to global var name
@@ -326,16 +327,20 @@ check_dmsq_instances()
 	what_failed failed_instances failed_set_ids || return 1
 	[ -n "${failed_instances}" ] &&
 	{
-		[ -n "${DMSQ_RESTART_TRIED}" ] && return 1
 		is_included "${CUR_CMD}" "start pause resume setup gen_persist_blockset create_addnmounts select_dnsmasq_instances gen_blockset_config" || return 1
-		DMSQ_RESTART_TRIED=1
 
-		do_stop "${failed_set_ids}" || exit 1
-		R_PROCESSED=
-		parse_dmsq_runtime 1
-		[ ${?} = 1 ] && return 1
+		# The repair runs once per process. Once spent, blocksets of a still-failed instance are marked and skipped
+		[ -z "${DMSQ_RESTART_TRIED}" ] &&
+		{
+			DMSQ_RESTART_TRIED=1
 
-		what_failed failed_instances failed_set_ids || return 1
+			do_stop "${failed_set_ids}" || exit 1
+			R_PROCESSED=
+			parse_dmsq_runtime 1
+			[ ${?} = 1 ] && return 1
+
+			what_failed failed_instances failed_set_ids || return 1
+		}
 	}
 
 	is_included "${CUR_CMD}" "start pause resume create_addnmounts status gen_persist_blockset" ||
@@ -1288,11 +1293,9 @@ try_mv_blockset()
 	:
 }
 
-# Make sure the directory is not the same as the mount point
+# Validate persist_blockset_dir for given blockset ID
 check_persist_dir()
 {
-	local quiet
-	[ "${1}" = '-q' ] && { quiet=1; shift; }
 	local mnt_point persist_dir all_conf_dirs \
 		p_d_pr \
 		set_id="${1}"
@@ -1304,7 +1307,6 @@ check_persist_dir()
 
 	[ -d "${persist_dir}" ] ||
 	{
-		[ -n "${quiet}" ] ||
 		case "${persist_dir}" in
 			''|/) reg_fail "${p_d_pr} is empty or invalid." ;;
 			*) reg_fail "${p_d_pr} is not found"
@@ -1315,14 +1317,14 @@ check_persist_dir()
 	mnt_point="$(${DF_CMD} "${persist_dir}" |
 		${AWK_CMD} '/^[ \t]*Filesystem[ \t]/{next} {i++; print $6} END{ if(i == 1) exit 0; exit 1}')" &&
 	[ -d "${mnt_point}" ] ||
-		{ [ -n "${quiet}" ] || reg_fail "Failed to get the mount point for partition where the persistent blockset is stored (got '${mnt_point}')."; return 1; }
+		{ reg_fail "Failed to get the mount point for partition where the persistent blockset is stored (got '${mnt_point}')."; return 1; }
 
 	case "${persist_dir}" in
 		"${mnt_point}"|"${ABL_RUN_DIR}"|"${ABL_RUN_DIR}/"*|"${ABL_TMP_DIR}"|"${ABL_TMP_DIR}/"*) ;;
 		*) false
 	esac ||
 	is_included "${persist_dir}" "${all_conf_dirs}" &&
-		{  [ -n "${quiet}" ] || reg_fail "${p_d_pr} is the same as a mount point or a dnsmasq conf-dir or an adblock-lean reserved directory. Please use another directory."; return 1; }
+		{ reg_fail "${p_d_pr} is the same as a mount point or a dnsmasq conf-dir or an adblock-lean reserved directory. Please use another directory."; return 1; }
 
 	:
 }
@@ -1658,9 +1660,10 @@ set_blocksets_env()
 			then
 				FF_FIRST=1 FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}." "*" "" "${sbe_id}" ||
 				FF_FIRST=1 FF_RM_EXTRA="${rm_extra}" find_files cur_persist_path "${persist_dir}" "${set_base_fname}"  ""  "" "${sbe_id}"
-				set_params "${sbe_id}" cur_persist_path
+				set_params "${sbe_id}" cur_persist_path persist_dir_valid=1
 				[ -n "${cur_persist_path}" ] && debug_msg "Found ${cur_persist_path}"
 			else
+				set_params "${sbe_id}" persist_dir_valid=
 				log_msg -warn -fb "${sbe_id}" "" "Persistent blockset file can not be used or updated{}."
 			fi
 		esac
@@ -1799,6 +1802,7 @@ set_blockset_env()
 		install_in_cd_fallback \
 		\
 		persist_possible=0 \
+		persist_dir_valid \
 		persist_dir \
 		persist_mode \
 		\
@@ -1831,7 +1835,7 @@ set_blockset_env()
 		conf_dirs \
 		persist_mode || return 1
 
-	get_params "${set_id}" persist_dir cur_persist_path run_state cur_path
+	get_params "${set_id}" persist_dir persist_dir_valid cur_persist_path run_state cur_path
 
 	set_base_fname=${BLOCKSET_BASE_FNAME:?}-${set_id}
 
@@ -1906,7 +1910,7 @@ set_blockset_env()
 	persist_ok=0 persist_bad=''
 	is_included "${persist_mode}" "manual managed" &&
 	is_included "${CUR_CMD}" "start pause resume status" &&
-	check_persist_dir -q "${set_id}" &&
+	[ -n "${persist_dir_valid}" ] &&
 	get_params -f "${me}" "${set_id}" min_entries=min_blockset_entries max_set_size &&
 	{
 		[ "${final_compress}" = 1 ] || cat_addnm="${_NL_}${CAT_CMD}"
@@ -2427,9 +2431,9 @@ validate_doms()
 # 3 (optional): lookup timeout in seconds
 # 4 (optional): dnsmasq runtime parse attempts
 #
-# return values:
+# Return codes:
 # 0: All blocksets tested OK
-# 1: Some blockset tests failed
+# 1: Checks failed
 check_active_blocksets()
 {
 	local set_id recs \
